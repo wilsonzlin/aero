@@ -9450,6 +9450,61 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
     return STATUS_SUCCESS;
 }
 
+static BOOLEAN AeroGpuTryReadLegacySubmissionDescHeader(_In_ AEROGPU_ADAPTER* Adapter,
+                                                        _In_ ULONGLONG DescGpa,
+                                                        _Out_ aerogpu_legacy_submission_desc_header* Out)
+{
+    if (!Adapter || !Out) {
+        return FALSE;
+    }
+    RtlZeroMemory(Out, sizeof(*Out));
+
+    if (DescGpa == 0) {
+        return FALSE;
+    }
+
+    /*
+     * Only peek at legacy submission descriptors when the GPA matches a
+     * driver-tracked submission descriptor allocation. This avoids unsafe
+     * MmGetVirtualForPhysical translations of arbitrary/corrupted GPAs.
+     */
+    KIRQL pendingIrql;
+    KeAcquireSpinLock(&Adapter->PendingLock, &pendingIrql);
+
+    BOOLEAN found = FALSE;
+    const LIST_ENTRY* lists[] = {&Adapter->PendingSubmissions, &Adapter->RecentSubmissions};
+    for (UINT listIdx = 0; listIdx < (UINT)(sizeof(lists) / sizeof(lists[0])) && !found; ++listIdx) {
+        const LIST_ENTRY* head = lists[listIdx];
+        for (PLIST_ENTRY entry = head->Flink; entry != head; entry = entry->Flink) {
+            const AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+            if (!sub || !sub->DescVa || sub->DescSize < sizeof(*Out)) {
+                continue;
+            }
+            if ((ULONGLONG)sub->DescPa.QuadPart != DescGpa) {
+                continue;
+            }
+
+            __try {
+                RtlCopyMemory(Out, sub->DescVa, sizeof(*Out));
+                found = TRUE;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                found = FALSE;
+            }
+            break;
+        }
+    }
+
+    KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
+
+    if (!found) {
+        return FALSE;
+    }
+    if (Out->version != AEROGPU_LEGACY_SUBMISSION_DESC_VERSION) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_ESCAPE* pEscape)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
@@ -9773,11 +9828,23 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                                 ? AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS
                                 : io->desc_capacity;
 
-        KIRQL oldIrql;
-        KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+        /*
+         * Avoid writing to the caller-provided output buffer while holding the
+         * ring spin lock. Keep the critical section minimal by copying a bounded
+         * snapshot under the lock, then formatting the response after releasing.
+         */
+        aerogpu_dbgctl_ring_desc local[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
+        RtlZeroMemory(local, sizeof(local));
+        aerogpu_legacy_ring_entry legacy[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
+        RtlZeroMemory(legacy, sizeof(legacy));
 
         ULONG head = 0;
         ULONG tail = 0;
+        ULONG outCount = 0;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
             head = adapter->RingHeader->head;
             tail = adapter->RingHeader->tail;
@@ -9793,8 +9860,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 head = tail;
             }
         }
-        io->head = head;
-        io->tail = tail;
 
         ULONG pending = 0;
         if (adapter->RingEntryCount != 0) {
@@ -9810,13 +9875,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
         }
 
-        ULONG outCount = pending;
+        outCount = pending;
         if (outCount > io->desc_capacity) {
             outCount = io->desc_capacity;
         }
-        io->desc_count = outCount;
-
-        RtlZeroMemory(io->desc, sizeof(io->desc));
         if (adapter->RingVa && adapter->RingEntryCount && outCount) {
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
                 struct aerogpu_submit_desc* ring =
@@ -9824,49 +9886,52 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) & (adapter->RingEntryCount - 1);
                     const struct aerogpu_submit_desc entry = ring[idx];
-                    io->desc[i].signal_fence = (uint64_t)entry.signal_fence;
-                    io->desc[i].cmd_gpa = (uint64_t)entry.cmd_gpa;
-                    io->desc[i].cmd_size_bytes = entry.cmd_size_bytes;
-                    io->desc[i].flags = entry.flags;
+                    local[i].signal_fence = (uint64_t)entry.signal_fence;
+                    local[i].cmd_gpa = (uint64_t)entry.cmd_gpa;
+                    local[i].cmd_size_bytes = entry.cmd_size_bytes;
+                    local[i].flags = entry.flags;
                 }
             } else {
                 aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)adapter->RingVa;
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) % adapter->RingEntryCount;
-                    const aerogpu_legacy_ring_entry entry = ring[idx];
-                    if (entry.type != AEROGPU_LEGACY_RING_ENTRY_SUBMIT) {
-                        continue;
-                    }
-                    io->desc[i].signal_fence = (uint64_t)entry.submit.fence;
-                    io->desc[i].cmd_gpa = 0;
-                    io->desc[i].cmd_size_bytes = 0;
-                    io->desc[i].flags = entry.submit.flags;
-
-                    /*
-                     * Legacy ring entries point at a submission descriptor.
-                     * Translate to canonical-ish cmd_gpa/cmd_size_bytes by
-                     * peeking the legacy descriptor header.
-                     */
-                    {
-                        PHYSICAL_ADDRESS descPa;
-                        descPa.QuadPart = (LONGLONG)entry.submit.desc_gpa;
-                        const aerogpu_legacy_submission_desc_header* desc =
-                            (const aerogpu_legacy_submission_desc_header*)MmGetVirtualForPhysical(descPa);
-                        if (desc) {
-                            io->desc[i].signal_fence = (uint64_t)desc->fence;
-                            io->desc[i].cmd_gpa = (uint64_t)desc->dma_buffer_gpa;
-                            io->desc[i].cmd_size_bytes = desc->dma_buffer_size;
-                        } else {
-                            /* Fallback: expose the descriptor pointer itself. */
-                            io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
-                            io->desc[i].cmd_size_bytes = entry.submit.desc_size;
-                        }
-                    }
+                    legacy[i] = ring[idx];
                 }
             }
         }
 
         KeReleaseSpinLock(&adapter->RingLock, oldIrql);
+
+        /* Best-effort legacy header peek after releasing RingLock. */
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+            for (ULONG i = 0; i < outCount; ++i) {
+                const aerogpu_legacy_ring_entry entry = legacy[i];
+                if (entry.type != AEROGPU_LEGACY_RING_ENTRY_SUBMIT) {
+                    continue;
+                }
+
+                local[i].signal_fence = (uint64_t)entry.submit.fence;
+                local[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
+                local[i].cmd_size_bytes = entry.submit.desc_size;
+                local[i].flags = entry.submit.flags;
+
+                aerogpu_legacy_submission_desc_header desc;
+                if (AeroGpuTryReadLegacySubmissionDescHeader(adapter, (ULONGLONG)entry.submit.desc_gpa, &desc)) {
+                    local[i].signal_fence = (uint64_t)desc.fence;
+                    local[i].cmd_gpa = (uint64_t)desc.dma_buffer_gpa;
+                    local[i].cmd_size_bytes = desc.dma_buffer_size;
+                }
+            }
+        }
+
+        io->head = head;
+        io->tail = tail;
+        io->desc_count = outCount;
+
+        RtlZeroMemory(io->desc, sizeof(io->desc));
+        for (ULONG i = 0; i < outCount; ++i) {
+            io->desc[i] = local[i];
+        }
         return STATUS_SUCCESS;
     }
 
@@ -9901,11 +9966,23 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                                 ? AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS
                                 : io->desc_capacity;
 
-        KIRQL oldIrql;
-        KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+        /*
+         * Avoid writing to the caller-provided output buffer while holding the
+         * ring spin lock. Keep the critical section minimal by copying a bounded
+         * snapshot under the lock, then formatting the response after releasing.
+         */
+        aerogpu_dbgctl_ring_desc_v2 local[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
+        RtlZeroMemory(local, sizeof(local));
+        aerogpu_legacy_ring_entry legacy[AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS];
+        RtlZeroMemory(legacy, sizeof(legacy));
 
         ULONG head = 0;
         ULONG tail = 0;
+        ULONG outCount = 0;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
+
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
             head = adapter->RingHeader->head;
             tail = adapter->RingHeader->tail;
@@ -9921,8 +9998,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 head = tail;
             }
         }
-        io->head = head;
-        io->tail = tail;
 
         ULONG pending = 0;
         if (adapter->RingEntryCount != 0) {
@@ -9949,7 +10024,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * Legacy format is kept as a pending-only view because its head/tail are
          * not monotonic (masked indices).
          */
-        ULONG outCount = pending;
+        outCount = pending;
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             outCount = io->desc_capacity;
             if (outCount > adapter->RingEntryCount) {
@@ -9961,9 +10036,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         } else if (outCount > io->desc_capacity) {
             outCount = io->desc_capacity;
         }
-        io->desc_count = outCount;
-
-        RtlZeroMemory(io->desc, sizeof(io->desc));
         if (adapter->RingVa && adapter->RingEntryCount && outCount) {
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
                 struct aerogpu_submit_desc* ring =
@@ -9972,59 +10044,62 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     const ULONG start = tail - outCount;
                     const ULONG idx = (start + i) & (adapter->RingEntryCount - 1);
                     const struct aerogpu_submit_desc entry = ring[idx];
-                    io->desc[i].fence = (uint64_t)entry.signal_fence;
-                    io->desc[i].cmd_gpa = (uint64_t)entry.cmd_gpa;
-                    io->desc[i].cmd_size_bytes = entry.cmd_size_bytes;
-                    io->desc[i].flags = entry.flags;
-                    io->desc[i].alloc_table_gpa = (uint64_t)entry.alloc_table_gpa;
-                    io->desc[i].alloc_table_size_bytes = entry.alloc_table_size_bytes;
-                    io->desc[i].reserved0 = 0;
+                    local[i].fence = (uint64_t)entry.signal_fence;
+                    local[i].cmd_gpa = (uint64_t)entry.cmd_gpa;
+                    local[i].cmd_size_bytes = entry.cmd_size_bytes;
+                    local[i].flags = entry.flags;
+                    local[i].alloc_table_gpa = (uint64_t)entry.alloc_table_gpa;
+                    local[i].alloc_table_size_bytes = entry.alloc_table_size_bytes;
+                    local[i].reserved0 = 0;
                 }
             } else {
                 aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)adapter->RingVa;
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) % adapter->RingEntryCount;
-                    const aerogpu_legacy_ring_entry entry = ring[idx];
-                    if (entry.type != AEROGPU_LEGACY_RING_ENTRY_SUBMIT) {
-                        continue;
-                    }
-                    io->desc[i].fence = (uint64_t)entry.submit.fence;
-                    io->desc[i].cmd_gpa = 0;
-                    io->desc[i].cmd_size_bytes = 0;
-                    io->desc[i].flags = entry.submit.flags;
-                    io->desc[i].alloc_table_gpa = 0;
-                    io->desc[i].alloc_table_size_bytes = 0;
-                    io->desc[i].reserved0 = 0;
-
-                    /*
-                     * Legacy ring entries point at a submission descriptor.
-                     * Translate to canonical-ish cmd_gpa/cmd_size_bytes by
-                     * peeking the legacy descriptor header.
-                     */
-                    {
-                        PHYSICAL_ADDRESS descPa;
-                        descPa.QuadPart = (LONGLONG)entry.submit.desc_gpa;
-                        const aerogpu_legacy_submission_desc_header* desc =
-                            (const aerogpu_legacy_submission_desc_header*)MmGetVirtualForPhysical(descPa);
-                        if (desc) {
-                            io->desc[i].fence = (uint64_t)desc->fence;
-                            io->desc[i].cmd_gpa = (uint64_t)desc->dma_buffer_gpa;
-                            io->desc[i].cmd_size_bytes = desc->dma_buffer_size;
-
-                            if (desc->type == AEROGPU_SUBMIT_PRESENT) {
-                                io->desc[i].flags |= AEROGPU_SUBMIT_FLAG_PRESENT;
-                            }
-                        } else {
-                            /* Fallback: expose the descriptor pointer itself. */
-                            io->desc[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
-                            io->desc[i].cmd_size_bytes = entry.submit.desc_size;
-                        }
-                    }
+                    legacy[i] = ring[idx];
                 }
             }
         }
 
         KeReleaseSpinLock(&adapter->RingLock, oldIrql);
+
+        /* Best-effort legacy header peek after releasing RingLock. */
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+            for (ULONG i = 0; i < outCount; ++i) {
+                const aerogpu_legacy_ring_entry entry = legacy[i];
+                if (entry.type != AEROGPU_LEGACY_RING_ENTRY_SUBMIT) {
+                    continue;
+                }
+
+                local[i].fence = (uint64_t)entry.submit.fence;
+                local[i].cmd_gpa = (uint64_t)entry.submit.desc_gpa;
+                local[i].cmd_size_bytes = entry.submit.desc_size;
+                local[i].flags = entry.submit.flags;
+                local[i].alloc_table_gpa = 0;
+                local[i].alloc_table_size_bytes = 0;
+                local[i].reserved0 = 0;
+
+                aerogpu_legacy_submission_desc_header desc;
+                if (AeroGpuTryReadLegacySubmissionDescHeader(adapter, (ULONGLONG)entry.submit.desc_gpa, &desc)) {
+                    local[i].fence = (uint64_t)desc.fence;
+                    local[i].cmd_gpa = (uint64_t)desc.dma_buffer_gpa;
+                    local[i].cmd_size_bytes = desc.dma_buffer_size;
+
+                    if (desc.type == AEROGPU_SUBMIT_PRESENT) {
+                        local[i].flags |= AEROGPU_SUBMIT_FLAG_PRESENT;
+                    }
+                }
+            }
+        }
+
+        io->head = head;
+        io->tail = tail;
+        io->desc_count = outCount;
+
+        RtlZeroMemory(io->desc, sizeof(io->desc));
+        for (ULONG i = 0; i < outCount; ++i) {
+            io->desc[i] = local[i];
+        }
         return STATUS_SUCCESS;
     }
 
