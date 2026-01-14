@@ -265,7 +265,7 @@ Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
 copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
 :: Win7 x86:
 :: copy /y <GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
-bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=bin\aerogpu_dbgctl.exe
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
 ```
 
 By default the snapshot is written next to the per-test logs (or next to `report.json` when `--json` is used).
