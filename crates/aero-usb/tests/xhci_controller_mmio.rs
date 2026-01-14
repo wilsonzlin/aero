@@ -657,6 +657,63 @@ fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
 }
 
 #[test]
+fn xhci_endpoint_doorbell_defers_transfers_until_run() {
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mut ctrl = XhciController::new();
+    ctrl.attach_device(0, Box::new(DummyDevice));
+
+    let mut mem = CountingMem::new(0x4000);
+
+    // Enable slot 1 so endpoint doorbells have a valid target.
+    ctrl.set_dcbaap(0x1000);
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion, CommandCompletion::success(1));
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    assert_eq!(ctrl.address_device(completion.slot_id, slot_ctx), completion);
+
+    // Configure a plausible endpoint ring cursor for EP1 IN (device context index 3). Leave DCBAAP
+    // cleared so the endpoint-state gating logic falls back to controller-local cursor state.
+    ctrl.set_endpoint_ring(completion.slot_id, 3, 0x1800, true);
+    ctrl.set_dcbaap(0);
+
+    let doorbell = u64::from(regs::DBOFF_VALUE)
+        + u64::from(completion.slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+
+    let reads_before = mem.reads;
+
+    // Ring the endpoint doorbell while the controller is stopped (USBCMD.RUN=0). The doorbell
+    // should be remembered, but transfer-ring execution must not DMA or make progress.
+    ctrl.mmio_write(doorbell, 4, 3);
+    ctrl.tick(&mut mem);
+    assert_eq!(
+        mem.reads, reads_before,
+        "transfer rings must not be serviced while USBCMD.RUN is clear"
+    );
+
+    // Once RUN is set, the previously queued doorbell should allow transfer processing to begin
+    // without requiring the guest to ring the doorbell again.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick(&mut mem);
+    assert!(
+        mem.reads > reads_before,
+        "expected queued endpoint doorbell to execute once USBCMD.RUN is set"
+    );
+}
+
+#[test]
 fn xhci_doorbell_ignores_halted_endpoint_without_device_context() {
     use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
 
