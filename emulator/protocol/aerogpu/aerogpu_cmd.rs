@@ -526,6 +526,63 @@ pub enum AerogpuPrimitiveTopology {
     PatchList32 = 64,
 }
 
+impl AerogpuPrimitiveTopology {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            1 => Some(Self::PointList),
+            2 => Some(Self::LineList),
+            3 => Some(Self::LineStrip),
+            4 => Some(Self::TriangleList),
+            5 => Some(Self::TriangleStrip),
+            6 => Some(Self::TriangleFan),
+
+            10 => Some(Self::LineListAdj),
+            11 => Some(Self::LineStripAdj),
+            12 => Some(Self::TriangleListAdj),
+            13 => Some(Self::TriangleStripAdj),
+
+            33..=64 => {
+                const PATCHLISTS: [AerogpuPrimitiveTopology; 32] = [
+                    AerogpuPrimitiveTopology::PatchList1,
+                    AerogpuPrimitiveTopology::PatchList2,
+                    AerogpuPrimitiveTopology::PatchList3,
+                    AerogpuPrimitiveTopology::PatchList4,
+                    AerogpuPrimitiveTopology::PatchList5,
+                    AerogpuPrimitiveTopology::PatchList6,
+                    AerogpuPrimitiveTopology::PatchList7,
+                    AerogpuPrimitiveTopology::PatchList8,
+                    AerogpuPrimitiveTopology::PatchList9,
+                    AerogpuPrimitiveTopology::PatchList10,
+                    AerogpuPrimitiveTopology::PatchList11,
+                    AerogpuPrimitiveTopology::PatchList12,
+                    AerogpuPrimitiveTopology::PatchList13,
+                    AerogpuPrimitiveTopology::PatchList14,
+                    AerogpuPrimitiveTopology::PatchList15,
+                    AerogpuPrimitiveTopology::PatchList16,
+                    AerogpuPrimitiveTopology::PatchList17,
+                    AerogpuPrimitiveTopology::PatchList18,
+                    AerogpuPrimitiveTopology::PatchList19,
+                    AerogpuPrimitiveTopology::PatchList20,
+                    AerogpuPrimitiveTopology::PatchList21,
+                    AerogpuPrimitiveTopology::PatchList22,
+                    AerogpuPrimitiveTopology::PatchList23,
+                    AerogpuPrimitiveTopology::PatchList24,
+                    AerogpuPrimitiveTopology::PatchList25,
+                    AerogpuPrimitiveTopology::PatchList26,
+                    AerogpuPrimitiveTopology::PatchList27,
+                    AerogpuPrimitiveTopology::PatchList28,
+                    AerogpuPrimitiveTopology::PatchList29,
+                    AerogpuPrimitiveTopology::PatchList30,
+                    AerogpuPrimitiveTopology::PatchList31,
+                    AerogpuPrimitiveTopology::PatchList32,
+                ];
+                Some(PATCHLISTS[(v - 33) as usize])
+            }
+            _ => None,
+        }
+    }
+}
+
 pub const AEROGPU_RESOURCE_USAGE_NONE: u32 = 0;
 pub const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1u32 << 0;
 pub const AEROGPU_RESOURCE_USAGE_INDEX_BUFFER: u32 = 1u32 << 1;

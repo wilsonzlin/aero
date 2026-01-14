@@ -924,22 +924,7 @@ fn stage_ex_name(stage_ex: u32) -> &'static str {
 }
 
 fn topology_name(topology: u32) -> Option<String> {
-    // Match the AeroGPU protocol constants, which intentionally use the D3D11 numeric values so
-    // D3D10/11 UMDs can forward the IA topology directly.
-    Some(match topology {
-        1 => "PointList".to_string(),
-        2 => "LineList".to_string(),
-        3 => "LineStrip".to_string(),
-        4 => "TriangleList".to_string(),
-        5 => "TriangleStrip".to_string(),
-        6 => "TriangleFan".to_string(),
-        10 => "LineListAdj".to_string(),
-        11 => "LineStripAdj".to_string(),
-        12 => "TriangleListAdj".to_string(),
-        13 => "TriangleStripAdj".to_string(),
-        33..=64 => format!("PatchList{}", topology - 32),
-        _ => return None,
-    })
+    AerogpuPrimitiveTopology::from_u32(topology).map(|t| format!("{t:?}"))
 }
 
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
