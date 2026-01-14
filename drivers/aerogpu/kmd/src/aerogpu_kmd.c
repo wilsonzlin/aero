@@ -13265,6 +13265,15 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
             if (mmioCode != 0) {
                 out->error_code = mmioCode;
+            } else if (mmioCount != 0 && out->error_code == 0) {
+                /*
+                 * Defensive: if the device reports a non-zero error payload count but an empty/unknown
+                 * error_code, treat it as INTERNAL so dbgctl tooling does not interpret it as "no error".
+                 *
+                 * Do not override a previously cached/non-zero error_code unless the device provides a
+                 * new non-zero code above.
+                 */
+                out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
             }
             if (mmioFence != 0 && mmioFence <= 0xFFFFFFFFull) {
                 out->error_fence = (uint64_t)mmioFence;
