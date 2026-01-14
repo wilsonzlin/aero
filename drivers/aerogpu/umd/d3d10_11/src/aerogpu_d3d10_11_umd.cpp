@@ -272,6 +272,18 @@ using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
 using aerogpu::d3d10_11::kD3DFeatureLevel10_0;
 
+// D3D11DDICAPS_TYPE subset (numeric values from d3d11umddi.h).
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeThreading;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeDoubles;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeFormatSupport;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeFormatSupport2;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeD3D10XHardwareOptions;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeD3D11Options;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeArchitectureInfo;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeD3D9Options;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeFeatureLevels;
+using aerogpu::d3d10_11::kD3D11DdiCapsTypeMultisampleQualityLevels;
+
 // D3D11_RESOURCE_MISC_SHARED (numeric value from d3d11.h).
 using aerogpu::d3d10_11::kD3D11ResourceMiscShared;
 
@@ -6154,23 +6166,6 @@ void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
 // model this entrypoint using the shared `D3D10DDIARG_GETCAPS` container from
 // `include/aerogpu_d3d10_11_umd.h`.
 
-// NOTE: These numeric values intentionally match the D3D11_FEATURE enum values
-// for the common CheckFeatureSupport queries on Windows 7. Win7-specific DDI
-// cap queries (feature levels, multisample quality) are assigned consecutive
-// values and may need to be extended as more types are observed in the wild.
-enum AEROGPU_D3D11DDICAPS_TYPE : uint32_t {
-  AEROGPU_D3D11DDICAPS_THREADING = 0,
-  AEROGPU_D3D11DDICAPS_DOUBLES = 1,
-  AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT = 2,
-  AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT2 = 3,
-  AEROGPU_D3D11DDICAPS_D3D10_X_HARDWARE_OPTIONS = 4,
-  AEROGPU_D3D11DDICAPS_D3D11_OPTIONS = 5,
-  AEROGPU_D3D11DDICAPS_ARCHITECTURE_INFO = 6,
-  AEROGPU_D3D11DDICAPS_D3D9_OPTIONS = 7,
-  AEROGPU_D3D11DDICAPS_FEATURE_LEVELS = 8,
-  AEROGPU_D3D11DDICAPS_MULTISAMPLE_QUALITY_LEVELS = 9,
-};
-
 struct AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT {
   uint32_t InFormat;
   uint32_t OutFormatSupport;
@@ -6206,7 +6201,7 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_G
   const auto* adapter = hAdapter.pDrvPrivate ? FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter) : nullptr;
 
   switch (type) {
-    case AEROGPU_D3D11DDICAPS_FEATURE_LEVELS: {
+    case kD3D11DdiCapsTypeFeatureLevels: {
       // The Win7 runtime uses this to determine which feature levels to attempt.
       // We advertise only FL10_0 until CS/UAV/etc are implemented.
       // Win7 D3D11 uses a "count + inline list" layout:
@@ -6265,18 +6260,18 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_G
       return E_INVALIDARG;
     }
 
-    case AEROGPU_D3D11DDICAPS_THREADING:
-    case AEROGPU_D3D11DDICAPS_DOUBLES:
-    case AEROGPU_D3D11DDICAPS_D3D10_X_HARDWARE_OPTIONS:
-    case AEROGPU_D3D11DDICAPS_D3D11_OPTIONS:
-    case AEROGPU_D3D11DDICAPS_ARCHITECTURE_INFO:
-    case AEROGPU_D3D11DDICAPS_D3D9_OPTIONS: {
+    case kD3D11DdiCapsTypeThreading:
+    case kD3D11DdiCapsTypeDoubles:
+    case kD3D11DdiCapsTypeD3D10XHardwareOptions:
+    case kD3D11DdiCapsTypeD3D11Options:
+    case kD3D11DdiCapsTypeArchitectureInfo:
+    case kD3D11DdiCapsTypeD3D9Options: {
       // Conservative: report "not supported" for everything (all fields zero).
       std::memset(data, 0, data_size);
       return S_OK;
     }
 
-    case AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT: {
+    case kD3D11DdiCapsTypeFormatSupport: {
       if (data_size < sizeof(AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT)) {
         return E_INVALIDARG;
       }
@@ -6285,7 +6280,7 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_G
       return S_OK;
     }
 
-    case AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT2: {
+    case kD3D11DdiCapsTypeFormatSupport2: {
       if (data_size < sizeof(AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT2)) {
         return E_INVALIDARG;
       }
@@ -6294,7 +6289,7 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_G
       return S_OK;
     }
 
-    case AEROGPU_D3D11DDICAPS_MULTISAMPLE_QUALITY_LEVELS: {
+    case kD3D11DdiCapsTypeMultisampleQualityLevels: {
       if (data_size < sizeof(AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS)) {
         return E_INVALIDARG;
       }

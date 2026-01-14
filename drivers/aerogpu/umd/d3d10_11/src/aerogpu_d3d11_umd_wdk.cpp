@@ -2347,7 +2347,7 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
     //   { DXGI_FORMAT InFormat; UINT OutFormatSupport2; }
     //
     // We currently do not advertise any FormatSupport2 bits.
-    case static_cast<D3D11DDICAPS_TYPE>(3): { // FORMAT_SUPPORT2
+    case static_cast<D3D11DDICAPS_TYPE>(kD3D11DdiCapsTypeFormatSupport2): { // FORMAT_SUPPORT2
       if (size < sizeof(DXGI_FORMAT) + sizeof(UINT)) {
         return E_INVALIDARG;
       }

@@ -128,6 +128,26 @@ constexpr uint32_t kD3D10UsageStaging = kD3D11UsageStaging;
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
 constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
 
+// D3D11DDICAPS_TYPE subset (numeric values from d3d11umddi.h).
+//
+// The Win7 D3D11 runtime routes common CheckFeatureSupport queries through the
+// DDI `GetCaps` hook using these numeric values (which intentionally match the
+// D3D11_FEATURE enum values for the overlapping subset).
+//
+// Keep these constants centralized so the portable (non-WDK) build and the WDK
+// build stay consistent.
+constexpr uint32_t kD3D11DdiCapsTypeThreading = 0;
+constexpr uint32_t kD3D11DdiCapsTypeDoubles = 1;
+constexpr uint32_t kD3D11DdiCapsTypeFormatSupport = 2;
+constexpr uint32_t kD3D11DdiCapsTypeFormatSupport2 = 3;
+constexpr uint32_t kD3D11DdiCapsTypeD3D10XHardwareOptions = 4;
+constexpr uint32_t kD3D11DdiCapsTypeD3D11Options = 5;
+constexpr uint32_t kD3D11DdiCapsTypeArchitectureInfo = 6;
+constexpr uint32_t kD3D11DdiCapsTypeD3D9Options = 7;
+// Win7-specific additions:
+constexpr uint32_t kD3D11DdiCapsTypeFeatureLevels = 8;
+constexpr uint32_t kD3D11DdiCapsTypeMultisampleQualityLevels = 9;
+
 // D3D11_FORMAT_SUPPORT subset (numeric values from d3d11.h).
 // These values are stable across Windows versions and are used by
 // ID3D11Device::CheckFormatSupport.
