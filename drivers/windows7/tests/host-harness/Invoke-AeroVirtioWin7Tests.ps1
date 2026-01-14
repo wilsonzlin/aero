@@ -444,7 +444,7 @@ $script:VirtioInputTabletQmpId = "aero_virtio_tablet0"
 $script:VirtioNetQmpId = "aero_virtio_net0"
 if ($VerifyVirtioSndWav) {
   if (-not $WithVirtioSnd) {
-    throw "-VerifyVirtioSndWav requires -WithVirtioSnd/-RequireVirtioSnd."
+    throw "-VerifyVirtioSndWav requires -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd."
   }
   if ($VirtioSndAudioBackend -ne "wav") {
     throw "-VerifyVirtioSndWav requires -VirtioSndAudioBackend wav."
@@ -458,15 +458,15 @@ if ($VerifyVirtioSndWav) {
 }
 
 if ($RequireVirtioSndMsix -and (-not $WithVirtioSnd)) {
-  throw "-RequireVirtioSndMsix/-RequireSndMsix requires -WithVirtioSnd/-RequireVirtioSnd."
+  throw "-RequireVirtioSndMsix/-RequireSndMsix requires -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd."
 }
 
 if ($WithSndBufferLimits -and (-not $WithVirtioSnd)) {
-  throw "-WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits requires -WithVirtioSnd/-RequireVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
+  throw "-WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits requires -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
 }
 
 if ($VirtioTransitional -and $WithVirtioSnd) {
-  throw "-VirtioTransitional is incompatible with -WithVirtioSnd/-RequireVirtioSnd (virtio-snd testing requires modern-only virtio-pci + contract revision overrides)."
+  throw "-VirtioTransitional is incompatible with -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd (virtio-snd testing requires modern-only virtio-pci + contract revision overrides)."
 }
 
 if ($VirtioMsixVectors -lt 0) {
@@ -497,7 +497,7 @@ if ($VirtioDisableMsix -and ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or
 }
 
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
-  throw "-VirtioSndVectors requires -WithVirtioSnd/-RequireVirtioSnd."
+  throw "-VirtioSndVectors requires -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd."
 }
 
 function Resolve-AeroWin7QemuMsixVectors {
@@ -7150,7 +7150,7 @@ try {
         "-device", $virtioSndDevice
       )
     } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
-      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd/-RequireVirtioSnd."
+      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd."
     }
 
     $qemuArgs = @(
@@ -7234,7 +7234,7 @@ try {
         "-device", $virtioSndDevice
       )
     } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
-      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd/-RequireVirtioSnd."
+      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd."
     }
 
     $qemuArgs = @(
@@ -8956,7 +8956,7 @@ try {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-net MSI-X was not enabled" }
-      Write-Host "FAIL: VIRTIO_NET_MSIX_NOT_ENABLED: $reason"
+      Write-Host "FAIL: VIRTIO_NET_MSIX_NOT_ENABLED: $reason (while -RequireVirtioNetMsix/-RequireNetMsix was enabled)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8967,7 +8967,7 @@ try {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "guest did not report virtio-net running in MSI-X mode" }
-      Write-Host "FAIL: VIRTIO_NET_MSIX_REQUIRED: $reason"
+      Write-Host "FAIL: VIRTIO_NET_MSIX_REQUIRED: $reason (while -RequireVirtioNetMsix/-RequireNetMsix was enabled)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8978,7 +8978,7 @@ try {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-blk MSI-X was not enabled" }
-      Write-Host "FAIL: VIRTIO_BLK_MSIX_NOT_ENABLED: $reason"
+      Write-Host "FAIL: VIRTIO_BLK_MSIX_NOT_ENABLED: $reason (while -RequireVirtioBlkMsix/-RequireBlkMsix was enabled)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8989,7 +8989,7 @@ try {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "guest did not report virtio-blk running in MSI-X mode" }
-      Write-Host "FAIL: VIRTIO_BLK_MSIX_REQUIRED: $reason"
+      Write-Host "FAIL: VIRTIO_BLK_MSIX_REQUIRED: $reason (while -RequireVirtioBlkMsix/-RequireBlkMsix was enabled)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9000,7 +9000,7 @@ try {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-snd MSI-X was not enabled" }
-      Write-Host "FAIL: VIRTIO_SND_MSIX_NOT_ENABLED: $reason"
+      Write-Host "FAIL: VIRTIO_SND_MSIX_NOT_ENABLED: $reason (while -RequireVirtioSndMsix/-RequireSndMsix was enabled)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9011,7 +9011,7 @@ try {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "guest did not report virtio-snd running in MSI-X mode" }
-      Write-Host "FAIL: VIRTIO_SND_MSIX_REQUIRED: $reason"
+      Write-Host "FAIL: VIRTIO_SND_MSIX_REQUIRED: $reason (while -RequireVirtioSndMsix/-RequireSndMsix was enabled)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9114,7 +9114,7 @@ try {
         $reason = "--disable-snd"
       }
 
-      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd was enabled"
+      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9128,9 +9128,9 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but -WithVirtioSnd/-RequireVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
+        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
       } else {
-        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd was enabled"
+        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -9145,9 +9145,9 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but -WithVirtioSnd/-RequireVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
+        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
       } else {
-        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd was enabled"
+        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"

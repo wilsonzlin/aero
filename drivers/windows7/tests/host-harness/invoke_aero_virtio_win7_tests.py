@@ -4841,7 +4841,13 @@ def main() -> int:
     if virtio_disable_msix and (
         need_msix_check or bool(getattr(args, "require_virtio_input_msix", False))
     ):
-        parser.error("--virtio-disable-msix is incompatible with --require-virtio-*-msix (MSI-X is disabled).")
+        # Keep the `--require-virtio-*-msix` phrasing stable for tests and greppability; add alias
+        # hints for usability.
+        parser.error(
+            "--virtio-disable-msix is incompatible with --require-virtio-*-msix "
+            "(aliases: --require-net-msix/--require-blk-msix/--require-snd-msix/--require-input-msix) "
+            "(MSI-X is disabled)."
+        )
 
     if args.require_intx and args.require_msi:
         parser.error("--require-intx and --require-msi are mutually exclusive")
@@ -4859,7 +4865,7 @@ def main() -> int:
 
     if args.require_virtio_snd_msix and not args.enable_virtio_snd:
         parser.error(
-            "--require-virtio-snd-msix requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+            "--require-virtio-snd-msix/--require-snd-msix requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
         )
     if args.udp_port <= 0 or args.udp_port > 65535:
         parser.error("--udp-port must be in the range 1..65535")
@@ -7954,7 +7960,7 @@ def main() -> int:
                                 if reason.startswith("missing virtio-net-msix marker"):
                                     print(
                                         "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while "
-                                        "--require-virtio-net-msix was enabled (guest selftest too old?)",
+                                        "--require-virtio-net-msix/--require-net-msix was enabled (guest selftest too old?)",
                                         file=sys.stderr,
                                     )
                                 else:
@@ -8021,7 +8027,7 @@ def main() -> int:
                                 if reason.startswith("missing virtio-input-msix marker"):
                                     print(
                                         "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
-                                        "--require-virtio-input-msix was enabled (guest selftest too old?)",
+                                        "--require-virtio-input-msix/--require-input-msix was enabled (guest selftest too old?)",
                                         file=sys.stderr,
                                     )
                                 else:
@@ -10065,11 +10071,11 @@ def main() -> int:
                                 ok, reason = _require_virtio_net_msix_marker(msix_tail)
                                 if not ok:
                                     if reason.startswith("missing virtio-net-msix marker"):
-                                        print(
-                                            "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while "
-                                            "--require-virtio-net-msix was enabled (guest selftest too old?)",
-                                            file=sys.stderr,
-                                        )
+                                                print(
+                                                    "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while "
+                                                    "--require-virtio-net-msix/--require-net-msix was enabled (guest selftest too old?)",
+                                                    file=sys.stderr,
+                                                )
                                     else:
                                         print(f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                     _print_tail(serial_log)
@@ -10130,11 +10136,11 @@ def main() -> int:
                                 ok, reason = _require_virtio_input_msix_marker(msix_tail)
                                 if not ok:
                                     if reason.startswith("missing virtio-input-msix marker"):
-                                        print(
-                                            "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
-                                            "--require-virtio-input-msix was enabled (guest selftest too old?)",
-                                            file=sys.stderr,
-                                        )
+                                                print(
+                                                    "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
+                                                    "--require-virtio-input-msix/--require-input-msix was enabled (guest selftest too old?)",
+                                                    file=sys.stderr,
+                                                )
                                     else:
                                         print(f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                     _print_tail(serial_log)
