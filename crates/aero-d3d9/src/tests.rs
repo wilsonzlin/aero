@@ -2711,6 +2711,74 @@ fn translate_entrypoint_prefers_sm3_when_supported() {
 }
 
 #[test]
+fn translate_entrypoint_sm3_half_pixel_center_affects_vertex_wgsl() {
+    let vs_bytes = to_bytes(&assemble_vs_passthrough_sm3_decoder());
+
+    let translated_enabled = shader_translate::translate_d3d9_shader_to_wgsl(
+        &vs_bytes,
+        shader::WgslOptions {
+            half_pixel_center: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        translated_enabled.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+    assert!(translated_enabled.wgsl.contains("@vertex"));
+    assert!(
+        translated_enabled
+            .wgsl
+            .contains("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;"),
+        "{}",
+        translated_enabled.wgsl
+    );
+    assert!(
+        translated_enabled
+            .wgsl
+            .contains("out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;"),
+        "{}",
+        translated_enabled.wgsl
+    );
+    assert!(
+        translated_enabled
+            .wgsl
+            .contains("out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;"),
+        "{}",
+        translated_enabled.wgsl
+    );
+
+    // Validate WGSL via naga to ensure WebGPU compatibility.
+    let module = naga::front::wgsl::parse_str(&translated_enabled.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    let translated_disabled =
+        shader_translate::translate_d3d9_shader_to_wgsl(&vs_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated_disabled.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+    assert!(
+        !translated_disabled
+            .wgsl
+            .contains("@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;"),
+        "{}",
+        translated_disabled.wgsl
+    );
+    assert!(
+        !translated_disabled.wgsl.contains("half_pixel.inv_viewport"),
+        "{}",
+        translated_disabled.wgsl
+    );
+}
+
+#[test]
 fn translate_entrypoint_accepts_operand_count_length_encoding() {
     // Some historical shader blobs encoded opcode token length as operand count instead of total
     // instruction length. The high-level translator should normalize this and still produce valid
