@@ -1456,8 +1456,8 @@ function Invoke-PackageDrivers {
     if (-not $stagingFull.StartsWith($outFull + $sep, $comparison)) {
         throw "Internal error: staging directory is not a subdirectory of OutDir. OutDir='$outFull' staging='$stagingFull'"
     }
-    if (Test-Path $stagingBase) {
-        Remove-Item -Recurse -Force $stagingBase
+    if (Test-Path -LiteralPath $stagingBase) {
+        Remove-Item -LiteralPath $stagingBase -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $stagingBase | Out-Null
 
@@ -1559,8 +1559,8 @@ function Invoke-PackageDrivers {
         }
         $success = $true
     } finally {
-        if ($success -and (Test-Path $stagingBase)) {
-            Remove-Item -Recurse -Force $stagingBase
+        if ($success -and (Test-Path -LiteralPath $stagingBase)) {
+            Remove-Item -LiteralPath $stagingBase -Recurse -Force
         }
     }
 
