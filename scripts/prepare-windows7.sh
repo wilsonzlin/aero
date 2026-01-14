@@ -21,7 +21,7 @@ To run the gated Windows 7 boot test locally:
      (or set AERO_WINDOWS7_GOLDEN=/path/to/golden.png)
 
   3) Run the ignored test (recommended: use safe-run for timeouts/memory limits):
-       AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
+       AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-boot-tests --test windows7_boot --locked -- --ignored
 
  Notes:
       - Do NOT commit Windows images or golden screenshots.

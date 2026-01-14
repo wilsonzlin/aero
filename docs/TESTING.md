@@ -260,9 +260,9 @@ enable deterministic framebuffer/serial checkpoints.
 These tests are defined under the workspace root `tests/` directory (e.g. `tests/boot_sector.rs`,
 `tests/freedos_boot.rs`, `tests/windows7_boot.rs`, and `tests/boot/basic_boot.rs`).
 
-The **supported** way to run them is via the `emulator` crate: it registers them as explicit
-`[[test]]` targets in `crates/emulator/Cargo.toml` (paths like `../../tests/boot_sector.rs`), so you
-can run them with `cargo test -p emulator --test ...`.
+The canonical way to run them is via the dedicated `aero-boot-tests` crate: it registers them as
+explicit `[[test]]` targets in `crates/aero-boot-tests/Cargo.toml` (paths like
+`../../tests/boot_sector.rs`), so you can run them with `cargo test -p aero-boot-tests --test ...`.
 
 Note: this is a **test harness / dependency hygiene** choice (see the note below on `-p aero`), and
 does *not* imply `crates/emulator` is the canonical VM wiring layer. Canonical machine wiring lives
@@ -289,11 +289,11 @@ cargo xtask fixtures
 bash ./scripts/prepare-freedos.sh
 
 # Run the QEMU boot tests.
-cargo test -p emulator --test boot_sector --test freedos_boot --locked
+cargo test -p aero-boot-tests --test boot_sector --test freedos_boot --locked
 
 # In constrained/contended sandboxes (agents/CI-like), prefer safe-run.sh (timeout + memory limit).
 # The first run can take >10 minutes to compile on a cold checkout.
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --test freedos_boot --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-boot-tests --test boot_sector --test freedos_boot --locked
 ```
 
 ### Windows 7 (local only)
@@ -302,7 +302,7 @@ The Windows boot test is intentionally gated and requires user-supplied media:
 
 ```bash
 bash ./scripts/prepare-windows7.sh
-cargo test -p emulator --test windows7_boot --locked -- --ignored
+cargo test -p aero-boot-tests --test windows7_boot --locked -- --ignored
 ```
 
 ### Useful environment variables

@@ -492,8 +492,9 @@ The emulator exposes CPU/device state for debugging. See [`docs/16-debugging-and
 ## Testing
 
 QEMU boot integration tests live under the workspace root `tests/` directory, but are registered
-under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (e.g.
-`path = "../../tests/boot_sector.rs"`). Always run them via `-p emulator` (not `-p aero`).
+under the dedicated `aero-boot-tests` crate via `crates/aero-boot-tests/Cargo.toml` `[[test]]`
+entries (e.g. `path = "../../tests/boot_sector.rs"`). Always run them via `-p aero-boot-tests`
+(not `-p aero`).
 
 ```bash
 # Regenerate/verify deterministic in-repo fixtures (BIOS ROM, ACPI DSDT, tiny boot images).
@@ -534,12 +535,12 @@ bash ./scripts/prepare-freedos.sh
 # BIOS ROM, ACPI DSDT, etc). CI enforces this via `cargo xtask fixtures --check`;
 # no assembler toolchain required.
 bash ./scripts/safe-run.sh cargo xtask fixtures --check
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --locked
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-boot-tests --test boot_sector --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-boot-tests --test freedos_boot --locked
 
 # Full Windows 7 boot (local only; requires a user-supplied Windows 7 disk image)
 bash ./scripts/prepare-windows7.sh
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test windows7_boot --locked -- --ignored
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-boot-tests --test windows7_boot --locked -- --ignored
 ```
 
 ---
@@ -555,7 +556,7 @@ already implemented.
 - [x] Canonical PC platform wiring (interrupt controllers, timers, PCI, storage) (`crates/aero-machine`, `crates/aero-pc-platform`)
 - [ ] **A Windows 7 disk image** (local-only; not in repo):
   - Put it at `test-images/local/windows7.img`, or set `AERO_WINDOWS7_IMAGE=/path/to/windows7.img`
-  - Then run: `cargo test -p emulator --test windows7_boot --locked -- --ignored` (see `scripts/prepare-windows7.sh`)
+  - Then run: `cargo test -p aero-boot-tests --test windows7_boot --locked -- --ignored` (see `scripts/prepare-windows7.sh`)
 - [ ] Optional but recommended: provide a golden screenshot at `test-images/local/windows7_login.png` (or `AERO_WINDOWS7_GOLDEN=...`)
 
 ### B) Boot the Win7 installer from ISO (El Torito)

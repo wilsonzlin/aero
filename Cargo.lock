@@ -83,6 +83,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-boot-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "firmware",
+ "image",
+ "memory",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "aero-core"
 version = "0.1.0"
 

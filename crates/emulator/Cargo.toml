@@ -80,22 +80,6 @@ hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 proptest = "1.4"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 
-[[test]]
-name = "boot_basic"
-path = "../../tests/boot/basic_boot.rs"
-
-[[test]]
-name = "boot_sector"
-path = "../../tests/boot_sector.rs"
-
-[[test]]
-name = "freedos_boot"
-path = "../../tests/freedos_boot.rs"
-
-[[test]]
-name = "windows7_boot"
-path = "../../tests/windows7_boot.rs"
-
 [[bench]]
 name = "dsp"
 harness = false

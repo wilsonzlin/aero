@@ -21,6 +21,7 @@ members = [
     "crates/aero-shared",
     "crates/aero-edid",
     "crates/aero-core",
+    "crates/aero-boot-tests",
     "crates/aero-tests",
     "crates/aero-http-range",
     "crates/aero-ipc",

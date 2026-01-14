@@ -219,8 +219,9 @@ backend.flush()?;
 ## Testing
 
 QEMU boot integration tests live under the workspace root `tests/` directory, but are registered
-under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (e.g.
-`path = "../../tests/freedos_boot.rs"`). Always run them via `-p emulator` (not `-p aero`).
+under the dedicated `aero-boot-tests` crate via `crates/aero-boot-tests/Cargo.toml` `[[test]]`
+entries (e.g. `path = "../../tests/freedos_boot.rs"`). Always run them via `-p aero-boot-tests`
+(not `-p aero`).
 
 ```bash
 # Run storage tests
@@ -238,7 +239,7 @@ bash ./scripts/safe-run.sh cargo check --target wasm32-unknown-unknown -p aero-d
 
 # Integration tests
 # Note: the first run in a clean/contended agent sandbox can take >10 minutes to compile.
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
+ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-boot-tests --test freedos_boot --locked
 ```
 
 ---

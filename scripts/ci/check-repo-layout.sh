@@ -43,11 +43,11 @@ fi
 
 # QEMU boot test docs guardrail:
 # The QEMU boot integration tests live under the workspace root `tests/` directory, but are
-# explicitly registered as `[[test]]` targets in `crates/emulator/Cargo.toml` (paths like
+# explicitly registered as `[[test]]` targets in `crates/aero-boot-tests/Cargo.toml` (paths like
 # `../../tests/boot_sector.rs`).
 #
-# Docs should consistently instruct running them via the `emulator` crate:
-#   cargo test -p emulator --test <...> --locked
+# Docs should consistently instruct running them via the dedicated `aero-boot-tests` crate:
+#   cargo test -p aero-boot-tests --test <...> --locked
 #
 # While Cargo also auto-registers workspace-root `tests/*.rs` under the `aero` package, we avoid
 # `-p aero` for these boot tests because:
@@ -55,25 +55,26 @@ fi
 # - `aero` has heavyweight GPU dev-dependencies that significantly slow compilation.
 #
 # Fail CI if any tracked markdown suggests running these boot tests via `-p aero`.
-qemu_boot_test_aero_re='cargo test.*(-p aero.*--test (boot_sector|freedos_boot|windows7_boot|boot_basic)|--test (boot_sector|freedos_boot|windows7_boot|boot_basic).*-p aero)'
+# (Be careful not to match the dedicated crate name `aero-boot-tests`.)
+qemu_boot_test_aero_re='cargo test.*(-p[[:space:]]+aero([[:space:]]|$).*--test (boot_sector|freedos_boot|windows7_boot|boot_basic)|--test (boot_sector|freedos_boot|windows7_boot|boot_basic).*-p[[:space:]]+aero([[:space:]]|$))'
 if git grep -n -E "${qemu_boot_test_aero_re}" -- '*.md' >/dev/null; then
-  echo "error: docs must run QEMU boot integration tests via -p emulator (registered via crates/emulator/Cargo.toml [[test]]), not -p aero" >&2
+  echo "error: docs must run QEMU boot integration tests via -p aero-boot-tests (registered via crates/aero-boot-tests/Cargo.toml [[test]]), not -p aero" >&2
   git grep -n -E "${qemu_boot_test_aero_re}" -- '*.md' >&2
   exit 1
 fi
 
 # Keep scripts/prepare-windows7.sh (referenced by the ignored test) aligned with the same guidance.
 if git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >/dev/null; then
-  echo "error: scripts/prepare-windows7.sh must instruct running windows7_boot via -p emulator (not -p aero)" >&2
+  echo "error: scripts/prepare-windows7.sh must instruct running windows7_boot via -p aero-boot-tests (not -p aero)" >&2
   git grep -n -E "${qemu_boot_test_aero_re}" -- 'scripts/prepare-windows7.sh' >&2
   exit 1
 fi
 
-# Ensure the `emulator` crate continues to register the QEMU boot tests via `[[test]]` entries.
-# (Docs and CI rely on `cargo test -p emulator --test ...` working even though the sources live
-# under the workspace root `tests/` directory.)
-need_file "crates/emulator/Cargo.toml"
-emulator_boot_test_needles=(
+# Ensure the `aero-boot-tests` crate continues to register the QEMU boot tests via `[[test]]`
+# entries. (Docs and CI rely on `cargo test -p aero-boot-tests --test ...` working even though the
+# sources live under the workspace root `tests/` directory.)
+need_file "crates/aero-boot-tests/Cargo.toml"
+boot_test_needles=(
   'name = "boot_basic"'
   'path = "../../tests/boot/basic_boot.rs"'
   'name = "boot_sector"'
@@ -83,28 +84,28 @@ emulator_boot_test_needles=(
   'name = "windows7_boot"'
   'path = "../../tests/windows7_boot.rs"'
 )
-for needle in "${emulator_boot_test_needles[@]}"; do
-  if ! grep -qF "${needle}" crates/emulator/Cargo.toml; then
-    die "crates/emulator/Cargo.toml missing expected boot test registration: ${needle}"
+for needle in "${boot_test_needles[@]}"; do
+  if ! grep -qF "${needle}" crates/aero-boot-tests/Cargo.toml; then
+    die "crates/aero-boot-tests/Cargo.toml missing expected boot test registration: ${needle}"
   fi
 done
-unset emulator_boot_test_needles
+unset boot_test_needles
 
-# Additionally, ensure that any doc line that mentions these test targets includes `-p emulator`
+# Additionally, ensure that any doc line that mentions these test targets includes `-p aero-boot-tests`
 # (avoid ambiguous `cargo test --test ...` invocations that would default to the workspace root
 # package).
 qemu_boot_test_any_re='cargo test.*--test (boot_sector|freedos_boot|windows7_boot|boot_basic)'
-qemu_boot_test_missing_pkg=$(git grep -n -E "${qemu_boot_test_any_re}" -- '*.md' | grep -v -- "-p emulator" || true)
+qemu_boot_test_missing_pkg=$(git grep -n -E "${qemu_boot_test_any_re}" -- '*.md' | grep -v -- "-p aero-boot-tests" || true)
 if [[ -n "${qemu_boot_test_missing_pkg}" ]]; then
-  echo "error: docs mention QEMU boot tests via 'cargo test ... --test ...' but are missing '-p emulator' on the same line:" >&2
+  echo "error: docs mention QEMU boot tests via 'cargo test ... --test ...' but are missing '-p aero-boot-tests' on the same line:" >&2
   echo "${qemu_boot_test_missing_pkg}" >&2
   exit 1
 fi
 unset qemu_boot_test_missing_pkg
 
-# Keep the canonical docs in sync with the `emulator` crate `[[test]]` registration model.
+# Keep the canonical docs in sync with the `aero-boot-tests` crate `[[test]]` registration model.
 # These are the primary human-facing entrypoints for running the QEMU boot tests, and they should
-# explicitly mention `crates/emulator/Cargo.toml` `[[test]]` to prevent future drift.
+# explicitly mention `crates/aero-boot-tests/Cargo.toml` `[[test]]` to prevent future drift.
 qemu_boot_test_docs=(
   "docs/TESTING.md"
   "instructions/integration.md"
@@ -114,8 +115,8 @@ for doc in "${qemu_boot_test_docs[@]}"; do
   if [[ ! -f "${doc}" ]]; then
     die "expected QEMU boot test doc '${doc}' to exist"
   fi
-  if ! grep -q "crates/emulator/Cargo.toml" "${doc}" || ! grep -q "\\[\\[test\\]\\]" "${doc}"; then
-    die "${doc}: expected to mention crates/emulator/Cargo.toml [[test]] registration for QEMU boot tests"
+  if ! grep -q "crates/aero-boot-tests/Cargo.toml" "${doc}" || ! grep -q "\\[\\[test\\]\\]" "${doc}"; then
+    die "${doc}: expected to mention crates/aero-boot-tests/Cargo.toml [[test]] registration for QEMU boot tests"
   fi
 done
 unset qemu_boot_test_docs

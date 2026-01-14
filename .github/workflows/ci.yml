@@ -507,7 +507,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run QEMU boot tests
-        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p emulator --test boot_sector --test freedos_boot
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-boot-tests --test boot_sector --test freedos_boot
 
   wasm:
     name: WASM (wasm-pack build + test)
