@@ -3059,10 +3059,9 @@ function Format-AeroPciIdSummary {
     $keys[$k] = $true
   }
 
-  $sorted = @(
-    $keys.Keys | Sort-Object -Stable { $_.Split("@")[0] }, { $_.Split("@")[1] }
-  )
-  return ($sorted -join ",")
+  # Keys are formatted with fixed-width hex fields (e.g. "1af4:1041@01"), so lexicographic sorting
+  # is stable enough and keeps this compatible with Windows PowerShell 5.1 (no Sort-Object -Stable).
+  return (($keys.Keys | Sort-Object) -join ",")
 }
 
 function Format-AeroPciIdDump {
@@ -3072,7 +3071,7 @@ function Format-AeroPciIdDump {
   )
 
   $lines = @()
-  foreach ($d in ($Ids | Sort-Object -Stable VendorId, DeviceId, Bus, Slot, Function)) {
+  foreach ($d in ($Ids | Sort-Object VendorId, DeviceId, Bus, Slot, Function)) {
     $ven = Convert-AeroPciInt $d.VendorId
     $dev = Convert-AeroPciInt $d.DeviceId
     if (($null -eq $ven) -or ($null -eq $dev)) { continue }
