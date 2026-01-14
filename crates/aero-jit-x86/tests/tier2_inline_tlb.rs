@@ -1214,6 +1214,89 @@ fn tier2_inline_tlb_store_with_zero_length_code_version_table_does_not_trap() {
 }
 
 #[test]
+fn tier2_inline_tlb_store_with_zero_length_code_version_table_ignores_invalid_ptr() {
+    // Like `tier2_inline_tlb_store_with_zero_length_code_version_table_does_not_trap`, but ensure
+    // the bump fast-path does not attempt to dereference the table pointer when `len == 0`.
+    //
+    // This is important because runtimes may leave the pointer uninitialized until the table is
+    // configured.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x10),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    // RAM at `ram_base = 0`.
+    mem[..ram.len()].copy_from_slice(&ram);
+
+    // Set an intentionally invalid pointer but `len = 0`. The bump code should not dereference it.
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+        u32::MAX,
+    );
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+        0,
+    );
+
+    // CPU state at `cpu_ptr`, JIT context immediately following.
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let ctx = JitContext {
+        ram_base: 0,
+        tlb_salt: 0x1234_5678_9abc_def0,
+    };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    let pages = (total_len.div_ceil(65_536)) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0x20_000);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap() as u64;
+    assert_eq!(ret, 0x1000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+    let got_ram = &got_mem[..ram.len()];
+    assert_eq!(got_ram[0x10], 0xAB);
+
+    let host = *store.data();
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_store_to_non_ram_uses_slow_helper_and_does_not_bump_code_version_table() {
     let trace = TraceIr {
         prologue: Vec::new(),
