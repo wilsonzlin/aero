@@ -159,12 +159,23 @@ fn presenter_randomized_uploads_match_source_slices() {
             .present(&frame_data, stride, Some(&dirty))
             .expect("present should succeed for well-formed frame_data/stride");
 
+        assert_eq!(telemetry.rects_requested, dirty.len());
         assert_eq!(presenter.writer().calls.len(), telemetry.rects_uploaded);
+        assert!(telemetry.rects_uploaded <= cap);
 
         if cap == 0 {
             assert!(presenter.writer().calls.is_empty());
+            assert_eq!(telemetry.bytes_uploaded, 0);
             continue;
         }
+
+        let sum_uploaded: usize = presenter
+            .writer()
+            .calls
+            .iter()
+            .map(|c| c.data.len())
+            .sum();
+        assert_eq!(telemetry.bytes_uploaded, sum_uploaded);
 
         for call in &presenter.writer().calls {
             let rect = call.rect;
@@ -197,4 +208,3 @@ fn presenter_randomized_uploads_match_source_slices() {
         }
     }
 }
-
