@@ -24,6 +24,10 @@ defined in:
 
 This topology is treated as part of the platform ABI: drift should be caught by unit tests.
 
+Browser/runtime note: the canonical full-system browser runtime (`vmRuntime=machine`, i.e.
+`?vm=machine`) runs `api.Machine` (backed by `aero_machine::Machine`) and uses this topology. The
+legacy browser runtime does not implement the full AHCI/IDE Win7 bring-up path.
+
 ---
 
 ## Storage Architecture
