@@ -257,7 +257,6 @@ impl IdeChannel {
         };
         0xC0 | ((!head) & 0x0F) | (n_ds0 << 4) | (n_ds1 << 5)
     }
-
     fn write_device_control(&mut self, val: u8, irq: &dyn IrqLine) {
         let prev = self.dev_ctl;
         self.dev_ctl = val;

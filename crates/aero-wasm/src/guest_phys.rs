@@ -12,12 +12,17 @@
 //! - High RAM: `[0x1_0000_0000 .. 0x1_0000_0000 + (ram_bytes - PCIE_ECAM_BASE))`
 
 pub(crate) use aero_guest_phys::{
-    GuestRamChunk, GuestRamRange, PCIE_ECAM_BASE, guest_ram_phys_end_exclusive,
-    translate_guest_paddr_chunk, translate_guest_paddr_range,
+    GuestRamChunk, GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_chunk,
+    translate_guest_paddr_range,
 };
 
 /// Compatibility alias used by older call sites/tests in this crate.
+#[allow(dead_code)]
 pub(crate) const HIGH_RAM_BASE: u64 = aero_guest_phys::HIGH_RAM_START;
+
+// Keep the ECAM base constant available for tests/debug helpers, but not all builds need it.
+#[allow(unused_imports)]
+pub(crate) use aero_guest_phys::PCIE_ECAM_BASE;
 
 #[cfg(test)]
 mod tests {
@@ -166,4 +171,3 @@ mod tests {
         );
     }
 }
-

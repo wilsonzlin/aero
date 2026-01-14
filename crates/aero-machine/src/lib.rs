@@ -1973,7 +1973,6 @@ impl PciDevice for EhciPciConfigDevice {
         &mut self.cfg
     }
 }
-
 // -----------------------------------------------------------------------------
 // VGA / SVGA integration (legacy VGA + Bochs VBE_DISPI)
 // -----------------------------------------------------------------------------
