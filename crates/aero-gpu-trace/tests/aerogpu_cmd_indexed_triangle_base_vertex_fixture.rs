@@ -42,8 +42,8 @@ fn make_cmd_stream() -> Vec<u8> {
         0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
         // v1..v3: fullscreen triangle, solid green with alpha=0
         -1.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, // v1
-        -1.0, 3.0, 0.0, 0.0, 1.0, 0.0, 0.0,  // v2
-        3.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0,  // v3
+        -1.0, 3.0, 0.0, 0.0, 1.0, 0.0, 0.0, // v2
+        3.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, // v3
     ];
     let mut vb_bytes = Vec::with_capacity(vertices.len() * 4);
     for f in vertices {
@@ -164,4 +164,3 @@ fn aerogpu_cmd_indexed_triangle_base_vertex_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-
