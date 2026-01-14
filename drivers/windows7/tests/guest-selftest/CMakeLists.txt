@@ -12,6 +12,9 @@ target_compile_features(aero-virtio-selftest PRIVATE cxx_std_17)
 
 target_include_directories(aero-virtio-selftest PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/../../virtio-snd/include
+  # Share the virtio-blk miniport IOCTL contract with the kernel driver to avoid
+  # user/kernel struct drift.
+  ${CMAKE_CURRENT_LIST_DIR}/../../virtio-blk/include
 )
 
 target_compile_definitions(aero-virtio-selftest PRIVATE

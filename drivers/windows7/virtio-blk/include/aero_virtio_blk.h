@@ -9,6 +9,8 @@
 #include "virtqueue_split_legacy.h"
 #include "virtio_os_storport.h"
 
+#include "aero_virtio_blk_ioctl.h"
+
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aero_virtio_blk: " fmt "\n", __VA_ARGS__)
 #else
@@ -169,67 +171,6 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
 } AEROVBLK_DEVICE_EXTENSION, *PAEROVBLK_DEVICE_EXTENSION;
 
 C_ASSERT(AEROVBLK_QUEUE_SIZE == 128);
-
-#define AEROVBLK_SRBIO_SIG "AEROVBLK"
-#define AEROVBLK_IOCTL_QUERY 0x8000A001u
-#define AEROVBLK_IOCTL_FORCE_RESET 0x8000A002u
-
-/*
- * AEROVBLK_QUERY_INFO.InterruptMode values.
- *
- * For contract v1 the driver primarily uses legacy INTx + ISR, but MSI/MSI-X
- * may be enabled as an optional enhancement. Expose the effective mode to the
- * guest selftest for debugging/validation.
- */
-#define AEROVBLK_INTERRUPT_MODE_INTX 0u
-#define AEROVBLK_INTERRUPT_MODE_MSI 1u
-
-#pragma pack(push, 1)
-typedef struct _AEROVBLK_QUERY_INFO {
-    ULONGLONG NegotiatedFeatures;
-    USHORT QueueSize;
-    USHORT NumFree;
-    USHORT AvailIdx;
-    USHORT UsedIdx;
-
-    /*
-     * Interrupt observability (virtio-pci modern).
-     *
-     * - InterruptMode reports whether the driver is currently operating in
-     *   legacy INTx mode or using message-signaled interrupts (MSI/MSI-X).
-     * - Msix*Vector report the currently programmed virtio MSI-X vectors.
-     *   A value of 0xFFFF means "no vector assigned" per the virtio spec.
-     * - MessageCount reports the number of message interrupts assigned by
-     *   StorPort (0 for INTx).
-     *
-     * These fields are appended for backwards compatibility: callers that only
-     * understand the original v1 layout can request/consume just the first 16
-     * bytes (through UsedIdx).
-     */
-    ULONG InterruptMode;
-    USHORT MsixConfigVector;
-    USHORT MsixQueue0Vector;
-    ULONG MessageCount;
-    ULONG Reserved0;
-
-    /*
-     * SRB function counters (appended).
-     *
-     * These are used to validate StorPort timeout recovery paths and debug
-     * real-world storage stack behaviour.
-     */
-    ULONG AbortSrbCount;
-    ULONG ResetDeviceSrbCount;
-    ULONG ResetBusSrbCount;
-    ULONG PnpSrbCount;
-    ULONG IoctlResetCount;
-
-    /*
-     * Optional (appended): number of capacity change events handled at runtime.
-     */
-    ULONG CapacityChangeEvents;
-} AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
-#pragma pack(pop)
 
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, NegotiatedFeatures) == 0x00);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, QueueSize) == 0x08);

@@ -43,6 +43,7 @@
 #include <vector>
 
 #include <aero_virtio_snd_diag.h>
+#include <aero_virtio_blk_ioctl.h>
 
 #ifndef STATUS_NOT_SUPPORTED
 // Some Windows 7 SDK environments don't expose NTSTATUS codes in the default
@@ -496,37 +497,7 @@ struct StorageIdStrings {
   std::wstring revision;
 };
 
-// Userspace mirror of `drivers/windows7/virtio-blk/include/aero_virtio_blk.h` IOCTL contract.
-static constexpr const char kAerovblkSrbIoSig[8] = {'A', 'E', 'R', 'O', 'V', 'B', 'L', 'K'};
-static constexpr ULONG kAerovblkIoctlQuery = 0x8000A001u;
-static constexpr ULONG kAerovblkIoctlForceReset = 0x8000A002u;
-static constexpr ULONG kAerovblkInterruptModeIntx = 0u;
-static constexpr ULONG kAerovblkInterruptModeMsi = 1u;
 static constexpr USHORT kVirtioPciMsiNoVector = 0xFFFFu;
-
-#pragma pack(push, 1)
-struct AEROVBLK_QUERY_INFO {
-  ULONGLONG NegotiatedFeatures;
-  USHORT QueueSize;
-  USHORT NumFree;
-  USHORT AvailIdx;
-  USHORT UsedIdx;
-
-  ULONG InterruptMode;
-  USHORT MsixConfigVector;
-  USHORT MsixQueue0Vector;
-  ULONG MessageCount;
-  ULONG Reserved0;
-
-  ULONG AbortSrbCount;
-  ULONG ResetDeviceSrbCount;
-  ULONG ResetBusSrbCount;
-  ULONG PnpSrbCount;
-  ULONG IoctlResetCount;
-
-  ULONG CapacityChangeEvents;
-};
-#pragma pack(pop)
 
 static_assert(offsetof(AEROVBLK_QUERY_INFO, NegotiatedFeatures) == 0x00, "AEROVBLK_QUERY_INFO layout");
 static_assert(offsetof(AEROVBLK_QUERY_INFO, QueueSize) == 0x08, "AEROVBLK_QUERY_INFO layout");
@@ -627,9 +598,9 @@ static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& 
   std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO));
   auto* ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
   ctrl->HeaderLength = sizeof(SRB_IO_CONTROL);
-  memcpy(ctrl->Signature, kAerovblkSrbIoSig, sizeof(ctrl->Signature));
+  memcpy(ctrl->Signature, AEROVBLK_SRBIO_SIG, sizeof(ctrl->Signature));
   ctrl->Timeout = 10;
-  ctrl->ControlCode = kAerovblkIoctlQuery;
+  ctrl->ControlCode = AEROVBLK_IOCTL_QUERY;
   ctrl->ReturnCode = 0;
   ctrl->Length = sizeof(AEROVBLK_QUERY_INFO);
 
@@ -683,9 +654,9 @@ static bool ForceAerovblkMiniportReset(Logger& log, HANDLE hPhysicalDrive, bool*
   std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL));
   auto* ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
   ctrl->HeaderLength = sizeof(SRB_IO_CONTROL);
-  memcpy(ctrl->Signature, kAerovblkSrbIoSig, sizeof(ctrl->Signature));
+  memcpy(ctrl->Signature, AEROVBLK_SRBIO_SIG, sizeof(ctrl->Signature));
   ctrl->Timeout = 30;
-  ctrl->ControlCode = kAerovblkIoctlForceReset;
+  ctrl->ControlCode = AEROVBLK_IOCTL_FORCE_RESET;
   ctrl->ReturnCode = 0;
   ctrl->Length = 0;
 
@@ -775,9 +746,9 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
   }
 
   const char* mode = "unknown";
-  if (info.InterruptMode == kAerovblkInterruptModeIntx) {
+  if (info.InterruptMode == AEROVBLK_INTERRUPT_MODE_INTX) {
     mode = "intx";
-  } else if (info.InterruptMode == kAerovblkInterruptModeMsi) {
+  } else if (info.InterruptMode == AEROVBLK_INTERRUPT_MODE_MSI) {
     mode = "msi";
   }
 
@@ -798,8 +769,8 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
 }
 
 static const char* AerovblkIrqModeForMarker(const AEROVBLK_QUERY_INFO& info) {
-  if (info.InterruptMode == kAerovblkInterruptModeIntx) return "intx";
-  if (info.InterruptMode == kAerovblkInterruptModeMsi) {
+  if (info.InterruptMode == AEROVBLK_INTERRUPT_MODE_INTX) return "intx";
+  if (info.InterruptMode == AEROVBLK_INTERRUPT_MODE_MSI) {
     // `InterruptMode` intentionally conflates MSI + MSI-X. If any virtio MSI-X vectors are assigned,
     // treat this as MSI-X for marker diagnostics.
     if (info.MsixConfigVector != kVirtioPciMsiNoVector || info.MsixQueue0Vector != kVirtioPciMsiNoVector) {
@@ -2659,7 +2630,7 @@ static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
           // scenario; the host harness can still observe INTx/MSI via PnP resources if needed.
           log.Logf("virtio-blk: miniport query WARN (expected MSI/MSI-X but InterruptMode not reported; len=%zu)",
                    info->returned_len);
-        } else if (info->info.InterruptMode != kAerovblkInterruptModeMsi) {
+        } else if (info->info.InterruptMode != AEROVBLK_INTERRUPT_MODE_MSI) {
           log.Logf("virtio-blk: miniport query FAIL (expected MSI/MSI-X, got InterruptMode=%lu)",
                    static_cast<unsigned long>(info->info.InterruptMode));
           query_ok = false;
