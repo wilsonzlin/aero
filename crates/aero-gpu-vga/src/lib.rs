@@ -349,15 +349,108 @@ impl VgaDevice {
         // VBE scanout is only describable via `ScanoutState` when the guest has enabled the linear
         // framebuffer and the pixel format matches our single supported scanout format.
         if self.vbe.enabled() && self.vbe.lfb_enabled() && self.vbe.bpp == 32 {
-            let base = u64::from(self.svga_lfb_base);
-            let stride_pixels = self.vbe.effective_stride_pixels();
-            let pitch_bytes = stride_pixels.saturating_mul(4);
+            let disabled = ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            };
+
+            let width = u32::from(self.vbe.xres);
+            let height = u32::from(self.vbe.yres);
+            if width == 0 || height == 0 {
+                return disabled;
+            }
+
+            // Only support the canonical boot pixel format for now:
+            // little-endian packed pixels B8G8R8X8.
+            let bytes_per_pixel: u32 = 4;
+
+            // Derive the pitch from the Bochs "virtual width" (stride) unless a BIOS VBE call has
+            // overridden it explicitly via `4F06`.
+            let pitch_bytes = if self.vbe_bytes_per_scan_line_override != 0 {
+                u32::from(self.vbe_bytes_per_scan_line_override)
+            } else {
+                let stride_pixels = self.vbe.effective_stride_pixels();
+                match stride_pixels.checked_mul(bytes_per_pixel) {
+                    Some(v) => v,
+                    None => return disabled,
+                }
+            };
+            if pitch_bytes == 0 {
+                return disabled;
+            }
+
+            let row_bytes = match width.checked_mul(bytes_per_pixel) {
+                Some(v) => v,
+                None => return disabled,
+            };
+            if pitch_bytes < row_bytes {
+                return disabled;
+            }
+
+            // Compute the displayed base address in guest physical memory.
+            //
+            // `ScanoutState` has no explicit panning fields, so `(x_offset, y_offset)` must be
+            // encoded by adjusting the base.
+            let lfb_base = u64::from(self.svga_lfb_base);
+            let x_off_bytes = match u64::from(self.vbe.x_offset).checked_mul(u64::from(bytes_per_pixel))
+            {
+                Some(v) => v,
+                None => return disabled,
+            };
+            let y_off_bytes =
+                match u64::from(self.vbe.y_offset).checked_mul(u64::from(pitch_bytes)) {
+                    Some(v) => v,
+                    None => return disabled,
+                };
+            let base_paddr = match lfb_base
+                .checked_add(y_off_bytes)
+                .and_then(|v| v.checked_add(x_off_bytes))
+            {
+                Some(v) => v,
+                None => return disabled,
+            };
+
+            // Validate that the scanout rectangle fits within the backing VRAM aperture.
+            let vbe_len = match self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET) {
+                Some(v) => v as u64,
+                None => return disabled,
+            };
+            let lfb_end = match lfb_base.checked_add(vbe_len) {
+                Some(v) => v,
+                None => return disabled,
+            };
+
+            let last_row = match height.checked_sub(1) {
+                Some(v) => v,
+                None => return disabled,
+            };
+            let needed_bytes = match u64::from(pitch_bytes)
+                .checked_mul(u64::from(last_row))
+                .and_then(|v| v.checked_add(u64::from(row_bytes)))
+            {
+                Some(v) => v,
+                None => return disabled,
+            };
+            let scanout_end = match base_paddr.checked_add(needed_bytes) {
+                Some(v) => v,
+                None => return disabled,
+            };
+
+            if base_paddr < lfb_base || scanout_end > lfb_end {
+                return disabled;
+            }
+
             return ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
-                base_paddr_lo: base as u32,
-                base_paddr_hi: (base >> 32) as u32,
-                width: self.vbe.xres as u32,
-                height: self.vbe.yres as u32,
+                base_paddr_lo: base_paddr as u32,
+                base_paddr_hi: (base_paddr >> 32) as u32,
+                width,
+                height,
                 pitch_bytes,
                 format: SCANOUT_FORMAT_B8G8R8X8,
             };
@@ -2365,6 +2458,32 @@ mod tests {
         assert_eq!(update.base_paddr_lo, 0xE100_0000);
         assert_eq!(update.base_paddr_hi, 0);
         assert_eq!(update.pitch_bytes, 64 * 4);
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[test]
+    fn scanout_update_accounts_for_stride_and_panning() {
+        let mut dev = VgaDevice::new();
+        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_mode(64, 32, 32, true);
+
+        // Configure a virtual width larger than the visible resolution and apply a pan offset.
+        dev.vbe.virt_width = 128;
+        dev.vbe.x_offset = 8;
+        dev.vbe.y_offset = 2;
+
+        let update = dev.active_scanout_update();
+        assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(update.width, 64);
+        assert_eq!(update.height, 32);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
+
+        let expected_pitch = 128u32 * 4;
+        assert_eq!(update.pitch_bytes, expected_pitch);
+
+        let base = (update.base_paddr_hi as u64) << 32 | update.base_paddr_lo as u64;
+        let expected_base = 0xE100_0000u64 + 2u64 * u64::from(expected_pitch) + 8u64 * 4;
+        assert_eq!(base, expected_base);
     }
 
     #[test]
