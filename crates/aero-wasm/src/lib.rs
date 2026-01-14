@@ -320,7 +320,7 @@ pub fn jit_abi_constants() -> JsValue {
         };
         use aero_jit_x86::jit_ctx::{
             CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext, TIER2_CTX_OFFSET,
-            TIER2_CTX_SIZE,
+            TIER2_CTX_SIZE, TRACE_EXIT_REASON_OFFSET,
         };
         use aero_jit_x86::{
             JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
@@ -355,6 +355,7 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("jit_tlb_flag_is_ram", TLB_FLAG_IS_RAM as u32);
         set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET as u32);
         set_u32("tier2_ctx_size", TIER2_CTX_SIZE as u32);
+        set_u32("trace_exit_reason_offset", TRACE_EXIT_REASON_OFFSET);
         set_u32(
             "code_version_table_ptr_offset",
             CODE_VERSION_TABLE_PTR_OFFSET as u32,
@@ -400,7 +401,7 @@ mod jit_abi_constants_tests {
     };
     use aero_jit_x86::jit_ctx::{
         CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext, TIER2_CTX_OFFSET,
-        TIER2_CTX_SIZE,
+        TIER2_CTX_SIZE, TRACE_EXIT_REASON_OFFSET,
     };
     use aero_jit_x86::{
         JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
@@ -457,6 +458,10 @@ mod jit_abi_constants_tests {
         assert_eq!(read_u32(&obj, "tier2_ctx_offset"), TIER2_CTX_OFFSET);
         assert_eq!(read_u32(&obj, "tier2_ctx_size"), TIER2_CTX_SIZE);
         assert_eq!(
+            read_u32(&obj, "trace_exit_reason_offset"),
+            TRACE_EXIT_REASON_OFFSET
+        );
+        assert_eq!(
             read_u32(&obj, "code_version_table_ptr_offset"),
             CODE_VERSION_TABLE_PTR_OFFSET
         );
@@ -507,6 +512,17 @@ mod jit_abi_constants_tests {
             tier2_ctx_offset,
             cpu_state_size + jit_ctx_total_bytes,
             "tier2_ctx_offset must follow CpuState + JitContext"
+        );
+
+        assert_eq!(
+            read_u32(&obj, "code_version_table_ptr_offset"),
+            tier2_ctx_offset + 4,
+            "code_version_table_ptr_offset must equal tier2_ctx_offset + 4"
+        );
+        assert_eq!(
+            read_u32(&obj, "code_version_table_len_offset"),
+            tier2_ctx_offset + 8,
+            "code_version_table_len_offset must equal tier2_ctx_offset + 8"
         );
 
         let tier2_ctx_size = read_u32(&obj, "tier2_ctx_size");
@@ -591,6 +607,18 @@ mod jit_abi_constants_tests {
             read_u32(&obj, "tier2_ctx_offset")
         );
         assert_eq!(layout.tier2_ctx_bytes(), read_u32(&obj, "tier2_ctx_size"));
+        assert_eq!(
+            layout.trace_exit_reason_offset(),
+            read_u32(&obj, "trace_exit_reason_offset")
+        );
+        assert_eq!(
+            layout.code_version_table_ptr_offset(),
+            read_u32(&obj, "code_version_table_ptr_offset")
+        );
+        assert_eq!(
+            layout.code_version_table_len_offset(),
+            read_u32(&obj, "code_version_table_len_offset")
+        );
         assert_eq!(
             layout.commit_flag_offset(),
             read_u32(&obj, "commit_flag_offset")

@@ -37,7 +37,10 @@ use aero_cpu_core::state::{
 };
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
-use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
+use aero_jit_x86::jit_ctx::{
+    CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext,
+    TRACE_EXIT_REASON_OFFSET, TIER2_CTX_OFFSET, TIER2_CTX_SIZE,
+};
 use aero_jit_x86::{
     BlockLimits, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, Tier1Bus, discover_block_mode,
 };
@@ -149,6 +152,13 @@ pub struct TieredVmJitAbiLayout {
     jit_ctx_ptr_offset: u32,
     /// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
     tier2_ctx_offset: u32,
+    /// Offset (relative to `cpu_ptr`) of the Tier-2 trace exit reason (`u32`).
+    trace_exit_reason_offset: u32,
+    /// Offset (relative to `cpu_ptr`) of a pointer (`u32`, byte offset) to the code-version table.
+    code_version_table_ptr_offset: u32,
+    /// Offset (relative to `cpu_ptr`) of the length (`u32`, number of `u32` entries) of the
+    /// code-version table.
+    code_version_table_len_offset: u32,
 }
 
 #[wasm_bindgen]
@@ -187,6 +197,21 @@ impl TieredVmJitAbiLayout {
     pub fn tier2_ctx_offset(&self) -> u32 {
         self.tier2_ctx_offset
     }
+
+    #[wasm_bindgen(getter)]
+    pub fn trace_exit_reason_offset(&self) -> u32 {
+        self.trace_exit_reason_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn code_version_table_ptr_offset(&self) -> u32 {
+        self.code_version_table_ptr_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn code_version_table_len_offset(&self) -> u32 {
+        self.code_version_table_len_offset
+    }
 }
 
 /// Return the current Tier-1 JIT ABI layout constants for the Tiered VM.
@@ -201,6 +226,9 @@ pub fn tiered_vm_jit_abi_layout() -> TieredVmJitAbiLayout {
         commit_flag_offset: COMMIT_FLAG_OFFSET,
         jit_ctx_ptr_offset: CPU_STATE_SIZE as u32,
         tier2_ctx_offset: TIER2_CTX_OFFSET,
+        trace_exit_reason_offset: TRACE_EXIT_REASON_OFFSET,
+        code_version_table_ptr_offset: CODE_VERSION_TABLE_PTR_OFFSET,
+        code_version_table_len_offset: CODE_VERSION_TABLE_LEN_OFFSET,
     }
 }
 

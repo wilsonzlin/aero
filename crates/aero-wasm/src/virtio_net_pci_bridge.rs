@@ -27,14 +27,14 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aero_ipc::layout::io_ipc_queue_kind::{NET_RX, NET_TX};
-use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
+use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
 use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 use aero_net_backend::{L2TunnelRingBackend, NetworkBackend};
 use aero_net_pump::{tick_virtio_net, VirtioNetBackendAdapter, DEFAULT_MAX_FRAMES_PER_POLL};
 use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::net::VirtioNet;
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
-use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
+use aero_virtio::pci::{InterruptSink, VirtioPciDevice, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY};
 
 type NetRingBackend = L2TunnelRingBackend<SharedRingBuffer, SharedRingBuffer>;
 
