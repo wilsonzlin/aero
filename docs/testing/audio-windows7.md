@@ -293,11 +293,12 @@ Alternative (if the web UI exposes it):
   - WorkerCoordinator snapshot (worker states + wasm variants + last fatal/nonfatal)
   - Effective config snapshot (with sensitive fields redacted)
  - Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
-   - `audio-metrics.json`
-   - `README.txt` (bundle overview + quick interpretation hints)
-   - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
-   - `aero.version.json` (best-effort; build/version endpoint, when served)
-   - `host-media-devices.json` (best-effort; browser media device inventory + mic permission state; device IDs are hashed)
+    - `audio-metrics.json`
+    - `manifest.json` (best-effort; list of files and byte sizes included in the tar)
+    - `README.txt` (bundle overview + quick interpretation hints)
+    - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
+    - `aero.version.json` (best-effort; build/version endpoint, when served)
+    - `host-media-devices.json` (best-effort; browser media device inventory + mic permission state; device IDs are hashed)
    - `workers.json` (best-effort; WorkerCoordinator snapshot: worker states + wasm variants + last fatal/nonfatal errors)
    - `serial.txt` (best-effort; guest serial output tail, if any)
    - `audio-output-*.wav` (best-effort; snapshot of currently-buffered output ring samples, usually a few hundred ms)
