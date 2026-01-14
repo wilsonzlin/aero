@@ -492,10 +492,6 @@ impl PlatformInterrupts {
             .unwrap_or_else(|| panic!("invalid CPU index {cpu_index}"))
     }
 
-    pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
-        self.lapics.iter().map(|lapic| lapic.as_ref())
-    }
-
     pub fn set_mode(&mut self, mode: PlatformInterruptMode) {
         let prev = self.mode;
         self.mode = mode;

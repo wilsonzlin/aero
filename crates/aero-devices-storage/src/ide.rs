@@ -138,42 +138,6 @@ impl IdeChannel {
         }
     }
 
-    fn selected_drive_present(&self) -> bool {
-        self.drives
-            .get(self.selected)
-            .map(|d| d.is_some())
-            .unwrap_or(false)
-    }
-
-    fn read_drive_address(&self) -> u8 {
-        // ATA "Drive Address" register (control block offset +1).
-        //
-        // Exact semantics vary across controllers and the ATA spec is nuanced. For legacy IDE
-        // probing we mainly need a value that:
-        // - reads as 0xFF (open bus) when the selected drive is absent
-        // - is stable and non-zero when a drive is present
-        // - changes when the guest selects master vs slave
-        //
-        // We model this as a readback of the head select (bits 0..=3) and drive select lines
-        // (bits 4..=5, active-low), with bits 6..=7 high as commonly observed on real hardware.
-        if !self.selected_drive_present() {
-            return 0xFF;
-        }
-
-        let head = self.drive_head & 0x0F;
-
-        // nDS0/nDS1 are active-low drive select signals. Exactly one should be asserted (0) at a
-        // time. If an invalid `selected` ever occurs, keep both deasserted (1) to avoid panics and
-        // return a sensible, non-zero value.
-        let (n_ds0, n_ds1) = match self.selected {
-            0 => (0u8, 1u8), // master (device 0) selected
-            1 => (1u8, 0u8), // slave (device 1) selected
-            _ => (1u8, 1u8),
-        };
-
-        0xC0 | head | (n_ds1 << 4) | (n_ds0 << 5)
-    }
-
     fn interrupts_enabled(&self) -> bool {
         // Device control bit 1: nIEN (0 = enabled).
         self.dev_ctl & 0x02 == 0
