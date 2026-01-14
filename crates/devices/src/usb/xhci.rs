@@ -86,8 +86,9 @@ impl XhciPciDevice {
     pub fn new() -> Self {
         let irq = AtomicIrqLine::default();
 
-        // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions and class code are
-        // consistent with the guest-visible config-space stub used by `PcPlatform`.
+        // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions, class code, and
+        // capabilities (MSI) are consistent with the guest-visible config-space stub used by
+        // `PcPlatform`.
         let config = profile::USB_XHCI_QEMU.build_config_space();
 
         let mut dev = Self {

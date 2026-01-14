@@ -1833,6 +1833,10 @@ impl PcPlatform {
             let bdf = profile.bdf;
 
             let xhci = Rc::new(RefCell::new(XhciPciDevice::default()));
+            // Provide an MSI sink so the xHCI device model can deliver MSI when the guest enables it
+            // via PCI config space.
+            xhci.borrow_mut()
+                .set_msi_target(Some(Box::new(interrupts.clone())));
 
             {
                 let xhci_for_intx = xhci.clone();
@@ -1840,19 +1844,20 @@ impl PcPlatform {
                     bdf,
                     pin: PciInterruptPin::IntA,
                     query_level: Box::new(move |pc| {
-                        let command = {
+                        let pci_state = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
                             pci_cfg
                                 .bus_mut()
                                 .device_config(bdf)
-                                .map(|cfg| cfg.command())
-                                .unwrap_or(0)
+                                .map(|cfg| cfg.snapshot_state())
                         };
 
                         // Keep device-side gating consistent when the same device model is also
                         // used outside the platform (e.g. in unit tests).
                         let mut xhci = xhci_for_intx.borrow_mut();
-                        xhci.config_mut().set_command(command);
+                        if let Some(state) = pci_state {
+                            xhci.config_mut().restore_state(&state);
+                        }
 
                         xhci.irq_level()
                     }),
@@ -3007,24 +3012,19 @@ impl PcPlatform {
         if let Some(xhci) = self.xhci.as_ref() {
             const NS_PER_MS: u64 = 1_000_000;
             let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
-            let (command, bar0_base) = {
+            let pci_state = {
                 let mut pci_cfg = self.pci_cfg.borrow_mut();
-                let cfg = pci_cfg.bus_mut().device_config(bdf);
-                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                let bar0_base = cfg
-                    .and_then(|cfg| cfg.bar_range(XhciPciDevice::MMIO_BAR_INDEX))
-                    .map(|range| range.base)
-                    .unwrap_or(0);
-                (command, bar0_base)
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.snapshot_state())
             };
 
             // Keep the xHCI model's view of PCI config state in sync so it can apply bus mastering
             // / MMIO gating when used via `tick_1ms`.
             let mut xhci = xhci.borrow_mut();
-            xhci.config_mut().set_command(command);
-            if bar0_base != 0 {
-                xhci.config_mut()
-                    .set_bar_base(XhciPciDevice::MMIO_BAR_INDEX, bar0_base);
+            if let Some(state) = pci_state {
+                xhci.config_mut().restore_state(&state);
             }
 
             self.xhci_ns_remainder = self.xhci_ns_remainder.saturating_add(delta_ns);

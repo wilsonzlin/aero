@@ -326,8 +326,8 @@ pub const XHCI_BARS: [PciBarProfile; 1] =
 
 /// Canonical capabilities exposed by the QEMU-style xHCI profile.
 ///
-/// The current xHCI PCI wrapper models a single interrupt vector, so a single-vector MSI capability
-/// is sufficient.
+/// The current xHCI device model uses a single interrupt vector/condition, so a single-vector MSI
+/// capability is sufficient.
 pub const XHCI_CAPS: [PciCapabilityProfile; 1] = [PciCapabilityProfile::Msi {
     is_64bit: true,
     per_vector_masking: true,
