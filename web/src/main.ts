@@ -123,6 +123,22 @@ function wireIoWorkerForWebHid(ioWorker: Worker, manager: WebHidPassthroughManag
 const webHidManager = new WebHidPassthroughManager({
   target: {
     postMessage: (message, transfer) => {
+      // WebHID passthrough currently targets the legacy IO worker USB/HID stack. In
+      // `vmRuntime=machine`, the IO worker runs in a host-only stub mode and does not
+      // initialize guest device models, so WebHID passthrough is not yet supported.
+      //
+      // Keep detach/cleanup messages as no-ops so users can still remove already-attached
+      // devices after switching runtimes, but fail fast on attach so the UI can surface a
+      // clear error instead of silently doing nothing.
+      const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+      if (vmRuntime === "machine") {
+        const kind = (message as unknown as { type?: unknown } | null)?.type;
+        if (kind === "hid:attach" || kind === "hid:attachHub") {
+          throw new Error("WebHID passthrough is currently unavailable in vmRuntime=machine.");
+        }
+        return;
+      }
+
       const ioWorker = workerCoordinator.getIoWorker();
       if (!ioWorker) {
         throw new Error("I/O worker is not running. Start workers before attaching WebHID devices.");
@@ -140,6 +156,15 @@ const webHidManager = new WebHidPassthroughManager({
 });
 
 function syncWebHidInputReportRing(ioWorker: Worker | null): void {
+  // WebHID passthrough is not supported in vmRuntime=machine (see target wiring above).
+  // Disable the SharedArrayBuffer fast path so we don't write into the HID ring buffer when
+  // the IO worker is running in host-only stub mode.
+  const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+  if (vmRuntime === "machine") {
+    webHidManager.setInputReportRing(null);
+    return;
+  }
+
   if (!ioWorker) {
     webHidManager.setInputReportRing(null);
     return;
@@ -6862,8 +6887,12 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
-          wireIoWorkerForWebHid(ioWorker, webHidManager);
-          void webHidManager.resyncAttachedDevices();
+          // WebHID passthrough is currently only supported in the legacy runtime.
+          // In machine runtime the IO worker is a host-only stub and will ignore passthrough messages.
+          if ((config.vmRuntime ?? "legacy") !== "machine") {
+            wireIoWorkerForWebHid(ioWorker, webHidManager);
+            void webHidManager.resyncAttachedDevices();
+          }
           syncWebHidInputReportRing(ioWorker);
           attachedIoWorker = ioWorker;
         }
@@ -7197,8 +7226,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       }
       if (ioWorker) {
         usbBroker.attachWorkerPort(ioWorker);
-        wireIoWorkerForWebHid(ioWorker, webHidManager);
-        void webHidManager.resyncAttachedDevices();
+        if (vmRuntime !== "machine") {
+          wireIoWorkerForWebHid(ioWorker, webHidManager);
+          void webHidManager.resyncAttachedDevices();
+        }
       }
       syncWebHidInputReportRing(ioWorker);
       attachedIoWorker = ioWorker;
