@@ -262,6 +262,8 @@ Code pointers:
 ### How it is used today
 
 - **Main thread scheduling:** `web/src/main/frameScheduler.ts` uses `ScanoutState` to decide whether to keep ticking the GPU worker even when the shared framebuffer is in the `PRESENTED` state.
+  - When `ScanoutState.source` is `WDDM` or `LEGACY_VBE_LFB`, it keeps ticking so the worker can poll/present scanout output and drain vsync-paced completions even if the legacy shared framebuffer is idle.
+  - When WDDM publishes the **disabled** descriptor (`base/width/height/pitch = 0`), the scheduler stops continuous ticking (vblank pacing is effectively off) but will still wake on scanout generation changes.
 - **GPU worker output selection:** `web/src/workers/gpu-worker.ts` snapshots `ScanoutState` during `presentOnce()` and uses it to avoid “flashing back” to the legacy framebuffer after WDDM scanout is considered active.
 - **GPU worker scanout readback (guest-memory scanout):** when `ScanoutState.source` is `WDDM` or `LEGACY_VBE_LFB` and `base_paddr` points at a real guest framebuffer, `web/src/workers/gpu-worker.ts` reads pixels from either the shared VRAM aperture (BAR1 backing) or guest RAM and normalizes to a tightly-packed RGBA8 buffer (`tryReadScanoutFrame()` / `tryReadScanoutRgba8()`).
   - Supported formats today (AeroGPU `AerogpuFormat` discriminants):
