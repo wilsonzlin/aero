@@ -1222,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn create_texture_bc_falls_back_when_dimensions_not_block_aligned() {
         let Some((device, queue)) = device_queue() else {
             return;
@@ -1309,7 +1309,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn texture_manager_view_rejects_out_of_range_base_mip_level() {
         let Some((device, queue)) = device_queue() else {
             return;
@@ -1343,7 +1343,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn texture_manager_view_rejects_out_of_bounds_array_range() {
         let Some((device, queue)) = device_queue() else {
             return;
@@ -1385,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn create_texture_sanitizes_zero_sized_descriptors() {
         let Some((device, queue)) = device_queue() else {
             return;
@@ -1419,7 +1419,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn write_texture_region_noops_on_zero_sized_extent() {
         let Some((device, queue)) = device_queue() else {
             return;

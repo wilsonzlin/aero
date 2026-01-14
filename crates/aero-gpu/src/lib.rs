@@ -54,6 +54,9 @@ mod texture_format;
 mod texture_manager;
 mod wgpu_features;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod test_wgpu;
+
 pub mod aerogpu_d3d9;
 pub mod aerogpu_executor;
 pub mod backend;

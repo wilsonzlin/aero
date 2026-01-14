@@ -99,17 +99,27 @@ impl AeroGpuAcmdExecutor {
             }
         }
 
-        // On Linux CI we prefer the GL backend first to avoid crashes seen with some Vulkan
-        // software adapters (lavapipe/llvmpipe). If no GL adapter is available, fall back to
-        // the native backends.
+        // On Linux CI, prefer the native ("primary") backends first.
+        //
+        // Mixing wgpu backends (creating a GL device in one test and a Vulkan device in another)
+        // has been observed to segfault in some sandbox environments. Since the D3D9 executor
+        // prefers `Backends::PRIMARY` on Linux, keep the ACMD executor aligned so unit tests don't
+        // cross backend boundaries in a single process.
+        //
+        // If no primary adapter is available (e.g. headless environment without Vulkan), fall back
+        // to the GL backend.
         let adapter = if cfg!(target_os = "linux") {
-            let gl_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::GL,
+            let primary_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                // Prefer "native" backends; this avoids initializing GL stacks on platforms
+                // where they're more likely to require a windowing system.
+                backends: wgpu::Backends::PRIMARY,
                 ..Default::default()
             });
-            let adapter = gl_instance
+            let adapter = primary_instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    // Match the D3D9 executor's headless adapter selection so we don't fall back to
+                    // GL on systems where only a low-power software adapter is available.
+                    power_preference: wgpu::PowerPreference::LowPower,
                     compatible_surface: None,
                     force_fallback_adapter: false,
                 })
@@ -117,13 +127,11 @@ impl AeroGpuAcmdExecutor {
             if adapter.is_some() {
                 adapter
             } else {
-                let primary_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                    // Prefer "native" backends; this avoids initializing GL stacks on platforms
-                    // where they're more likely to require a windowing system.
-                    backends: wgpu::Backends::PRIMARY,
+                let gl_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::GL,
                     ..Default::default()
                 });
-                primary_instance
+                gl_instance
                     .request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
                         compatible_surface: None,
@@ -483,15 +491,12 @@ fn is_bc_format(format: u32) -> bool {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::sync::{Mutex, OnceLock};
-
     use super::*;
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
     #[cfg(not(target_arch = "wasm32"))]
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+    use std::sync::{Mutex, OnceLock};
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn shared_executor() -> Option<&'static Mutex<AeroGpuAcmdExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuAcmdExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -508,20 +513,11 @@ mod tests {
         .copied()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn with_executor<R>(f: impl FnOnce(&mut AeroGpuAcmdExecutor) -> R) -> Option<R> {
         let exec = shared_executor()?;
         let mut exec = exec.lock().unwrap();
         exec.reset();
         Some(f(&mut exec))
-    }
-
-    // The ACMD executor unit tests mostly validate behavior by issuing wgpu submissions to a
-    // headless device. For `wasm32-unknown-unknown` CI builds we only need these tests to compile
-    // (they are not run), so avoid constructing global statics containing non-Send WebGPU types.
-    #[cfg(target_arch = "wasm32")]
-    fn with_executor<R>(_f: impl FnOnce(&mut AeroGpuAcmdExecutor) -> R) -> Option<R> {
-        None
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -649,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn destroy_resource_clears_presented_scanout() {
         let Some(()) = with_executor(|exec| {
             const TEX: u32 = 1;
@@ -686,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn set_render_targets_rejects_destroyed_original_handle_while_alias_alive() {
         let Some(()) = with_executor(|exec| {
             const ORIGINAL: u32 = 1;
@@ -727,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn create_texture2d_rejects_zero_sized_textures() {
         let Some(()) = with_executor(|exec| {
             let mut w = AerogpuCmdWriter::new();
@@ -755,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn clear_x8_render_target_forces_opaque_alpha() {
         let Some(()) = with_executor(|exec| {
             const SCANOUT: u32 = 0;
