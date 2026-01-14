@@ -842,6 +842,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     | Op::Sge
                     | Op::Seq
                     | Op::Sne
+                    | Op::Dp2
                     | Op::Dp3
                     | Op::Dp4
                     | Op::Pow => 3,
