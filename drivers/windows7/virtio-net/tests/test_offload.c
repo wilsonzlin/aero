@@ -185,6 +185,74 @@ static void build_ipv6_hopbyhop_udp(uint8_t *dst, size_t payload_len)
     dst[41] = 0;  /* 8 bytes */
 }
 
+static void build_ipv6_routing_tcp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 base header with a Routing extension header (43) before TCP. */
+    const uint16_t payload = (uint16_t)(8 + 20 + payload_len); /* ext + TCP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 43; /* Routing */
+    dst[7] = 64; /* hop limit */
+
+    /* Routing header: NextHeader=TCP, HdrExtLen=0 (8 bytes total). */
+    memset(dst + 40, 0, 8);
+    dst[40] = 6; /* next = TCP */
+    dst[41] = 0; /* 8 bytes */
+}
+
+static void build_ipv6_routing_udp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 base header with a Routing extension header (43) before UDP. */
+    const uint16_t payload = (uint16_t)(8 + 8 + payload_len); /* ext + UDP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 43; /* Routing */
+    dst[7] = 64; /* hop limit */
+
+    /* Routing header: NextHeader=UDP, HdrExtLen=0 (8 bytes total). */
+    memset(dst + 40, 0, 8);
+    dst[40] = 17; /* next = UDP */
+    dst[41] = 0;  /* 8 bytes */
+}
+
+static void build_ipv6_destopt_tcp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 base header with a Destination Options extension header (60) before TCP. */
+    const uint16_t payload = (uint16_t)(8 + 20 + payload_len); /* ext + TCP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 60; /* Destination Options */
+    dst[7] = 64; /* hop limit */
+
+    /* Destination Options header: NextHeader=TCP, HdrExtLen=0 (8 bytes total). */
+    memset(dst + 40, 0, 8);
+    dst[40] = 6; /* next = TCP */
+    dst[41] = 0; /* 8 bytes */
+}
+
+static void build_ipv6_destopt_udp(uint8_t *dst, size_t payload_len)
+{
+    /* IPv6 base header with a Destination Options extension header (60) before UDP. */
+    const uint16_t payload = (uint16_t)(8 + 8 + payload_len); /* ext + UDP header + payload */
+    memset(dst, 0, 40);
+    dst[0] = (6u << 4);
+    dst[4] = (uint8_t)(payload >> 8);
+    dst[5] = (uint8_t)(payload & 0xff);
+    dst[6] = 60; /* Destination Options */
+    dst[7] = 64; /* hop limit */
+
+    /* Destination Options header: NextHeader=UDP, HdrExtLen=0 (8 bytes total). */
+    memset(dst + 40, 0, 8);
+    dst[40] = 17; /* next = UDP */
+    dst[41] = 0;  /* 8 bytes */
+}
+
 static void build_ipv6_ah_tcp(uint8_t *dst, size_t payload_len)
 {
     /* IPv6 base header with an Authentication Header (AH, 51) before TCP. */
@@ -457,6 +525,110 @@ static void test_ipv6_hopbyhop_udp_checksum_only(void)
     assert(info.L4Protocol == 17);
 }
 
+static void test_ipv6_routing_tcp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_routing_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 6);
+}
+
+static void test_ipv6_routing_udp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_routing_udp(pkt + 14, 0);
+    build_udp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
+    assert(hdr.CsumOffset == 6);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 17);
+}
+
+static void test_ipv6_destopt_tcp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_destopt_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 6);
+}
+
+static void test_ipv6_destopt_udp_checksum_only(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_destopt_udp(pkt + 14, 0);
+    build_udp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
+    assert(hdr.CsumOffset == 6);
+    assert(info.IpVersion == 6);
+    assert(info.L4Protocol == 17);
+}
+
 static void test_ipv6_ah_tcp_checksum_only(void)
 {
     enum { kAhBytes = 12 };
@@ -536,6 +708,62 @@ static void test_ipv6_ah_tcp_lso(void)
     assert(hdr.HdrLen == (uint16_t)(14 + 40 + kAhBytes + 20));
     assert(hdr.GsoSize == 1440);
     assert(hdr.CsumStart == (uint16_t)(14 + 40 + kAhBytes));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 6);
+}
+
+static void test_ipv6_routing_tcp_lso(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_routing_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1440;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6);
+    assert(hdr.HdrLen == (uint16_t)(14 + 40 + 8 + 20));
+    assert(hdr.GsoSize == 1440);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
+    assert(hdr.CsumOffset == 16);
+    assert(info.IpVersion == 6);
+}
+
+static void test_ipv6_destopt_tcp_lso(void)
+{
+    uint8_t pkt[14 + 40 + 8 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_destopt_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 40 + 8);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1440;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6);
+    assert(hdr.HdrLen == (uint16_t)(14 + 40 + 8 + 20));
+    assert(hdr.GsoSize == 1440);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40 + 8));
     assert(hdr.CsumOffset == 16);
     assert(info.IpVersion == 6);
 }
@@ -1493,6 +1721,10 @@ int main(void)
     test_ipv6_tcp_checksum_only();
     test_ipv6_udp_checksum_only();
     test_ipv6_hopbyhop_udp_checksum_only();
+    test_ipv6_routing_tcp_checksum_only();
+    test_ipv6_routing_udp_checksum_only();
+    test_ipv6_destopt_tcp_checksum_only();
+    test_ipv6_destopt_udp_checksum_only();
     test_ipv6_ah_tcp_checksum_only();
     test_ipv6_ah_udp_checksum_only();
     test_ipv6_vlan_tcp_checksum_only();
@@ -1515,6 +1747,8 @@ int main(void)
     test_ipv6_vlan_tcp_lso();
     test_ipv6_tcp_lso();
     test_ipv6_ah_tcp_lso();
+    test_ipv6_routing_tcp_lso();
+    test_ipv6_destopt_tcp_lso();
     test_ipv6_hopbyhop_tcp_lso();
     test_ipv6_hopbyhop_tcp_lso_large_ext_hdr();
     test_ipv6_hopbyhop_tcp_lso_large_ext_hdr_truncated();
