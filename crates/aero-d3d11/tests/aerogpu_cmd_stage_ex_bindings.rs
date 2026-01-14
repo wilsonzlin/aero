@@ -8,8 +8,9 @@ use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderResourceBufferBinding,
+    AerogpuShaderStage, AerogpuShaderStageEx, AerogpuUnorderedAccessBufferBinding,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -160,34 +161,6 @@ fn push_set_constant_buffer(
     stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&16u32.to_le_bytes()); // size_bytes
     stream.extend_from_slice(&0u32.to_le_bytes()); // binding reserved0
-    end_cmd(stream, start);
-}
-
-fn push_set_srv_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, buffer: u32, stage_ex: u32) {
-    let start = begin_cmd(stream, AerogpuCmdOpcode::SetShaderResourceBuffers as u32);
-    stream.extend_from_slice(&stage.to_le_bytes());
-    stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
-    stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
-    stream.extend_from_slice(&stage_ex.to_le_bytes());
-    // struct aerogpu_shader_resource_buffer_binding
-    stream.extend_from_slice(&buffer.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
-    stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = whole buffer)
-    stream.extend_from_slice(&0u32.to_le_bytes()); // binding reserved0
-    end_cmd(stream, start);
-}
-
-fn push_set_uav_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, buffer: u32, stage_ex: u32) {
-    let start = begin_cmd(stream, AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32);
-    stream.extend_from_slice(&stage.to_le_bytes());
-    stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
-    stream.extend_from_slice(&1u32.to_le_bytes()); // uav_count
-    stream.extend_from_slice(&stage_ex.to_le_bytes());
-    // struct aerogpu_unordered_access_buffer_binding
-    stream.extend_from_slice(&buffer.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
-    stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = whole buffer)
-    stream.extend_from_slice(&0u32.to_le_bytes()); // initial_count (reserved)
     end_cmd(stream, start);
 }
 
@@ -604,21 +577,46 @@ fn aerogpu_cmd_legacy_geometry_stage_bindings_update_geometry_bucket() {
             }
         };
 
-        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
-        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        let mut w = AerogpuCmdWriter::new();
 
         // Baseline: bind CS so we can assert that GS bindings don't clobber CS state.
-        push_set_texture(&mut stream, AerogpuShaderStage::Compute as u32, 0, 111, 0);
+        w.set_texture(AerogpuShaderStage::Compute, 0, 111);
 
         // Legacy GS encoding uses `shader_stage=GEOMETRY` directly (not the stage_ex encoding).
-        push_set_texture(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 222, 0);
-        push_set_samplers(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 333, 0);
-        push_set_constant_buffer(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 444, 0);
-        push_set_srv_buffer(&mut stream, AerogpuShaderStage::Geometry as u32, 1, 555, 0);
-        push_set_uav_buffer(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 666, 0);
+        w.set_texture(AerogpuShaderStage::Geometry, 0, 222);
+        w.set_samplers(AerogpuShaderStage::Geometry, 0, &[333]);
+        w.set_constant_buffers(
+            AerogpuShaderStage::Geometry,
+            0,
+            &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuConstantBufferBinding {
+                buffer: 444,
+                offset_bytes: 0,
+                size_bytes: 16,
+                reserved0: 0,
+            }],
+        );
+        w.set_shader_resource_buffers(
+            AerogpuShaderStage::Geometry,
+            1,
+            &[AerogpuShaderResourceBufferBinding {
+                buffer: 555,
+                offset_bytes: 0,
+                size_bytes: 0,
+                reserved0: 0,
+            }],
+        );
+        w.set_unordered_access_buffers(
+            AerogpuShaderStage::Geometry,
+            0,
+            &[AerogpuUnorderedAccessBufferBinding {
+                buffer: 666,
+                offset_bytes: 0,
+                size_bytes: 0,
+                initial_count: 0,
+            }],
+        );
 
-        let stream = finish_stream(stream);
+        let stream = w.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
@@ -676,39 +674,79 @@ fn aerogpu_cmd_buffer_bindings_update_stage_state_and_unbind_t_slot_conflicts() 
             }
         };
 
-        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
-        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        let mut w = AerogpuCmdWriter::new();
 
         // `t0` can be bound as either a texture or an SRV buffer; binding one kind must unbind the
         // other.
-        push_set_texture(&mut stream, AerogpuShaderStage::Vertex as u32, 0, 111, 0);
-        push_set_srv_buffer(&mut stream, AerogpuShaderStage::Vertex as u32, 0, 222, 0);
+        w.set_texture(AerogpuShaderStage::Vertex, 0, 111);
+        w.set_shader_resource_buffers(
+            AerogpuShaderStage::Vertex,
+            0,
+            &[AerogpuShaderResourceBufferBinding {
+                buffer: 222,
+                offset_bytes: 0,
+                size_bytes: 0,
+                reserved0: 0,
+            }],
+        );
 
-        push_set_srv_buffer(&mut stream, AerogpuShaderStage::Pixel as u32, 1, 333, 0);
-        push_set_texture(&mut stream, AerogpuShaderStage::Pixel as u32, 1, 444, 0);
+        w.set_shader_resource_buffers(
+            AerogpuShaderStage::Pixel,
+            1,
+            &[AerogpuShaderResourceBufferBinding {
+                buffer: 333,
+                offset_bytes: 0,
+                size_bytes: 0,
+                reserved0: 0,
+            }],
+        );
+        w.set_texture(AerogpuShaderStage::Pixel, 1, 444);
 
         // Compute-stage buffer bindings.
-        push_set_srv_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 2, 555, 0);
-        push_set_uav_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, 666, 0);
+        w.set_shader_resource_buffers(
+            AerogpuShaderStage::Compute,
+            2,
+            &[AerogpuShaderResourceBufferBinding {
+                buffer: 555,
+                offset_bytes: 0,
+                size_bytes: 0,
+                reserved0: 0,
+            }],
+        );
+        w.set_unordered_access_buffers(
+            AerogpuShaderStage::Compute,
+            0,
+            &[AerogpuUnorderedAccessBufferBinding {
+                buffer: 666,
+                offset_bytes: 0,
+                size_bytes: 0,
+                initial_count: 0,
+            }],
+        );
 
         // GS bindings use shader_stage==COMPUTE + stage_ex reserved0 to select the GS bucket.
-        push_set_srv_buffer(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
+        w.set_shader_resource_buffers_ex(
+            AerogpuShaderStageEx::Geometry,
             2,
-            777,
-            STAGE_EX_GEOMETRY,
+            &[AerogpuShaderResourceBufferBinding {
+                buffer: 777,
+                offset_bytes: 0,
+                size_bytes: 0,
+                reserved0: 0,
+            }],
         );
-        push_set_uav_buffer(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
+        w.set_unordered_access_buffers_ex(
+            AerogpuShaderStageEx::Geometry,
             0,
-            888,
-            STAGE_EX_GEOMETRY,
+            &[AerogpuUnorderedAccessBufferBinding {
+                buffer: 888,
+                offset_bytes: 0,
+                size_bytes: 0,
+                initial_count: 0,
+            }],
         );
 
-        let stream = finish_stream(stream);
+        let stream = w.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
