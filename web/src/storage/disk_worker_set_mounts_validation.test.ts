@@ -22,6 +22,10 @@ afterEach(() => {
   vi.resetModules();
 });
 
+function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
+}
+
 async function sendSetMounts(payload: any): Promise<any> {
   vi.resetModules();
 
@@ -61,6 +65,44 @@ async function sendSetMounts(payload: any): Promise<any> {
   return await response;
 }
 
+async function setupWorkerHarness(): Promise<{ send: (req: { requestId: number; op: string; payload: any }) => Promise<any> }> {
+  vi.resetModules();
+
+  const root = new MemoryDirectoryHandle("root");
+  restoreOpfs = installMemoryOpfs(root).restore;
+
+  hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+  originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+  const pending = new Map<number, (msg: any) => void>();
+  const workerScope: any = {
+    postMessage(msg: any) {
+      if (msg?.type === "response" && typeof msg.requestId === "number") {
+        pending.get(msg.requestId)?.(msg);
+      }
+    },
+  };
+  (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+  await import("./disk_worker.ts");
+
+  const send = async (req: { requestId: number; op: string; payload: any }): Promise<any> => {
+    const response = new Promise<any>((resolve) => pending.set(req.requestId, resolve));
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId: req.requestId,
+        backend: "opfs",
+        op: req.op,
+        payload: req.payload,
+      },
+    });
+    return await response;
+  };
+
+  return { send };
+}
+
 describe("disk_worker set_mounts validation", () => {
   it("ignores mount IDs inherited from Object.prototype", async () => {
     const hddExisting = Object.getOwnPropertyDescriptor(Object.prototype, "hddId");
@@ -85,5 +127,22 @@ describe("disk_worker set_mounts validation", () => {
       else delete (Object.prototype as any).cdId;
     }
   });
-});
 
+  it("rejects mounting qcow2/vhd images as HDDs", async () => {
+    const { send } = await setupWorkerHarness();
+
+    const qcow2 = new Uint8Array(72);
+    qcow2.set([0x51, 0x46, 0x49, 0xfb], 0); // "QFI\xfb"
+    new DataView(qcow2.buffer).setUint32(4, 3, false);
+    const file = new File([toArrayBufferUint8(qcow2)], "disk.img");
+
+    const imported = await send({ requestId: 1, op: "import_file", payload: { file } });
+    expect(imported.ok).toBe(true);
+    const id = imported.result?.id;
+    expect(typeof id).toBe("string");
+
+    const resp = await send({ requestId: 2, op: "set_mounts", payload: { hddId: id } });
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/qcow2|vhd/i);
+  });
+});

@@ -769,10 +769,20 @@ async function validateMounts(backend: DiskBackend, mounts: MountConfig): Promis
   if (mounts.hddId) {
     const hdd = await requireDisk(backend, mounts.hddId);
     if (hdd.kind !== "hdd") throw new Error("hddId must refer to a HDD image");
+    // Only formats that the runtime can open as HDDs.
+    if (hdd.format === "qcow2" || hdd.format === "vhd") {
+      throw new Error(`hddId must refer to a mountable HDD image (format=${hdd.format}; convert to aerospar first)`);
+    }
+    if (hdd.format === "iso") {
+      throw new Error("hddId must not refer to an ISO image");
+    }
   }
   if (mounts.cdId) {
     const cd = await requireDisk(backend, mounts.cdId);
     if (cd.kind !== "cd") throw new Error("cdId must refer to a CD image");
+    if (cd.format !== "iso") {
+      throw new Error(`cdId must refer to an ISO image (format=${cd.format})`);
+    }
   }
 }
 
