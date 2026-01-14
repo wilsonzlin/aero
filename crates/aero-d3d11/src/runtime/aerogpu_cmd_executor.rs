@@ -1656,34 +1656,32 @@ impl AerogpuD3d11Executor {
         let empty_bind_group =
             bind_group_cache.get_or_create(&device, &empty_bgl, &empty_bg_entries);
 
-        let (passthrough_vs_dummy_bind_group, passthrough_vs_dummy_bind_group_layout_hash) = if caps
-            .supports_compute
-            && device.limits().max_storage_buffers_per_shader_stage > 0
-        {
-            let passthrough_vs_bgl_entries = [wgpu::BindGroupLayoutEntry {
-                binding: BINDING_INTERNAL_EXPANDED_VERTICES,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }];
-            let passthrough_vs_bgl =
-                bind_group_layout_cache.get_or_create(&device, &passthrough_vs_bgl_entries);
-            let bg = Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd passthrough VS dummy bind group"),
-                layout: passthrough_vs_bgl.layout.as_ref(),
-                entries: &[wgpu::BindGroupEntry {
+        let (passthrough_vs_dummy_bind_group, passthrough_vs_dummy_bind_group_layout_hash) =
+            if caps.supports_compute && device.limits().max_storage_buffers_per_shader_stage > 0 {
+                let passthrough_vs_bgl_entries = [wgpu::BindGroupLayoutEntry {
                     binding: BINDING_INTERNAL_EXPANDED_VERTICES,
-                    resource: dummy_storage.as_entire_binding(),
-                }],
-            }));
-            (Some(bg), Some(passthrough_vs_bgl.hash))
-        } else {
-            (None, None)
-        };
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }];
+                let passthrough_vs_bgl =
+                    bind_group_layout_cache.get_or_create(&device, &passthrough_vs_bgl_entries);
+                let bg = Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd passthrough VS dummy bind group"),
+                    layout: passthrough_vs_bgl.layout.as_ref(),
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                        resource: dummy_storage.as_entire_binding(),
+                    }],
+                }));
+                (Some(bg), Some(passthrough_vs_bgl.hash))
+            } else {
+                (None, None)
+            };
 
         Self {
             caps,
@@ -4380,8 +4378,11 @@ impl AerogpuD3d11Executor {
 
         // Prepare compute prepass output buffers.
         let centered_placeholder_triangle = tessellation_placeholder
-            || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
-        let mut use_indexed_indirect = false;
+            || matches!(
+                self.state.primitive_topology,
+                CmdPrimitiveTopology::PointList
+            );
+        let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
@@ -5183,7 +5184,11 @@ impl AerogpuD3d11Executor {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(compute_pipeline);
-                bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 0);
+                bind_empty_groups_before_vertex_pulling(
+                    &mut pass,
+                    self.empty_bind_group.as_ref(),
+                    0,
+                );
                 pass.set_bind_group(VERTEX_PULLING_GROUP, &prepass_bind_group, &[]);
                 pass.dispatch_workgroups(primitive_count, gs_instance_count, 1);
             }
