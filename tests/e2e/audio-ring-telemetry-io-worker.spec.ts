@@ -38,10 +38,8 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
   test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
 
   const result = await page.evaluate(async () => {
-    const { CONTROL_BYTES, STATUS_OFFSET_BYTES, STATUS_INTS, StatusIndex, ringRegionsForWorker, createIoIpcSab, RUNTIME_RESERVED_BYTES } = await import(
-      "/web/src/runtime/shared_layout.ts"
-    );
-    const { ringCtrl } = await import("/web/src/ipc/layout.ts");
+    const { allocateHarnessSharedMemorySegments } = await import("/web/src/runtime/harness_shared_memory.ts");
+    const { StatusIndex, createIoIpcSab, createSharedMemoryViews } = await import("/web/src/runtime/shared_layout.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
     const { requiredBytes: audioRequiredBytes, wrapRingBuffer: wrapAudioRingBuffer } = await import("/web/src/audio/audio_worklet_ring.ts");
@@ -49,29 +47,24 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     const { queueKind } = await import("/web/src/ipc/layout.ts");
     const { encodeCommand, decodeEvent } = await import("/web/src/ipc/protocol.ts");
 
-    const WASM_PAGE_BYTES = 64 * 1024;
-    const guestBase = RUNTIME_RESERVED_BYTES >>> 0;
-    const guestSize = WASM_PAGE_BYTES; // minimal non-zero guest region
-    const pages = Math.ceil((guestBase + guestSize) / WASM_PAGE_BYTES);
-
-    const guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
-
-    const controlSab = new SharedArrayBuffer(CONTROL_BYTES);
-    const status = new Int32Array(controlSab, STATUS_OFFSET_BYTES, STATUS_INTS);
-    Atomics.store(status, StatusIndex.GuestBase, guestBase | 0);
-    Atomics.store(status, StatusIndex.GuestSize, guestSize | 0);
-    Atomics.store(status, StatusIndex.RuntimeReserved, guestBase | 0);
-
-    const regions = ringRegionsForWorker("io");
-    const initRing = (byteOffset: number, byteLength: number) => {
-      const capacityBytes = byteLength - ringCtrl.BYTES;
-      new Int32Array(controlSab, byteOffset, ringCtrl.WORDS).set([0, 0, 0, capacityBytes]);
-    };
-    initRing(regions.command.byteOffset, regions.command.byteLength);
-    initRing(regions.event.byteOffset, regions.event.byteLength);
-
-    const ioIpcSab = createIoIpcSab({ includeNet: false, includeHidIn: false });
-    const sharedFramebuffer = new SharedArrayBuffer(64);
+    // This test only needs:
+    // - a SharedArrayBuffer-backed status/control SAB, and
+    // - enough guest RAM for the IO worker to instantiate (it does not execute the VM).
+    //
+    // Use the harness allocator so we don't reserve the full wasm32 runtime region (~128MiB).
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(64),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+    const status = views.status;
+    const controlSab = segments.control;
+    const guestMemory = segments.guestMemory;
+    const ioIpcSab = segments.ioIpc;
+    const sharedFramebuffer = segments.sharedFramebuffer;
 
     // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
     // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
