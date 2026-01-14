@@ -3805,6 +3805,14 @@ fn supports_shader_model_3() {
 }
 
 #[test]
+fn rejects_missing_end_token_legacy_translator() {
+    // Version token only, with no terminating `end` instruction.
+    let bytes = to_bytes(&[0xFFFE0200]);
+    let err = shader::parse(&bytes).unwrap_err();
+    assert!(matches!(err, shader::ShaderError::UnexpectedEof), "{err:?}");
+}
+
+#[test]
 fn rejects_oversized_shader_bytecode_legacy_translator() {
     // Ensure the legacy token-stream translator rejects oversized inputs without trying to
     // allocate a gigantic `Vec<u32>`.

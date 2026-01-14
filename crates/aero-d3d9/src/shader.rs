@@ -530,6 +530,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     let mut input_dcl_map = HashMap::<u16, (DeclUsage, u8)>::new();
     let mut input_dcl_order = Vec::<(DeclUsage, u8)>::new();
     let mut sampler_texture_types = HashMap::<u16, TextureType>::new();
+    let mut saw_end = false;
 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
@@ -718,6 +719,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             continue;
         };
         if op == Op::End {
+            saw_end = true;
             instructions.push(Instruction {
                 op,
                 dst: None,
@@ -940,6 +942,12 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
 
     if !if_stack.is_empty() {
         return Err(ShaderError::InvalidControlFlow("missing endif"));
+    }
+
+    // SM2/SM3 token streams are terminated by an explicit `end` instruction (opcode 0xFFFF). Treat
+    // missing termination as malformed input rather than silently accepting truncated streams.
+    if !saw_end {
+        return Err(ShaderError::UnexpectedEof);
     }
 
     // Apply semantic-based vertex input remapping.
