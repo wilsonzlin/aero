@@ -769,7 +769,6 @@ impl PlatformInterrupts {
             Box::new(ImcrPort::new(interrupts, IMCR_DATA_PORT)),
         );
     }
-
     #[cfg(test)]
     pub(crate) fn lapic_apic_id(&self) -> u8 {
         self.lapics[0].apic_id()

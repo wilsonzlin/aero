@@ -266,11 +266,11 @@ impl XhciPciDevice {
         self.controller.service_event_ring(&mut adapter);
         self.service_interrupts();
     }
-
+ 
     /// Advance the device by 1ms.
     pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
         let dma_enabled = (self.config.command() & (1 << 2)) != 0;
-
+ 
         enum TickMemoryBus<'a> {
             Dma(&'a mut MemoryBus),
         }
@@ -295,7 +295,7 @@ impl XhciPciDevice {
         } else {
             self.controller.tick_1ms_no_dma();
         }
-
+ 
         self.service_interrupts();
     }
 }
