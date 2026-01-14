@@ -246,6 +246,44 @@ fn int10_vbe_set_mode_clears_framebuffer_and_reports_current_mode() {
 }
 
 #[test]
+fn int10_vbe_bank_switch_get_returns_last_set_bank() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Enter a VBE mode first.
+    cpu.set_ax(0x4F02);
+    cpu.set_bx(0x118 | 0x4000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+
+    // Set window A bank to 2: BH=0 window A, BL=0 set.
+    cpu.set_ax(0x4F05);
+    cpu.set_bx(0x0000);
+    cpu.set_dx(2);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    // Get current bank: BH=0 window A, BL=1 get.
+    cpu.set_ax(0x4F05);
+    cpu.set_bx(0x0001);
+    cpu.set_dx(0xBEEF);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.dx(), 2);
+
+    // Window B is not supported.
+    cpu.set_ax(0x4F05);
+    cpu.set_bx(0x0100); // BH=1 window B, BL=0 set
+    cpu.set_dx(0);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x014F);
+    assert!(cpu.cf());
+}
+
+#[test]
 fn int10_vbe_default_palette_matches_vga_defaults() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));

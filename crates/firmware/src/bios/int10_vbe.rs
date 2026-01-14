@@ -58,8 +58,11 @@ impl Bios {
             }
             0x4F05 => {
                 // Display window control (bank switching)
-                let sub = cpu.bh();
-                let window = cpu.bl();
+                // VBE function 4F05h:
+                // - BH: window number (0 = A, 1 = B)
+                // - BL: subfunction (0 = set, 1 = get)
+                let window = cpu.bh();
+                let sub = cpu.bl();
 
                 if window != 0 {
                     vbe_failure(cpu);
