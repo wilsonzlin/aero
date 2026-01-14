@@ -70,16 +70,27 @@ This is the **coordination hub**. You wire together the work from all other work
     boot/dev workflows (see [`docs/16-snapshots.md`](../docs/16-snapshots.md)).
   - **Progress tracker / plan:** [`docs/21-smp.md`](../docs/21-smp.md)
   See [`docs/09-bios-firmware.md#smp-boot-bsp--aps`](../docs/09-bios-firmware.md#smp-boot-bsp--aps).
+- **Virtio MSI(-X) is wired for virtio-blk/virtio-net, but virtio-input MSI-X interrupts are still incomplete in `aero_machine`**:
+  - Transport MSI-X support (table/PBA + vector programming): `crates/aero-virtio/src/pci.rs`.
+  - MSI-X enable/function-mask bits are mirrored into the virtio transport (`sync_virtio_msix_from_platform`,
+    `VirtioPciBar0Mmio::{sync_pci_config,sync_pci_command}`); MSI delivery uses
+    `VirtioPlatformInterruptSink` / `VirtioMsixInterruptSink`.
+  - Coverage: `crates/aero-machine/tests/virtio_blk_msix.rs`,
+    `crates/aero-machine/tests/machine_snapshot_preserves_msix_enable.rs`,
+    `crates/aero-pc-platform/tests/pc_platform_virtio_blk_msix_snapshot.rs`.
+  - Remaining gap: `aero_machine` wires virtio-input through `NoopVirtioInterruptSink`, so MSI-X
+    messages are dropped if a guest enables MSI-X; INTx-only (or polling) remains the safe baseline.
 - **NVMe MSI/MSI-X is implemented (but Win7 support is opt-in/experimental)**:
   `aero-devices-nvme` exposes MSI + MSI-X capabilities (currently single-vector MSI-X) and delivers
   message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`, plus
   `crates/aero-devices-nvme/tests/interrupts.rs`, plus `pc_platform_nvme` tests).
   Note: Windows 7 has no in-box NVMe driver.
-- **MSI/MSI-X delivery targets LAPIC(s)**:
+- **MSI/MSI-X delivery targets LAPIC(s) (APIC-mode only)**:
   `PlatformInterrupts::trigger_msi` decodes the MSI address/data and injects a fixed interrupt into
-  the selected LAPIC(s) (see `crates/platform/src/interrupts/msi.rs`). This does **not** depend on
-  the platform’s PIC vs APIC routing mode, but it *does* depend on the guest leaving the LAPIC
-  software-enabled (SVR[8]=1). See `crates/platform-compat/tests/smp_msi_routing.rs`.
+  the selected LAPIC(s) (see `crates/platform/src/interrupts/msi.rs` and
+  `crates/platform-compat/tests/smp_msi_routing.rs`). In **PIC mode** the platform polls the 8259
+  PIC instead of LAPICs, so MSIs are effectively dropped/ignored until the guest switches to APIC
+  mode. Also ensure the guest leaves the LAPIC software-enabled (SVR[8]=1).
 ---
 
 ## Key Crates & Directories
