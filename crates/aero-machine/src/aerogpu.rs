@@ -4065,6 +4065,107 @@ mod tests {
         assert_eq!(state.read_rgba8888(&mut mem), None);
     }
 
+    #[test]
+    fn composite_cursor_rgba8888_over_scanout_replaces_opaque_pixels() {
+        let mut scanout = vec![
+            u32::from_le_bytes([1, 2, 3, 0xFF]),
+            u32::from_le_bytes([4, 5, 6, 0xFF]),
+        ];
+        let cursor_cfg = AeroGpuCursorConfig {
+            enable: true,
+            x: 0,
+            y: 0,
+            hot_x: 0,
+            hot_y: 0,
+            width: 1,
+            height: 1,
+            ..Default::default()
+        };
+        let cursor = vec![u32::from_le_bytes([10, 20, 30, 0xFF])];
+
+        composite_cursor_rgba8888_over_scanout(&mut scanout, 2, 1, &cursor_cfg, &cursor);
+        assert_eq!(scanout[0], cursor[0]);
+        assert_eq!(scanout[1], u32::from_le_bytes([4, 5, 6, 0xFF]));
+    }
+
+    #[test]
+    fn composite_cursor_rgba8888_over_scanout_skips_fully_transparent_pixels() {
+        let mut scanout = vec![u32::from_le_bytes([1, 2, 3, 0xFF])];
+        let cursor_cfg = AeroGpuCursorConfig {
+            enable: true,
+            x: 0,
+            y: 0,
+            hot_x: 0,
+            hot_y: 0,
+            width: 1,
+            height: 1,
+            ..Default::default()
+        };
+        let cursor = vec![u32::from_le_bytes([10, 20, 30, 0x00])];
+
+        composite_cursor_rgba8888_over_scanout(&mut scanout, 1, 1, &cursor_cfg, &cursor);
+        assert_eq!(scanout[0], u32::from_le_bytes([1, 2, 3, 0xFF]));
+    }
+
+    #[test]
+    fn composite_cursor_rgba8888_over_scanout_alpha_blends_semi_transparent_pixels() {
+        let mut scanout = vec![u32::from_le_bytes([100, 0, 0, 0xFF])];
+        let cursor_cfg = AeroGpuCursorConfig {
+            enable: true,
+            x: 0,
+            y: 0,
+            hot_x: 0,
+            hot_y: 0,
+            width: 1,
+            height: 1,
+            ..Default::default()
+        };
+        let cursor = vec![u32::from_le_bytes([0, 100, 0, 128])];
+
+        composite_cursor_rgba8888_over_scanout(&mut scanout, 1, 1, &cursor_cfg, &cursor);
+
+        // Expected output (using the same blend math as the compositor):
+        // out = (src*sa + dst*(255-sa) + 127) / 255
+        let sa = 128u32;
+        let inv = 255u32 - sa;
+        let blend = |s: u8, d: u8| -> u8 {
+            let v = u32::from(s) * sa + u32::from(d) * inv;
+            ((v + 127) / 255) as u8
+        };
+        let expected = u32::from_le_bytes([blend(0, 100), blend(100, 0), blend(0, 0), 0xFF]);
+        assert_eq!(scanout[0], expected);
+    }
+
+    #[test]
+    fn composite_cursor_rgba8888_over_scanout_clips_using_hotspot() {
+        // Place a 2x1 cursor with hot_x=1 at (0,0), so the leftmost cursor pixel is off-screen and
+        // only the second pixel is visible at scanout x=0.
+        let mut scanout = vec![
+            u32::from_le_bytes([1, 2, 3, 0xFF]),
+            u32::from_le_bytes([4, 5, 6, 0xFF]),
+            u32::from_le_bytes([7, 8, 9, 0xFF]),
+        ];
+        let cursor_cfg = AeroGpuCursorConfig {
+            enable: true,
+            x: 0,
+            y: 0,
+            hot_x: 1,
+            hot_y: 0,
+            width: 2,
+            height: 1,
+            ..Default::default()
+        };
+        let cursor = vec![
+            u32::from_le_bytes([10, 11, 12, 0xFF]),
+            u32::from_le_bytes([13, 14, 15, 0xFF]),
+        ];
+
+        composite_cursor_rgba8888_over_scanout(&mut scanout, 3, 1, &cursor_cfg, &cursor);
+        assert_eq!(scanout[0], cursor[1]);
+        assert_eq!(scanout[1], u32::from_le_bytes([4, 5, 6, 0xFF]));
+        assert_eq!(scanout[2], u32::from_le_bytes([7, 8, 9, 0xFF]));
+    }
+
     #[derive(Clone, Debug, Default)]
     struct WrapDetectMemory {
         bytes: std::collections::BTreeMap<u64, u8>,
