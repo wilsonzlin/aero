@@ -55,8 +55,12 @@ fn assert_doc_mentions_bar1_vbe_lfb_offset(path: &Path) {
 fn docs_aerogpu_bar1_vbe_lfb_offset_matches_protocol_constant() {
     // Keep the key boot-display docs in sync with the canonical protocol constant.
     for rel in [
+        "docs/03-memory-management.md",
         "docs/16-aerogpu-vga-vesa-compat.md",
         "docs/abi/aerogpu-pci-identity.md",
+        "docs/graphics/status.md",
+        "docs/pci-device-compatibility.md",
+        "instructions/integration.md",
     ] {
         let path = repo_root().join(rel);
         assert!(path.is_file(), "expected doc file at {}", path.display());
