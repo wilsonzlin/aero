@@ -6,7 +6,9 @@
 //!
 //! The main consumer is the browser-based emulator, which exposes an emulated UHCI (USB 1.1)
 //! controller and USB HID devices (keyboard/mouse/gamepad/consumer-control + passthrough). There is also an
-//! in-progress xHCI (USB 3.0) controller model; currently only core data types are implemented.
+//! in-progress xHCI (USB 3.x) controller model with a limited MMIO register set, root hub ports,
+//! ERST-backed event ring delivery, and a subset of command + transfer processing (bring-up quality;
+//! see `docs/usb-xhci.md`).
 //!
 //! ## Snapshot/restore
 //!
