@@ -95,7 +95,7 @@ const HEADER_LEN: usize = 4 + 2 + 2 + 4 + 2 + 2;
 pub struct SnapshotWriter {
     device_id: [u8; 4],
     device_version: SnapshotVersion,
-    fields: Vec<(u16, Vec<u8>)>,
+    fields: BTreeMap<u16, Vec<u8>>,
 }
 
 impl SnapshotWriter {
@@ -103,12 +103,22 @@ impl SnapshotWriter {
         Self {
             device_id,
             device_version,
-            fields: Vec::new(),
+            fields: BTreeMap::new(),
         }
     }
 
     pub fn field_bytes(&mut self, tag: u16, bytes: Vec<u8>) {
-        self.fields.push((tag, bytes));
+        // Snapshots are a small TLV encoding keyed by tag. Tags must be unique; the reader rejects
+        // duplicates. Make the writer consistent by overwriting existing values.
+        //
+        // In debug/test builds, assert so duplicate tag bugs are caught early. In release builds,
+        // last-write-wins produces a parseable snapshot rather than an invalid encoding.
+        let prev = self.fields.insert(tag, bytes);
+        debug_assert!(
+            prev.is_none(),
+            "SnapshotWriter: duplicate field tag {}",
+            tag
+        );
     }
 
     pub fn field_u8(&mut self, tag: u16, val: u8) {
@@ -135,10 +145,8 @@ impl SnapshotWriter {
         self.field_bytes(tag, val.to_le_bytes().to_vec());
     }
 
-    pub fn finish(mut self) -> Vec<u8> {
+    pub fn finish(self) -> Vec<u8> {
         // Canonical ordering: tags ascending.
-        self.fields.sort_by_key(|(tag, _)| *tag);
-
         let mut out = Vec::with_capacity(HEADER_LEN + self.fields.len() * 8);
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&FORMAT_VERSION.major.to_le_bytes());
