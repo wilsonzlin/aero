@@ -17013,6 +17013,30 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_restore_preserves_ps2_keyboard_leds() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut m = Machine::new(cfg.clone()).unwrap();
+        assert!(m.i8042.is_some(), "sanity: default config enables i8042");
+
+        // Set ScrollLock via PS/2 Set LEDs, and validate the HID-style getter.
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0xED); // Set LEDs
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0x01); // ScrollLock (PS/2 bit0)
+        assert_eq!(m.ps2_keyboard_leds(), 0x04);
+
+        let snap = m.take_snapshot_full().unwrap();
+
+        // Restore into a fresh machine and ensure the LED state survives.
+        let mut restored = Machine::new(cfg).unwrap();
+        assert_eq!(restored.ps2_keyboard_leds(), 0);
+        restored.restore_snapshot_bytes(&snap).unwrap();
+        assert_eq!(restored.ps2_keyboard_leds(), 0x04);
+    }
+
+    #[test]
     fn inject_input_batch_produces_i8042_output_bytes() {
         let mut m = Machine::new(MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
