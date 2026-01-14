@@ -329,7 +329,7 @@ impl XhciTransferExecutor {
                             completion_code: CompletionCode::TrbError,
                         });
                     }
-                    GatherTdResult::BudgetExhausted => return,
+                    GatherTdResult::BudgetExhausted => (),
                 }
             }
             TrbType::NoOp => {
@@ -368,7 +368,7 @@ impl XhciTransferExecutor {
                 // If we land on a link TRB after a TD commit, skip it now.
                 match self.skip_link_trbs(mem, ep, step_budget) {
                     SkipLinkTrbsResult::Ok | SkipLinkTrbsResult::Fault => {}
-                    SkipLinkTrbsResult::BudgetExhausted => return,
+                    SkipLinkTrbsResult::BudgetExhausted => (),
                 }
             }
             _ => {

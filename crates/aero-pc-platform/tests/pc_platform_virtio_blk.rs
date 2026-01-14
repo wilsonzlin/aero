@@ -1621,7 +1621,7 @@ fn pc_platform_routes_virtio_blk_msix_to_lapic_in_apic_mode() {
     // Program table entry 0 with an xAPIC message targeting vector 0x61.
     let vector = 0x61u32;
     let table_base = bar0_base + u64::from(table & !0x7);
-    pc.memory.write_u32(table_base + 0x0, 0xFEE0_0000);
+    pc.memory.write_u32(table_base, 0xFEE0_0000);
     pc.memory.write_u32(table_base + 0x4, 0);
     pc.memory.write_u32(table_base + 0x8, vector);
     pc.memory.write_u32(table_base + 0xc, 0); // unmasked

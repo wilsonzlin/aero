@@ -145,7 +145,7 @@ fn pc_platform_virtio_blk_msix_triggers_lapic_vector() {
 
     // Program table entry 0: destination = BSP (APIC ID 0), vector = 0x55.
     let entry0 = bar0_base + table_offset;
-    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0, 0xfee0_0000);
     pc.memory.write_u32(entry0 + 0x4, 0);
     pc.memory.write_u32(entry0 + 0x8, 0x0055);
     pc.memory.write_u32(entry0 + 0xc, 0); // unmasked
@@ -274,7 +274,7 @@ fn pc_platform_virtio_blk_msix_config_interrupt_triggers_lapic_vector() {
     assert_eq!(table & 0x7, 0, "MSI-X table should live in BAR0 (BIR=0)");
     let table_offset = u64::from(table & !0x7);
     let entry1 = bar0_base + table_offset + 16;
-    pc.memory.write_u32(entry1 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry1, 0xfee0_0000);
     pc.memory.write_u32(entry1 + 0x4, 0);
     pc.memory.write_u32(entry1 + 0x8, 0x0056);
     pc.memory.write_u32(entry1 + 0xc, 0); // unmasked

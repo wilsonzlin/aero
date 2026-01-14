@@ -746,7 +746,7 @@ fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
 
     const MSIX_VECTOR: u8 = 0x55;
     let entry0 = bar0_base + table_offset;
-    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0, 0xfee0_0000);
     pc.memory.write_u32(entry0 + 0x4, 0);
     pc.memory.write_u32(entry0 + 0x8, u32::from(MSIX_VECTOR));
     pc.memory.write_u32(entry0 + 0xc, 0); // unmasked

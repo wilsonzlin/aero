@@ -142,7 +142,7 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     assert_eq!(table & 0x7, 0, "MSI-X table should live in BAR0");
     let table_offset = u64::from(table & !0x7);
     let entry0 = bar0_base + table_offset;
-    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0, 0xfee0_0000);
     pc.memory.write_u32(entry0 + 0x4, 0);
     pc.memory.write_u32(entry0 + 0x8, 0x0055);
     pc.memory.write_u32(entry0 + 0xc, 0); // unmasked
@@ -269,7 +269,7 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     );
     let table_offset2 = u64::from(table2 & !0x7);
     let entry0_2 = bar0_base2 + table_offset2;
-    assert_eq!(restored.memory.read_u32(entry0_2 + 0x0), 0xfee0_0000);
+    assert_eq!(restored.memory.read_u32(entry0_2), 0xfee0_0000);
     assert_eq!(restored.memory.read_u32(entry0_2 + 0x4), 0);
     assert_eq!(restored.memory.read_u32(entry0_2 + 0x8), 0x0055);
     assert_eq!(restored.memory.read_u32(entry0_2 + 0xc) & 1, 0);

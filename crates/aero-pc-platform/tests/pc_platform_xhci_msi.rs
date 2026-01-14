@@ -75,9 +75,8 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
         .raise_event_interrupt();
 
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(0x65));
-    assert_eq!(
-        pc.xhci.as_ref().unwrap().borrow().irq_level(),
-        false,
+    assert!(
+        !pc.xhci.as_ref().unwrap().borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI is active"
     );
 }
@@ -209,7 +208,7 @@ fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
 
     // Program table entry 0: destination = BSP (APIC ID 0), vector = 0x65.
     let entry0 = bar0_base + table_offset;
-    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0, 0xfee0_0000);
     pc.memory.write_u32(entry0 + 0x4, 0);
     pc.memory.write_u32(entry0 + 0x8, 0x0065);
     pc.memory.write_u32(entry0 + 0xc, 0); // unmasked
@@ -226,9 +225,8 @@ fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
         .raise_event_interrupt();
 
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(0x65));
-    assert_eq!(
-        pc.xhci.as_ref().unwrap().borrow().irq_level(),
-        false,
+    assert!(
+        !pc.xhci.as_ref().unwrap().borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active"
     );
 }

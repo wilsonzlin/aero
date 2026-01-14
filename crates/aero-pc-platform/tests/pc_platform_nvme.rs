@@ -561,7 +561,7 @@ fn pc_platform_nvme_admin_identify_produces_msix_when_enabled() {
 
     let bar0_base = read_nvme_bar0_base(&mut pc);
     let table_base = bar0_base + u64::from(NVME_MSIX_TABLE_OFFSET);
-    pc.memory.write_u32(table_base + 0x0, 0xfee0_0000); // addr low
+    pc.memory.write_u32(table_base, 0xfee0_0000); // addr low
     pc.memory.write_u32(table_base + 0x4, 0); // addr high
     let vector: u16 = 0x0067;
     pc.memory.write_u32(table_base + 0x8, u32::from(vector)); // data

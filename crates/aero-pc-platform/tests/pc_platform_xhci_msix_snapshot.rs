@@ -73,7 +73,7 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_table_and_delivery() {
 
     // Program table entry 0: destination = BSP (APIC ID 0), vector = 0x65.
     let entry0 = bar0_base + table_offset;
-    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0, 0xfee0_0000);
     pc.memory.write_u32(entry0 + 0x4, 0);
     pc.memory.write_u32(entry0 + 0x8, 0x0065);
     pc.memory.write_u32(entry0 + 0xc, 0); // unmasked
@@ -126,7 +126,7 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_table_and_delivery() {
     assert_eq!(table2 & 0x7, 0, "xHCI MSI-X table should live in BAR0");
     let table_offset2 = u64::from(table2 & !0x7);
     let entry0_2 = bar0_base2 + table_offset2;
-    assert_eq!(restored.memory.read_u32(entry0_2 + 0x0), 0xfee0_0000);
+    assert_eq!(restored.memory.read_u32(entry0_2), 0xfee0_0000);
     assert_eq!(restored.memory.read_u32(entry0_2 + 0x4), 0);
     assert_eq!(restored.memory.read_u32(entry0_2 + 0x8), 0x0065);
     assert_eq!(restored.memory.read_u32(entry0_2 + 0xc) & 1, 0);
@@ -144,9 +144,8 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_table_and_delivery() {
         .raise_event_interrupt();
 
     assert_eq!(restored.interrupts.borrow().get_pending(), Some(0x65));
-    assert_eq!(
-        restored.xhci.as_ref().unwrap().borrow().irq_level(),
-        false,
+    assert!(
+        !restored.xhci.as_ref().unwrap().borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active"
     );
 }
@@ -203,7 +202,7 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_pending_bit_and_delivers_aft
     // Program table entry 0: destination = BSP (APIC ID 0), vector = 0x66.
     let vector: u8 = 0x66;
     let entry0 = bar0_base + table_offset;
-    pc.memory.write_u32(entry0 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry0, 0xfee0_0000);
     pc.memory.write_u32(entry0 + 0x4, 0);
     pc.memory.write_u32(entry0 + 0x8, u32::from(vector));
     pc.memory.write_u32(entry0 + 0xc, 0); // unmasked
@@ -226,9 +225,8 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_pending_bit_and_delivers_aft
         None,
         "expected no MSI-X delivery while Function Mask is set"
     );
-    assert_eq!(
-        pc.xhci.as_ref().unwrap().borrow().irq_level(),
-        false,
+    assert!(
+        !pc.xhci.as_ref().unwrap().borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active (even if masked)"
     );
     let pba_bits = pc.memory.read_u64(bar0_base + pba_offset);

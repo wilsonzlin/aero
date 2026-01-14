@@ -318,7 +318,7 @@ fn pc_platform_ehci_async_schedule_in_transfer_dmas_and_asserts_intx() {
         .write_u32(QH_ADDR + QH_HORIZ, (QH_ADDR as u32) | LINK_TYPE_QH);
     // Device address 0, endpoint 1, high-speed, MPS=64.
     const SPEED_HIGH: u32 = 2;
-    let ep_char = 0 | (1u32 << 8) | (SPEED_HIGH << 12) | (64u32 << 16);
+    let ep_char = (1u32 << 8) | (SPEED_HIGH << 12) | (64u32 << 16);
     pc.memory.write_u32(QH_ADDR + QH_EPCHAR, ep_char);
     pc.memory.write_u32(QH_ADDR + QH_CUR_QTD, 0);
     pc.memory.write_u32(QH_ADDR + QH_NEXT_QTD, QTD_ADDR as u32);
