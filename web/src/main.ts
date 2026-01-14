@@ -4512,6 +4512,7 @@ function renderAudioPanel(): HTMLElement {
               default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
             },
           },
+          ringBuffers: workerCoordinator.getRingBufferAttachmentSnapshot(),
           // Include all known audio outputs so QA can tell which ring was actually active.
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
@@ -4711,6 +4712,7 @@ function renderAudioPanel(): HTMLElement {
               default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
             },
           },
+          ringBuffers: workerCoordinator.getRingBufferAttachmentSnapshot(),
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),

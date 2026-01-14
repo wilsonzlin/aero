@@ -918,6 +918,42 @@ export class WorkerCoordinator {
     return this.effectiveMicrophoneRingBufferOwner();
   }
 
+  getRingBufferAttachmentSnapshot(): {
+    audioOutput: {
+      attached: boolean;
+      ringByteLength: number | null;
+      capacityFrames: number;
+      channelCount: number;
+      dstSampleRate: number;
+      attachedToWorker: AudioRingWorkerRole | null;
+    };
+    microphone: {
+      attached: boolean;
+      ringByteLength: number | null;
+      sampleRate: number;
+      attachedToWorker: AudioRingWorkerRole | null;
+    };
+  } {
+    const audioRing = this.audioRingBuffer;
+    const micRing = this.micRingBuffer;
+    return {
+      audioOutput: {
+        attached: !!audioRing,
+        ringByteLength: audioRing ? audioRing.byteLength : null,
+        capacityFrames: this.audioCapacityFrames,
+        channelCount: this.audioChannelCount,
+        dstSampleRate: this.audioDstSampleRate,
+        attachedToWorker: this.audioRingProducerOwner,
+      },
+      microphone: {
+        attached: !!micRing,
+        ringByteLength: micRing ? micRing.byteLength : null,
+        sampleRate: this.micSampleRate,
+        attachedToWorker: this.micRingConsumerOwner,
+      },
+    };
+  }
+
   setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate: number): void {
     if (ringBuffer !== null) {
       const Sab = globalThis.SharedArrayBuffer;
