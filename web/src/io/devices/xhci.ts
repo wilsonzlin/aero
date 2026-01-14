@@ -179,14 +179,11 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     // PCI Bus Master Enable (command bit 2) gates whether the controller is allowed to DMA into
     // guest memory (TRBs/rings/event updates, transfer buffers, etc).
     //
-    // When bus mastering is disabled, drop elapsed time so we do not "catch up" later; DMA must not
-    // occur until the guest enables BME.
+    // Unlike DMA, internal controller time (e.g. port timers) continues to advance even when BME
+    // is disabled. DMA-heavy work is instead gated on BME via:
+    // - the WASM bridge's `set_pci_command`-backed memory bus selection, and
+    // - suppressing `poll()` calls below when BME is off (older WASM builds may not gate DMA).
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
-    if (!busMasterEnabled) {
-      this.#accumulatedMs = 0;
-      this.#syncIrq();
-      return;
-    }
 
     // Clamp catch-up work so long pauses (e.g. tab backgrounded) do not stall the worker.
     deltaMs = Math.min(deltaMs, XHCI_MAX_FRAMES_PER_TICK * XHCI_FRAME_MS);
@@ -215,7 +212,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     // Some WASM bridges expose a `poll()` hook that performs non-time-advancing work (e.g. draining
     // pending completions). Treat it as a legacy alias for `step_frames(0)`.
     const poll = this.#bridge.poll;
-    if (typeof poll === "function") {
+    if (busMasterEnabled && typeof poll === "function") {
       try {
         poll.call(this.#bridge);
       } catch {
