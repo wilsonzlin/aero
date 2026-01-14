@@ -503,6 +503,15 @@ function Assert-ContainsFileExtension {
     }
 }
 
+function Assert-NoUtf8Bom {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        throw "Expected '$Path' to be UTF-8 without BOM (found EF BB BF)."
+    }
+}
+
 function Write-InstallTxt {
     param(
         [Parameter(Mandatory = $true)][string] $DestPath,
@@ -603,9 +612,10 @@ function Write-InstallTxt {
     # Make the generated file stable across PowerShell versions/hosts:
     # - UTF-8 without BOM
     # - CRLF newlines (Windows-friendly, deterministic even when running under pwsh on Unix)
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     $text = ($lines -join "`r`n") + "`r`n"
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($DestPath, $text, $utf8NoBom)
+    Assert-NoUtf8Bom -Path $DestPath
 }
 
 function New-DriverArtifactRoot {
