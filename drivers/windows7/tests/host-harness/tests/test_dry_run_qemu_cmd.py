@@ -10,7 +10,7 @@ import json
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PosixPath
 from unittest import mock
 
 
@@ -152,6 +152,54 @@ class DryRunQemuCmdTests(unittest.TestCase):
             first_line = stdout.splitlines()[0]
             parsed = json.loads(first_line)
             self.assertTrue(any(isinstance(x, str) and "vectors=0" in x for x in parsed))
+
+            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
+
+    def test_dry_run_windows_cmdline_uses_list2cmdline(self) -> None:
+        """
+        The harness prints a second-line single-string command for copy/paste.
+
+        On Windows (`os.name == "nt"`) this should use subprocess.list2cmdline rather than POSIX shlex quoting.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "win7.qcow2"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+
+            argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                str(disk),
+                "--serial-log",
+                str(serial),
+                "--dry-run",
+            ]
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(self.harness.os, "name", "nt"),
+                # The harness uses `pathlib.Path`, which selects WindowsPath when os.name == "nt".
+                # On non-Windows hosts that raises NotImplementedError. Override the harness's
+                # Path binding so we can exercise Windows quoting behavior in CI.
+                mock.patch.object(self.harness, "Path", PosixPath),
+                mock.patch.object(self.harness.subprocess, "run") as mock_run,
+                mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                contextlib.redirect_stdout(out),
+            ):
+                rc = self.harness.main()
+
+            self.assertEqual(rc, 0)
+
+            lines = out.getvalue().splitlines()
+            self.assertGreaterEqual(len(lines), 2)
+            argv_list = json.loads(lines[0])
+            expected = self.harness.subprocess.list2cmdline([str(a) for a in argv_list])
+            self.assertEqual(lines[1], expected)
 
             mock_run.assert_not_called()
             mock_popen.assert_not_called()
