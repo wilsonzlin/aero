@@ -4716,6 +4716,296 @@ bool TestApplyStateBlockViewportCapturesRedundantSet() {
   return true;
 }
 
+bool TestApplyStateBlockScissorRectCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetScissorRect != nullptr, "pfnSetScissorRect is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u; // D3DRS_SCISSORTESTENABLE
+
+  RECT rect_a{};
+  rect_a.left = 10;
+  rect_a.top = 20;
+  rect_a.right = 110;
+  rect_a.bottom = 220;
+
+  RECT rect_b{};
+  rect_b.left = 1;
+  rect_b.top = 2;
+  rect_b.right = 33;
+  rect_b.bottom = 44;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect_a, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(A, enable)")) {
+    return false;
+  }
+
+  // Record a redundant SetScissorRect(A, TRUE). D3D9 state blocks must still
+  // capture it even if the UMD skips redundant scissor command emission.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant scissor rect)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect_a, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(A, TRUE) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant scissor rect)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change scissor state to a different rect so applying the state block must
+  // restore it.
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect_b, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(B, TRUE) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant scissor rect)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->scissor_enabled == TRUE, "ApplyStateBlock restores scissor enabled")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsScissorTestEnable] == 1u, "ApplyStateBlock restores render state 174")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect_user_set, "ApplyStateBlock restores scissor_rect_user_set=true")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect.left == rect_a.left &&
+                   dev->scissor_rect.top == rect_a.top &&
+                   dev->scissor_rect.right == rect_a.right &&
+                   dev->scissor_rect.bottom == rect_a.bottom,
+               "ApplyStateBlock restores scissor rect A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant scissor rect)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_scissor = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SCISSOR)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_scissor)) {
+      continue;
+    }
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+    if (sc->x == rect_a.left && sc->y == rect_a.top &&
+        sc->width == (rect_a.right - rect_a.left) &&
+        sc->height == (rect_a.bottom - rect_a.top)) {
+      saw_scissor = true;
+      break;
+    }
+  }
+  if (!Check(saw_scissor, "ApplyStateBlock emits SET_SCISSOR for rect A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestApplyStateBlockTransformCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Enable a fixed-function WVP path so transform changes result in a reserved
+  // WVP constant upload on ApplyStateBlock.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+
+  constexpr float tx_a = 2.0f;
+  constexpr float ty_a = 3.0f;
+  constexpr float tz_a = 0.0f;
+  constexpr float tx_b = 5.0f;
+  constexpr float ty_b = 6.0f;
+  constexpr float tz_b = 0.0f;
+
+  D3DMATRIX world_a = identity;
+  world_a.m[3][0] = tx_a;
+  world_a.m[3][1] = ty_a;
+  world_a.m[3][2] = tz_a;
+
+  D3DMATRIX world_b = identity;
+  world_b.m[3][0] = tx_b;
+  world_b.m[3][1] = ty_b;
+  world_b.m[3][2] = tz_b;
+
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_a);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=A) seed")) {
+    return false;
+  }
+
+  // Record a redundant SetTransform(WORLD=A). D3D9 state blocks must still
+  // capture it even if the UMD skips redundant fixed-function constant emission.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant transform)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_a);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant transform)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change the transform so applying the state block must restore it.
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_b);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant transform)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(std::memcmp(dev->transform_matrices[kD3dTransformWorld0], &world_a, 16u * sizeof(float)) == 0,
+               "ApplyStateBlock restores WORLD transform A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant transform)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  const float expected_wvp_cols_a[16] = {
+      1.0f, 0.0f, 0.0f, tx_a,
+      0.0f, 1.0f, 0.0f, ty_a,
+      0.0f, 0.0f, 1.0f, tz_a,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
+             "ApplyStateBlock emits one WVP constant upload")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count);
+  if (!Check(payload != nullptr, "found WVP constant payload")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(std::memcmp(payload, expected_wvp_cols_a, sizeof(expected_wvp_cols_a)) == 0,
+             "ApplyStateBlock uploads expected WVP columns for transform A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockTextureCapturesRedundantSet() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -25672,6 +25962,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockViewportCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockScissorRectCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockTransformCapturesRedundantSet()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockTextureCapturesRedundantSet()) {
