@@ -1362,6 +1362,7 @@ pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
         next_value: &mut next_value,
         instrs: Vec::new(),
         unsupported: false,
+        const_values: HashMap::new(),
     };
     lower.lower_block(ir);
 
