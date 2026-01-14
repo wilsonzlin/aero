@@ -418,10 +418,10 @@ async function main(): Promise<void> {
     const pass = hash === expectedHash && sourceHash === expectedSourceHash;
     const cursorOk = cursorPixel[0] === 0 && cursorPixel[1] === 0 && cursorPixel[2] === 0 && cursorPixel[3] === 255;
 
-    const sample = (rgba: Uint8Array, width_: number, x: number, y: number): number[] => {
+    function sample(rgba: Uint8Array, width_: number, x: number, y: number): number[] {
       const i = (y * width_ + x) * 4;
       return [rgba[i + 0] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0, rgba[i + 3] ?? 0];
-    };
+    }
 
     log(`backend=${backend}`);
     log(`hash=${hash} expected=${expectedHash} ${pass ? "PASS" : "FAIL"}`);
