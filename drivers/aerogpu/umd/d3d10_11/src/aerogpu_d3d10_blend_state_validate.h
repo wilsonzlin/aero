@@ -112,6 +112,12 @@ inline bool D3dBlendFactorToAerogpu(uint32_t factor, uint32_t* out_factor) {
   }
 }
 
+inline uint32_t D3dBlendFactorToAerogpuOr(uint32_t factor, uint32_t fallback) {
+  uint32_t out = fallback;
+  (void)D3dBlendFactorToAerogpu(factor, &out);
+  return out;
+}
+
 inline bool D3dBlendOpToAerogpu(uint32_t blend_op, uint32_t* out_op) {
   if (!out_op) {
     return false;
@@ -135,6 +141,12 @@ inline bool D3dBlendOpToAerogpu(uint32_t blend_op, uint32_t* out_op) {
     default:
       return false;
   }
+}
+
+inline uint32_t D3dBlendOpToAerogpuOr(uint32_t blend_op, uint32_t fallback) {
+  uint32_t out = fallback;
+  (void)D3dBlendOpToAerogpu(blend_op, &out);
+  return out;
 }
 
 inline bool D3dRtBlendDescMatchesRt0(const D3dRtBlendDesc& rt, const D3dRtBlendDesc& rt0) {

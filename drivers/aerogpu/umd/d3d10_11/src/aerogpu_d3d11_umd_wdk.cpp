@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "aerogpu_d3d10_11_internal.h"
+#include "aerogpu_d3d10_blend_state_validate.h"
 #include "aerogpu_legacy_d3d9_format_fixup.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "../../../protocol/aerogpu_wddm_alloc.h"
@@ -4859,32 +4860,13 @@ void AEROGPU_APIENTRY DestroyElementLayout11(D3D11DDI_HDEVICE hDevice, D3D11DDI_
 // Fixed-function state objects (accepted and bindable; conservative encoding).
 
 static bool IsSupportedD3D11BlendFactor(uint32_t factor) {
-  switch (static_cast<D3D11_BLEND>(factor)) {
-    case D3D11_BLEND_ZERO:
-    case D3D11_BLEND_ONE:
-    case D3D11_BLEND_SRC_ALPHA:
-    case D3D11_BLEND_INV_SRC_ALPHA:
-    case D3D11_BLEND_DEST_ALPHA:
-    case D3D11_BLEND_INV_DEST_ALPHA:
-    case D3D11_BLEND_BLEND_FACTOR:
-    case D3D11_BLEND_INV_BLEND_FACTOR:
-      return true;
-    default:
-      return false;
-  }
+  uint32_t out = 0;
+  return D3dBlendFactorToAerogpu(factor, &out);
 }
 
 static bool IsSupportedD3D11BlendOp(uint32_t blend_op) {
-  switch (static_cast<D3D11_BLEND_OP>(blend_op)) {
-    case D3D11_BLEND_OP_ADD:
-    case D3D11_BLEND_OP_SUBTRACT:
-    case D3D11_BLEND_OP_REV_SUBTRACT:
-    case D3D11_BLEND_OP_MIN:
-    case D3D11_BLEND_OP_MAX:
-      return true;
-    default:
-      return false;
-  }
+  uint32_t out = 0;
+  return D3dBlendOpToAerogpu(blend_op, &out);
 }
 
 template <typename RtBlendDescT>
@@ -6183,49 +6165,6 @@ void AEROGPU_APIENTRY SetScissorRects11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumRe
                                          pRects,
                                          [&](HRESULT hr) { SetError(dev, hr); });
 }
-
-static uint32_t D3D11BlendFactorToAerogpu(uint32_t factor, uint32_t fallback) {
-  switch (static_cast<D3D11_BLEND>(factor)) {
-    case D3D11_BLEND_ZERO:
-      return AEROGPU_BLEND_ZERO;
-    case D3D11_BLEND_ONE:
-      return AEROGPU_BLEND_ONE;
-    case D3D11_BLEND_SRC_ALPHA:
-      return AEROGPU_BLEND_SRC_ALPHA;
-    case D3D11_BLEND_INV_SRC_ALPHA:
-      return AEROGPU_BLEND_INV_SRC_ALPHA;
-    case D3D11_BLEND_DEST_ALPHA:
-      return AEROGPU_BLEND_DEST_ALPHA;
-    case D3D11_BLEND_INV_DEST_ALPHA:
-      return AEROGPU_BLEND_INV_DEST_ALPHA;
-    case D3D11_BLEND_BLEND_FACTOR:
-      return AEROGPU_BLEND_CONSTANT;
-    case D3D11_BLEND_INV_BLEND_FACTOR:
-      return AEROGPU_BLEND_INV_CONSTANT;
-    default:
-      break;
-  }
-  return fallback;
-}
-
-static uint32_t D3D11BlendOpToAerogpu(uint32_t blend_op) {
-  switch (static_cast<D3D11_BLEND_OP>(blend_op)) {
-    case D3D11_BLEND_OP_ADD:
-      return AEROGPU_BLEND_OP_ADD;
-    case D3D11_BLEND_OP_SUBTRACT:
-      return AEROGPU_BLEND_OP_SUBTRACT;
-    case D3D11_BLEND_OP_REV_SUBTRACT:
-      return AEROGPU_BLEND_OP_REV_SUBTRACT;
-    case D3D11_BLEND_OP_MIN:
-      return AEROGPU_BLEND_OP_MIN;
-    case D3D11_BLEND_OP_MAX:
-      return AEROGPU_BLEND_OP_MAX;
-    default:
-      break;
-  }
-  return AEROGPU_BLEND_OP_ADD;
-}
-
 static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   if (!dev) {
     return;
@@ -6323,17 +6262,17 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   }
 
   cmd->state.enable = blend_enable ? 1u : 0u;
-  cmd->state.src_factor = D3D11BlendFactorToAerogpu(src_blend, AEROGPU_BLEND_ONE);
-  cmd->state.dst_factor = D3D11BlendFactorToAerogpu(dst_blend, AEROGPU_BLEND_ZERO);
-  cmd->state.blend_op = D3D11BlendOpToAerogpu(blend_op);
+  cmd->state.src_factor = D3dBlendFactorToAerogpuOr(src_blend, AEROGPU_BLEND_ONE);
+  cmd->state.dst_factor = D3dBlendFactorToAerogpuOr(dst_blend, AEROGPU_BLEND_ZERO);
+  cmd->state.blend_op = D3dBlendOpToAerogpuOr(blend_op, AEROGPU_BLEND_OP_ADD);
   cmd->state.color_write_mask = static_cast<uint8_t>(write_mask & 0xFu);
   cmd->state.reserved0[0] = 0;
   cmd->state.reserved0[1] = 0;
   cmd->state.reserved0[2] = 0;
 
-  cmd->state.src_factor_alpha = D3D11BlendFactorToAerogpu(src_blend_alpha, cmd->state.src_factor);
-  cmd->state.dst_factor_alpha = D3D11BlendFactorToAerogpu(dst_blend_alpha, cmd->state.dst_factor);
-  cmd->state.blend_op_alpha = D3D11BlendOpToAerogpu(blend_op_alpha);
+  cmd->state.src_factor_alpha = D3dBlendFactorToAerogpuOr(src_blend_alpha, cmd->state.src_factor);
+  cmd->state.dst_factor_alpha = D3dBlendFactorToAerogpuOr(dst_blend_alpha, cmd->state.dst_factor);
+  cmd->state.blend_op_alpha = D3dBlendOpToAerogpuOr(blend_op_alpha, cmd->state.blend_op);
 
   cmd->state.blend_constant_rgba_f32[0] = f32_bits(dev->current_blend_factor[0]);
   cmd->state.blend_constant_rgba_f32[1] = f32_bits(dev->current_blend_factor[1]);
