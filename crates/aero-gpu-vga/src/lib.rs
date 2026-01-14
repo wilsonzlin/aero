@@ -38,7 +38,8 @@ use aero_io_snapshot::io::state::{
 
 /// Default physical base address for the Bochs VBE linear framebuffer (LFB).
 ///
-/// QEMU/Bochs typically map the LFB at `0xE000_0000`.
+/// Real Bochs/QEMU configurations commonly map the LFB at `0xE000_0000`, but Aero's VGA/VBE device
+/// model supports overriding the base at runtime via [`VgaDevice::set_svga_lfb_base`].
 pub const SVGA_LFB_BASE: u32 = 0xE000_0000;
 
 // -----------------------------------------------------------------------------
