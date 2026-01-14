@@ -95,7 +95,7 @@ The guest may also emit optional interrupt-mode diagnostics markers (information
 - `virtio-<dev>-irq|INFO|...`
 - `virtio-<dev>-irq|WARN|...`
 
-The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
+ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
 (virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net) were emitted so older selftest binaries
 can’t accidentally pass. When the harness is run with `-WithVirtioSnd` / `--with-virtio-snd`, both `virtio-snd` and
 `virtio-snd-capture` must `PASS` (not `SKIP`).
@@ -143,9 +143,14 @@ To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
   - PowerShell (per device): `-VirtioNetVectors N`, `-VirtioBlkVectors N`, `-VirtioInputVectors N`, `-VirtioSndVectors N`
   - Python (global): `--virtio-msix-vectors N`
   - Python (per device): `--virtio-net-vectors N`, `--virtio-blk-vectors N`, `--virtio-input-vectors N`, `--virtio-snd-vectors N`
-  - Fail the harness if QEMU reports MSI-X **disabled** (QMP introspection check):
+- Fail the harness if QEMU reports MSI-X **disabled** (QMP introspection check):
   - PowerShell: `-RequireVirtioBlkMsix` / `-RequireVirtioNetMsix` / `-RequireVirtioSndMsix`
   - Python: `--require-virtio-blk-msix` / `--require-virtio-net-msix` / `--require-virtio-snd-msix`
+- When `RequireVirtio*Msix` is enabled, the harness may also require a **guest-side** marker confirming the *effective*
+  interrupt mode (end-to-end):
+  - `virtio-blk`: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...`
+  - `virtio-snd`: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...`
+  - `virtio-input`: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...`
 - For virtio-blk specifically, you can also make MSI/MSI-X a **guest-side** hard requirement:
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
 
