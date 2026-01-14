@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -17,7 +18,11 @@ class PowerShellHarnessInputLedFlagTests(unittest.TestCase):
         self.assertIn("[switch]$WithInputLed", self.text)
 
         # Keep alias pattern consistent with other virtio-input flags.
-        self.assertIn('Alias("WithVirtioInputLed", "EnableVirtioInputLed")', self.text)
+        # The alias list may evolve, so avoid brittle exact-string matching.
+        self.assertRegex(
+            self.text,
+            r'Alias\("WithVirtioInputLed",\s*"EnableVirtioInputLed"(?:,\s*"RequireVirtioInputLed")?\)',
+        )
 
     def test_wait_result_enforces_led_marker_when_required(self) -> None:
         # Ensure the Wait-AeroSelftestResult plumbing exists and returns stable tokens.
