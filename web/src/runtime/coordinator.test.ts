@@ -653,9 +653,12 @@ describe("runtime/coordinator", () => {
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
+    // `allocateTestSegments` uses a tiny 64KiB guest RAM layout; keep the config consistent so we
+    // don't trigger a full restart due to a guest memory layout change.
+    const guestMemoryMiB = 64 / 1024;
     // Older/compat configs may omit vmRuntime; treat that as legacy.
     (coordinator as any).activeConfig = {
-      guestMemoryMiB: 1,
+      guestMemoryMiB,
       vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -671,7 +674,7 @@ describe("runtime/coordinator", () => {
     // Apply an unrelated update that happens to include an explicit legacy vmRuntime value.
     coordinator.updateConfig({
       vmRuntime: "legacy",
-      guestMemoryMiB: 1,
+      guestMemoryMiB,
       vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
