@@ -1616,7 +1616,7 @@ fn assemble_ps3_lrp() -> Vec<u32> {
     out
 }
 
-fn assemble_ps3_predicated_mov() -> Vec<u32> {
+fn assemble_ps3_predicated_mov_with_pred_index(pred_index: u16) -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, 0.5, 0.0, 0.0, 0.0 (threshold)
@@ -1653,11 +1653,11 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
         ],
     ));
 
-    // setp_gt p0.x, v0.x, c0.x (compare op 0 = gt)
+    // setp_gt p#.x, v0.x, c0.x (compare op 0 = gt)
     out.extend(enc_inst(
         0x005E,
         &[
-            enc_dst(19, 0, 0x1), // p0.x
+            enc_dst(19, pred_index, 0x1), // p#.x
             enc_src(1, 0, 0x00), // v0.x
             enc_src(2, 0, 0x00), // c0.x
         ],
@@ -1673,7 +1673,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
         &[
             enc_dst(8, 0, 0xF),
             enc_src(2, 1, 0xE4),
-            enc_src(19, 0, 0x00), // p0.x predicate token
+            enc_src(19, pred_index, 0x00), // p#.x predicate token
         ],
     ));
 
@@ -1681,7 +1681,12 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
     out
 }
 
-fn assemble_ps3_mova_relative_const() -> Vec<u32> {
+#[allow(dead_code)]
+fn assemble_ps3_predicated_mov() -> Vec<u32> {
+    assemble_ps3_predicated_mov_with_pred_index(0)
+}
+
+fn assemble_ps3_mova_relative_const_with_addr_index(addr_index: u16) -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c1, 1.0, 0.0, 0.0, 1.0 (red)
@@ -1707,7 +1712,7 @@ fn assemble_ps3_mova_relative_const() -> Vec<u32> {
         ],
     ));
 
-    // mova_x2 a0.x, t0.x
+    // mova_x2 a#.x, t0.x
     // This exercises:
     // - pixel-shader `mova` destination decoding (regtype 3 -> address register)
     // - result modifier ordering (shift applied before float->int conversion)
@@ -1715,12 +1720,12 @@ fn assemble_ps3_mova_relative_const() -> Vec<u32> {
         0x002E,
         2u32 << 20, // result shift = x2 (no saturate)
         &[
-            enc_dst(3, 0, 0x1),  // a0.x (regtype 3)
+            enc_dst(3, addr_index, 0x1), // a#.x (regtype 3)
             enc_src(3, 0, 0x00), // t0.x
         ],
     ));
 
-    // mov oC0, c1[a0.x]
+    // mov oC0, c1[a#.x]
     let mut c1_rel = enc_src(2, 1, 0xE4);
     c1_rel |= 0x0000_2000; // RELATIVE flag
     out.extend(enc_inst(
@@ -1728,12 +1733,17 @@ fn assemble_ps3_mova_relative_const() -> Vec<u32> {
         &[
             enc_dst(8, 0, 0xF),
             c1_rel,
-            enc_src(3, 0, 0x00), // a0.x (swizzle xxxx)
+            enc_src(3, addr_index, 0x00), // a#.x (swizzle xxxx)
         ],
     ));
 
     out.push(0x0000FFFF);
     out
+}
+
+#[allow(dead_code)]
+fn assemble_ps3_mova_relative_const() -> Vec<u32> {
+    assemble_ps3_mova_relative_const_with_addr_index(0)
 }
 
 fn assemble_ps3_mova_sat_relative_const() -> Vec<u32> {
@@ -2361,7 +2371,7 @@ fn assemble_ps3_relative_const_clamp_high() -> Vec<u32> {
     out
 }
 
-fn assemble_ps3_loop_relative_const() -> Vec<u32> {
+fn assemble_ps3_loop_relative_const_with_loop_index(loop_index: u16) -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, 1.0, 0.0, 0.0, 1.0 (red)
@@ -2408,7 +2418,7 @@ fn assemble_ps3_loop_relative_const() -> Vec<u32> {
     out.extend(enc_inst(
         0x001B,
         &[
-            enc_src(15, 0, 0xE4), // aL
+            enc_src(15, loop_index, 0xE4), // aL
             enc_src(7, 0, 0xE4),  // i0
         ],
     ));
@@ -2422,7 +2432,7 @@ fn assemble_ps3_loop_relative_const() -> Vec<u32> {
             enc_dst(0, 0, 0xF),
             enc_src(0, 0, 0xE4),
             c0_rel,
-            enc_src(15, 0, 0x00), // aL.x
+            enc_src(15, loop_index, 0x00), // aL.x
         ],
     ));
 
@@ -2434,6 +2444,11 @@ fn assemble_ps3_loop_relative_const() -> Vec<u32> {
 
     out.push(0x0000FFFF);
     out
+}
+
+#[allow(dead_code)]
+fn assemble_ps3_loop_relative_const() -> Vec<u32> {
+    assemble_ps3_loop_relative_const_with_loop_index(0)
 }
 
 fn assemble_ps3_rep_relative_const() -> Vec<u32> {
@@ -5970,7 +5985,6 @@ fn sm3_texld_cube_samples_face_colors() {
 #[test]
 fn sm3_predicated_mov_pixel_compare() {
     let vs = build_sm3_ir(&assemble_vs_passthrough());
-    let ps = build_sm3_ir(&assemble_ps3_predicated_mov());
 
     let decl = build_vertex_decl_pos_tex_color();
 
@@ -6005,39 +6019,51 @@ fn sm3_predicated_mov_pixel_compare() {
         push_vec4(&mut vb, color);
     }
 
-    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
-    let constants = zero_constants();
-    sm3::software::draw(
-        &mut rt,
-        sm3::software::DrawParams {
-            vs: &vs,
-            ps: &ps,
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: Some(&indices),
-            constants: &constants,
-            textures: &HashMap::new(),
-            sampler_states: &HashMap::new(),
-            blend_state: state::BlendState::default(),
-        },
-    );
+    for pred_index in [0u16, 20u16] {
+        let ps = build_sm3_ir(&assemble_ps3_predicated_mov_with_pred_index(pred_index));
 
-    // Left side: v0.x = 1.0 so predicate is true, output red.
-    assert_eq!(rt.get(1, 4).to_rgba8(), [255, 0, 0, 255]);
-    // Right side: v0.x = 0.0 so predicate is false, output blue.
-    assert_eq!(rt.get(6, 4).to_rgba8(), [0, 0, 255, 255]);
+        let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+        let constants = zero_constants();
+        sm3::software::draw(
+            &mut rt,
+            sm3::software::DrawParams {
+                vs: &vs,
+                ps: &ps,
+                vertex_decl: &decl,
+                vertex_buffer: &vb,
+                indices: Some(&indices),
+                constants: &constants,
+                textures: &HashMap::new(),
+                sampler_states: &HashMap::new(),
+                blend_state: state::BlendState::default(),
+            },
+        );
 
-    let hash = blake3::hash(&rt.to_rgba8());
-    assert_eq!(
-        hash.to_hex().as_str(),
-        "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b"
-    );
+        // Left side: v0.x = 1.0 so predicate is true, output red.
+        assert_eq!(
+            rt.get(1, 4).to_rgba8(),
+            [255, 0, 0, 255],
+            "pred_index={pred_index}"
+        );
+        // Right side: v0.x = 0.0 so predicate is false, output blue.
+        assert_eq!(
+            rt.get(6, 4).to_rgba8(),
+            [0, 0, 255, 255],
+            "pred_index={pred_index}"
+        );
+
+        let hash = blake3::hash(&rt.to_rgba8());
+        assert_eq!(
+            hash.to_hex().as_str(),
+            "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b",
+            "pred_index={pred_index}"
+        );
+    }
 }
 
 #[test]
 fn sm3_mova_relative_const_pixel_compare() {
     let vs = build_sm3_ir(&assemble_vs_passthrough());
-    let ps = build_sm3_ir(&assemble_ps3_mova_relative_const());
 
     let decl = build_vertex_decl_pos_tex_color();
 
@@ -6072,33 +6098,46 @@ fn sm3_mova_relative_const_pixel_compare() {
         push_vec4(&mut vb, color);
     }
 
-    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
-    let constants = zero_constants();
-    sm3::software::draw(
-        &mut rt,
-        sm3::software::DrawParams {
-            vs: &vs,
-            ps: &ps,
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: Some(&indices),
-            constants: &constants,
-            textures: &HashMap::new(),
-            sampler_states: &HashMap::new(),
-            blend_state: state::BlendState::default(),
-        },
-    );
+    for addr_index in [0u16, 20u16] {
+        let ps = build_sm3_ir(&assemble_ps3_mova_relative_const_with_addr_index(addr_index));
 
-    // Left side: t0.x < 0.5 so mova_x2 truncates to 0, output c1 (red).
-    assert_eq!(rt.get(1, 4).to_rgba8(), [255, 0, 0, 255]);
-    // Right side: t0.x >= 0.5 so mova_x2 truncates to 1, output c2 (blue).
-    assert_eq!(rt.get(6, 4).to_rgba8(), [0, 0, 255, 255]);
+        let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+        let constants = zero_constants();
+        sm3::software::draw(
+            &mut rt,
+            sm3::software::DrawParams {
+                vs: &vs,
+                ps: &ps,
+                vertex_decl: &decl,
+                vertex_buffer: &vb,
+                indices: Some(&indices),
+                constants: &constants,
+                textures: &HashMap::new(),
+                sampler_states: &HashMap::new(),
+                blend_state: state::BlendState::default(),
+            },
+        );
 
-    let hash = blake3::hash(&rt.to_rgba8());
-    assert_eq!(
-        hash.to_hex().as_str(),
-        "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b"
-    );
+        // Left side: t0.x < 0.5 so mova_x2 truncates to 0, output c1 (red).
+        assert_eq!(
+            rt.get(1, 4).to_rgba8(),
+            [255, 0, 0, 255],
+            "addr_index={addr_index}"
+        );
+        // Right side: t0.x >= 0.5 so mova_x2 truncates to 1, output c2 (blue).
+        assert_eq!(
+            rt.get(6, 4).to_rgba8(),
+            [0, 0, 255, 255],
+            "addr_index={addr_index}"
+        );
+
+        let hash = blake3::hash(&rt.to_rgba8());
+        assert_eq!(
+            hash.to_hex().as_str(),
+            "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b",
+            "addr_index={addr_index}"
+        );
+    }
 }
 
 #[test]
@@ -6458,7 +6497,6 @@ fn sm3_relative_const_clamps_index_high_pixel_compare() {
 #[test]
 fn sm3_loop_relative_const_pixel_compare() {
     let vs = build_sm3_ir(&assemble_vs_passthrough());
-    let ps = build_sm3_ir(&assemble_ps3_loop_relative_const());
 
     let decl = build_vertex_decl_pos_tex_color();
 
@@ -6470,30 +6508,39 @@ fn sm3_loop_relative_const_pixel_compare() {
         push_vec4(&mut vb, white);
     }
 
-    let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
-    let constants = zero_constants();
-    sm3::software::draw(
-        &mut rt,
-        sm3::software::DrawParams {
-            vs: &vs,
-            ps: &ps,
-            vertex_decl: &decl,
-            vertex_buffer: &vb,
-            indices: None,
-            constants: &constants,
-            textures: &HashMap::new(),
-            sampler_states: &HashMap::new(),
-            blend_state: state::BlendState::default(),
-        },
-    );
+    for loop_index in [0u16, 20u16] {
+        let ps = build_sm3_ir(&assemble_ps3_loop_relative_const_with_loop_index(loop_index));
 
-    // Two loop iterations add c0 (red) + c1 (blue) => magenta (alpha clamps to 1).
-    assert_eq!(rt.get(8, 8).to_rgba8(), [255, 0, 255, 255]);
-    let hash = blake3::hash(&rt.to_rgba8());
-    assert_eq!(
-        hash.to_hex().as_str(),
-        "f0ea24543939c1b353690b0561b904ea57c604ffb63e4d0bf145020d213a3796"
-    );
+        let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+        let constants = zero_constants();
+        sm3::software::draw(
+            &mut rt,
+            sm3::software::DrawParams {
+                vs: &vs,
+                ps: &ps,
+                vertex_decl: &decl,
+                vertex_buffer: &vb,
+                indices: None,
+                constants: &constants,
+                textures: &HashMap::new(),
+                sampler_states: &HashMap::new(),
+                blend_state: state::BlendState::default(),
+            },
+        );
+
+        // Two loop iterations add c0 (red) + c1 (blue) => magenta (alpha clamps to 1).
+        assert_eq!(
+            rt.get(8, 8).to_rgba8(),
+            [255, 0, 255, 255],
+            "loop_index={loop_index}"
+        );
+        let hash = blake3::hash(&rt.to_rgba8());
+        assert_eq!(
+            hash.to_hex().as_str(),
+            "f0ea24543939c1b353690b0561b904ea57c604ffb63e4d0bf145020d213a3796",
+            "loop_index={loop_index}"
+        );
+    }
 }
 
 #[test]

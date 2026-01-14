@@ -1324,9 +1324,12 @@ fn run_vertex_shader(
     sampler_states: &HashMap<u16, SamplerState>,
 ) -> VsOut {
     let mut temps = vec![Vec4::ZERO; 32];
-    let mut addrs = vec![Vec4::ZERO; 4];
-    let mut loops = vec![Vec4::ZERO; 4];
-    let mut preds = vec![Vec4::ZERO; 16];
+    // The SM3 decoder accepts register indices up to `MAX_D3D9_SHADER_REGISTER_INDEX`. Keep the
+    // software interpreter consistent so shaders that use high indices (even if technically out of
+    // spec) match the WGSL lowering.
+    let mut addrs = vec![Vec4::ZERO; MAX_D3D9_SHADER_REGISTER_INDEX as usize + 1];
+    let mut loops = vec![Vec4::ZERO; MAX_D3D9_SHADER_REGISTER_INDEX as usize + 1];
+    let mut preds = vec![Vec4::ZERO; MAX_D3D9_SHADER_REGISTER_INDEX as usize + 1];
 
     let mut o_pos = Vec4::ZERO;
     let mut o_attr = HashMap::<u16, Vec4>::new();
@@ -1381,9 +1384,10 @@ fn run_pixel_shader(
     sampler_states: &HashMap<u16, SamplerState>,
 ) -> Option<Vec4> {
     let mut temps = vec![Vec4::ZERO; 32];
-    let mut addrs = vec![Vec4::ZERO; 4];
-    let mut loops = vec![Vec4::ZERO; 4];
-    let mut preds = vec![Vec4::ZERO; 16];
+    // See `run_vertex_shader`.
+    let mut addrs = vec![Vec4::ZERO; MAX_D3D9_SHADER_REGISTER_INDEX as usize + 1];
+    let mut loops = vec![Vec4::ZERO; MAX_D3D9_SHADER_REGISTER_INDEX as usize + 1];
+    let mut preds = vec![Vec4::ZERO; MAX_D3D9_SHADER_REGISTER_INDEX as usize + 1];
 
     let mut dummy_pos = Vec4::ZERO;
     let mut dummy_attr = HashMap::<u16, Vec4>::new();
