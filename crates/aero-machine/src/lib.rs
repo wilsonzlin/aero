@@ -11099,8 +11099,8 @@ impl Machine {
         // can follow BIOS-driven mode sets and panning/stride updates.
         //
         // If the scanout is currently owned by the WDDM path, do not allow legacy INT 10h calls
-        // to steal it back (until the VM resets; `SCANOUT0_ENABLE=0` is treated as a visibility
-        // toggle and does not release WDDM ownership).
+        // to steal it back until the guest disables scanout (`SCANOUT0_ENABLE=0`) or the VM
+        // resets.
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if vector == 0x10 {
             let vbe_scanout_sig_after = self.bios.video.vbe.current_mode.map(|mode| {
