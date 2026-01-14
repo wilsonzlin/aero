@@ -9,6 +9,8 @@ license = "MIT OR Apache-2.0"
 # shared header owned by the browser runtime). This is intended to be driven by build-system
 # features (see `aero-wasm`'s `wasm-threaded` feature).
 wasm-threaded = ["dep:aero-shared"]
+# Enables the native wgpu-based AeroGPU execution backend.
+aerogpu-wgpu-backend = ["aero-devices-gpu/wgpu-backend"]
 
 [dependencies]
 aero-cpu-core = { path = "../aero-cpu-core" }

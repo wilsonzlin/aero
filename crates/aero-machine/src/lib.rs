@@ -5811,6 +5811,23 @@ impl Machine {
         ));
     }
 
+    /// Install the native wgpu-based AeroGPU backend (headless) if available.
+    ///
+    /// This is feature-gated because the native backend is heavier (wgpu + renderer) than the
+    /// lightweight default `aero-machine` build.
+    ///
+    /// Safe to call even when AeroGPU is not enabled/present; it will no-op.
+    #[cfg(all(feature = "aerogpu-wgpu-backend", not(target_arch = "wasm32")))]
+    pub fn aerogpu_set_backend_wgpu(&mut self) -> Result<(), String> {
+        let Some(mmio) = &self.aerogpu_mmio else {
+            return Ok(());
+        };
+        let backend = aero_devices_gpu::backend::NativeAeroGpuBackend::new_headless()
+            .map_err(|err| err.to_string())?;
+        mmio.borrow_mut().set_backend(Box::new(backend));
+        Ok(())
+    }
+
     /// Returns the PCI INTx router, if present.
     pub fn pci_intx_router(&self) -> Option<Rc<RefCell<PciIntxRouter>>> {
         self.pci_intx.clone()
