@@ -37,6 +37,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       ) {
         return true;
       }
+      if (
+        p.includes("/web/src/wasm/pkg-single-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
 
       // JIT outputs are missing until the build step runs.
       if (
@@ -95,6 +101,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       ) {
         return true;
       }
+      if (
+        p.includes("/web/src/wasm/pkg-threaded-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
 
       // JIT outputs are missing until the build step runs.
       if (
@@ -145,6 +157,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
         return true;
       }
       if (
+        p.includes("/web/src/wasm/pkg-single-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
+      if (
         p.includes("/web/src/wasm/pkg-jit-single/") &&
         (p.endsWith("/aero_jit_wasm.js") || p.endsWith("/aero_jit_wasm_bg.wasm"))
       ) {
@@ -178,6 +196,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       if (
         p.includes("/web/src/wasm/pkg-single-gpu/") &&
         (p.endsWith("/aero_gpu_wasm.js") || p.endsWith("/aero_gpu_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
+      if (
+        p.includes("/web/src/wasm/pkg-single-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
       ) {
         return true;
       }
@@ -218,6 +242,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
         return true;
       }
       if (
+        p.includes("/web/src/wasm/pkg-single-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
+      if (
         p.includes("/web/src/wasm/pkg-jit-single/") &&
         (p.endsWith("/aero_jit_wasm.js") || p.endsWith("/aero_jit_wasm_bg.wasm"))
       ) {
@@ -234,6 +264,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       if (
         p.includes("/web/src/wasm/pkg-threaded-gpu/") &&
         (p.endsWith("/aero_gpu_wasm.js") || p.endsWith("/aero_gpu_wasm_bg.wasm"))
+      ) {
+        return builtThreaded;
+      }
+      if (
+        p.includes("/web/src/wasm/pkg-threaded-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
       ) {
         return builtThreaded;
       }
@@ -266,7 +302,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
     expect(argv[1]).toBe("threaded");
     const idx = argv.indexOf("--packages");
     expect(idx).toBeGreaterThanOrEqual(0);
-    expect(argv[idx + 1]).toBe("core,gpu,jit");
+    expect(argv[idx + 1]).toBe("core,gpu,d3d11,jit");
   });
 
   it("fails if build succeeds but expected outputs are still missing", async () => {
@@ -288,6 +324,12 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       if (
         p.includes("/web/src/wasm/pkg-single-gpu/") &&
         (p.endsWith("/aero_gpu_wasm.js") || p.endsWith("/aero_gpu_wasm_bg.wasm"))
+      ) {
+        return true;
+      }
+      if (
+        p.includes("/web/src/wasm/pkg-single-d3d11/") &&
+        (p.endsWith("/aero_d3d11_wasm.js") || p.endsWith("/aero_d3d11_wasm_bg.wasm"))
       ) {
         return true;
       }
