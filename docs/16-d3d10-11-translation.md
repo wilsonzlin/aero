@@ -901,7 +901,7 @@ If using strategy (2), then:
 - `out_max_vertices = input_prim_count * instance_count * gs_instance_count * M`
 - `out_max_indices = input_prim_count * instance_count * gs_instance_count * max_list_vertices_per_input_prim`
 
-**Expanded vertex layout (concrete):**
+**Expanded vertex layout (target; bit-preserving):**
 
 For compatibility with signature-driven stage linking *and* to preserve integer/float bit patterns,
 expansion outputs store the same logical interface that the pixel shader consumes, but encoded as
@@ -923,7 +923,7 @@ struct ExpandedVertex {
 ```
 
 Where `VARYING_COUNT` is the number of linked varyings in the VS/GS/DS → PS signature intersection.
-The passthrough vertex shader then:
+A bit-preserving passthrough vertex shader would then:
 
 - loads `pos_bits` and `bitcast<vec4<f32>>()` to write `@builtin(position)`, and
 - for each varying location `N` (with dense index `i`), loads `varyings[i]` and bitcasts to
@@ -959,6 +959,11 @@ To match the packed `ExpandedVertex` layout above:
 
 This keeps the final draw in the “normal” vertex-input path (no storage-buffer reads in the vertex
 stage), while still being bit-preserving via `bitcast`.
+
+Implementation note: the current in-tree placeholder expansion path uses a simpler vertex format
+(`vec4<f32>` position + one `vec4<f32>` varying) and binds it via `VertexFormat::Float32x4` at fixed
+locations 0/1 (see `GEOMETRY_PREPASS_CS_WGSL` and `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` in
+`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
 #### 2.3) Indirect draw argument formats
 
