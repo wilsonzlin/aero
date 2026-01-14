@@ -185,6 +185,61 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
   });
 
+  it("preserves bootDevice when setBootDisks is called with unchanged disk IDs (machine runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as any).workers.cpu;
+    const cpuWorker = cpuInfo.worker as MockWorker;
+
+    // Simulate the CPU worker switching to HDD boot after the guest rebooted.
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
+
+    // DiskManager may re-apply the same selection (e.g. after refresh). This must not reset bootDevice back to cdrom.
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+
+    // `setBootDisks` also re-syncs audio/mic rings; find the most recent boot-disks message.
+    const lastBootDisksMsg = [...cpuWorker.posted].reverse().find((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(lastBootDisksMsg).toEqual({
+      message: {
+        ...emptySetBootDisksMessage(),
+        mounts: { hddId: "hdd1", cdId: "cd1" },
+        hdd,
+        cd,
+        bootDevice: "hdd",
+      } satisfies SetBootDisksMessage,
+      transfer: undefined,
+    });
+  });
+
   it("resends boot disk selection to the IO worker when vmRuntime=legacy and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 
