@@ -74,7 +74,7 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
 #[test]
 fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -280,7 +280,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
 #[test]
 fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -582,7 +582,7 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
 #[test]
 fn copy_buffer_writeback_roundtrips_bytes() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -709,7 +709,7 @@ fn copy_buffer_writeback_roundtrips_bytes() {
 #[test]
 fn copy_texture2d_writeback_roundtrips_bytes() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -881,7 +881,7 @@ fn copy_texture2d_writeback_roundtrips_bytes() {
 #[test]
 fn copy_buffer_executes_before_draw() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1077,7 +1077,7 @@ fn copy_buffer_executes_before_draw() {
 #[test]
 fn copy_texture2d_executes_before_draw() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1275,7 +1275,7 @@ fn copy_texture2d_executes_before_draw() {
 #[test]
 fn copy_buffer_writeback_writes_guest_backing() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1384,7 +1384,7 @@ fn copy_buffer_writeback_writes_guest_backing() {
 #[test]
 fn copy_buffer_writeback_requires_alloc_table_each_submit() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1563,7 +1563,7 @@ fn copy_buffer_writeback_requires_alloc_table_each_submit() {
 #[test]
 fn copy_buffer_writeback_rejects_readonly_alloc() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1681,7 +1681,7 @@ fn copy_buffer_writeback_rejects_readonly_alloc() {
 #[test]
 fn copy_texture2d_writeback_writes_guest_backing() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1812,7 +1812,7 @@ fn copy_texture2d_writeback_writes_guest_backing() {
 #[test]
 fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1965,7 +1965,7 @@ fn copy_texture2d_writeback_encodes_x8_alpha_as_255() {
 #[test]
 fn copy_texture2d_writeback_rejects_readonly_alloc() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2101,7 +2101,7 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
 #[test]
 fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2346,7 +2346,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
 #[test]
 fn upload_resource_updates_host_owned_resources() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2508,7 +2508,7 @@ fn upload_resource_updates_host_owned_resources() {
 #[test]
 fn alloc_table_descriptor_requires_gpa_and_size_bytes_to_match() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2560,7 +2560,7 @@ fn alloc_table_descriptor_requires_gpa_and_size_bytes_to_match() {
 #[test]
 fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2605,7 +2605,7 @@ fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
 #[test]
 fn resource_dirty_range_texture_row_pitch_is_respected() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2805,7 +2805,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
 #[test]
 fn draw_to_bgra_render_target_is_supported() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -2967,7 +2967,7 @@ fn draw_to_bgra_render_target_is_supported() {
 #[test]
 fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };
@@ -3294,7 +3294,7 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
 #[test]
 fn copy_texture2d_writeback_packs_16bit_formats_b5g6r5_and_b5g5r5a1() {
     pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()) {
+        let mut exec = match common::aerogpu_executor(module_path!()).await {
             Some(exec) => exec,
             None => return,
         };

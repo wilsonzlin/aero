@@ -92,9 +92,11 @@ pub fn d3d9_executor(
 /// many `#[test]` cases in a single process.
 #[allow(dead_code)]
 #[cfg(target_arch = "wasm32")]
-pub fn aerogpu_executor(
+pub async fn aerogpu_executor(
     test_name: &str,
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+) -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
     // `AeroGpuExecutor` uses JS-backed WebGPU handles on wasm32 which are not Send/Sync. Keep the
     // host-style integration tests buildable by treating them as skipped.
     skip_or_panic(test_name, "AeroGpuExecutor is host-only");
@@ -103,9 +105,11 @@ pub fn aerogpu_executor(
 
 #[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn aerogpu_executor(
+pub async fn aerogpu_executor(
     test_name: &str,
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+) -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = test_name;
@@ -117,7 +121,8 @@ pub fn aerogpu_executor(
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    use std::sync::{Mutex, OnceLock};
+    use futures_intrusive::sync::Mutex;
+    use std::sync::OnceLock;
 
     #[cfg(not(target_arch = "wasm32"))]
     static EXEC: OnceLock<Option<&'static Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>> =
@@ -164,7 +169,7 @@ pub fn aerogpu_executor(
 
         let exec = aero_gpu::aerogpu_executor::AeroGpuExecutor::new(device, queue)
             .expect("create AeroGpuExecutor");
-        Some(Box::leak(Box::new(Mutex::new(exec))))
+        Some(Box::leak(Box::new(Mutex::new(exec, true))))
     });
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -174,7 +179,7 @@ pub fn aerogpu_executor(
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let mut exec = exec.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut exec = exec.lock().await;
     exec.reset();
     #[cfg(not(target_arch = "wasm32"))]
     Some(exec)
