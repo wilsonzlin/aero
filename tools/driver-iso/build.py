@@ -77,27 +77,23 @@ def _build_iso_with_imapi(stage_root: Path, out_path: Path, label: str) -> None:
     if not powershell:
         raise SystemExit("powershell.exe not found; required for IMAPI ISO generation fallback")
 
-    cmd = [
-        powershell,
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script),
-        "-SourcePath",
-        str(stage_root),
-        "-IsoPath",
-        str(out_path),
-        "-VolumeLabel",
-        label,
-    ]
-    # New-IsoFile.ps1 prefers the deterministic Rust ISO builder when `cargo` is available.
-    # If the build is configured with SOURCE_DATE_EPOCH, pass it through so the ISO timestamps
-    # remain reproducible (and match other packaging tools).
-    sde = os.environ.get("SOURCE_DATE_EPOCH")
-    if sde:
-        cmd += ["-SourceDateEpoch", sde]
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-SourcePath",
+            str(stage_root),
+            "-IsoPath",
+            str(out_path),
+            "-VolumeLabel",
+            label,
+        ],
+        check=True,
+    )
 
 
 def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
