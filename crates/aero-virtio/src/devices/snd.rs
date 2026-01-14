@@ -3646,6 +3646,10 @@ mod tests {
                 snd.resampler.queued_source_frames() > 0,
                 "precondition: first TX should leave queued resampler state (host_rate_hz={host_rate_hz})"
             );
+            assert!(
+                snd.resampler.required_source_frames(1) > 1,
+                "precondition: first TX should leave fractional resampler state (host_rate_hz={host_rate_hz})"
+            );
 
             // Stop and restart the playback stream without providing any new non-zero audio.
             control_simple(&mut snd, VIRTIO_SND_R_PCM_STOP, PLAYBACK_STREAM_ID);
@@ -3672,6 +3676,11 @@ mod tests {
                 snd.resampler.dst_rate_hz(),
                 host_rate_hz,
                 "PCM_STOP should preserve playback resampler dst rate"
+            );
+            assert_eq!(
+                snd.resampler.required_source_frames(1),
+                1,
+                "PCM_STOP should reset playback resampler fractional position"
             );
             control_simple(&mut snd, VIRTIO_SND_R_PCM_START, PLAYBACK_STREAM_ID);
 
@@ -3988,6 +3997,10 @@ mod tests {
                 snd.resampler.queued_source_frames() > 0,
                 "precondition: first TX should leave queued resampler state (host_rate_hz={host_rate_hz})"
             );
+            assert!(
+                snd.resampler.required_source_frames(1) > 1,
+                "precondition: first TX should leave fractional resampler state (host_rate_hz={host_rate_hz})"
+            );
 
             // Release and restart.
             control_simple(&mut snd, VIRTIO_SND_R_PCM_RELEASE, PLAYBACK_STREAM_ID);
@@ -4014,6 +4027,11 @@ mod tests {
                 snd.resampler.dst_rate_hz(),
                 host_rate_hz,
                 "PCM_RELEASE should preserve playback resampler dst rate"
+            );
+            assert_eq!(
+                snd.resampler.required_source_frames(1),
+                1,
+                "PCM_RELEASE should reset playback resampler fractional position"
             );
             control_set_params(&mut snd, PLAYBACK_STREAM_ID);
             control_simple(&mut snd, VIRTIO_SND_R_PCM_PREPARE, PLAYBACK_STREAM_ID);
