@@ -413,6 +413,14 @@ fn all_ones(size: usize) -> u64 {
 mod tests {
     use super::*;
 
+    const HBA_REG_IS: u64 = 0x08;
+    const PORT0_BASE: u64 = 0x100;
+    const PORT_REG_CLB: u64 = 0x00;
+    const PORT_REG_FB: u64 = 0x08;
+    const PORT_REG_IS: u64 = 0x10;
+    const PORT_REG_IE: u64 = 0x14;
+    const PORT_REG_SERR: u64 = 0x30;
+
     #[test]
     fn mmio_read_size0_returns_zero() {
         let mut dev = AhciPciDevice::new(1);
@@ -490,6 +498,149 @@ mod tests {
         // Clear only bit8 (byte lane 1) with a 2-byte write, leaving bit0 and higher bytes intact.
         dev.mmio_write(px_is_off, 2, 0x0100);
         assert_eq!(dev.mmio_read(px_is_off, 4), 0x0101_0001);
+    }
+
+    #[test]
+    fn mmio_write_partial_rmw_byte_enables_for_non_w1c_register() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        let px_ie_off = PORT0_BASE + PORT_REG_IE;
+
+        // Initialize with a known dword value.
+        dev.mmio_write(px_ie_off, 4, 0x1122_3344);
+        assert_eq!(dev.mmio_read(px_ie_off, 4), 0x1122_3344);
+
+        // 1-byte write should only affect the targeted byte (byte enables via RMW).
+        dev.mmio_write(px_ie_off + 1, 1, 0xAA);
+        assert_eq!(
+            dev.mmio_read(px_ie_off, 4),
+            0x1122_AA44,
+            "1-byte write must not clobber other bytes"
+        );
+
+        // 2-byte write should only affect the targeted bytes.
+        dev.mmio_write(px_ie_off + 2, 2, 0xBEEF);
+        assert_eq!(
+            dev.mmio_read(px_ie_off, 4),
+            0xBEEF_AA44,
+            "2-byte write must not clobber other bytes"
+        );
+    }
+
+    #[test]
+    fn mmio_write_w1c_hba_is_byte_writes_only_clear_written_bytes() {
+        // HBA.IS is a W1C register, but unlike regular registers it must *not* use RMW to implement
+        // byte enables: unwritten bytes should behave as zeros (no effect).
+        let mut dev = AhciPciDevice::new(16);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Synthesize interrupt status for port 0 and port 8 (different bytes in HBA.IS).
+        let mut state = dev.controller.snapshot_state();
+        state.ports[0].is = 1;
+        state.ports[8].is = 1;
+        dev.controller.restore_state(&state);
+
+        assert_eq!(dev.mmio_read(HBA_REG_IS, 4) as u32, (1 << 0) | (1 << 8));
+
+        // Clear port 0 summary bit via a byte write to byte 0.
+        dev.mmio_write(HBA_REG_IS, 1, 1);
+        assert_eq!(
+            dev.mmio_read(HBA_REG_IS, 4) as u32,
+            1 << 8,
+            "byte write to HBA.IS[0] must not clear bits in other bytes"
+        );
+
+        // Reset status bits and clear port 8 via a byte write to byte 1.
+        let mut state = dev.controller.snapshot_state();
+        state.ports[0].is = 1;
+        state.ports[8].is = 1;
+        dev.controller.restore_state(&state);
+
+        dev.mmio_write(HBA_REG_IS + 1, 1, 1);
+        assert_eq!(
+            dev.mmio_read(HBA_REG_IS, 4) as u32,
+            1 << 0,
+            "byte write to HBA.IS[1] must not clear bits in other bytes"
+        );
+    }
+
+    #[test]
+    fn mmio_write_w1c_px_is_and_px_serr_byte_enables_do_not_use_rmw() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Seed port status registers with bits set in multiple bytes so we can detect accidental
+        // clearing from an incorrect RMW merge.
+        let mut state = dev.controller.snapshot_state();
+        state.ports[0].is = 0xFFFF_FFFF;
+        state.ports[0].serr = 0xFFFF_FFFF;
+        dev.controller.restore_state(&state);
+
+        let px_is_off = PORT0_BASE + PORT_REG_IS;
+        let px_serr_off = PORT0_BASE + PORT_REG_SERR;
+
+        assert_eq!(dev.mmio_read(px_is_off, 4), 0xFFFF_FFFF);
+        assert_eq!(dev.mmio_read(px_serr_off, 4), 0xFFFF_FFFF);
+
+        // Clear the second byte of PxIS with a byte write.
+        dev.mmio_write(px_is_off + 1, 1, 0xFF);
+        assert_eq!(
+            dev.mmio_read(px_is_off, 4),
+            0xFFFF_00FF,
+            "byte write must only clear bits covered by the written byte"
+        );
+
+        // Clear the upper 2 bytes of PxIS with a 2-byte write.
+        dev.mmio_write(px_is_off + 2, 2, 0xFFFF);
+        assert_eq!(
+            dev.mmio_read(px_is_off, 4),
+            0x0000_00FF,
+            "2-byte write must only clear bits covered by the written bytes"
+        );
+
+        // Clear the high byte of PxSERR with a byte write.
+        dev.mmio_write(px_serr_off + 3, 1, 0xFF);
+        assert_eq!(
+            dev.mmio_read(px_serr_off, 4),
+            0x00FF_FFFF,
+            "byte write must only clear bits covered by the written byte"
+        );
+    }
+
+    #[test]
+    fn mmio_out_of_range_write_is_ignored_and_size_is_clamped() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Initialize a register we can observe.
+        let px_ie_off = PORT0_BASE + PORT_REG_IE;
+        dev.mmio_write(px_ie_off, 4, 0x1234_5678);
+        assert_eq!(dev.mmio_read(px_ie_off, 4), 0x1234_5678);
+
+        // Writes beyond the ABAR window should be ignored.
+        dev.mmio_write(AHCI_ABAR_SIZE + 16, 4, 0xFFFF_FFFF);
+        assert_eq!(
+            dev.mmio_read(px_ie_off, 4),
+            0x1234_5678,
+            "out-of-range write must not affect in-range registers"
+        );
+
+        // Oversized accesses should be clamped to 8 bytes. Verify that a size-16 write only
+        // updates the first 8 bytes (CLB/CLBU) and does not touch the adjacent FB/FBU.
+        let px_clb_off = PORT0_BASE + PORT_REG_CLB;
+        let px_fb_off = PORT0_BASE + PORT_REG_FB;
+
+        dev.mmio_write(px_fb_off, 8, 0xA1A2_A3A4_A5A6_A7A8);
+        let fb_before = dev.mmio_read(px_fb_off, 8);
+
+        dev.mmio_write(px_clb_off, 16, 0x1122_3344_5566_7788);
+        assert_eq!(dev.mmio_read(px_clb_off, 8), 0x1122_3344_5566_7788);
+        assert_eq!(
+            dev.mmio_read(px_fb_off, 8),
+            fb_before,
+            "size clamping must prevent writes beyond 8 bytes"
+        );
     }
 
     #[test]
