@@ -407,6 +407,26 @@ section_contains_norm \
   'hkr,parameters,allowpollingonly,0x00010001,0' \
   "inf/aero_virtio_snd.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
 
+# Also seed these defaults under the device instance's hardware key (Device Parameters)
+# so they are discoverable via Device Manager's "Device instance path".
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.HW' \
+  'aerovirtiosnd_parameters_addreg' \
+  "inf/aero_virtio_snd.inf must apply AeroVirtioSnd_Parameters_AddReg via [AeroVirtioSnd_Install.NT.HW]"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Parameters_AddReg' \
+  'hkr,parameters,forcenullbackend,0x00010001,0' \
+  "inf/aero_virtio_snd.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Parameters_AddReg' \
+  'hkr,parameters,allowpollingonly,0x00010001,0' \
+  "inf/aero_virtio_snd.inf must seed HKR\\Parameters\\AllowPollingOnly under the hardware key"
+
 if [ -f "$INF_TRANSITIONAL" ]; then
   note "checking transitional INF bring-up toggle defaults..."
   section_contains_norm \
@@ -420,6 +440,24 @@ if [ -f "$INF_TRANSITIONAL" ]; then
     'AeroVirtioSndLegacy.AddReg' \
     'hkr,parameters,allowpollingonly,0x00010001,0' \
     "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT.HW' \
+    'aerovirtiosndlegacy_parameters_addreg' \
+    "inf/aero-virtio-snd-legacy.inf must apply AeroVirtioSndLegacy_Parameters_AddReg via [AeroVirtioSndLegacy_Install.NT.HW]"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Parameters_AddReg' \
+    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    "inf/aero-virtio-snd-legacy.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Parameters_AddReg' \
+    'hkr,parameters,allowpollingonly,0x00010001,0' \
+    "inf/aero-virtio-snd-legacy.inf must seed HKR\\Parameters\\AllowPollingOnly under the hardware key"
 
   note "checking transitional INF MSI interrupt management registrations..."
   section_contains_norm \
