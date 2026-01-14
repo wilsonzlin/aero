@@ -1191,17 +1191,25 @@ fn shl_sets_cf_for_jc() {
 
     let expected = "\
 block 0x6b00:
-  v0 = const.i8 0x80
-  write.al v0
-  v1 = read.eax
-  v2 = read.eax
-  cmpflags.i32 v1, v2 ; flags=CF|PF|AF|ZF|SF|OF
-  v3 = read.al
-  v4 = const.i8 0x1
-  v5 = shl.i8 v3, v4 ; flags=CF|PF|ZF|SF|OF
-  write.al v5
-  v6 = evalcond.b
-  term jcc v6, 0x6b0c, 0x6b08
+  v0 = const.i64 0x6b00
+  write.rip v0
+  v1 = const.i8 0x80
+  write.al v1
+  v2 = const.i64 0x6b02
+  write.rip v2
+  v3 = read.eax
+  v4 = read.eax
+  cmpflags.i32 v3, v4 ; flags=CF|PF|AF|ZF|SF|OF
+  v5 = const.i64 0x6b04
+  write.rip v5
+  v6 = read.al
+  v7 = const.i8 0x1
+  v8 = shl.i8 v6, v7 ; flags=CF|PF|ZF|SF|OF
+  write.al v8
+  v9 = const.i64 0x6b06
+  write.rip v9
+  v10 = evalcond.b
+  term jcc v10, 0x6b0c, 0x6b08
 ";
 
     assert_block_ir(&code, entry, cpu, bus, expected);
