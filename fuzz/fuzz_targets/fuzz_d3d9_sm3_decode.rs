@@ -123,11 +123,13 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     let dst_mask = seed.get(11).copied().unwrap_or(0) & 0xF;
     let dst = dst_token(dst_regtype, dst_index, dst_mask);
 
-    // Sources: float constants c0/c1 (type=2) with varying indices.
+    // Sources: float constants c0/c1/c2 (type=2) with varying indices.
     let c0 = seed.get(3).copied().unwrap_or(0) % 8;
     let c1 = seed.get(4).copied().unwrap_or(1) % 8;
+    let c2 = seed.get(12).copied().unwrap_or(2) % 8;
     let src0 = src_token(2, c0, swz, src_mod);
     let src1 = src_token(2, c1, swz, src_mod);
+    let src2 = src_token(2, c2, swz, src_mod);
 
     // Optional embedded constant definition for c0.
     let include_def = seed.get(5).copied().unwrap_or(0) & 1 != 0;
@@ -208,7 +210,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
         }
 
         // A couple of math ops to reach more lowering code.
-        _ => match seed.get(2).copied().unwrap_or(0) % 3 {
+        _ => match seed.get(2).copied().unwrap_or(0) % 5 {
             // dp2 dst, src0, src1
             0 => {
                 tokens.push(opcode_token(90, 3, mod_bits));
@@ -223,11 +225,27 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
                 tokens.push(src0);
             }
             // pow dst, src0, src1
-            _ => {
+            2 => {
                 tokens.push(opcode_token(32, 3, mod_bits));
                 tokens.push(dst);
                 tokens.push(src0);
                 tokens.push(src1);
+            }
+            // dp2add dst, src0, src1, src2
+            3 => {
+                tokens.push(opcode_token(89, 4, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+                tokens.push(src2);
+            }
+            // lrp dst, src0, src1, src2
+            _ => {
+                tokens.push(opcode_token(18, 4, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+                tokens.push(src2);
             }
         },
     };
