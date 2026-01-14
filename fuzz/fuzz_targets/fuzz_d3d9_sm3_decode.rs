@@ -144,31 +144,30 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
     match mode {
         // Simple straight-line op.
-        0 => {
-            match seed.get(2).copied().unwrap_or(0) % 3 {
-                // mov dst, src0
-                0 => {
-                    tokens.push(opcode_token(1, 2, mod_bits));
-                    tokens.push(dst);
-                    tokens.push(src0);
-                }
-                // add dst, src0, src1
-                1 => {
-                    tokens.push(opcode_token(2, 3, mod_bits));
-                    tokens.push(dst);
-                    tokens.push(src0);
-                    tokens.push(src1);
-                }
-                // cmp dst, cond=src0, src_ge=src0, src_lt=src1
-                _ => {
-                    tokens.push(opcode_token(88, 4, mod_bits));
-                    tokens.push(dst);
-                    tokens.push(src0);
-                    tokens.push(src0);
-                    tokens.push(src1);
-                }
+        0 => match seed.get(2).copied().unwrap_or(0) % 3 {
+            // mov dst, src0
+            0 => {
+                tokens.push(opcode_token(1, 2, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
             }
-        }
+            // add dst, src0, src1
+            1 => {
+                tokens.push(opcode_token(2, 3, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+            }
+            // cmp dst, cond=src0, src_ge=src0, src_lt=src1
+            _ => {
+                tokens.push(opcode_token(88, 4, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src0);
+                tokens.push(src1);
+            }
+        },
+
         // Simple control-flow: if/else/endif around a couple of ops.
         1 => {
             // if src0
@@ -188,6 +187,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             // endif
             tokens.push(opcode_token(43, 0, 0));
         }
+
         // Exercise address registers + relative constant addressing (vs_3_0).
         2 => {
             // mova a0, src0
@@ -203,6 +203,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(rel[0]);
             tokens.push(rel[1]);
         }
+
         // A couple of math ops to reach more lowering code.
         _ => match seed.get(2).copied().unwrap_or(0) % 3 {
             // dp2 dst, src0, src1
@@ -259,6 +260,8 @@ fuzz_target!(|data: &[u8]| {
     // paths quickly (while still treating the raw input as hostile below).
     let patched = build_patched_shader(data);
     decode_build_verify(&patched);
+    // Exercise the non-DXBC code path in `aero_d3d9::shader::parse`.
+    let _ = aero_d3d9::shader::parse(&patched);
     // Also wrap the patched SM2/3 token stream in a minimal DXBC container to exercise the DXBC
     // parsing and shader-bytecode extraction entrypoints in `aero_d3d9::dxbc`.
     let patched_dxbc =
@@ -284,10 +287,13 @@ fuzz_target!(|data: &[u8]| {
     //
     // This parser tokenizes the entire input into u32 tokens up front, so avoid calling it on
     // large buffers unless the first token looks like a plausible version token.
-    if data.len() <= MAX_RAW_DECODE_BYTES {
-        if allow_dxbc && data.len() >= 4 && &data[..4] == b"DXBC" {
-            let _ = aero_d3d9::shader::parse(data);
-        } else if data.len() < 4 || (data.len() % 4) != 0 {
+    if allow_dxbc && data.len() >= 4 && &data[..4] == b"DXBC" {
+        // `shader::parse` tokenizes only the extracted shader chunk (not the whole DXBC container),
+        // so it is fine to run this even when the container itself is larger than
+        // `MAX_RAW_DECODE_BYTES`.
+        let _ = aero_d3d9::shader::parse(data);
+    } else if data.len() <= MAX_RAW_DECODE_BYTES {
+        if data.len() < 4 || (data.len() % 4) != 0 {
             // Cheap early-error path (no full tokenization).
             let _ = aero_d3d9::shader::parse(data);
         } else {
