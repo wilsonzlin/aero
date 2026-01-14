@@ -39,7 +39,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
-  - D3D10/D3D10.1: VS/PS
+  - D3D10/D3D10.1: VS/PS/GS (GS resource bindings are stubbed)
   - D3D11: VS/PS/GS/CS (GS stage bindings are limited; see below)
 - Input layout + vertex/index buffers, primitive topology
 - VS/PS binding tables:
