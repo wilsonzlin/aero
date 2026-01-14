@@ -19,6 +19,7 @@ const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 // `stage_ex` values use DXBC program-type numbering (SM4/SM5 version token).
+const STAGE_EX_VERTEX: u32 = 1;
 const STAGE_EX_GEOMETRY: u32 = 2;
 const STAGE_EX_HULL: u32 = 3;
 const STAGE_EX_DOMAIN: u32 = 4;
@@ -243,6 +244,15 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         push_set_samplers(&mut stream, AerogpuShaderStage::Pixel as u32, 0, 202, 0);
         push_set_texture(&mut stream, AerogpuShaderStage::Pixel as u32, 0, 302, 0);
 
+        // VS binding using the stage_ex extension must route to the VS bucket (not CS).
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            2,
+            304,
+            STAGE_EX_VERTEX,
+        );
+
         // CS bindings (reserved0==0 is the real compute stage). Write slot 0 first; stage_ex writes
         // must not clobber it.
         push_set_constant_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, 103, 0);
@@ -388,6 +398,11 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             bindings.stage(ShaderStage::Vertex).texture(0),
             Some(BoundTexture { texture: 301 })
         );
+        assert_eq!(
+            bindings.stage(ShaderStage::Vertex).texture(2),
+            Some(BoundTexture { texture: 304 })
+        );
+        assert_eq!(bindings.stage(ShaderStage::Compute).texture(2), None);
 
         assert_eq!(
             bindings.stage(ShaderStage::Pixel).constant_buffer(1),

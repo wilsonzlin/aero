@@ -39,13 +39,15 @@ impl ShaderStage {
     /// - `stage_ex != 0` in a packet's reserved field (opcode-specific)
     ///
     /// The `stage_ex` value uses DXBC program-type numbering (SM4/5 version token `program_type`):
+    /// - 1 = vertex shader (VS)
     /// - 2 = geometry shader (GS)
     /// - 3 = hull shader (HS)
     /// - 4 = domain shader (DS)
-    /// - 5 = compute shader (CS) (accepted as an alias for legacy compute)
+    /// - 5 = compute shader (CS)
     ///
-    /// Note: `stage_ex = 1` (Vertex) is intentionally rejected for clarity: VS/PS are always encoded
-    /// via the legacy `shader_stage` field.
+    /// Note: Stage-ex encoding is only required for stages that cannot be represented by the legacy
+    /// VS/PS/CS enum. However, the protocol exposes helpers that can encode any
+    /// `AerogpuShaderStageEx` value, so we accept `Vertex` (1) and `Compute` (5) for robustness.
     pub const fn from_aerogpu_u32_with_stage_ex(stage: u32, stage_ex: u32) -> Option<Self> {
         match stage {
             0 => Some(Self::Vertex),
@@ -57,6 +59,7 @@ impl ShaderStage {
                 // command writers that incorrectly used the DXBC value instead of the reserved 0
                 // sentinel in binding packets.
                 0 | 5 => Some(Self::Compute),
+                1 => Some(Self::Vertex),
                 2 => Some(Self::Geometry),
                 3 => Some(Self::Hull),
                 4 => Some(Self::Domain),
@@ -403,11 +406,18 @@ mod tests {
     }
 
     #[test]
-    fn stage_ex_vertex_is_rejected_for_clarity() {
-        // `stage_ex == 1` is the DXBC program type for Vertex, but the stage_ex mechanism reserves
-        // non-zero tags for stages that cannot be represented by the legacy enum (HS/DS; optionally
-        // GS). Vertex must be encoded via `shader_stage=VERTEX` instead.
-        assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1), None);
+    fn stage_ex_vertex_is_accepted_for_robustness() {
+        // `stage_ex == 1` is the DXBC program type for Vertex. Some command writers may encode it
+        // via `shader_stage=COMPUTE` as the stage_ex sentinel; accept it and route to the VS bucket.
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1),
+            Some(ShaderStage::Vertex)
+        );
+        // Legacy compute encoding.
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 0),
+            Some(ShaderStage::Compute)
+        );
 
         // Non-compute stages ignore stage_ex (reserved field).
         assert_eq!(
