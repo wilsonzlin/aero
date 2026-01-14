@@ -3175,7 +3175,11 @@ impl Machine {
         let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
             .await
             .map_err(|e| {
-                opfs_disk_error_to_js("Machine.attach_ide_secondary_master_iso_opfs_existing", &path, e)
+                opfs_disk_error_to_js(
+                    "Machine.attach_ide_secondary_master_iso_opfs_existing",
+                    &path,
+                    e,
+                )
             })?;
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
