@@ -1527,6 +1527,7 @@ impl AeroGpuMmioDevice {
         }
 
         let mut ticks = 0u32;
+        let dma_enabled = self.bus_master_enabled();
         while now_ns >= next {
             self.scanout0_vblank_seq = self.scanout0_vblank_seq.wrapping_add(1);
             self.scanout0_vblank_time_ns = next;
@@ -1537,7 +1538,12 @@ impl AeroGpuMmioDevice {
                 self.irq_status |= pci::AEROGPU_IRQ_SCANOUT_VBLANK;
             }
 
-            self.process_pending_fences_on_vblank();
+            // Fence completion is gated by PCI COMMAND.BME: without bus mastering, the device must
+            // not perform DMA (including fence page updates). Keep vblank counters advancing, but
+            // do not complete any vsync-paced fences until DMA is permitted again.
+            if dma_enabled {
+                self.process_pending_fences_on_vblank();
+            }
 
             next = next.saturating_add(interval_ns);
             ticks = ticks.saturating_add(1);

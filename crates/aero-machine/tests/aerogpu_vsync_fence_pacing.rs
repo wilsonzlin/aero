@@ -233,6 +233,142 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
 }
 
 #[test]
+fn vsync_fence_completion_is_gated_on_pci_bus_master_enable() {
+    let mut m = new_test_machine();
+    let (bdf, bar0) = setup_pci_and_get_bar0(&mut m);
+
+    let ring_gpa = 0x10000u64;
+    let fence_gpa = 0x20000u64;
+    let cmd_gpa = 0x30000u64;
+
+    // Build a command stream containing a PRESENT with the VSYNC flag.
+    let mut writer = AerogpuCmdWriter::new();
+    writer.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+    let cmd_stream = writer.finish();
+    m.write_physical(cmd_gpa, &cmd_stream);
+
+    // Ring with a single submission.
+    let entry_count = 8u32;
+    let ring_size_bytes = write_ring_header(
+        &mut m,
+        ring_gpa,
+        entry_count,
+        /*head=*/ 0,
+        /*tail=*/ 1,
+    );
+
+    let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
+    let signal_fence = 1u64;
+    write_submit_desc(
+        &mut m,
+        desc_gpa,
+        cmd_gpa,
+        cmd_stream.len() as u32,
+        signal_fence,
+        0,
+    );
+
+    // Program BAR0 registers.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
+        (ring_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES),
+        ring_size_bytes,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_ENABLE,
+    );
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
+        (fence_gpa >> 32) as u32,
+    );
+
+    // Enable scanout/vblank scheduling and fence IRQ delivery.
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_ENABLE),
+        pci::AEROGPU_IRQ_FENCE,
+    );
+
+    let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+
+    // Doorbell + process.
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    // Disable bus mastering before the vblank edge.
+    let mut command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    command &= !(1 << 2); // COMMAND.BME
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+
+    let period_ns = u64::from(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    );
+
+    // On vblank, the fence is eligible, but must not complete without bus mastering.
+    m.tick_platform(period_ns);
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, 0);
+    assert_eq!(
+        m.read_physical_u64(fence_gpa + 8),
+        0,
+        "device must not DMA an updated fence page while bus mastering is disabled"
+    );
+    let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
+    assert!(
+        !interrupts.borrow().gsi_level(gsi),
+        "INTx should not assert while bus mastering is disabled"
+    );
+
+    // Re-enable bus mastering and allow the next vblank tick to complete the fence.
+    command |= 1 << 2;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+
+    m.tick_platform(period_ns);
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, signal_fence);
+    assert_eq!(m.read_physical_u64(fence_gpa + 8), signal_fence);
+    let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_ne!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
+    assert!(
+        interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to assert after vsync-paced fence completion"
+    );
+}
+
+#[test]
 fn duplicate_fence_vsync_present_upgrades_kind_and_merges_irq_semantics() {
     let mut m = new_test_machine();
     let (bdf, bar0) = setup_pci_and_get_bar0(&mut m);

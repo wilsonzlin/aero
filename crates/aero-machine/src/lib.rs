@@ -8063,7 +8063,41 @@ impl Machine {
         }
 
         if let Some(aerogpu_mmio) = self.aerogpu_mmio.as_ref() {
-            aerogpu_mmio.borrow_mut().tick(delta_ns, &mut self.mem);
+            // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI
+            // config space before ticking. This ensures bus mastering gating applies even when the
+            // guest toggles COMMAND.BME between `tick_platform` calls (without an intervening
+            // `process_aerogpu` call).
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+                let (command, bar0_base, bar1_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    let bar1_base = cfg
+                        .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base, bar1_base)
+                };
+
+                let mut dev = aerogpu_mmio.borrow_mut();
+                dev.config_mut().set_command(command);
+                dev.config_mut().set_bar_base(
+                    aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
+                    bar0_base,
+                );
+                dev.config_mut().set_bar_base(
+                    aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+                    bar1_base,
+                );
+                dev.tick(delta_ns, &mut self.mem);
+            } else {
+                aerogpu_mmio.borrow_mut().tick(delta_ns, &mut self.mem);
+            }
         }
 
         if let Some(uhci) = self.uhci.as_ref() {
