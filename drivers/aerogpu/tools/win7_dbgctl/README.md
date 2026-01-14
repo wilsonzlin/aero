@@ -393,7 +393,7 @@ The most common use of `--read-gpa` is to inspect the scanout framebuffer withou
    ```
 
 If scanout is configured for `B8G8R8X8`, the first pixels should match the expected desktop contents (little-endian BGRA/XRGB).
-If `mmio_fb_gpa` is 0 but `cached_fb_gpa` is non-zero, use `cached_fb_gpa` for `--read-gpa` / `--dump-scanout-*`:
+If `mmio_fb_gpa` is 0 but `cached_fb_gpa` is non-zero, use `cached_fb_gpa` for `--read-gpa` / `--dump-scanout-bmp` / `--dump-scanout-png`:
 this can happen during post-display ownership transitions (the KMD disables scanout and may clear MMIO FB GPA registers to stop DMA).
 `--query-scanout` also reports `post_display_ownership_released` in its flags to make this state explicit.
 
