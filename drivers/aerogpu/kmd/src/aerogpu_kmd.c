@@ -8291,9 +8291,27 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_BUFFER_TOO_SMALL;
         }
 
-        ULONGLONG completedFence = adapter->LastCompletedFence;
+        ULONGLONG lastSubmittedFence = 0;
+        ULONGLONG lastCompletedFence = 0;
+        {
+            KIRQL pendingIrql;
+            KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+            lastSubmittedFence = adapter->LastSubmittedFence;
+            lastCompletedFence = adapter->LastCompletedFence;
+            KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+        }
+
+        ULONGLONG completedFence = lastCompletedFence;
         if (poweredOn) {
-            completedFence = AeroGpuReadCompletedFence(adapter);
+            ULONGLONG mmioFence = AeroGpuReadCompletedFence(adapter);
+            /* Clamp for monotonicity + robustness against device reset/tearing. */
+            if (mmioFence < lastCompletedFence) {
+                mmioFence = lastCompletedFence;
+            }
+            if (mmioFence > lastSubmittedFence) {
+                mmioFence = lastSubmittedFence;
+            }
+            completedFence = mmioFence;
         }
 
         aerogpu_escape_query_fence_out* out = (aerogpu_escape_query_fence_out*)pEscape->pPrivateDriverData;
@@ -8301,7 +8319,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
         out->hdr.size = (aerogpu_escape_u32)min((SIZE_T)sizeof(*out), (SIZE_T)pEscape->PrivateDriverDataSize);
         out->hdr.reserved0 = 0;
-        out->last_submitted_fence = (uint64_t)adapter->LastSubmittedFence;
+        out->last_submitted_fence = (uint64_t)lastSubmittedFence;
         out->last_completed_fence = (uint64_t)completedFence;
 
         if (pEscape->PrivateDriverDataSize >=
@@ -8328,16 +8346,25 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.reserved0 = 0;
 
         ULONGLONG lastSubmittedFence = 0;
+        ULONGLONG lastCompletedFence = 0;
         {
             KIRQL pendingIrql;
             KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
             lastSubmittedFence = adapter->LastSubmittedFence;
+            lastCompletedFence = adapter->LastCompletedFence;
             KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
         }
 
-        ULONGLONG lastCompletedFence = adapter->LastCompletedFence;
         if (poweredOn) {
-            lastCompletedFence = AeroGpuReadCompletedFence(adapter);
+            ULONGLONG mmioFence = AeroGpuReadCompletedFence(adapter);
+            /* Clamp for monotonicity + robustness against device reset/tearing. */
+            if (mmioFence < lastCompletedFence) {
+                mmioFence = lastCompletedFence;
+            }
+            if (mmioFence > lastSubmittedFence) {
+                mmioFence = lastSubmittedFence;
+            }
+            lastCompletedFence = mmioFence;
         }
 
         out->last_submitted_fence = (uint64_t)lastSubmittedFence;
