@@ -862,6 +862,38 @@ mod tests {
     use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestRam};
     use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_WRITE};
 
+    #[test]
+    fn inject_wheel2_emits_one_syn_report() {
+        let mut dev = VirtioInput::new(VirtioInputDeviceKind::Mouse);
+        dev.inject_wheel2(2, -3);
+        assert_eq!(
+            dev.pending.len(),
+            3,
+            "inject_wheel2 should emit REL_WHEEL, REL_HWHEEL, and a single SYN_REPORT"
+        );
+        let events: Vec<VirtioInputEvent> = dev.pending.iter().copied().collect();
+        assert_eq!(
+            events,
+            vec![
+                VirtioInputEvent {
+                    type_: EV_REL,
+                    code: REL_WHEEL,
+                    value: 2,
+                },
+                VirtioInputEvent {
+                    type_: EV_REL,
+                    code: REL_HWHEEL,
+                    value: -3,
+                },
+                VirtioInputEvent {
+                    type_: EV_SYN,
+                    code: SYN_REPORT,
+                    value: 0,
+                },
+            ]
+        );
+    }
+
     fn write_desc(
         mem: &mut GuestRam,
         table: u64,
