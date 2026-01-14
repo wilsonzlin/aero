@@ -688,7 +688,6 @@ impl PlatformInterrupts {
     pub fn lapic_by_index(&self, cpu_index: usize) -> Option<Arc<LocalApic>> {
         self.lapics.get(cpu_index).cloned()
     }
-
     /// Register a callback that is invoked when the guest writes to `ICR_LOW` on the given LAPIC.
     pub fn register_icr_notifier(&self, apic_id: u8, notifier: IcrNotifier) {
         if let Some(lapic) = self.lapic_by_apic_id(apic_id) {
