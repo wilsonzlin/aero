@@ -124,18 +124,18 @@ impl AtaDrive {
     /// The transfer mode select byte is written to the Sector Count register.
     pub fn set_transfer_mode_select(&mut self, mode_select: u8) -> Result<(), ()> {
         match mode_select {
-            0x20..=0x27 => {
-                // Ultra DMA: 0x20 | mode
-                let mode = mode_select - 0x20;
+            0x40..=0x47 => {
+                // Ultra DMA: 0x40 | mode
+                let mode = mode_select & 0x07;
                 if mode > ATA_MAX_UDMA_MODE {
                     return Err(());
                 }
                 self.udma_enabled = true;
                 self.udma_mode = mode;
             }
-            0x10..=0x17 => {
-                // Multiword DMA: 0x10 | mode
-                let mode = mode_select - 0x10;
+            0x20..=0x27 => {
+                // Multiword DMA: 0x20 | mode
+                let mode = mode_select & 0x07;
                 if mode > ATA_MAX_MWDMA_MODE {
                     return Err(());
                 }

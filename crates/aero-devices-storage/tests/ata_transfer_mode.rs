@@ -31,9 +31,9 @@ fn ide_set_features_set_transfer_mode_updates_snapshot_state() {
     // Select master.
     io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
 
-    // SET FEATURES / 0x03: set transfer mode to UDMA2 (0x20 | 2).
+    // SET FEATURES / 0x03: set transfer mode to UDMA2 (0x40 | 2).
     io.write(PRIMARY_PORTS.cmd_base + 1, 1, 0x03);
-    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x22);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x42);
     io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEF);
     let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1); // ack IRQ
 
@@ -45,7 +45,7 @@ fn ide_set_features_set_transfer_mode_updates_snapshot_state() {
 
     // Now select UDMA0.
     io.write(PRIMARY_PORTS.cmd_base + 1, 1, 0x03);
-    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x20);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x40);
     io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEF);
     let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1); // ack IRQ
 
@@ -63,7 +63,7 @@ fn ata_drive_snapshot_roundtrip_preserves_transfer_mode() {
     let mut drive = AtaDrive::new(Box::new(disk)).unwrap();
 
     // Switch away from the default (UDMA2) to ensure we actually track the value.
-    drive.set_transfer_mode_select(0x20).unwrap(); // UDMA0
+    drive.set_transfer_mode_select(0x40).unwrap(); // UDMA0
 
     let snap = drive.save_state();
 
@@ -89,9 +89,8 @@ fn ata_identify_word88_reflects_negotiated_udma_mode() {
     assert_eq!(w88 & 0xFF00, 1 << (8 + 2));
 
     // Switch to UDMA0 and ensure word 88 updates.
-    drive.set_transfer_mode_select(0x20).unwrap(); // UDMA0
+    drive.set_transfer_mode_select(0x40).unwrap(); // UDMA0
     let id2 = drive.identify_sector();
     let w88_2 = identify_word(id2, 88);
     assert_eq!(w88_2 & 0xFF00, 1 << (8 + 0));
 }
-
