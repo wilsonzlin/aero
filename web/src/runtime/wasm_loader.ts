@@ -270,6 +270,7 @@ export type MachineHandle = {
      *
      * Optional for older WASM builds.
      */
+    reattach_restored_disks_from_opfs?(): Promise<void>;
     set_ahci_port0_disk_overlay_ref?(base_image: string, overlay_image: string): void;
     clear_ahci_port0_disk_overlay_ref?(): void;
     set_ide_secondary_master_atapi_overlay_ref?(base_image: string, overlay_image: string): void;

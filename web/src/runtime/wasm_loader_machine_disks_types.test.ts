@@ -17,6 +17,7 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       clear_ide_secondary_master_atapi_overlay_ref: () => {},
       set_ide_primary_master_ata_overlay_ref: (_base: string, _overlay: string) => {},
       clear_ide_primary_master_ata_overlay_ref: () => {},
+      reattach_restored_disks_from_opfs: async () => {},
       take_restored_disk_overlays: () => null,
     } as unknown as Machine;
 
@@ -40,6 +41,8 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       machine.set_ide_primary_master_ata_overlay_ref("d2.base", "d2.overlay");
       // @ts-expect-error clear_ide_primary_master_ata_overlay_ref may be undefined
       machine.clear_ide_primary_master_ata_overlay_ref();
+      // @ts-expect-error reattach_restored_disks_from_opfs may be undefined
+      void machine.reattach_restored_disks_from_opfs();
       // @ts-expect-error take_restored_disk_overlays may be undefined
       machine.take_restored_disk_overlays();
 
@@ -70,6 +73,9 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     }
     if (machine.clear_ide_primary_master_ata_overlay_ref) {
       machine.clear_ide_primary_master_ata_overlay_ref();
+    }
+    if (machine.reattach_restored_disks_from_opfs) {
+      void machine.reattach_restored_disks_from_opfs();
     }
     if (machine.take_restored_disk_overlays) {
       machine.take_restored_disk_overlays();
