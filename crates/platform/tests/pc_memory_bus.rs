@@ -235,6 +235,38 @@ fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_offsets() {
 }
 
 #[test]
+fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_writes() {
+    let mut bus = new_bus(false, 0);
+
+    let mmio_len = (1 << 20) + 0x40u64;
+    let (mmio, mmio_state) = RecordingMmio::new(vec![0xEEu8; mmio_len as usize]);
+
+    let mmio_base = IOAPIC_MMIO_BASE;
+    bus.map_mmio(mmio_base, mmio_len, Box::new(mmio)).unwrap();
+
+    let start = mmio_base + 0x0F_FFF0;
+    let data: Vec<u8> = (0..0x40u8).map(|v| v.wrapping_add(0x10)).collect();
+    bus.write_physical(start, &data);
+
+    // Writes should wrap, so offsets >= 1MiB should remain untouched.
+    let state = mmio_state.lock().unwrap();
+
+    assert!(
+        state.writes.iter().all(|(off, _, _)| *off < (1 << 20)),
+        "unexpected MMIO writes past 1MiB boundary: {:?}",
+        state.writes
+    );
+
+    // First 0x10 bytes land just before the boundary.
+    assert_eq!(&state.mem[0x0F_FFF0..0x1_00000], &data[..0x10]);
+    // Remaining bytes wrap to the start of the region.
+    assert_eq!(&state.mem[0..0x30], &data[0x10..]);
+
+    // Ensure we did not write linearly into offsets >= 1MiB.
+    assert_eq!(&state.mem[0x1_00000..0x1_00030], &[0xEEu8; 0x30]);
+}
+
+#[test]
 fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
     let mut bus = new_bus(false, 2 * 1024 * 1024);
 
