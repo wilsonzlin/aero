@@ -48,7 +48,8 @@ pub struct D3D11Runtime {
     ///
     /// wgpu's GL backend has historically had correctness issues with native primitive restart for
     /// indexed strip topologies. When this is true, the runtime falls back to CPU-side strip
-    /// expansion for restart indices.
+    /// restart handling by splitting indexed strip draws into multiple segments that omit restart
+    /// indices entirely.
     emulate_strip_restart: bool,
     pipelines: PipelineCache,
     pub resources: D3D11Resources,
