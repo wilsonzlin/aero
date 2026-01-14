@@ -11,6 +11,7 @@ pub mod index_pulling;
 pub mod pipeline_layout_cache;
 pub mod scratch_allocator;
 pub mod tessellator;
+pub mod tessellation;
 mod reflection_bindings;
 pub mod resources;
 // Persistent shader translation cache is only available in the browser/WASM build.

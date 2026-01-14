@@ -69,6 +69,7 @@ use super::vertex_pulling::{
     VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 use super::scratch_allocator::GpuScratchAllocator;
+use super::tessellation::TessellationRuntime;
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
@@ -1119,6 +1120,7 @@ pub struct AerogpuD3d11Executor {
     gs_scratch: GsScratchPool,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
+    tessellation: TessellationRuntime,
 
     dummy_uniform: wgpu::Buffer,
     dummy_storage: wgpu::Buffer,
@@ -1378,6 +1380,7 @@ impl AerogpuD3d11Executor {
             gs_scratch: GsScratchPool::default(),
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
+            tessellation: TessellationRuntime::default(),
             dummy_uniform,
             dummy_storage,
             dummy_texture_view,
@@ -1556,6 +1559,7 @@ impl AerogpuD3d11Executor {
         self.gpu_scratch.clear();
         self.gs_scratch.clear();
         self.expansion_scratch.reset();
+        self.tessellation.reset();
         self.encoder_used_buffers.clear();
         self.encoder_used_textures.clear();
         self.next_scratch_buffer_id = 1u64 << 32;
