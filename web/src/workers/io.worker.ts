@@ -3252,10 +3252,15 @@ function runHdaMicCaptureTest(requestId: number): void {
       }
     };
 
+    const CORB_ENTRIES = 256;
+    const RIRB_ENTRIES = 256;
+    const CORB_BYTES = CORB_ENTRIES * 4;
+    const RIRB_BYTES = RIRB_ENTRIES * 8;
+
     // Ensure these fixed-offset harness buffers do not overlap the always-on shared framebuffer demo
     // region embedded in guest RAM.
-    assertNoGuestOverlapWithSharedFramebuffer(corbBase, 8, "HDA test CORB");
-    assertNoGuestOverlapWithSharedFramebuffer(rirbBase, 16, "HDA test RIRB");
+    assertNoGuestOverlapWithSharedFramebuffer(corbBase, CORB_BYTES, "HDA test CORB");
+    assertNoGuestOverlapWithSharedFramebuffer(rirbBase, RIRB_BYTES, "HDA test RIRB");
     assertNoGuestOverlapWithSharedFramebuffer(bdlBase, 16, "HDA test BDL");
     assertNoGuestOverlapWithSharedFramebuffer(pcmBase, pcmBytes, "HDA test PCM");
 
@@ -3281,18 +3286,32 @@ function runHdaMicCaptureTest(requestId: number): void {
     writeU32(bdlBase + 12, 1); // IOC
 
     // Program CORB verbs to configure the input converter (NID4) for stream 2, ch0 and a basic format.
+    // Also enable the mic pin widget (NID5); the codec defaults to gating capture to silence
+    // until the pin is enabled.
     const cmd = (cad: number, nid: number, verb20: number) => ((cad << 28) | (nid << 20) | (verb20 & 0x000f_ffff)) >>> 0;
     const setStreamCh = (0x706 << 8) | 0x20; // stream=2, channel=0
     const setFmt = (0x200 << 8) | 0x10; // 48kHz, 16-bit, mono (matches fmt raw below)
+    const setMicPinCtl = (0x707 << 8) | 0x20; // PinWidgetControl: IN_EN
 
-    ensureRange(corbBase, 8);
-    ensureRange(rirbBase, 16);
+    ensureRange(corbBase, CORB_BYTES);
+    ensureRange(rirbBase, RIRB_BYTES);
     writeU32(corbBase + 0, cmd(0, 4, setStreamCh));
     writeU32(corbBase + 4, cmd(0, 4, setFmt));
+    writeU32(corbBase + 8, cmd(0, 5, setMicPinCtl));
 
-    const mmioWrite = bridge.mmio_write as (offset: number, size: number, value: number) => void;
-    const mmioRead = bridge.mmio_read as (offset: number, size: number) => number;
-    const stepFrames = bridge.step_frames as (frames: number) => void;
+    // wasm-bindgen class methods rely on `this.__wbg_ptr`. If we detach methods from the
+    // object (e.g. `const f = bridge.mmio_write; f(...)`) then `this` becomes `undefined`
+    // and the generated glue crashes trying to read `__wbg_ptr`. Wrap with `.call()` so
+    // we always invoke the methods with the correct receiver.
+    const mmioWrite = (offset: number, size: number, value: number): void => {
+      (bridge.mmio_write as (offset: number, size: number, value: number) => void).call(bridge, offset, size, value);
+    };
+    const mmioRead = (offset: number, size: number): number => {
+      return (bridge.mmio_read as (offset: number, size: number) => number).call(bridge, offset, size) >>> 0;
+    };
+    const stepFrames = (frames: number): void => {
+      (bridge.step_frames as (frames: number) => void).call(bridge, frames);
+    };
 
     // Reset the controller to a known state, then bring it out of reset.
     //
@@ -3302,11 +3321,10 @@ function runHdaMicCaptureTest(requestId: number): void {
     mmioWrite(0x08, 4, 0x0); // GCTL.CRST=0 (enter reset)
     mmioWrite(0x08, 4, 0x1); // GCTL.CRST=1 (leave reset)
 
-    // Use the smallest supported CORB/RIRB sizes (2 entries each) since the harness only
-    // submits two verbs and reads back a small number of responses.
-    // This keeps pointer masking deterministic and avoids relying on the default 256-entry rings.
-    mmioWrite(0x4e, 1, 0); // CORBSIZE: 2 entries
-    mmioWrite(0x5e, 1, 0); // RIRBSIZE: 2 entries
+    // Use 256-entry CORB/RIRB rings so we can enqueue multiple verbs without dealing with
+    // 2-entry pointer masking semantics (CORBWP becomes 1-bit wide when CORBSIZE=2).
+    mmioWrite(0x4e, 1, 0x2); // CORBSIZE: 256 entries
+    mmioWrite(0x5e, 1, 0x2); // RIRBSIZE: 256 entries
     mmioWrite(0x40, 4, corbBase); // CORBLBASE
     mmioWrite(0x44, 4, 0); // CORBUBASE
     mmioWrite(0x50, 4, rirbBase); // RIRBLBASE
@@ -3321,15 +3339,19 @@ function runHdaMicCaptureTest(requestId: number): void {
     mmioWrite(0x5c, 1, 0x03); // RIRBCTL.RUN | RIRBCTL.RINTCTL
     mmioWrite(0x4c, 1, 0x02); // CORBCTL.RUN
 
-    // Submit the 2 commands in two steps. With CORBSIZE=2 entries, CORBWP is only 1-bit wide,
-    // so a single update to CORBWP=1 cannot represent \"two pending entries\" (RP==WP is empty).
-    //
-    // 1) CORBWP=0 -> process CORB[0]
-    // 2) CORBWP=1 -> process CORB[1]
-    mmioWrite(0x48, 2, 0x0000); // CORBWP
-    stepFrames(1);
-    mmioWrite(0x48, 2, 0x0001); // CORBWP
-    stepFrames(1);
+    // Submit the 3 commands (CORB[0..2]) then wait for the responses (RIRBWP should advance to 2).
+    mmioWrite(0x48, 2, 0x0002); // CORBWP
+    let verbsOk = false;
+    for (let i = 0; i < 1024; i++) {
+      stepFrames(1);
+      if ((mmioRead(0x58, 2) & 0xffff) === 0x0002) {
+        verbsOk = true;
+        break;
+      }
+    }
+    if (!verbsOk) {
+      throw new Error("Timed out waiting for HDA CORB/RIRB verb processing.");
+    }
 
     // Program capture stream descriptor 1 (SD#1).
     const sd1Base = 0x80 + 0x20 * 1;

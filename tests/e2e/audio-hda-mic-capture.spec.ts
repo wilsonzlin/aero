@@ -132,7 +132,13 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     if (!io) throw new Error("Missing IO worker");
 
     const requestId = 1;
-    return await new Promise<{ pcm: ArrayBuffer; lpibBefore: number; lpibAfter: number }>((resolve, reject) => {
+    return await new Promise<{
+      lpibBefore: number;
+      lpibAfter: number;
+      pcmNonZeroBytes: number;
+      pcmPosSamples: number;
+      pcmNegSamples: number;
+    }>((resolve, reject) => {
       const timeoutMs = 10_000;
       const timer = setTimeout(() => {
         io.removeEventListener("message", onMessage as any);
@@ -147,10 +153,26 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
         clearTimeout(timer);
         io.removeEventListener("message", onMessage as any);
         if (msg.ok) {
+          const pcm = msg.pcm as ArrayBuffer;
+          const bytes = new Uint8Array(pcm);
+          let pcmNonZeroBytes = 0;
+          for (const b of bytes) if (b !== 0) pcmNonZeroBytes += 1;
+
+          // Decode as signed 16-bit PCM (the harness programs 16-bit mono).
+          const view = new DataView(pcm);
+          let pcmPosSamples = 0;
+          let pcmNegSamples = 0;
+          for (let off = 0; off + 1 < view.byteLength; off += 2) {
+            const s = view.getInt16(off, true);
+            if (s > 0) pcmPosSamples += 1;
+            else if (s < 0) pcmNegSamples += 1;
+          }
           resolve({
-            pcm: msg.pcm as ArrayBuffer,
             lpibBefore: (msg.lpibBefore ?? 0) >>> 0,
             lpibAfter: (msg.lpibAfter ?? 0) >>> 0,
+            pcmNonZeroBytes,
+            pcmPosSamples,
+            pcmNegSamples,
           });
         } else {
           reject(new Error(typeof msg.error === "string" ? msg.error : "HDA mic capture test failed"));
@@ -166,23 +188,9 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
   const expectedLpibDelta = 1024 * 2;
   expect(((first.lpibAfter - first.lpibBefore) >>> 0) >>> 0).toBe(expectedLpibDelta);
 
-  const bytes = new Uint8Array(first.pcm);
-  let nonZero = 0;
-  for (const b of bytes) if (b !== 0) nonZero += 1;
-
-  expect(nonZero).toBeGreaterThan(0);
-
-  // Decode as signed 16-bit PCM (the harness programs 16-bit mono).
-  const view = new DataView(first.pcm);
-  let posSamples = 0;
-  let negSamples = 0;
-  for (let off = 0; off + 1 < view.byteLength; off += 2) {
-    const s = view.getInt16(off, true);
-    if (s > 0) posSamples += 1;
-    else if (s < 0) negSamples += 1;
-  }
-  expect(posSamples).toBeGreaterThan(0);
-  expect(negSamples).toBeGreaterThan(0);
+  expect(first.pcmNonZeroBytes).toBeGreaterThan(0);
+  expect(first.pcmPosSamples).toBeGreaterThan(0);
+  expect(first.pcmNegSamples).toBeGreaterThan(0);
 
   // Confirm that the mic ring consumer advanced (IO worker actually read from the ring).
   const micAfter = await page.evaluate(
@@ -232,7 +240,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     if (!io) throw new Error("Missing IO worker");
 
     const requestId = 2;
-    return await new Promise<{ pcm: ArrayBuffer; lpibBefore: number; lpibAfter: number }>((resolve, reject) => {
+    return await new Promise<{ lpibBefore: number; lpibAfter: number; pcmNonZeroBytes: number }>((resolve, reject) => {
       const timeoutMs = 10_000;
       const timer = setTimeout(() => {
         io.removeEventListener("message", onMessage as any);
@@ -247,10 +255,14 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
         clearTimeout(timer);
         io.removeEventListener("message", onMessage as any);
         if (msg.ok) {
+          const pcm = msg.pcm as ArrayBuffer;
+          const bytes = new Uint8Array(pcm);
+          let pcmNonZeroBytes = 0;
+          for (const b of bytes) if (b !== 0) pcmNonZeroBytes += 1;
           resolve({
-            pcm: msg.pcm as ArrayBuffer,
             lpibBefore: (msg.lpibBefore ?? 0) >>> 0,
             lpibAfter: (msg.lpibAfter ?? 0) >>> 0,
+            pcmNonZeroBytes,
           });
         } else {
           reject(new Error(typeof msg.error === "string" ? msg.error : "HDA mic capture test failed"));
@@ -263,10 +275,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
   });
 
   expect(((silence.lpibAfter - silence.lpibBefore) >>> 0) >>> 0).toBe(expectedLpibDelta);
-  const silenceBytes = new Uint8Array(silence.pcm);
-  let silenceNonZero = 0;
-  for (const b of silenceBytes) if (b !== 0) silenceNonZero += 1;
-  expect(silenceNonZero).toBe(0);
+  expect(silence.pcmNonZeroBytes).toBe(0);
 
   const micAfterSilence = await page.evaluate(
     ({ MIC_HEADER_U32_LEN, MIC_READ_POS_INDEX, MIC_WRITE_POS_INDEX, MIC_DROPPED_SAMPLES_INDEX }) => {

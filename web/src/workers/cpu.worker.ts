@@ -1914,21 +1914,28 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     cursor = rirbBase;
     const corbBase = cursor - slotBytes;
 
-    guestBoundsCheck(corbBase, 8);
-    guestBoundsCheck(rirbBase, 16);
+    const CORB_ENTRIES = 256;
+    const RIRB_ENTRIES = 256;
+    const CORB_BYTES = CORB_ENTRIES * 4;
+    const RIRB_BYTES = RIRB_ENTRIES * 8;
+
+    guestBoundsCheck(corbBase, CORB_BYTES);
+    guestBoundsCheck(rirbBase, RIRB_BYTES);
     guestBoundsCheck(bdlBase, 16);
     guestBoundsCheck(pcmBase, pcmBytes);
-    guestAssertNoOverlapWithDemoRegions(corbBase, 8, "HDA capture CORB");
-    guestAssertNoOverlapWithDemoRegions(rirbBase, 16, "HDA capture RIRB");
+    guestAssertNoOverlapWithDemoRegions(corbBase, CORB_BYTES, "HDA capture CORB");
+    guestAssertNoOverlapWithDemoRegions(rirbBase, RIRB_BYTES, "HDA capture RIRB");
     guestAssertNoOverlapWithDemoRegions(bdlBase, 16, "HDA capture BDL");
     guestAssertNoOverlapWithDemoRegions(pcmBase, pcmBytes, "HDA capture PCM");
 
     // Clear the target PCM buffer so the main thread can detect progress reliably.
     guestU8.fill(0, pcmBase, pcmBase + pcmBytes);
 
-    // Setup CORB/RIRB in guest memory (2 entries each).
-    hdaWrite(0x4e, 1, 0); // CORBSIZE: 2 entries
-    hdaWrite(0x5e, 1, 0); // RIRBSIZE: 2 entries
+    // Setup CORB/RIRB in guest memory (256 entries each).
+    // This matches the working HDA PCI playback harness setup and lets us enqueue multiple
+    // verbs without dealing with the 1-bit CORBWP masking of the 2-entry rings.
+    hdaWrite(0x4e, 1, 0x2); // CORBSIZE: 256 entries
+    hdaWrite(0x5e, 1, 0x2); // RIRBSIZE: 256 entries
     hdaWrite(0x40, 4, corbBase);
     hdaWrite(0x44, 4, 0);
     hdaWrite(0x50, 4, rirbBase);
@@ -1938,13 +1945,23 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     hdaWrite(0x4a, 2, 0x00ff); // CORBRP
     hdaWrite(0x58, 2, 0x00ff); // RIRBWP
 
-    // Queue one verb: SET_STREAM_CHANNEL on input converter (NID 4) to stream 2, channel 0.
-    //
-    // cmd = (cad<<28) | (nid<<20) | verb_20
-    const verb20 = ((0x706 << 8) | 0x20) >>> 0;
-    const cmdWord = ((4 << 20) | verb20) >>> 0;
-    guestWriteU32(corbBase, cmdWord);
-    hdaWrite(0x48, 2, 0x0000); // CORBWP = 0
+    // Configure codec input converter (NID 4) for stream 2, channel 0 and a basic format.
+    // HDA CORB command format: CAD[31:28] | NID[27:20] | VERB[19:0].
+    const mkCorbCmd = (cad: number, nid: number, verb20: number) =>
+      (((cad & 0xf) << 28) | ((nid & 0x7f) << 20) | (verb20 & 0x000f_ffff)) >>> 0;
+    const setStreamChVerb20 = ((0x706 << 8) | 0x20) >>> 0; // stream=2, channel=0
+    const fmtRaw = 0x0010; // 48kHz base, 16-bit, mono
+    const setFmtVerb20 = ((0x200 << 8) | (fmtRaw & 0xffff)) >>> 0;
+    // Enable the mic pin widget (NID 5) so the codec routes capture samples instead of gating
+    // the capture engine to silence. (PinWidgetControl: IN_EN = 0x20).
+    const setMicPinCtlVerb20 = ((0x707 << 8) | 0x20) >>> 0;
+
+    guestWriteU32(corbBase + 0, mkCorbCmd(0, 4, setStreamChVerb20));
+    guestWriteU32(corbBase + 4, mkCorbCmd(0, 4, setFmtVerb20));
+    guestWriteU32(corbBase + 8, mkCorbCmd(0, 5, setMicPinCtlVerb20));
+    // CORBWP points at the last written entry. With CORBRP=0xff and CORBWP=2, there are
+    // three pending verbs (entries 0..2).
+    hdaWrite(0x48, 2, 0x0002); // CORBWP
 
     // Start rings.
     //
@@ -1960,16 +1977,19 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
       return;
     }
 
-    // Wait (briefly) for the verb to be processed so the capture stream is accepted.
-    const rirbDeadline = performance.now() + 1000;
+    // Wait for all verbs to be processed (RIRBWP should advance to 2).
+    const rirbDeadline = performance.now() + 5_000;
     while (performance.now() < rirbDeadline) {
       if (!isHdaPciDeviceTokenActive(token)) {
         stopHdaPciDeviceHardwareIfToken(token);
         return;
       }
-      const rirbSts = hdaRead(0x5d, 1) & 0xff;
-      if ((rirbSts & 0x1) !== 0) break;
+      const wp = hdaRead(0x58, 2) & 0xffff;
+      if (wp === 0x0002) break;
       await sleepMs(10);
+    }
+    if ((hdaRead(0x58, 2) & 0xffff) !== 0x0002) {
+      throw new Error("Timed out waiting for HDA CORB/RIRB verb processing.");
     }
 
     if (!isHdaPciDeviceTokenActive(token)) {
@@ -1992,8 +2012,7 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     const SD_BDPL = sd1 + 0x18;
     const SD_BDPU = sd1 + 0x1c;
 
-    // 48kHz, 16-bit, mono (matches `aero_audio` tests).
-    const fmtRaw = 1 << 4;
+    // 48kHz, 16-bit, mono (matches the converter format programmed via CORB above).
     hdaWrite(SD_BDPL, 4, bdlBase);
     hdaWrite(SD_BDPU, 4, 0);
     hdaWrite(SD_CBL, 4, pcmBytes);

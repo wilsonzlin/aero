@@ -32,7 +32,7 @@ export type VmCacheWriteResult = {
 };
 
 export class VmCoordinator extends EventTarget {
-  constructor(options?: { config?: VmCoordinatorConfig; workerUrl?: URL });
+  constructor(options?: { config?: VmCoordinatorConfig; workerUrl?: URL | null });
 
   static loadSavedCrashSnapshot(): Promise<{ savedTo: string; snapshot: unknown } | null>;
   static clearSavedCrashSnapshot(): Promise<void>;
@@ -43,6 +43,7 @@ export class VmCoordinator extends EventTarget {
   lastHeartbeat: unknown;
   lastSnapshot: unknown;
   lastSnapshotSavedTo: string | null;
+  lastError: { error: unknown; snapshot?: unknown } | null;
 
   start(options?: VmCoordinatorStartOptions): Promise<void>;
   pause(): Promise<void>;

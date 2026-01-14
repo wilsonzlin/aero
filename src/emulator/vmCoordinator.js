@@ -65,16 +65,26 @@ async function tryDeleteSnapshotFromOpfs() {
 }
 
 export class VmCoordinator extends EventTarget {
-  constructor({ config = {}, workerUrl = new URL("./cpu.worker.js", import.meta.url) } = {}) {
+  constructor({ config = {}, workerUrl } = {}) {
     super();
     this.config = mergeConfig(DEFAULT_CONFIG, config);
-    this.workerUrl = workerUrl;
+    // Optional override for the CPU worker script URL.
+    //
+    // Note: when `workerUrl` is unset, `start()` constructs the worker using
+    // `new Worker(new URL("./cpu.worker.js", import.meta.url), ...)` so that Vite can
+    // statically detect and bundle the worker and its dependencies for production
+    // builds. See `docs/` and Vite worker docs for details.
+    this.workerUrl = workerUrl ?? null;
     this.state = "stopped";
     this.worker = null;
     this.lastHeartbeatAt = 0;
     this.lastHeartbeat = null;
     this.lastSnapshot = null;
     this.lastSnapshotSavedTo = null;
+    // Most recent error emitted by the coordinator. This is a convenience for UIs/tests that
+    // want to inspect the underlying failure (stack trace, details, etc.) without wiring an
+    // explicit event listener.
+    this.lastError = null;
 
     this._ackQueues = new Map();
     this._watchdogTimer = null;
@@ -143,7 +153,10 @@ export class VmCoordinator extends EventTarget {
     this.lastHeartbeatAt = Date.now();
     this.lastSnapshotSavedTo = null;
 
-    const worker = new Worker(this.workerUrl, { type: "module" });
+    const worker =
+      this.workerUrl instanceof URL
+        ? new Worker(this.workerUrl, { type: "module" })
+        : new Worker(new URL("./cpu.worker.js", import.meta.url), { type: "module" });
     this.worker = worker;
 
     worker.onmessage = (event) => this._onWorkerMessage(event.data);
@@ -334,10 +347,22 @@ export class VmCoordinator extends EventTarget {
 
   _onWorkerError(event) {
     const err = event.error instanceof Error ? event.error : new Error(event.message);
+    // Preserve the underlying error message so callers (and Playwright E2E) can
+    // diagnose why the worker failed to load/execute. `worker.onerror` is often
+    // the only signal for module-load failures (e.g. missing chunks, syntax
+    // errors, COEP/CSP issues, etc).
+    const baseMessage = err instanceof Error ? err.message : String(err);
+    const message = baseMessage ? `CPU worker crashed: ${baseMessage}` : "CPU worker crashed.";
     this._emitError(
       serializeError(err, {
         code: ErrorCode.WorkerCrashed,
-        message: "CPU worker crashed.",
+        message,
+        details: {
+          ...(baseMessage ? { workerMessage: baseMessage } : {}),
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+        },
       }),
     );
   }
@@ -424,6 +449,7 @@ export class VmCoordinator extends EventTarget {
 
   _emitError(error, { snapshot } = {}) {
     const structured = error && typeof error === "object" ? error : { code: ErrorCode.InternalError, message: String(error) };
+    this.lastError = { error: structured, snapshot };
     if (this.config.autoSaveSnapshotOnCrash) {
       this.lastSnapshot = snapshot ?? this.lastSnapshot;
       const snapshotToSave = this.lastSnapshot;
