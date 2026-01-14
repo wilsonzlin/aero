@@ -1,7 +1,94 @@
 #![cfg(target_arch = "wasm32")]
 
+use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_wasm::{Machine, RunExitKind};
 use wasm_bindgen_test::wasm_bindgen_test;
+
+// Keep constants in sync with:
+// - `crates/aero-shared/src/scanout_state.rs`
+// - `web/src/ipc/scanout_state.ts`
+const SCANOUT_STATE_U32_LEN: usize = 8;
+const SCANOUT_STATE_BYTE_LEN: u32 = (SCANOUT_STATE_U32_LEN as u32) * 4;
+const SCANOUT_STATE_GENERATION_BUSY_BIT: u32 = 1 << 31;
+
+const SCANOUT_SOURCE_LEGACY_TEXT: u32 = 0;
+const SCANOUT_SOURCE_LEGACY_VBE_LFB: u32 = 1;
+const SCANOUT_FORMAT_B8G8R8X8: u32 = 0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScanoutSnapshot {
+    generation: u32,
+    source: u32,
+    base_paddr: u64,
+    width: u32,
+    height: u32,
+    pitch_bytes: u32,
+    format: u32,
+}
+
+unsafe fn snapshot_scanout_state(ptr: u32) -> ScanoutSnapshot {
+    // Implements the same seqlock-style protocol as `aero_shared::scanout_state::ScanoutState::snapshot`,
+    // but without depending on the optional `aero-shared` crate when running wasm-bindgen tests.
+    let base = ptr as *const u32;
+    loop {
+        // Safety: caller ensures `ptr` points to a valid scanout state header in wasm linear memory.
+        let gen0 = unsafe { core::ptr::read_volatile(base.add(0)) };
+        if (gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT) != 0 {
+            core::hint::spin_loop();
+            continue;
+        }
+        let source = unsafe { core::ptr::read_volatile(base.add(1)) };
+        let base_lo = unsafe { core::ptr::read_volatile(base.add(2)) };
+        let base_hi = unsafe { core::ptr::read_volatile(base.add(3)) };
+        let width = unsafe { core::ptr::read_volatile(base.add(4)) };
+        let height = unsafe { core::ptr::read_volatile(base.add(5)) };
+        let pitch_bytes = unsafe { core::ptr::read_volatile(base.add(6)) };
+        let format = unsafe { core::ptr::read_volatile(base.add(7)) };
+
+        let gen1 = unsafe { core::ptr::read_volatile(base.add(0)) };
+        if gen0 != gen1 {
+            core::hint::spin_loop();
+            continue;
+        }
+
+        return ScanoutSnapshot {
+            generation: gen0,
+            source,
+            base_paddr: (base_hi as u64) << 32 | base_lo as u64,
+            width,
+            height,
+            pitch_bytes,
+            format,
+        };
+    }
+}
+
+#[cfg(feature = "wasm-threaded")]
+fn ensure_runtime_reserved_floor() {
+    // In shared-memory worker runs the coordinator always instantiates the module with at least the
+    // runtime-reserved region available. wasm-bindgen tests may start with a smaller default memory.
+    //
+    // The scanout state is placed at the end of the runtime-reserved region, so grow memory up to
+    // that floor before constructing `Machine` (which takes a reference to the scanout state region
+    // in the threaded build).
+    const PAGE_BYTES: u32 = 64 * 1024;
+    let layout = aero_wasm::guest_ram_layout(0);
+    let runtime_reserved = layout.runtime_reserved();
+    if runtime_reserved == 0 {
+        return;
+    }
+    let required_pages = runtime_reserved.div_ceil(PAGE_BYTES);
+    let current_pages = core::arch::wasm32::memory_size(0) as u32;
+    if current_pages < required_pages {
+        let delta = required_pages - current_pages;
+        let prev = core::arch::wasm32::memory_grow(0, delta as usize);
+        assert_ne!(
+            prev,
+            usize::MAX,
+            "wasm memory.grow failed while reserving runtime pages (requested {delta} pages)"
+        );
+    }
+}
 
 fn boot_sector_write_a_to_b8000() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -268,6 +355,9 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
 
 #[wasm_bindgen_test]
 fn wasm_machine_vbe_present_reports_expected_pixel() {
+    #[cfg(feature = "wasm-threaded")]
+    ensure_runtime_reserved_floor();
+
     let boot = boot_sector_vbe_64x64x32_red_pixel();
     // `Machine::new` defaults to AeroGPU; this test specifically targets the legacy VGA/VBE path.
     let mut machine = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
@@ -275,7 +365,29 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     machine
         .set_disk_image(&boot)
         .expect("set_disk_image should accept a 512-byte boot sector");
+
+    let scanout_ptr = machine.scanout_state_ptr();
+    let scanout_len = machine.scanout_state_len_bytes();
     machine.reset();
+
+    if scanout_ptr == 0 {
+        assert_eq!(
+            scanout_len, 0,
+            "scanout_state_len_bytes should be 0 when scanout_state_ptr is 0"
+        );
+    } else {
+        assert_eq!(
+            scanout_len, SCANOUT_STATE_BYTE_LEN,
+            "scanout_state_len_bytes should match SCANOUT_STATE_BYTE_LEN"
+        );
+        let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
+        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+        assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+        assert_ne!(
+            snap.generation, 0,
+            "Machine::reset should publish legacy text scanout state"
+        );
+    }
 
     let mut halted = false;
     for _ in 0..10_000 {
@@ -290,6 +402,16 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
         }
     }
     assert!(halted, "guest never reached HLT");
+
+    if scanout_ptr != 0 {
+        let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
+        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(snap.base_paddr, SVGA_LFB_BASE as u64);
+        assert_eq!(snap.width, 64);
+        assert_eq!(snap.height, 64);
+        assert_eq!(snap.pitch_bytes, 64 * 4);
+        assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+    }
 
     machine.vga_present();
     assert_eq!(machine.vga_width(), 64);

@@ -138,6 +138,12 @@ use aero_shared::shared_framebuffer::{
     SharedFramebuffer, SharedFramebufferLayout, SharedFramebufferWriter,
 };
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+use aero_shared::scanout_state::{
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
+    SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM, SCANOUT_STATE_BYTE_LEN,
+};
+
 #[cfg(target_arch = "wasm32")]
 use aero_opfs::OpfsSyncFile;
 
@@ -3146,6 +3152,20 @@ pub struct Machine {
     // emitting redundant button transition packets.
     mouse_buttons: u8,
     mouse_buttons_known: bool,
+
+    /// Shared scanout descriptor used by the browser presentation pipeline to select the active
+    /// scanout source (legacy VGA text, legacy VBE LFB, or WDDM/AeroGPU).
+    ///
+    /// In the threaded WASM build this lives inside the shared wasm linear memory so both:
+    /// - WASM device models (this VM), and
+    /// - JS workers (GPU presenter / frame scheduler)
+    /// can read/write it using atomics without additional SharedArrayBuffer allocations.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    scanout_state: &'static ScanoutState,
+
+    /// Last legacy scanout state this VM published (used to avoid bumping generation every slice).
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    last_published_scanout: Option<ScanoutStateUpdate>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3286,10 +3306,18 @@ impl Machine {
     fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
         let inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        let scanout_state = Self::scanout_state_ref();
         Ok(Self {
             inner,
             mouse_buttons: 0,
             mouse_buttons_known: true,
+
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            scanout_state,
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            last_published_scanout: None,
         })
     }
 
@@ -3516,6 +3544,14 @@ impl Machine {
         self.inner.reset();
         self.mouse_buttons = 0;
         self.mouse_buttons_known = true;
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            // Reset returns the canonical VM to legacy VGA text mode. Publish this so the browser
+            // presenter can switch scanout sources without heuristics.
+            self.last_published_scanout = None;
+            self.publish_legacy_text_scanout();
+        }
     }
 
     pub fn set_disk_image(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
@@ -4305,7 +4341,174 @@ impl Machine {
     }
 
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
-        RunExit::from_native(self.inner.run_slice(max_insts as u64))
+        let exit = self.inner.run_slice(max_insts as u64);
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            // Poll for legacy VGA/VBE mode transitions and publish scanout state updates.
+            // (WDDM scanout updates are published by the AeroGPU path.)
+            self.maybe_publish_legacy_scanout_from_vga();
+        }
+
+        RunExit::from_native(exit)
+    }
+
+    // -------------------------------------------------------------------------
+    // Scanout state (threaded WASM only)
+    // -------------------------------------------------------------------------
+
+    /// Pointer (into wasm linear memory) to the shared [`ScanoutState`] header.
+    ///
+    /// Returns 0 when the build does not support a shared scanout state (e.g. non-threaded WASM
+    /// variant or non-wasm host builds).
+    pub fn scanout_state_ptr(&self) -> u32 {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            Self::scanout_state_offset_bytes()
+        }
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            0
+        }
+    }
+
+    /// Length in bytes of the shared scanout state header.
+    pub fn scanout_state_len_bytes(&self) -> u32 {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            SCANOUT_STATE_BYTE_LEN as u32
+        }
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            0
+        }
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn scanout_state_offset_bytes() -> u32 {
+        // Keep this in sync with:
+        // - `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`)
+        // - `web/src/runtime/shared_layout.ts` (embedded scanoutState offset)
+        const WASM_MEMORY_PROBE_WINDOW_BYTES: u32 = 64;
+        let tail_guard = WASM_MEMORY_PROBE_WINDOW_BYTES + SCANOUT_STATE_BYTE_LEN as u32;
+        (crate::guest_layout::RUNTIME_RESERVED_BYTES as u32).saturating_sub(tail_guard)
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn ensure_runtime_reserved_floor_for_scanout_state() {
+        // The browser runtime always instantiates this module with a `WebAssembly.Memory` that is
+        // at least `RUNTIME_RESERVED_BYTES` large.
+        //
+        // wasm-bindgen tests (and other non-worker contexts) may start with a much smaller default
+        // linear memory; grow it to the required floor so `scanout_state_offset_bytes()` is
+        // in-bounds before we create a reference into linear memory.
+        let page_bytes = crate::guest_layout::WASM_PAGE_BYTES as usize;
+        let reserved_bytes = crate::guest_layout::RUNTIME_RESERVED_BYTES as usize;
+        let cur_pages = core::arch::wasm32::memory_size(0) as usize;
+        let cur_bytes = cur_pages.saturating_mul(page_bytes);
+        if cur_bytes >= reserved_bytes {
+            return;
+        }
+
+        let desired_pages = reserved_bytes.div_ceil(page_bytes);
+        let delta_pages = desired_pages.saturating_sub(cur_pages);
+        if delta_pages == 0 {
+            return;
+        }
+
+        // `memory_grow` returns the previous size, or `usize::MAX` on failure.
+        let prev = core::arch::wasm32::memory_grow(0, delta_pages);
+        if prev == usize::MAX {
+            // Re-check and abort if we still cannot satisfy the runtime layout contract.
+            let pages = core::arch::wasm32::memory_size(0) as usize;
+            let bytes = pages.saturating_mul(page_bytes);
+            if bytes < reserved_bytes {
+                panic!(
+                    "WASM linear memory too small for scanout state: have {bytes} bytes, need at least {reserved_bytes} bytes (runtime reserved). Ensure the module is instantiated with the worker guest memory."
+                );
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn scanout_state_ref() -> &'static ScanoutState {
+        Self::ensure_runtime_reserved_floor_for_scanout_state();
+        // Safety:
+        // - The web runtime allocates at least `RUNTIME_RESERVED_BYTES` of linear memory.
+        // - The wasm-side runtime allocator leaves a tail guard so this region does not overlap heap allocations.
+        // - The region is treated as a plain `u32` array (Atomics-compatible) by both Rust and JS.
+        unsafe { &*(Self::scanout_state_offset_bytes() as *const ScanoutState) }
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn publish_scanout(&mut self, update: ScanoutStateUpdate) {
+        if self.last_published_scanout == Some(update) {
+            return;
+        }
+
+        self.scanout_state.publish(update);
+        self.last_published_scanout = Some(update);
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn publish_legacy_text_scanout(&mut self) {
+        self.publish_scanout(ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        });
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn maybe_publish_legacy_scanout_from_vga(&mut self) {
+        // Do not override WDDM ownership (see `docs/16-aerogpu-vga-vesa-compat.md`).
+        if self.scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM {
+            return;
+        }
+
+        let Some(vga) = self.inner.vga() else {
+            return;
+        };
+
+        // Detect Bochs VBE linear framebuffer modes programmed via ports 0x01CE/0x01CF.
+        let regs = vga.borrow().vbe;
+        let vbe_enabled = (regs.enable & 0x0001) != 0;
+        let lfb_enabled = (regs.enable & 0x0040) != 0;
+        if vbe_enabled && lfb_enabled {
+            let width = regs.xres as u32;
+            let height = regs.yres as u32;
+            if width == 0 || height == 0 {
+                // Treat invalid modes as text for robustness.
+                self.publish_legacy_text_scanout();
+                return;
+            }
+
+            let stride_pixels = if regs.virt_width != 0 {
+                regs.virt_width as u32
+            } else {
+                width
+            };
+            let bytes_per_pixel = ((regs.bpp as u32).saturating_add(7)) / 8;
+            let pitch_bytes = stride_pixels.saturating_mul(bytes_per_pixel);
+
+            let base = aero_gpu_vga::SVGA_LFB_BASE as u64;
+            self.publish_scanout(ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                base_paddr_lo: base as u32,
+                base_paddr_hi: (base >> 32) as u32,
+                width,
+                height,
+                pitch_bytes,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            });
+            return;
+        }
+
+        self.publish_legacy_text_scanout();
     }
 
     /// Returns and clears any accumulated BIOS "TTY output".

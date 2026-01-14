@@ -176,9 +176,14 @@ describe("runtime/shared_layout", () => {
   it("allocates and initializes scanoutState", () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     expect(segments.scanoutState).toBeInstanceOf(SharedArrayBuffer);
-    expect(segments.scanoutStateOffsetBytes).toBe(0);
 
-    const words = new Int32Array(segments.scanoutState!, 0, SCANOUT_STATE_U32_LEN);
+    // ScanoutState is embedded inside the shared WebAssembly.Memory so WASM can update it directly.
+    // Keep in sync with `web/src/runtime/shared_layout.ts`.
+    const expectedOffsetBytes = RUNTIME_RESERVED_BYTES - (64 + SCANOUT_STATE_U32_LEN * 4);
+    expect(segments.scanoutState).toBe(segments.guestMemory.buffer);
+    expect(segments.scanoutStateOffsetBytes).toBe(expectedOffsetBytes);
+
+    const words = new Int32Array(segments.scanoutState!, expectedOffsetBytes, SCANOUT_STATE_U32_LEN);
     const snap = snapshotScanoutState(words);
     expect(snap.generation).toBe(0);
     expect(snap.source).toBe(SCANOUT_SOURCE_LEGACY_TEXT);

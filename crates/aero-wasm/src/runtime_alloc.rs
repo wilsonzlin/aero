@@ -24,12 +24,13 @@ use linked_list_allocator::LockedHeap;
 
 use crate::guest_layout::{RUNTIME_RESERVED_BYTES, WASM_PAGE_BYTES};
 
-// Reserve a tiny tail region at the end of the runtime heap so JS/WASM can safely use a
-// deterministic scratch word for linear-memory wiring probes (and other tiny out-of-band
-// instrumentation) without risking clobbering a real Rust allocation.
+// Reserve a tiny tail region at the end of the runtime heap so JS/WASM can safely use:
+// - a deterministic scratch window for linear-memory wiring probes, and
+// - a small shared scanout descriptor (ScanoutState) that lives in wasm linear memory
+//   (required for cross-worker presentation plumbing in the threaded build).
 //
-// This is intentionally small (<< 1 page) so it doesn't materially reduce available heap.
-const HEAP_TAIL_GUARD_BYTES: usize = 64;
+// This stays intentionally small (<< 1 page) so it doesn't materially reduce available heap.
+const HEAP_TAIL_GUARD_BYTES: usize = 96; // 32B ScanoutState + 64B probe window
 
 // Ensure the tail guard is large enough for the JS-side memory wiring probes.
 //

@@ -13,6 +13,7 @@ import {
 import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_STATE_BYTE_LEN,
   SCANOUT_STATE_U32_LEN,
   ScanoutStateIndex,
   wrapScanoutState,
@@ -285,6 +286,20 @@ export const CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES = 0x20_0000; // 2 MiB (64-
 export const CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH = 640;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT = 480;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE = 32;
+
+// Shared scanout descriptor lives inside the wasm linear memory (guestMemory.buffer) so both:
+// - WASM device models (legacy VGA/VBE, AeroGPU WDDM path, etc), and
+// - JS workers (GPU presenter, frame scheduler)
+// can read/write it using Atomics without extra SharedArrayBuffer allocations/copies.
+//
+// The region is placed at the *end* of the runtime-reserved region, immediately before the
+// 64-byte memory-wiring probe window used by `web/src/runtime/wasm_memory_probe.ts`.
+//
+// IMPORTANT: Keep these constants in sync with the wasm-side runtime allocator guard in
+// `crates/aero-wasm/src/runtime_alloc.rs`.
+const WASM_MEMORY_PROBE_WINDOW_BYTES = 64;
+const WASM_RUNTIME_HEAP_TAIL_GUARD_BYTES = WASM_MEMORY_PROBE_WINDOW_BYTES + SCANOUT_STATE_BYTE_LEN;
+
 function mibToBytes(mib: number): number {
   return mib * 1024 * 1024;
 }
@@ -620,8 +635,9 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
 
   // Single authoritative scanout state (for selecting legacy VGA/VBE vs WDDM).
-  const scanoutState = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * 4);
-  const scanoutStateOffsetBytes = 0;
+  // Embed this inside the shared WebAssembly.Memory so the WASM VM can update it directly.
+  const scanoutState = guestSab;
+  const scanoutStateOffsetBytes = layout.runtime_reserved - WASM_RUNTIME_HEAP_TAIL_GUARD_BYTES;
   const scanoutWords = new Int32Array(scanoutState, scanoutStateOffsetBytes, SCANOUT_STATE_U32_LEN);
   Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, 0);
   Atomics.store(scanoutWords, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_LEGACY_TEXT);
