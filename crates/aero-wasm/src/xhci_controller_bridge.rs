@@ -275,8 +275,9 @@ impl XhciControllerBridge {
         if dma_enabled {
             let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             for _ in 0..frames {
+                // `XhciController::tick_1ms` performs DMA and drains queued events into the guest
+                // event ring, so a single call per frame is sufficient here.
                 self.ctrl.tick_1ms(&mut mem);
-                self.ctrl.service_event_ring(&mut mem);
             }
         } else {
             for _ in 0..frames {
