@@ -1173,12 +1173,20 @@ impl VgaDevice {
 
         // Text start address (CRTC regs 0x0C/0x0D) is specified in units of character cells.
         // Real VGA hardware uses only the low 14 bits and wraps within the 16KiB text window.
-        let start_addr = (((self.crtc[0x0C] as u16) << 8) | self.crtc[0x0D] as u16) & 0x3FFF;
+        let start_addr = (self.crtc_start_address_bytes() >> 1) & 0x3FFF;
+
+        // CRTC offset (0x13) gives the scanline pitch. In text mode, each cell is 2 bytes (char +
+        // attr), so treat the pitch as "cells per row".
+        let row_stride_cells = self
+            .crtc_offset_bytes()
+            .and_then(|b| b.checked_div(2))
+            .filter(|&v| v != 0)
+            .unwrap_or(cols);
 
         for row in 0..rows {
             for col in 0..cols {
-                let cell_index = row * cols + col;
-                let mem_index = (usize::from(start_addr) + cell_index) & 0x3FFF;
+                let cell_index = row * row_stride_cells + col;
+                let mem_index = (start_addr + cell_index) & 0x3FFF;
                 let ch = self.vram[mem_index];
                 let attr = if self.config.legacy_plane_count >= 2 {
                     self.vram[VGA_PLANE_SIZE + mem_index]
@@ -2338,6 +2346,36 @@ mod tests {
         dev.present();
         assert_eq!(dev.get_resolution(), (720, 400));
         assert_eq!(framebuffer_hash(&dev), 0x5cfe440e33546065);
+    }
+
+    #[test]
+    fn text_mode_respects_crtc_offset_register() {
+        let mut dev = VgaDevice::new();
+        dev.set_text_mode_80x25();
+
+        // Disable cursor for deterministic output.
+        dev.crtc[0x0A] = 0x20;
+
+        // Set a non-standard row pitch: 81 cells per row (instead of 80).
+        dev.crtc[0x13] = 81;
+
+        let base = 0xB8000u32;
+        // Row 0, col 0 => cell index 0.
+        dev.mem_write_u8(base, b'A');
+        dev.mem_write_u8(base + 1, 0x1F); // bg=1 (blue)
+
+        // Row 1, col 0 => cell index 81 when pitch is 81 cells/row.
+        let row1_cell0 = base + 81 * 2;
+        dev.mem_write_u8(row1_cell0, b'B');
+        dev.mem_write_u8(row1_cell0 + 1, 0x2F); // bg=2 (green)
+
+        dev.present();
+
+        let fb = dev.get_framebuffer();
+        let width = dev.get_resolution().0 as usize;
+        // Use the 9th column of each cell (x=8) which is always background for normal glyphs.
+        assert_eq!(fb[8], rgb_to_rgba_u32(dev.dac[1]));
+        assert_eq!(fb[16 * width + 8], rgb_to_rgba_u32(dev.dac[2]));
     }
 
     #[test]
