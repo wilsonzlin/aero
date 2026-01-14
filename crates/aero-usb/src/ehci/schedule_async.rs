@@ -244,10 +244,16 @@ impl QtdCursor {
     }
 
     fn encode_into_overlay(&self, token: &mut u32, out_bufs: &mut [u32; 5]) {
-        *token = (*token & !QTD_CPAGE_MASK) | ((self.page as u32) << QTD_CPAGE_SHIFT);
+        // CPAGE is only valid for values 0..=4.
+        //
+        // `QtdCursor::advance` allows `self.page == 5` as an internal "cursor is exactly at the end
+        // of the final page" state (a valid completion point). Avoid writing that reserved value
+        // back into the token field to keep guest-visible state spec-aligned.
+        let cpage = self.page.min(4);
+        *token = (*token & !QTD_CPAGE_MASK) | ((cpage as u32) << QTD_CPAGE_SHIFT);
         for i in 0..5 {
             let base = self.bufs[i] & 0xffff_f000;
-            out_bufs[i] = if i == self.page {
+            out_bufs[i] = if i == cpage {
                 base | ((self.offset as u32) & 0x0fff)
             } else {
                 base

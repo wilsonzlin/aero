@@ -624,6 +624,10 @@ fn ehci_async_in_transfer_spans_five_pages_without_buffer_error() {
         0,
         "qTD should not report buffer or transaction errors"
     );
+    assert!(
+        ((tok >> 12) & 0x7) <= 4,
+        "controller must not write reserved CPAGE values"
+    );
 
     let sts = ctrl.mmio_read(REG_USBSTS, 4);
     assert_ne!(sts & USBSTS_USBINT, 0, "IOC should raise USBINT");
