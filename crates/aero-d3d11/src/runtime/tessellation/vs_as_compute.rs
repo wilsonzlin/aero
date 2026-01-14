@@ -54,6 +54,10 @@ impl VsAsComputeConfig {
         if self.control_point_count == 0 {
             bail!("VS-as-compute: control_point_count must be > 0");
         }
+        // D3D11 patchlist topologies are defined for 1..=32 control points.
+        if self.control_point_count > 32 {
+            bail!("VS-as-compute: control_point_count must be <= 32");
+        }
         if self.out_reg_count == 0 {
             bail!("VS-as-compute: out_reg_count must be > 0");
         }
@@ -212,7 +216,19 @@ impl VsAsComputePipeline {
         invocations_per_instance: u32,
         instance_count: u32,
         bind_group_group3: &wgpu::BindGroup,
-    ) {
+    ) -> Result<()> {
+        if invocations_per_instance == 0 || instance_count == 0 {
+            bail!(
+                "VS-as-compute: invalid dispatch size (invocations_per_instance={invocations_per_instance} instance_count={instance_count})"
+            );
+        }
+        if invocations_per_instance % self.cfg.control_point_count != 0 {
+            bail!(
+                "VS-as-compute: invocations_per_instance must be a multiple of control_point_count (invocations_per_instance={invocations_per_instance} control_point_count={})",
+                self.cfg.control_point_count
+            );
+        }
+
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("aero-d3d11 VS-as-compute pass"),
             timestamp_writes: None,
@@ -220,6 +236,7 @@ impl VsAsComputePipeline {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(VERTEX_PULLING_GROUP, bind_group_group3, &[]);
         pass.dispatch_workgroups(invocations_per_instance, instance_count, 1);
+        Ok(())
     }
 }
 

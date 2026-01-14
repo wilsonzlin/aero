@@ -274,7 +274,9 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VS-as-compute encoder"),
         });
-        pipeline.dispatch(&mut encoder, vertex_count, instance_count, &bg);
+        pipeline
+            .dispatch(&mut encoder, vertex_count, instance_count, &bg)
+            .unwrap();
         queue.submit([encoder.finish()]);
 
         let bytes = read_back_buffer(
@@ -449,7 +451,9 @@ fn vs_as_compute_supports_index_pulling() {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VS-as-compute indexed encoder"),
         });
-        pipeline.dispatch(&mut encoder, index_count, instance_count, &bg);
+        pipeline
+            .dispatch(&mut encoder, index_count, instance_count, &bg)
+            .unwrap();
         queue.submit([encoder.finish()]);
 
         let bytes = read_back_buffer(
@@ -476,5 +480,109 @@ fn vs_as_compute_supports_index_pulling() {
             [0.0, 1.0, 0.0, 1.0],
         ];
         assert_eq!(vecs, expected);
+    });
+}
+
+#[test]
+fn vs_as_compute_rejects_non_multiple_of_control_points() {
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return;
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        let (vs_signature, out_reg_count) = load_vs_passthrough_signature().unwrap();
+        let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
+            .context("parse ILAY")
+            .unwrap();
+        let stride = 28u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature).context("pulling layout").unwrap();
+
+        // Provide 4 vertices (the exact contents don't matter since dispatch should fail before execution).
+        let mut vb_bytes = Vec::new();
+        for i in 0..4u32 {
+            vb_bytes.extend_from_slice(&(i as f32).to_le_bytes());
+            vb_bytes.extend_from_slice(&(i as f32).to_le_bytes());
+            vb_bytes.extend_from_slice(&(i as f32).to_le_bytes());
+            vb_bytes.extend_from_slice(&0.0f32.to_le_bytes());
+            vb_bytes.extend_from_slice(&0.0f32.to_le_bytes());
+            vb_bytes.extend_from_slice(&0.0f32.to_le_bytes());
+            vb_bytes.extend_from_slice(&1.0f32.to_le_bytes());
+        }
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute invalid vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute invalid ia uniform"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        let invocations_per_instance = 4u32;
+        let instance_count = 1u32;
+        let control_point_count = 3u32; // does not divide invocations_per_instance
+
+        let cfg = VsAsComputeConfig {
+            control_point_count,
+            out_reg_count,
+            indexed: false,
+        };
+        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs = alloc_vs_out_regs(
+            &mut scratch,
+            &device,
+            invocations_per_instance,
+            instance_count,
+            out_reg_count,
+        )
+        .unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                &ia_uniform,
+                None,
+                None,
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute invalid encoder"),
+        });
+        let err = pipeline
+            .dispatch(&mut encoder, invocations_per_instance, instance_count, &bg)
+            .expect_err("dispatch should reject non-multiple of control point count");
+        assert!(
+            err.to_string().contains("multiple of control_point_count"),
+            "unexpected error: {err:#}"
+        );
     });
 }
