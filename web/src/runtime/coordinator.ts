@@ -1508,6 +1508,12 @@ export class WorkerCoordinator {
           { timeoutMs: 120_000 },
         );
         this.assertSnapshotOk("restoreFromOpfs", restored);
+
+        // Machine snapshot restore is also in-place (SharedArrayBuffers persist). Reset the scanout
+        // descriptor so stale WDDM/BAR1 scanout from a later timeline cannot remain visible after
+        // restoring an older snapshot.
+        const shared = this.shared;
+        if (shared) this.resetScanoutState(shared);
       } finally {
         try {
           await this.resumeWorkersAfterSnapshot();
