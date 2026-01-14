@@ -53,6 +53,7 @@ describe("jit_protocol", () => {
         type: "jit:tier1:compiled",
         id: 8,
         entryRip: 0,
+        wasmBytes: bytes.buffer,
         module,
         codeByteLen: 1,
         exitToInterpreter: false,

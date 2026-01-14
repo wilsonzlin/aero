@@ -686,13 +686,14 @@ async function handleTier1Compile(req: JitTier1CompileRequest): Promise<void> {
     type: "jit:tier1:compiled" as const,
     id: req.id,
     entryRip: req.entryRip,
+    wasmBytes: wasmBytes.buffer,
     codeByteLen: compilation.code_byte_len,
     exitToInterpreter: compilation.exit_to_interpreter,
   };
 
   if (canPostTier1Module === false) {
     // `WebAssembly.Module` cannot be cloned in this environment: return raw bytes.
-    const msg: JitTier1CompiledResponse = { ...base, wasmBytes: wasmBytes.buffer };
+    const msg: JitTier1CompiledResponse = base;
     ctx.postMessage(msg, [wasmBytes.buffer]);
     return;
   }
@@ -704,11 +705,11 @@ async function handleTier1Compile(req: JitTier1CompileRequest): Promise<void> {
     // but fall back to raw bytes when structured cloning the module isn't supported.
     try {
       const msg: JitTier1CompiledResponse = { ...base, module };
-      ctx.postMessage(msg);
+      ctx.postMessage(msg, [wasmBytes.buffer]);
       canPostTier1Module = true;
     } catch (err) {
       if (canPostTier1Module === null && isDataCloneError(err)) canPostTier1Module = false;
-      const msg: JitTier1CompiledResponse = { ...base, wasmBytes: wasmBytes.buffer };
+      const msg: JitTier1CompiledResponse = base;
       ctx.postMessage(msg, [wasmBytes.buffer]);
     }
   } catch (err) {

@@ -62,9 +62,21 @@ export type JitTier1CompiledResponse = {
   type: "jit:tier1:compiled";
   id: number;
   entryRip: number | bigint;
+  /**
+   * Raw WASM bytes for the compiled Tier-1 block.
+   *
+   * Callers should transfer this buffer when sending the response to avoid copying
+   * large blocks.
+   */
+  wasmBytes: ArrayBuffer;
   codeByteLen: number;
   exitToInterpreter: boolean;
-} & ({ module: WebAssembly.Module; wasmBytes?: never } | { wasmBytes: ArrayBuffer; module?: never });
+  /**
+   * Optional precompiled module. When present, the receiver can skip
+   * `WebAssembly.compile(wasmBytes)` and instantiate directly.
+   */
+  module?: WebAssembly.Module;
+};
 
 export type JitErrorCode = "csp_blocked" | "compile_failed" | "unsupported";
 
@@ -131,15 +143,11 @@ export function isJitWorkerResponse(value: unknown): value is JitWorkerResponse 
     if (typeof msg.codeByteLen !== "number") return false;
     if (typeof msg.exitToInterpreter !== "boolean") return false;
     if (typeof msg.entryRip !== "number" && typeof msg.entryRip !== "bigint") return false;
-    if ("module" in msg) {
+    if (!(msg.wasmBytes instanceof ArrayBuffer)) return false;
+    if ("module" in msg && msg.module !== undefined) {
       const mod = msg.module;
       if (typeof mod !== "object" || mod === null) return false;
-      if ("wasmBytes" in msg && msg.wasmBytes !== undefined) return false;
-      return true;
     }
-    if (!("wasmBytes" in msg)) return false;
-    if (!(msg.wasmBytes instanceof ArrayBuffer)) return false;
-    if ("module" in msg && msg.module !== undefined) return false;
     return true;
   }
   return false;

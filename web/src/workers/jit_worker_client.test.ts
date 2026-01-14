@@ -143,11 +143,13 @@ describe("JitWorkerClient", () => {
     const id = (msg as { id: number }).id;
 
     // Minimal valid WebAssembly module: magic + version.
-    const module = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    const wasmBytes = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    const module = new WebAssembly.Module(wasmBytes);
     worker.dispatchMessage({
       type: "jit:tier1:compiled",
       id,
       entryRip: 0n,
+      wasmBytes: wasmBytes.buffer,
       module,
       codeByteLen: 4,
       exitToInterpreter: false,
