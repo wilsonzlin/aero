@@ -1,0 +1,15 @@
+[package]
+name = "aero-net-trace"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+# Opt-in flag to treat network tracing as "available" in release builds.
+net-trace = []
+
+[dependencies]
+aero-net-backend = { path = "../aero-net-backend" }
+aero-net-stack = { path = "../aero-net-stack" }
+aero-pcapng = { path = "../aero-pcapng" }

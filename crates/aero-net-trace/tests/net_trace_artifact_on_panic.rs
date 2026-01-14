@@ -2,7 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use emulator::io::net::trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
+use aero_net_trace::{CaptureArtifactOnPanic, FrameDirection, NetTraceConfig, NetTracer};
 
 #[test]
 fn writes_capture_artifact_when_panicking() {
@@ -30,3 +30,4 @@ fn writes_capture_artifact_when_panicking() {
 
     let _ = std::fs::remove_file(&path);
 }
+

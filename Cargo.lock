@@ -576,6 +576,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-net-trace"
+version = "0.1.0"
+dependencies = [
+ "aero-net-backend",
+ "aero-net-stack",
+ "aero-pcapng",
+]
+
+[[package]]
 name = "aero-opfs"
 version = "0.1.0"
 dependencies = [
@@ -1913,7 +1922,7 @@ dependencies = [
  "aero-net-e1000",
  "aero-net-pump",
  "aero-net-stack",
- "aero-pcapng",
+ "aero-net-trace",
  "aero-platform",
  "aero-protocol",
  "aero-shared",

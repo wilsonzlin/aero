@@ -9,7 +9,7 @@ aerogpu-native = ["dep:aero-gpu", "dep:pollster"]
 aerogpu-exec = ["dep:anyhow", "dep:aero-d3d11", "dep:aero-gpu", "dep:pollster"]
 # Alias for the WebGPU-backed AeroGPU command executor.
 aerogpu-webgpu = ["aerogpu-exec"]
-net-trace = []
+net-trace = ["aero-net-trace/net-trace"]
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
 sinc-resampler = []
@@ -51,6 +51,7 @@ aero-platform = { path = "../platform" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-shared = { path = "../aero-shared" }
 aero-net-backend = { path = "../aero-net-backend" }
+aero-net-trace = { path = "../aero-net-trace" }
 aero-gpu-trace = { path = "../aero-gpu-trace", optional = true }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu = { path = "../aero-gpu", optional = true }
@@ -61,7 +62,6 @@ lru = "0.16"
 memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
-aero-pcapng = { path = "../aero-pcapng" }
 pollster = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

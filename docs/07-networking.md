@@ -1157,7 +1157,7 @@ The network stack should support an *optional* tracing component that:
 
 ### Implementation Notes (Repo)
 
-The Rust implementation lives in `crates/emulator/src/io/net/trace/` and provides:
+The canonical Rust implementation lives in `crates/aero-net-trace/` and provides:
 
 - `NetTracer` + `NetTraceConfig` for capturing frames and exporting PCAPNG.
 - `TracedNetworkStack` wrapper that records:
@@ -1180,7 +1180,7 @@ raw Ethernet frames being forwarded between the guest and the tunnel client and 
 `.pcapng` file (openable in Wireshark).
 
 Note: this is implemented in the web runtime (TypeScript) and is separate from the Rust-side
-`crates/emulator/src/io/net/trace/` `NetTracer` described above; both export PCAPNG, but they run in
+`crates/aero-net-trace/` `NetTracer` described above; both export PCAPNG, but they run in
 different runtimes and capture at different boundaries.
 
 #### What it captures (L2 boundary)

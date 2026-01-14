@@ -40,6 +40,7 @@ members = [
     "crates/aero-l2-proxy",
     "crates/aero-pcapng",
     "crates/aero-net-stack",
+    "crates/aero-net-trace",
     "crates/aero-storage",
     "crates/aero-storage-adapters",
     "crates/aero-mem",
