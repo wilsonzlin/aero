@@ -215,6 +215,7 @@ The tables below are meant to be an **onboarding map**: what already exists in-t
 Legend:
 
 - **Implemented** = present in-tree and wired into at least one CI workflow/guardrail.
+- **Implemented (optional)** = present in-tree but not required by the v1 contract (typically compatibility/perf enhancements; emulator/device models may choose not to implement).
 - **Partial** = present but explicitly minimal/stubbed; known follow-ups remain.
 - **Remaining** = not implemented yet (or explicitly stubbed with TODO-level behavior).
 
