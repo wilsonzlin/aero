@@ -257,15 +257,38 @@ def inf_functional_bytes(path: Path) -> bytes:
     data = path.read_bytes()
     lines = data.splitlines(keepends=True)
 
+    def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
+        """
+        Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
+
+        This makes the section-header scan robust to UTF-16LE/BE INFs (with or
+        without a BOM), where each ASCII character is separated by a NUL byte.
+        """
+
+        if first_line:
+            # Strip BOMs for *detection only*. Returned content still includes them.
+            if line.startswith(b"\xef\xbb\xbf"):
+                line = line[3:]
+            elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
+                line = line[2:]
+
+        for b in line:
+            if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):  # NUL, tab, LF, CR, space
+                continue
+            return b
+        return None
+
     for i, line in enumerate(lines):
-        stripped = line.lstrip(b" \t")
+        first = _first_nonblank_ascii_byte(line=line, first_line=(i == 0))
+        if first is None:
+            continue
 
         # First section header (e.g. "[Version]") starts the functional region.
-        if stripped.startswith(b"["):
+        if first == ord("["):
             return b"".join(lines[i:])
 
-        # Ignore leading comments and blank lines.
-        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+        # Ignore leading comments.
+        if first == ord(";"):
             continue
 
         # Unexpected preamble content (not comment, not blank, not section):
@@ -323,8 +346,20 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
     canonical_label = str(canonical.relative_to(repo_root))
     alias_label = str(alias.relative_to(repo_root))
 
-    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
-    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    def _decode_lines_for_diff(data: bytes) -> list[str]:
+        if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+            text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
+        elif data.startswith(b"\xef\xbb\xbf"):
+            text = data.decode("utf-8-sig", errors="replace")
+        else:
+            text = data.decode("utf-8", errors="replace")
+            # If this was UTF-16 without a BOM, it will look like NUL-padded UTF-8.
+            if "\x00" in text:
+                text = text.replace("\x00", "")
+        return text.splitlines(keepends=True)
+
+    canonical_lines = _decode_lines_for_diff(canonical_body)
+    alias_lines = _decode_lines_for_diff(alias_body)
 
     diff = difflib.unified_diff(
         canonical_lines,
@@ -1059,6 +1094,59 @@ def _self_test_scan_text_tree_for_substrings_utf16() -> None:
         hits = scan_text_tree_for_substrings(root, (needle,))
         if not hits:
             fail("internal unit-test failed: scan_text_tree_for_substrings did not find needle in UTF-16LE file")
+
+
+def _self_test_inf_functional_bytes_utf16() -> None:
+    """
+    Ensure inf_functional_bytes/check_inf_alias_drift remain robust when INFs are
+    UTF-16 encoded (a common Windows INF encoding).
+
+    The INF alias drift checks are intentionally allowed to ignore only the
+    leading banner/comments block. They must still find the real first section
+    header in UTF-16 (with or without a BOM).
+    """
+
+    canonical_header = "; canonical banner\r\n; line2\r\n\r\n"
+    alias_header = "; alias banner\r\n\r\n"
+    body = "[Version]\r\nSignature=\"$WINDOWS NT$\"\r\n\r\n[Foo]\r\nBar=baz\r\n"
+
+    with tempfile.TemporaryDirectory() as td:
+        repo_root = Path(td)
+        canonical = repo_root / "canonical.inf"
+        alias = repo_root / "alias.inf"
+
+        # UTF-16 with BOM.
+        canonical.write_bytes((canonical_header + body).encode("utf-16"))
+        alias.write_bytes((alias_header + body).encode("utf-16"))
+
+        cb = inf_functional_bytes(canonical)
+        ab = inf_functional_bytes(alias)
+        if cb != ab:
+            fail("internal unit-test failed: inf_functional_bytes mismatch for UTF-16 INFs with different banners")
+
+        drift = check_inf_alias_drift(canonical=canonical, alias=alias, repo_root=repo_root, label="utf16-bom")
+        if drift is not None:
+            fail(format_error("internal unit-test failed: check_inf_alias_drift unexpectedly reported drift:", [drift]))
+
+    with tempfile.TemporaryDirectory() as td:
+        repo_root = Path(td)
+        canonical = repo_root / "canonical-nobom.inf"
+        alias = repo_root / "alias-nobom.inf"
+
+        # UTF-16LE without BOM.
+        canonical.write_bytes((canonical_header + body).encode("utf-16-le"))
+        alias.write_bytes((alias_header + body).encode("utf-16-le"))
+
+        cb = inf_functional_bytes(canonical)
+        ab = inf_functional_bytes(alias)
+        if cb != ab:
+            fail(
+                "internal unit-test failed: inf_functional_bytes mismatch for UTF-16LE (no BOM) INFs with different banners"
+            )
+
+        drift = check_inf_alias_drift(canonical=canonical, alias=alias, repo_root=repo_root, label="utf16-nobom")
+        if drift is not None:
+            fail(format_error("internal unit-test failed: check_inf_alias_drift unexpectedly reported drift:", [drift]))
 
 
 def _self_test_parse_queue_table_sizes() -> None:
@@ -2240,9 +2328,6 @@ def validate_virtio_input_model_lines(
                     [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
                 )
             )
-
-
-
 def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
     """
     Normalized INF representation for drift checks:
@@ -3108,6 +3193,7 @@ def main() -> None:
     _self_test_inf_int_parsing()
     _self_test_read_text_utf16()
     _self_test_scan_text_tree_for_substrings_utf16()
+    _self_test_inf_functional_bytes_utf16()
     _self_test_parse_queue_table_sizes()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
