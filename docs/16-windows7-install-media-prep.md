@@ -551,6 +551,8 @@ Important:
 
 - Use UDF-capable output (`-udf`, `-iso-level 3`) because `install.wim` can exceed 4GB.
 - Boot images (`boot/etfsboot.com`, `efi/…/efisys.bin`) must come from the user’s original ISO tree.
+- `-boot-info-table` is an optional bootloader-side patch used by some toolchains; BIOS does not
+  consume it (see [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md)).
 
 ---
 
