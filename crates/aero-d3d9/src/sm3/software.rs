@@ -2039,6 +2039,7 @@ mod tests {
         let mut in_string = false;
         let mut in_char = false;
         let mut raw_string_hashes: Option<usize> = None;
+        let mut code_bytes = Vec::<u8>::new();
 
         while i < bytes.len() {
             let b = bytes[i];
@@ -2157,6 +2158,7 @@ mod tests {
             }
 
             // Brace matching.
+            code_bytes.push(b);
             if b == b'{' {
                 depth += 1;
             } else if b == b'}' {
@@ -2169,11 +2171,18 @@ mod tests {
             i += 1;
         }
 
-        let fn_end = fn_end.expect("failed to find end of collect_used_pixel_inputs_op");
+        let _fn_end = fn_end.expect("failed to find end of collect_used_pixel_inputs_op");
 
-        let fn_src = &SRC[fn_start..fn_end];
+        let code_no_ws = String::from_utf8(
+            code_bytes
+                .into_iter()
+                .filter(|b| !b.is_ascii_whitespace())
+                .collect(),
+        )
+        .expect("source should be valid UTF-8");
+
         assert_eq!(
-            fn_src.matches("IrOp::Dp2Add {").count(),
+            code_no_ws.matches("IrOp::Dp2Add{").count(),
             1,
             "collect_used_pixel_inputs_op should list IrOp::Dp2Add exactly once"
         );
@@ -2182,12 +2191,12 @@ mod tests {
         // conflict resolutions more likely to accidentally duplicate a variant, and this file uses
         // `#[deny(unreachable_patterns)]`, turning that into a hard build break.
         assert!(
-            !fn_src.contains("| IrOp::Dp2Add {")
-                && !fn_src.contains("|IrOp::Dp2Add {")
-                && !fn_src.contains("| IrOp::Mad {")
-                && !fn_src.contains("|IrOp::Mad {")
-                && !fn_src.contains("| IrOp::Lrp {")
-                && !fn_src.contains("|IrOp::Lrp {"),
+            !code_no_ws.contains("|IrOp::Dp2Add{")
+                && !code_no_ws.contains("|(IrOp::Dp2Add{")
+                && !code_no_ws.contains("|IrOp::Mad{")
+                && !code_no_ws.contains("|(IrOp::Mad{")
+                && !code_no_ws.contains("|IrOp::Lrp{")
+                && !code_no_ws.contains("|(IrOp::Lrp{"),
             "collect_used_pixel_inputs_op should keep Dp2Add/Mad/Lrp as separate match arms (no or-pattern group)"
         );
     }
