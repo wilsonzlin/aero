@@ -76,6 +76,12 @@ Notes:
     immediate fences until then).
   - hosts should generally report completion as soon as execution finishes, rather than trying to
     “fake vsync” by delaying `submit_complete` based on host tick cadence.
+- Browser runtime robustness: the canonical web coordinator may **force-complete fences** (by calling
+  `Machine::aerogpu_complete_fence`) when it cannot forward a submission to the GPU worker (for
+  example: bounded queue overflow while the GPU worker is not READY, postMessage/transfer-list
+  failures, or GPU worker restart). This prevents guest deadlocks/TDRs but means the corresponding
+  submission may not have been executed/rendered. See `docs/graphics/status.md` for the concrete
+  failure-mode behaviors and tests.
 
 ### 3) In-process backend: native/headless executor mode
 
