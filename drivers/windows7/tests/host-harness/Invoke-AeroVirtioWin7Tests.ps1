@@ -7093,10 +7093,10 @@ try {
     "VIRTIO_BLK_RESET_FAILED" {
       $reason = "unknown"
       $err = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|FAIL\\|reason=([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL\|reason=([^|\r\n]+)") {
         $reason = $Matches[1]
       }
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|FAIL\\|[^\\r\\n]*\\|err=([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL\|[^\r\n]*\|err=([^|\r\n]+)") {
         $err = $Matches[1]
       }
       Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset was enabled (reason=$reason err=$err)"
@@ -7155,9 +7155,9 @@ try {
         -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|" `
         -SerialLogPath $SerialLogPath
       if ($null -ne $line) {
-        if ($line -match "reason=([^\\|\\r\\n]+)") { $reason = $Matches[1] }
-        if ($line -match "expected=([^\\|\\r\\n]+)") { $expected = $Matches[1] }
-        if ($line -match "actual=([^\\|\\r\\n]+)") { $actual = $Matches[1] }
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "expected=([^|\r\n]+)") { $expected = $Matches[1] }
+        if ($line -match "actual=([^|\r\n]+)") { $actual = $Matches[1] }
       }
       $details = "reason=$reason"
       if (-not [string]::IsNullOrEmpty($expected)) { $details += " expected=$expected" }
