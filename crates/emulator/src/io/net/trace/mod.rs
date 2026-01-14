@@ -179,10 +179,16 @@ fn ethernet_l2_l3_l4_header_len(frame: &[u8]) -> Option<usize> {
     let mut ethertype = u16::from_be_bytes([frame[12], frame[13]]);
     let mut l3_off = ETH_HDR_LEN;
 
-    // Optional 802.1Q / 802.1ad VLAN tags. Support up to two tags (Q-in-Q). If the frame is more
-    // exotic, we conservatively drop it.
+    fn is_vlan_ethertype(ethertype: u16) -> bool {
+        // Common ethertypes used for 802.1Q and VLAN stacking (Q-in-Q).
+        // 0x9100 is widely used as an alternative outer VLAN tag in some environments.
+        matches!(ethertype, 0x8100 | 0x88a8 | 0x9100)
+    }
+
+    // Optional VLAN tags. Support up to two tags (Q-in-Q). If the frame is more exotic, we
+    // conservatively drop it.
     for _ in 0..2 {
-        if ethertype == 0x8100 || ethertype == 0x88a8 {
+        if is_vlan_ethertype(ethertype) {
             if frame.len() < l3_off + 4 {
                 return None;
             }
@@ -192,7 +198,7 @@ fn ethernet_l2_l3_l4_header_len(frame: &[u8]) -> Option<usize> {
             break;
         }
     }
-    if ethertype == 0x8100 || ethertype == 0x88a8 {
+    if is_vlan_ethertype(ethertype) {
         return None;
     }
 
@@ -1677,6 +1683,40 @@ mod tests {
 
         assert_eq!(out.len(), 14 + 4 + 28);
         assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_vlan_l3_l4_headers_for_vlan_ipv4_tcp_with_9100_ethertype() {
+        let frame = make_ipv4_tcp_frame(b"hello vlan 9100", 0);
+        let frame = wrap_vlan(&frame, 0x9100);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable VLAN(0x9100) IPv4/TCP frame");
+
+        assert_eq!(out.len(), 14 + 4 + 20 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_drops_frames_with_more_than_two_vlan_tags() {
+        let frame = make_ipv4_tcp_frame(b"triple vlan", 0);
+        let frame = wrap_vlan(&frame, 0x8100);
+        let frame = wrap_vlan(&frame, 0x8100);
+        let frame = wrap_vlan(&frame, 0x8100);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        assert!(
+            redactor
+                .redact_ethernet(FrameDirection::GuestTx, &frame)
+                .is_none(),
+            "should drop frames with >2 stacked VLAN tags"
+        );
     }
 
     #[test]
