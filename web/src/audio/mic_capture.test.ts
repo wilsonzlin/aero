@@ -167,6 +167,7 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
 
   const dbg = mic.getDebugInfo();
   expect(dbg.backend).toBe("worklet");
+  expect(dbg.audioContextState).toBe(null);
   expect(dbg.workletInitError).toBe(null);
   expect(dbg.trackLabel).toBe("Test Mic");
   expect(dbg.trackEnabled).toBe(true);
@@ -179,6 +180,7 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
   await mic.stop();
   expect(mic.getDebugInfo()).toEqual({
     backend: null,
+    audioContextState: null,
     workletInitError: null,
     trackLabel: null,
     trackEnabled: null,

@@ -342,6 +342,7 @@ type MicAttachmentInfo = {
   /** Hashed deviceId (fnv1a32 of UTF-8). Avoids exporting raw device IDs. */
   deviceIdHash: string | null;
   backend: "worklet" | "script" | null;
+  audioContextState: string | null;
   workletInitError: string | null;
   trackLabel: string | null;
   trackEnabled: boolean | null;
@@ -4494,6 +4495,7 @@ function renderAudioPanel(): HTMLElement {
     sampleRate: number;
     deviceIdHash: string | null;
     backend: "worklet" | "script" | null;
+    audioContextState: string | null;
     workletInitError: string | null;
     trackLabel: string | null;
     trackEnabled: boolean | null;
@@ -4737,6 +4739,7 @@ function renderAudioPanel(): HTMLElement {
         sampleRate: att.sampleRate,
         deviceIdHash: att.deviceIdHash,
         backend: att.backend,
+        audioContextState: att.audioContextState,
         workletInitError: att.workletInitError,
         trackLabel: att.trackLabel,
         trackEnabled: att.trackEnabled,
@@ -4798,6 +4801,7 @@ function renderAudioPanel(): HTMLElement {
         sampleRate,
         deviceIdHash: att.deviceIdHash,
         backend: att.backend,
+        audioContextState: att.audioContextState,
         workletInitError: att.workletInitError,
         trackLabel: att.trackLabel,
         trackEnabled: att.trackEnabled,
@@ -5812,6 +5816,7 @@ function renderMicrophonePanel(): HTMLElement {
           sampleRate: mic.actualSampleRate,
           deviceIdHash,
           backend: dbg.backend,
+          audioContextState: typeof dbg.audioContextState === "string" ? dbg.audioContextState : null,
           workletInitError: typeof dbg.workletInitError === "string" && dbg.workletInitError.length ? dbg.workletInitError : null,
           trackLabel: dbg.trackLabel,
           trackEnabled: typeof dbg.trackEnabled === "boolean" ? dbg.trackEnabled : null,

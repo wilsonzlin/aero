@@ -318,6 +318,7 @@ export class MicCapture extends EventTarget {
 
   getDebugInfo(): {
     backend: "worklet" | "script" | null;
+    audioContextState: AudioContextState | null;
     workletInitError: string | null;
     trackLabel: string | null;
     trackEnabled: boolean | null;
@@ -327,8 +328,13 @@ export class MicCapture extends EventTarget {
     trackConstraints: MediaTrackConstraints | null;
     trackCapabilities: MediaTrackCapabilities | null;
   } {
+    const audioContextState =
+      this.audioContext && typeof (this.audioContext as unknown as { state?: unknown }).state === "string"
+        ? ((this.audioContext as unknown as { state: string }).state as AudioContextState)
+        : null;
     return {
       backend: this.backend,
+      audioContextState,
       workletInitError: this.workletInitError,
       trackLabel: this.trackLabel,
       trackEnabled: this.trackEnabled,
