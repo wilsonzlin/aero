@@ -130,13 +130,7 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
 
 fn imm_u32_scalar(value: u32) -> Vec<u32> {
     vec![
-        operand_token(
-            OPERAND_TYPE_IMMEDIATE32,
-            1,
-            OPERAND_SEL_SELECT1,
-            0,
-            0,
-        ),
+        operand_token(OPERAND_TYPE_IMMEDIATE32, 1, OPERAND_SEL_SELECT1, 0, 0),
         value,
     ]
 }
@@ -150,7 +144,12 @@ fn imm_f32x4(v: [f32; 4]) -> Vec<u32> {
         swizzle_bits(Swizzle::XYZW.0),
         0,
     ));
-    out.extend_from_slice(&[v[0].to_bits(), v[1].to_bits(), v[2].to_bits(), v[3].to_bits()]);
+    out.extend_from_slice(&[
+        v[0].to_bits(),
+        v[1].to_bits(),
+        v[2].to_bits(),
+        v[3].to_bits(),
+    ]);
     out
 }
 

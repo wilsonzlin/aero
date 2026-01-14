@@ -1,9 +1,8 @@
 use aero_d3d11::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, DstOperand, DxbcFile,
-    DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel,
-    ShaderStage, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, WriteMask, SamplerRef,
-    TextureRef,
+    DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
+    ShaderStage, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
