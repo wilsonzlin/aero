@@ -28,6 +28,11 @@ The Win7 D3D9 runtime exposes a device-managed cursor API (`SetCursorProperties`
 AeroGPU implements this as a **software cursor overlay** composited over the present source surface immediately before emitting
 `AEROGPU_CMD_PRESENT_EX`. Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8`, `A8B8G8R8`.
 
+Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
+
+- Cursor state DDIs: `device_set_cursor_properties_dispatch()` / `device_set_cursor_position_dispatch()` / `device_show_cursor_dispatch()`
+- Cursor overlay at present time: `overlay_device_cursor_locked()` (called by `device_present_ex()`)
+
 ## Win7/WDDM submission callbacks (render vs present)
 
 On Win7/WDDM 1.1, the D3D9 runtime provides a `D3DDDI_DEVICECALLBACKS` table during `CreateDevice`. The UMD must submit DMA buffers back to dxgkrnl via these callbacks so the KMD can:
@@ -352,7 +357,7 @@ Limitations (bring-up):
 
 - **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs and a handful of stage0 pixel shader variants, rather than implementing full fixed-function shader generation from `D3DTSS_*` / other fixed-function state (stages `> 0` ignored).
 - **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
-- **Bring-up no-ops:** `pfnGenerateMipSubLevels` and cursor DDIs (`pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`) are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
+- **Bring-up no-ops:** `pfnSetConvolutionMonoKernel`, `pfnGenerateMipSubLevels`, and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
 
 ### Validation
 
@@ -443,11 +448,10 @@ Limitations:
 
 ### Bring-up no-op DDIs
 
-These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They are still traced, but are **not** tagged as `(stub)` in trace output (so they do not trigger `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`):
+These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They are still traced, but are **not** tagged as `(stub)` in trace output (so they do not trigger `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`). They are wired via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
 
 - `pfnSetConvolutionMonoKernel`
 - `pfnGenerateMipSubLevels`
-- `pfnSetCursorProperties` / `pfnSetCursorPosition` / `pfnShowCursor`
 - `pfnSetDialogBoxMode`
 
 ### Cached legacy state (Set*/Get* round-trip)
