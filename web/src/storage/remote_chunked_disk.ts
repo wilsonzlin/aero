@@ -1417,7 +1417,14 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   }
 
   async flush(): Promise<void> {
-    await this.chunkCache.flush();
+    try {
+      await this.chunkCache.flush();
+    } catch (err) {
+      if (!isQuotaExceededError(err)) throw err;
+      // A quota error while flushing indicates we cannot reliably persist further cached data or
+      // metadata. Disable caching for the remainder of the disk lifetime, but keep the disk usable.
+      this.disableCachingDueToQuota();
+    }
   }
 
   async clearCache(): Promise<void> {
