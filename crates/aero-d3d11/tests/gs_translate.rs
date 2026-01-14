@@ -75,6 +75,46 @@ fn assert_wgsl_validates(wgsl: &str) {
         .expect("generated WGSL failed to validate");
 }
 
+fn base_gs_tokens() -> Vec<u32> {
+    // Nominal gs_4_0 version token (decoder uses program.stage/model, but the header must be
+    // well-formed).
+    let version_token = 0x0003_0040u32;
+
+    let mut tokens = vec![version_token, 0];
+
+    // Geometry metadata declarations required by `gs_translate`.
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(3); // D3D10_SB_PRIMITIVE_TRIANGLE
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    tokens.push(3); // D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(1);
+
+    // Declare outputs so the decoder produces `Sm4Decl::Output` entries (not strictly required by
+    // the GS prepass translator, but keeps the token streams realistic).
+    // dcl_output o0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    // dcl_output o1.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o1.xyzw
+    tokens.push(1);
+
+    tokens
+}
+
+fn wgsl_from_tokens(mut tokens: Vec<u32>) -> String {
+    tokens[1] = tokens.len() as u32;
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        tokens,
+    };
+    let module = decode_program(&program).expect("decode");
+    translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate")
+}
+
 #[test]
 fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
     // Build a minimal gs_4_0 token stream with:
@@ -521,6 +561,222 @@ fn sm5_gs_instance_id_translates_to_wgsl_compute_prepass() {
         "expected generated WGSL to reference gs_instance_id system value"
     );
 
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_mul_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // mul o0.xyzw, l(1,2,3,4), l(5,6,7,8)
+    tokens.push(opcode_token(OPCODE_MUL, 13));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x42); // immediate32 vec4
+    tokens.push(0x3f800000); // 1.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x42); // immediate32 vec4
+    tokens.push(0x40a00000); // 5.0
+    tokens.push(0x40c00000); // 6.0
+    tokens.push(0x40e00000); // 7.0
+    tokens.push(0x41000000); // 8.0
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains(") * ("),
+        "expected generated WGSL to contain a mul expression:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_mad_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // mad o0.xyzw, l(1,1,1,1), l(2,2,2,2), l(3,3,3,3)
+    tokens.push(opcode_token(OPCODE_MAD, 18));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x42); // imm
+    for _ in 0..4 {
+        tokens.push(0x3f800000); // 1.0
+    }
+    tokens.push(0x42); // imm
+    for _ in 0..4 {
+        tokens.push(0x40000000); // 2.0
+    }
+    tokens.push(0x42); // imm
+    for _ in 0..4 {
+        tokens.push(0x40400000); // 3.0
+    }
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains(") * (") && wgsl.contains(") + ("),
+        "expected generated WGSL to contain a mad expression:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_min_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // min o0.xyzw, l(1,2,3,4), l(4,3,2,1)
+    tokens.push(opcode_token(OPCODE_MIN, 13));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x42); // imm
+    tokens.push(0x3f800000); // 1.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x42); // imm
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x3f800000); // 1.0
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("min(("),
+        "expected generated WGSL to contain a min() call:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_max_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // max o0.xyzw, l(1,2,3,4), l(4,3,2,1)
+    tokens.push(opcode_token(OPCODE_MAX, 13));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x42); // imm
+    tokens.push(0x3f800000); // 1.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x42); // imm
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x3f800000); // 1.0
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("max(("),
+        "expected generated WGSL to contain a max() call:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_dp3_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // dp3 o0.x, l(1,2,3,4), l(5,6,7,8)
+    tokens.push(opcode_token(OPCODE_DP3, 13));
+    tokens.push(0x101022); // o0.x (mask mode, component_sel=1)
+    tokens.push(0);
+    tokens.push(0x42); // imm
+    tokens.push(0x3f800000); // 1.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x42); // imm
+    tokens.push(0x40a00000); // 5.0
+    tokens.push(0x40c00000); // 6.0
+    tokens.push(0x40e00000); // 7.0
+    tokens.push(0x41000000); // 8.0
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("dot((") && wgsl.contains(".xyz"),
+        "expected generated WGSL to contain a dp3 dot() call:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("o0.x ="),
+        "expected write-mask to lower to component assignment:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_dp4_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // dp4 o0.xyzw, l(1,2,3,4), l(5,6,7,8)
+    tokens.push(opcode_token(OPCODE_DP4, 13));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x42); // imm
+    tokens.push(0x3f800000); // 1.0
+    tokens.push(0x40000000); // 2.0
+    tokens.push(0x40400000); // 3.0
+    tokens.push(0x40800000); // 4.0
+    tokens.push(0x42); // imm
+    tokens.push(0x40a00000); // 5.0
+    tokens.push(0x40c00000); // 6.0
+    tokens.push(0x40e00000); // 7.0
+    tokens.push(0x41000000); // 8.0
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("vec4<f32>(dot(("),
+        "expected generated WGSL to contain a dp4 dot() call:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_movc_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // movc o0.xyzw, l(1,0,0,0), l(2,2,2,2), l(3,3,3,3)
+    tokens.push(opcode_token(OPCODE_MOVC, 18));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x42); // cond imm
+    tokens.push(0x3f800000); // 1.0 (non-zero => true)
+    tokens.push(0);
+    tokens.push(0);
+    tokens.push(0);
+    tokens.push(0x42); // a imm
+    for _ in 0..4 {
+        tokens.push(0x40000000); // 2.0
+    }
+    tokens.push(0x42); // b imm
+    for _ in 0..4 {
+        tokens.push(0x40400000); // 3.0
+    }
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("select(("),
+        "expected generated WGSL to contain a select() call for movc:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("!= vec4<u32>(0u)"),
+        "expected movc condition to be implemented via bitcast/!=0:\n{wgsl}"
+    );
     assert_wgsl_validates(&wgsl);
 }
 
