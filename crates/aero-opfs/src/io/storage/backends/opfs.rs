@@ -33,7 +33,7 @@ mod wasm {
     use std::sync::atomic::{AtomicU32, Ordering};
     use wasm_bindgen::JsValue;
 
-    const DEFAULT_SECTOR_SIZE: u32 = 512;
+    const DEFAULT_SECTOR_SIZE: u32 = aero_storage::SECTOR_SIZE as u32;
     const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991; // 2^53 - 1
 
     fn u64_to_f64_checked(value: u64) -> DiskResult<f64> {
@@ -1348,7 +1348,7 @@ mod wasm {
                 return;
             }
 
-            let err = OpfsBackend::open("tests/not-a-worker.img", true, 512)
+            let err = OpfsBackend::open("tests/not-a-worker.img", true, DEFAULT_SECTOR_SIZE as u64)
                 .await
                 .expect_err("OpfsBackend::open should fail on the main thread");
             let DiskError::NotSupported(msg) = err else {
@@ -1425,7 +1425,7 @@ mod wasm {
                 Err(e) => panic!("open failed: {e:?}"),
             };
 
-            let offset = 7u64 * 512;
+            let offset = 7u64 * (DEFAULT_SECTOR_SIZE as u64);
             let mut write_buf = vec![0u8; 4096];
             fill_deterministic(&mut write_buf, 0xDEAD_BEEF);
             disk.write_at(offset, &write_buf).unwrap();
@@ -1476,7 +1476,7 @@ mod wasm {
             };
 
             let write_offset = 2 * 1024 * 1024 * 1024u64 + 4 * 1024 * 1024;
-            let lba = write_offset / 512;
+            let lba = write_offset / (DEFAULT_SECTOR_SIZE as u64);
 
             let mut write_buf = vec![0u8; 8192];
             fill_deterministic(&mut write_buf, 0xA5A5_5A5A);
@@ -1553,7 +1553,7 @@ mod native {
         }
 
         pub fn sector_size(&self) -> u32 {
-            512
+            aero_storage::SECTOR_SIZE as u32
         }
 
         pub fn total_sectors(&self) -> u64 {
