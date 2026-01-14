@@ -4,8 +4,8 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::runtime::bindings::ShaderStage;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuShaderStageEx,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuShaderStageEx,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -28,7 +28,8 @@ fn insert_before_first_present(stream: &mut Vec<u8>, insert: &[u8]) {
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
         {
             stream.splice(cursor..cursor, insert.iter().copied());
             let size_bytes = u32::try_from(stream.len()).expect("patched stream too large");
@@ -55,16 +56,8 @@ fn aerogpu_cmd_set_shader_constants_f_stage_ex_routes_to_hs_ds_buffers() {
         };
 
         let mut writer = AerogpuCmdWriter::new();
-        writer.set_shader_constants_f_ex(
-            AerogpuShaderStageEx::Hull,
-            1,
-            &[1.0, 2.0, 3.0, 4.0],
-        );
-        writer.set_shader_constants_f_ex(
-            AerogpuShaderStageEx::Domain,
-            2,
-            &[5.0, 6.0, 7.0, 8.0],
-        );
+        writer.set_shader_constants_f_ex(AerogpuShaderStageEx::Hull, 1, &[1.0, 2.0, 3.0, 4.0]);
+        writer.set_shader_constants_f_ex(AerogpuShaderStageEx::Domain, 2, &[5.0, 6.0, 7.0, 8.0]);
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
@@ -84,7 +77,11 @@ fn aerogpu_cmd_set_shader_constants_f_stage_ex_routes_to_hs_ds_buffers() {
         assert_eq!(ds, vec![5.0, 6.0, 7.0, 8.0]);
 
         // Confirm stage_ex writes did not clobber the legacy VS/PS/CS buffers.
-        for stage in [ShaderStage::Vertex, ShaderStage::Pixel, ShaderStage::Compute] {
+        for stage in [
+            ShaderStage::Vertex,
+            ShaderStage::Pixel,
+            ShaderStage::Compute,
+        ] {
             let v1 = exec
                 .read_legacy_constants_f32(stage, 1, 1)
                 .await
@@ -159,4 +156,3 @@ fn aerogpu_cmd_set_shader_constants_f_stage_ex_fast_path_does_not_touch_compute(
         assert_eq!(cs_ds, vec![0.0; 4]);
     });
 }
-

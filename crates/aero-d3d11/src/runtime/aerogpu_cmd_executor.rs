@@ -7487,9 +7487,10 @@ impl AerogpuD3d11Executor {
                         })?;
 
                     if byte_len != 0 {
-                        let offset_bytes = (start_register as u64)
-                            .checked_mul(16)
-                            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: offset_bytes overflow"))?;
+                        let offset_bytes =
+                            (start_register as u64).checked_mul(16).ok_or_else(|| {
+                                anyhow!("SET_SHADER_CONSTANTS_F: offset_bytes overflow")
+                            })?;
                         let byte_len_u64: u64 = byte_len.try_into().map_err(|_| {
                             anyhow!("SET_SHADER_CONSTANTS_F: byte_len out of range")
                         })?;
@@ -10620,18 +10621,15 @@ impl AerogpuD3d11Executor {
             .get(24..data_end)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
-            .ok_or_else(|| {
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
                 anyhow!(
                     "SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
                 )
             })?;
-        let dst = self
-            .legacy_constants
-            .get(&stage)
-            .ok_or_else(|| {
-                anyhow!("SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}")
-            })?;
+        let dst = self.legacy_constants.get(&stage).ok_or_else(|| {
+            anyhow!("SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}")
+        })?;
 
         if byte_len == 0 {
             return Ok(());

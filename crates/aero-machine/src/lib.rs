@@ -4390,7 +4390,11 @@ impl Machine {
     pub fn install_media_is_inserted(&self) -> bool {
         self.ide
             .as_ref()
-            .map(|ide| ide.borrow().controller.secondary_master_atapi_media_present())
+            .map(|ide| {
+                ide.borrow()
+                    .controller
+                    .secondary_master_atapi_media_present()
+            })
             .unwrap_or(false)
     }
 

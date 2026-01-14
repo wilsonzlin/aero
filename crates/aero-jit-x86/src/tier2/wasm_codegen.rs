@@ -1400,8 +1400,7 @@ impl Emitter<'_> {
         // accesses never cross pages and constant vaddrs have a constant page offset).
         let needs_cross_page_check = size_bytes > 1 && !matches!(addr, Operand::Const(_));
         if needs_cross_page_check {
-            let cross_limit =
-                PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
+            let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
             self.f
                 .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
             self.f
@@ -1504,7 +1503,9 @@ impl Emitter<'_> {
                             Width::W32 => self
                                 .f
                                 .instruction(&Instruction::I64Const(0xffff_ffffu64 as i64)),
-                            Width::W64 => unreachable!("masking only required for <= 32-bit stores"),
+                            Width::W64 => {
+                                unreachable!("masking only required for <= 32-bit stores")
+                            }
                         };
                         self.f.instruction(&Instruction::I64And);
                         self.f.instruction(&Instruction::I32WrapI64);
@@ -1606,8 +1607,7 @@ impl Emitter<'_> {
         // accesses never cross pages and constant vaddrs have a constant page offset).
         let needs_cross_page_check = size_bytes > 1 && !matches!(addr, Operand::Const(_));
         if needs_cross_page_check {
-            let cross_limit =
-                PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
+            let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
             self.f
                 .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
             self.f

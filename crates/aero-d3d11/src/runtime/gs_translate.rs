@@ -1655,8 +1655,8 @@ mod tests {
             ],
         };
 
-        let wgsl =
-            translate_gs_module_to_wgsl_compute_prepass(&module).expect("translation should succeed");
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
         assert!(
             wgsl.contains("vec4<f32>(bitcast<vec4<i32>>(r0))"),
             "expected itof to lower via bitcast<i32> then numeric cast:\n{wgsl}"
