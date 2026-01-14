@@ -123,6 +123,28 @@ describe("runtime/coordinator", () => {
     expect(String(cpuWorker.specifier)).toMatch(/machine_cpu\.worker\.ts/);
   });
 
+  it("spawns the legacy CPU worker entrypoint when vmRuntime=legacy", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      vmRuntime: "legacy",
+      guestMemoryMiB: 1,
+      vramMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(String(cpuWorker.specifier)).toMatch(/\/cpu\.worker\.ts(\?|$)/);
+    expect(String(cpuWorker.specifier)).not.toMatch(/machine_cpu\.worker\.ts/);
+  });
+
   it("spawns the machine CPU worker via start() when vmRuntime=machine", () => {
     const coordinator = new WorkerCoordinator();
 
