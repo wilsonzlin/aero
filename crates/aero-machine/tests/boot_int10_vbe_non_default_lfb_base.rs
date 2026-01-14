@@ -86,21 +86,30 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
     run_until_halt(&mut m);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    let lfb_base = m
+    //
+    // Historically the legacy VGA/VBE path routed the LFB through a Bochs/QEMU-style VGA PCI stub
+    // (`00:0c.0`, `1234:1111`). That stub may be removed in future configurations, so always use the
+    // firmware-reported VBE PhysBasePtr via `Machine::vbe_lfb_base_*` and only validate the PCI BAR
+    // path if it is present.
+    let lfb_base = m.vbe_lfb_base_u32();
+    assert_ne!(lfb_base, 0);
+    let pci_lfb_base = m
         .pci_bar_base(profile::VGA_TRANSITIONAL_STUB.bdf, 0)
         .and_then(|base| u32::try_from(base).ok())
-        .expect("VGA PCI BAR should be assigned by BIOS POST");
-    assert_ne!(lfb_base, 0);
-    assert_ne!(
-        lfb_base, SVGA_LFB_BASE,
-        "expected VGA BAR base to differ from SVGA_LFB_BASE when another PCI MMIO device is enabled"
-    );
+        .filter(|&base| base != 0);
+    if let Some(pci_lfb_base) = pci_lfb_base {
+        assert_eq!(pci_lfb_base, lfb_base);
+        assert_ne!(
+            pci_lfb_base, SVGA_LFB_BASE,
+            "expected VGA BAR base to differ from SVGA_LFB_BASE when another PCI MMIO device is enabled"
+        );
+    }
     assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
 
     let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
     assert_eq!(
         phys_base_ptr, lfb_base,
-        "INT 10h AX=4F01 mode info PhysBasePtr must match the VGA PCI BAR assignment"
+        "INT 10h AX=4F01 mode info PhysBasePtr must match Machine::vbe_lfb_base()"
     );
 
     m.display_present();

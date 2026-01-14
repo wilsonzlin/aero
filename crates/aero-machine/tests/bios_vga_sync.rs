@@ -4,10 +4,10 @@ use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
 
-fn vga_pci_lfb_base(m: &Machine) -> u32 {
+fn vga_pci_lfb_base(m: &Machine) -> Option<u32> {
     m.pci_bar_base(profile::VGA_TRANSITIONAL_STUB.bdf, 0)
         .and_then(|base| u32::try_from(base).ok())
-        .unwrap_or(0)
+        .filter(|&base| base != 0)
 }
 
 fn run_until_halt(m: &mut Machine) {
@@ -381,12 +381,21 @@ fn bios_vbe_sync_mode_and_lfb_base() {
                 assert_eq!(m.vbe_lfb_base(), expected);
                 u32::try_from(expected).expect("AeroGPU VBE LFB base should fit in u32")
             } else {
-                let lfb_base = vga_pci_lfb_base(&m);
-                assert_ne!(lfb_base, 0, "VGA BAR0 base should be assigned by BIOS POST");
-                assert_ne!(
-                    lfb_base, SVGA_LFB_BASE,
-                    "expected VGA BAR assignment to differ from the historical hard-coded base"
-                );
+                let lfb_base = m.vbe_lfb_base_u32();
+                assert_ne!(lfb_base, 0, "expected a non-zero VBE LFB base for VGA path");
+
+                // Phase 1 may expose a transitional VGA PCI stub (`00:0c.0`) whose BAR0 routes the
+                // VBE LFB through the PCI MMIO window. Phase 2 removes this stub (AeroGPU owns VGA),
+                // so treat it as optional: if present, it must match the firmware-reported base and
+                // must not remain stuck at the historical hard-coded base when another PCI MMIO
+                // device (E1000) forces relocation.
+                if let Some(pci_lfb_base) = vga_pci_lfb_base(&m) {
+                    assert_eq!(pci_lfb_base, lfb_base);
+                    assert_ne!(
+                        pci_lfb_base, SVGA_LFB_BASE,
+                        "expected VGA BAR assignment to differ from the historical hard-coded base"
+                    );
+                }
                 let vga = m.vga().expect("pc platform should include VGA");
                 assert_eq!(vga.borrow().svga_lfb_base(), lfb_base);
                 lfb_base
