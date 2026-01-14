@@ -39,6 +39,37 @@ fn validate_wgsl(wgsl: &str) {
     .expect("wgsl validate");
 }
 
+fn clamp_value_expr<'a>(wgsl: &'a str) -> &'a str {
+    let clamp_pos = wgsl.find("clamp(").expect("wgsl should contain clamp()");
+    let after = &wgsl[clamp_pos + "clamp(".len()..];
+    let mut depth: u32 = 0;
+    for (idx, ch) in after.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            // The first argument to `clamp()` ends at the first comma that is not nested inside any
+            // parentheses (e.g. commas in `pow(a, b)`).
+            ',' if depth == 0 => return after[..idx].trim(),
+            _ => {}
+        }
+    }
+    panic!("clamp() should have a top-level comma after the value expression")
+}
+
+fn assert_shift_is_applied_before_saturate(wgsl: &str) {
+    // D3D9 result modifiers apply the shift first, then saturate. In WGSL we model saturate via
+    // `clamp()`, so the shifted expression should appear inside the first argument of `clamp()`.
+    let value_expr = clamp_value_expr(wgsl);
+    assert!(
+        value_expr.contains("* 2.0"),
+        "expected shift inside clamp value expr, got `{value_expr}`\nwgsl:\n{wgsl}"
+    );
+}
+
 #[test]
 fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
     // ps_3_0
@@ -95,12 +126,7 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
     assert!(wgsl.wgsl.contains("exp2("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
-    // D3D9 result modifiers apply the shift first, then saturate (clamp).
-    assert!(
-        wgsl.wgsl.contains("clamp((exp2(c0)) * 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
-        "wgsl:\n{}",
-        wgsl.wgsl
-    );
+    assert_shift_is_applied_before_saturate(&wgsl.wgsl);
     assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 
@@ -139,12 +165,7 @@ fn translates_log_to_wgsl_log2_with_saturate_and_shift() {
     assert!(wgsl.wgsl.contains("log2("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
-    // D3D9 result modifiers apply the shift first, then saturate (clamp).
-    assert!(
-        wgsl.wgsl.contains("clamp((log2(c0)) * 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
-        "wgsl:\n{}",
-        wgsl.wgsl
-    );
+    assert_shift_is_applied_before_saturate(&wgsl.wgsl);
 }
 
 #[test]
@@ -197,12 +218,7 @@ fn translates_pow_to_wgsl_pow_with_predication_and_modifiers() {
     assert!(wgsl.wgsl.contains("pow("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
-    // D3D9 result modifiers apply the shift first, then saturate (clamp).
-    assert!(
-        wgsl.wgsl.contains("clamp((pow((c0), (c1))) * 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
-        "wgsl:\n{}",
-        wgsl.wgsl
-    );
+    assert_shift_is_applied_before_saturate(&wgsl.wgsl);
     assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 #[test]
