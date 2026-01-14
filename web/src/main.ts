@@ -3860,7 +3860,10 @@ function renderAudioPanel(): HTMLElement {
         // worker harness. Otherwise, `AeroConfigManager.init()` may emit an update
         // after we start workers and trigger an avoidable worker restart.
         await configInitPromise;
-        workerCoordinator.start(configManager.getState().effective);
+        const base = configManager.getState().effective;
+        // This audio-only debug path does not need a large guest RAM allocation or a VRAM aperture.
+        // Keep allocations small so Playwright runs don't reserve hundreds of MiB per page.
+        workerCoordinator.start({ ...base, guestMemoryMiB: Math.min(base.guestMemoryMiB, 16), vramMiB: 0 });
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
@@ -4297,9 +4300,14 @@ function renderAudioPanel(): HTMLElement {
         // after we start workers and trigger an avoidable worker restart.
         await configInitPromise;
         const base = configManager.getState().effective;
-        // This debug path does not need a full guest RAM allocation; keep it
+        // This debug path does not need a full guest RAM allocation or VRAM aperture; keep it
         // small so Playwright runs don't reserve hundreds of MiB per page.
-        workerCoordinator.start({ ...base, enableWorkers: true, guestMemoryMiB: Math.min(base.guestMemoryMiB, 64) });
+        workerCoordinator.start({
+          ...base,
+          enableWorkers: true,
+          guestMemoryMiB: Math.min(base.guestMemoryMiB, 16),
+          vramMiB: 0,
+        });
 
         workerCoordinator.setMicrophoneRingBuffer(mic.ringBuffer, mic.sampleRate);
         workerCoordinator.setAudioOutputRingBuffer(
@@ -7286,7 +7294,15 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const selection = await getBootDiskSelection(diskManager);
         workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
 
-        workerCoordinator.start(config, { platformFeatures });
+        // When no boot disks are mounted, the workers panel runs in a lightweight demo mode
+        // (shared framebuffer + input capture). Avoid reserving a full VM-sized guest RAM/VRAM
+        // allocation so Playwright smoke tests don't OOM.
+        const isDemoMode = !selection.hdd && !selection.cd;
+        const startConfig = isDemoMode
+          ? { ...config, guestMemoryMiB: Math.min(config.guestMemoryMiB, 16), vramMiB: 0 }
+          : config;
+
+        workerCoordinator.start(startConfig, { platformFeatures });
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
           // WebUSB passthrough currently targets the legacy IO worker USB stack. In vmRuntime=machine,
