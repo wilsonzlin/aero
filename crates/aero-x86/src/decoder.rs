@@ -2075,102 +2075,102 @@ fn real_mode_cr_class() -> yaxpeax_x86::real_mode::RegisterClass {
     use std::sync::OnceLock;
     static CLASS: OnceLock<yaxpeax_x86::real_mode::RegisterClass> = OnceLock::new();
     *CLASS.get_or_init(|| {
-            use yaxpeax_arch::{Decoder, U8Reader};
-            // mov eax, cr0
-            let bytes = [0x0F, 0x20, 0xC0];
-            let decoder = yaxpeax_x86::real_mode::InstDecoder::default();
-            let mut reader = U8Reader::new(&bytes);
-            let inst = decoder.decode(&mut reader).expect("decode mov eax, cr0");
-            match inst.operand(1) {
-                yaxpeax_x86::real_mode::Operand::Register(r) => r.class(),
-                _ => unreachable!("expected CR register operand"),
-            }
-        })
+        use yaxpeax_arch::{Decoder, U8Reader};
+        // mov eax, cr0
+        let bytes = [0x0F, 0x20, 0xC0];
+        let decoder = yaxpeax_x86::real_mode::InstDecoder::default();
+        let mut reader = U8Reader::new(&bytes);
+        let inst = decoder.decode(&mut reader).expect("decode mov eax, cr0");
+        match inst.operand(1) {
+            yaxpeax_x86::real_mode::Operand::Register(r) => r.class(),
+            _ => unreachable!("expected CR register operand"),
+        }
+    })
 }
 
 fn real_mode_dr_class() -> yaxpeax_x86::real_mode::RegisterClass {
     use std::sync::OnceLock;
     static CLASS: OnceLock<yaxpeax_x86::real_mode::RegisterClass> = OnceLock::new();
     *CLASS.get_or_init(|| {
-            use yaxpeax_arch::{Decoder, U8Reader};
-            // mov eax, dr0
-            let bytes = [0x0F, 0x21, 0xC0];
-            let decoder = yaxpeax_x86::real_mode::InstDecoder::default();
-            let mut reader = U8Reader::new(&bytes);
-            let inst = decoder.decode(&mut reader).expect("decode mov eax, dr0");
-            match inst.operand(1) {
-                yaxpeax_x86::real_mode::Operand::Register(r) => r.class(),
-                _ => unreachable!("expected DR register operand"),
-            }
-        })
+        use yaxpeax_arch::{Decoder, U8Reader};
+        // mov eax, dr0
+        let bytes = [0x0F, 0x21, 0xC0];
+        let decoder = yaxpeax_x86::real_mode::InstDecoder::default();
+        let mut reader = U8Reader::new(&bytes);
+        let inst = decoder.decode(&mut reader).expect("decode mov eax, dr0");
+        match inst.operand(1) {
+            yaxpeax_x86::real_mode::Operand::Register(r) => r.class(),
+            _ => unreachable!("expected DR register operand"),
+        }
+    })
 }
 
 fn protected_mode_cr_class() -> yaxpeax_x86::protected_mode::RegisterClass {
     use std::sync::OnceLock;
     static CLASS: OnceLock<yaxpeax_x86::protected_mode::RegisterClass> = OnceLock::new();
     *CLASS.get_or_init(|| {
-            use yaxpeax_arch::{Decoder, U8Reader};
-            // mov eax, cr0
-            let bytes = [0x0F, 0x20, 0xC0];
-            let decoder = yaxpeax_x86::protected_mode::InstDecoder::default();
-            let mut reader = U8Reader::new(&bytes);
-            let inst = decoder.decode(&mut reader).expect("decode mov eax, cr0");
-            match inst.operand(1) {
-                yaxpeax_x86::protected_mode::Operand::Register(r) => r.class(),
-                _ => unreachable!("expected CR register operand"),
-            }
-        })
+        use yaxpeax_arch::{Decoder, U8Reader};
+        // mov eax, cr0
+        let bytes = [0x0F, 0x20, 0xC0];
+        let decoder = yaxpeax_x86::protected_mode::InstDecoder::default();
+        let mut reader = U8Reader::new(&bytes);
+        let inst = decoder.decode(&mut reader).expect("decode mov eax, cr0");
+        match inst.operand(1) {
+            yaxpeax_x86::protected_mode::Operand::Register(r) => r.class(),
+            _ => unreachable!("expected CR register operand"),
+        }
+    })
 }
 
 fn protected_mode_dr_class() -> yaxpeax_x86::protected_mode::RegisterClass {
     use std::sync::OnceLock;
     static CLASS: OnceLock<yaxpeax_x86::protected_mode::RegisterClass> = OnceLock::new();
     *CLASS.get_or_init(|| {
-            use yaxpeax_arch::{Decoder, U8Reader};
-            // mov eax, dr0
-            let bytes = [0x0F, 0x21, 0xC0];
-            let decoder = yaxpeax_x86::protected_mode::InstDecoder::default();
-            let mut reader = U8Reader::new(&bytes);
-            let inst = decoder.decode(&mut reader).expect("decode mov eax, dr0");
-            match inst.operand(1) {
-                yaxpeax_x86::protected_mode::Operand::Register(r) => r.class(),
-                _ => unreachable!("expected DR register operand"),
-            }
-        })
+        use yaxpeax_arch::{Decoder, U8Reader};
+        // mov eax, dr0
+        let bytes = [0x0F, 0x21, 0xC0];
+        let decoder = yaxpeax_x86::protected_mode::InstDecoder::default();
+        let mut reader = U8Reader::new(&bytes);
+        let inst = decoder.decode(&mut reader).expect("decode mov eax, dr0");
+        match inst.operand(1) {
+            yaxpeax_x86::protected_mode::Operand::Register(r) => r.class(),
+            _ => unreachable!("expected DR register operand"),
+        }
+    })
 }
 
 fn long_mode_cr_class() -> yaxpeax_x86::long_mode::RegisterClass {
     use std::sync::OnceLock;
     static CLASS: OnceLock<yaxpeax_x86::long_mode::RegisterClass> = OnceLock::new();
     *CLASS.get_or_init(|| {
-            use yaxpeax_arch::{Decoder, U8Reader};
-            // mov rax, cr0
-            let bytes = [0x48, 0x0F, 0x20, 0xC0];
-            let decoder = yaxpeax_x86::long_mode::InstDecoder::default();
-            let mut reader = U8Reader::new(&bytes);
-            let inst = decoder.decode(&mut reader).expect("decode mov rax, cr0");
-            match inst.operand(1) {
-                yaxpeax_x86::long_mode::Operand::Register(r) => r.class(),
-                _ => unreachable!("expected CR register operand"),
-            }
-        })
+        use yaxpeax_arch::{Decoder, U8Reader};
+        // mov rax, cr0
+        let bytes = [0x48, 0x0F, 0x20, 0xC0];
+        let decoder = yaxpeax_x86::long_mode::InstDecoder::default();
+        let mut reader = U8Reader::new(&bytes);
+        let inst = decoder.decode(&mut reader).expect("decode mov rax, cr0");
+        match inst.operand(1) {
+            yaxpeax_x86::long_mode::Operand::Register(r) => r.class(),
+            _ => unreachable!("expected CR register operand"),
+        }
+    })
 }
 
 fn long_mode_dr_class() -> yaxpeax_x86::long_mode::RegisterClass {
     use std::sync::OnceLock;
     static CLASS: OnceLock<yaxpeax_x86::long_mode::RegisterClass> = OnceLock::new();
     *CLASS.get_or_init(|| {
-            use yaxpeax_arch::{Decoder, U8Reader};
-            // mov rax, dr0
-            let bytes = [0x48, 0x0F, 0x21, 0xC0];
-            let decoder = yaxpeax_x86::long_mode::InstDecoder::default();
-            let mut reader = U8Reader::new(&bytes);
-            let inst = decoder.decode(&mut reader).expect("decode mov rax, dr0");
-            match inst.operand(1) {
-                yaxpeax_x86::long_mode::Operand::Register(r) => r.class(),
-                _ => unreachable!("expected DR register operand"),
-            }
-        })
+        use yaxpeax_arch::{Decoder, U8Reader};
+        // mov rax, dr0
+        let bytes = [0x48, 0x0F, 0x21, 0xC0];
+        let decoder = yaxpeax_x86::long_mode::InstDecoder::default();
+        let mut reader = U8Reader::new(&bytes);
+        let inst = decoder.decode(&mut reader).expect("decode mov rax, dr0");
+        match inst.operand(1) {
+            yaxpeax_x86::long_mode::Operand::Register(r) => r.class(),
+            _ => unreachable!("expected DR register operand"),
+        }
+    })
 }
 
 fn map_reg_real(reg: yaxpeax_x86::real_mode::RegSpec, prefixes: Prefixes) -> Option<Operand> {
