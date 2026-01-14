@@ -38,6 +38,9 @@ pub mod state;
 pub mod time;
 pub mod time_insn;
 
+#[cfg(test)]
+mod test_util;
+
 // Legacy CPU core stack. Kept default-off while the Tier-0 + JIT stack matures.
 #[cfg(feature = "legacy-interp")]
 pub mod system;

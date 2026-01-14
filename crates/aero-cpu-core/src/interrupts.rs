@@ -441,7 +441,9 @@ impl PendingEventState {
 
 #[cfg(test)]
 mod tests {
-    use super::PendingEventState;
+    use super::{exec_interrupt_assist_decoded, CpuCore, CpuMode, PendingEventState};
+    use crate::mem::FlatTestBus;
+    use crate::test_util::capture_panic_location;
 
     #[test]
     fn interrupt_inhibit_defaults_to_zero() {
@@ -478,6 +480,21 @@ mod tests {
         assert_eq!(pending.interrupt_inhibit(), 2);
         pending.set_interrupt_inhibit(u8::MAX);
         assert_eq!(pending.interrupt_inhibit(), u8::MAX);
+    }
+
+    #[test]
+    fn exec_interrupt_assist_decoded_panics_at_call_site_on_unsupported_mnemonic() {
+        let mut cpu = CpuCore::new(CpuMode::Real);
+        let mut bus = FlatTestBus::new(0);
+        let decoded = aero_x86::decode(&[0x90], 0, 16).expect("decode NOP");
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = exec_interrupt_assist_decoded(&mut cpu, &mut bus, &decoded, false);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
 
@@ -560,6 +577,7 @@ impl core::ops::DerefMut for CpuCore {
 /// This helper is the canonical implementation of the architectural semantics
 /// for `CLI`/`STI`/`INT*`/`INTO`/`IRET*` because it has access to
 /// [`PendingEventState`] (interrupt shadow + IRET frame bookkeeping).
+#[track_caller]
 pub fn exec_interrupt_assist_decoded<B: CpuBus>(
     cpu: &mut CpuCore,
     bus: &mut B,
