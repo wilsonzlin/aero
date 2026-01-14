@@ -1040,4 +1040,63 @@ mod tests {
             "expected gs_instance_id bitcast in WGSL:\n{wgsl}"
         );
     }
+
+    #[test]
+    fn gs_translate_emits_gs_instance_count_loop_when_declared() {
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: D3D10_SB_PRIMITIVE_POINT,
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+                Sm4Decl::GsInstanceCount { count: 2 },
+                Sm4Decl::InputSiv {
+                    reg: 3,
+                    mask: WriteMask::X,
+                    sys_value: D3D_NAME_GS_INSTANCE_ID,
+                },
+            ],
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::X,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 3,
+                        }),
+                        swizzle: Swizzle::XXXX,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl =
+            translate_gs_module_to_wgsl_compute_prepass(&module).expect("translation should succeed");
+        assert!(
+            wgsl.contains("const GS_INSTANCE_COUNT: u32 = 2u;"),
+            "expected GS_INSTANCE_COUNT constant in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("for (var gs_instance_id: u32 = 0u; gs_instance_id < GS_INSTANCE_COUNT;"),
+            "expected per-instance loop in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("gs_exec_primitive(prim_id, gs_instance_id,"),
+            "expected primitive invocation to receive gs_instance_id:\n{wgsl}"
+        );
+    }
 }
