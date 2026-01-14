@@ -809,8 +809,11 @@ impl CommandRingProcessor {
             return CompletionCode::ParameterError;
         }
 
-        let input_ctx_ptr = cmd.pointer();
-        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+        // Input Context pointer: bits 63:6 hold the 64-byte aligned address. Reserved low bits must
+        // be zero; do not mask them away (unlike TRB pointer fields that are only 16-byte aligned).
+        let input_ctx_raw = cmd.parameter;
+        let input_ctx_ptr = input_ctx_raw & !(CONTEXT_ALIGN - 1);
+        if input_ctx_ptr == 0 || (input_ctx_raw & (CONTEXT_ALIGN - 1)) != 0 {
             return CompletionCode::ParameterError;
         }
 
@@ -897,8 +900,11 @@ impl CommandRingProcessor {
             return CompletionCode::ParameterError;
         }
 
-        let input_ctx_ptr = cmd.pointer();
-        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+        // Input Context pointer: bits 63:6 hold the 64-byte aligned address. Reserved low bits must
+        // be zero; do not mask them away (unlike TRB pointer fields that are only 16-byte aligned).
+        let input_ctx_raw = cmd.parameter;
+        let input_ctx_ptr = input_ctx_raw & !(CONTEXT_ALIGN - 1);
+        if input_ctx_ptr == 0 || (input_ctx_raw & (CONTEXT_ALIGN - 1)) != 0 {
             return CompletionCode::ParameterError;
         }
 
@@ -1087,8 +1093,11 @@ impl CommandRingProcessor {
             Err(code) => return code,
         };
 
-        let input_ctx_ptr = cmd.pointer();
-        if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+        // Input Context pointer: bits 63:6 hold the 64-byte aligned address. Reserved low bits must
+        // be zero; do not mask them away (unlike TRB pointer fields that are only 16-byte aligned).
+        let input_ctx_raw = cmd.parameter;
+        let input_ctx_ptr = input_ctx_raw & !(CONTEXT_ALIGN - 1);
+        if input_ctx_ptr == 0 || (input_ctx_raw & (CONTEXT_ALIGN - 1)) != 0 {
             return CompletionCode::ParameterError;
         }
 
@@ -2174,6 +2183,75 @@ mod tests {
         let out_slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
         assert_eq!(out_slot_ctx.usb_device_address(), slot.address);
         assert_eq!(out_slot_ctx.slot_state(), SLOT_STATE_DEFAULT);
+    }
+
+    #[test]
+    fn address_device_rejects_misaligned_input_context_pointer() {
+        use crate::xhci::context::InputControlContext;
+
+        let mut mem = TestMem::new(0x20_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let input_ctx = 0x3000u64;
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            8,
+            dcbaa,
+            CommandRing::new(0),
+            EventRing::new(0, 0),
+        );
+        processor.attach_root_port(1, Box::new(DummyDevice));
+
+        // Enable the slot and install its DCBAA entry to point at our device context.
+        let (code, slot_id) = processor.handle_enable_slot(&mut mem);
+        assert_eq!(code, CompletionCode::Success);
+        assert_eq!(slot_id, 1);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Build a well-formed Input Context at a 64-byte aligned address.
+        let mut icc = InputControlContext::default();
+        icc.set_add_flags(ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0);
+        icc.write_to(&mut mem, input_ctx);
+
+        let mut slot_ctx = SlotContext::default();
+        slot_ctx.set_route_string(0);
+        slot_ctx.set_root_hub_port_number(1);
+        slot_ctx.write_to(&mut mem, input_ctx + INPUT_SLOT_CTX_OFFSET);
+
+        let mut ep0_ctx = EndpointContext::default();
+        ep0_ctx.set_dword(1, 4u32 << 3); // Control
+        ep0_ctx.write_to(&mut mem, input_ctx + INPUT_EP0_CTX_OFFSET);
+
+        // Provide an input context pointer with reserved low bits set. Older code incorrectly
+        // masked these away via `Trb::pointer()`, effectively accepting misaligned pointers.
+        let mut trb = Trb::new(input_ctx + 8, 0, 0);
+        trb.set_trb_type(TrbType::AddressDeviceCommand);
+        trb.set_slot_id(slot_id);
+
+        assert_eq!(
+            processor.handle_address_device(&mut mem, trb),
+            CompletionCode::ParameterError
+        );
+
+        let dev = processor
+            .port_device(1)
+            .expect("root port device must still exist");
+        assert_eq!(dev.address(), 0, "device must not observe SET_ADDRESS side effects");
+
+        let slot = processor.slots[usize::from(slot_id)]
+            .as_ref()
+            .expect("slot state must exist");
+        assert_eq!(slot.address, 0, "controller must not allocate an address on failure");
+
+        let out_slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+        assert_eq!(
+            out_slot_ctx.usb_device_address(),
+            0,
+            "output device context must not be updated on parameter error"
+        );
     }
 
     #[test]
