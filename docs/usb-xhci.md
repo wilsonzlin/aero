@@ -239,7 +239,8 @@ rather than a complete xHCI.
     DMA is gated on BME.
   - WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
     `pending_summary`) used by the web I/O worker to attach/detach a passthrough device behind a
-    reserved xHCI root port (currently root port index `1`).
+    reserved xHCI root port (typically root port index `1`; falls back to `0` if the controller only
+    exposes a single root port).
   - `irq_asserted()` reflects `XhciController::irq_level()` (interrupter 0 interrupt enable + pending).
   - Optional host-side topology mutation APIs for passthrough HID/hubs (`attach_hub`,
     `detach_at_path`, `attach_webhid_device`, `attach_usb_hid_passthrough_device`).
