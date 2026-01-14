@@ -82,8 +82,12 @@ pub const OPCODE_IBFE: u32 = 0x69;
 // ---- Integer comparison opcodes (SM4/SM5) ----
 //
 // These produce a per-component predicate mask: 0xffffffff for true, 0x00000000 for false.
-// Note: keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on
-// unique opcode IDs.
+//
+// Numeric values come from the Windows SDK header `d3d11tokenizedprogramformat.h`
+// (`D3D11_SB_OPCODE_TYPE_*`) and are verified by `tests/sm4_decode.rs`.
+//
+// Keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on unique
+// opcode IDs.
 pub const OPCODE_IEQ: u32 = 0x4d;
 pub const OPCODE_IGE: u32 = 0x4e;
 pub const OPCODE_ILT: u32 = 0x4f;
