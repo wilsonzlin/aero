@@ -94,7 +94,13 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_usb_hid_mouse_buttons(aero_wasm::MouseButtons::Left as u32);
     m.inject_usb_hid_mouse_buttons(0);
     m.inject_usb_hid_mouse_wheel(1);
+    m.inject_usb_hid_mouse_hwheel(1);
+    m.inject_usb_hid_mouse_wheel2(1, -1);
 
     // Packed gamepad report (8 bytes as 2 u32s). Use an all-zero/neutral report.
     m.inject_usb_hid_gamepad_report(0, 0);
+
+    // Consumer-control (media keys) usage injection.
+    m.inject_usb_hid_consumer_usage(0xE9, true); // Volume Up
+    m.inject_usb_hid_consumer_usage(0xE9, false);
 }
