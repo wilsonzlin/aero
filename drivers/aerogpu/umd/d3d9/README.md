@@ -183,7 +183,7 @@ Cross-process shared resources are expressed explicitly in the command stream:
 - `AEROGPU_CMD_RELEASE_SHARED_SURFACE` invalidates a `share_token` mapping on the host (emitted by the Win7 KMD when the final cross-process allocation wrapper is released; the D3D9 UMD does not emit this directly).
 
 `share_token` must be stable across guest processes. On Win7/WDDM 1.1, AeroGPU does
-**not** use the numeric value of the D3D shared `HANDLE` as `share_token`: for real
+**not** use the numeric value of the user-mode shared `HANDLE` as `share_token`: for real
 NT handles the numeric value is process-local (commonly different after
 `DuplicateHandle`), and some D3D9Ex stacks use token-style shared handles that
 still must not be treated as a stable protocol key.
