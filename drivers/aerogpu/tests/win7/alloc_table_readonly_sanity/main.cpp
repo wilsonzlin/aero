@@ -310,6 +310,24 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
     return reporter.Pass();
   }
 
+  // This test requires dbgctl READ_GPA to inspect both the cmd stream and the alloc table.
+  // Preflight it so we can cleanly skip (instead of failing later when selecting the descriptor).
+  {
+    aerogpu_escape_read_gpa_inout probe;
+    ZeroMemory(&probe, sizeof(probe));
+    NTSTATUS st_probe = 0;
+    if (!aerogpu_test::kmt::AerogpuReadGpa(&kmt, adapter, /*gpa=*/0, /*size_bytes=*/0, &probe, &st_probe)) {
+      aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+      if (st_probe == aerogpu_test::kmt::kStatusNotSupported) {
+        aerogpu_test::PrintfStdout("INFO: %s: READ_GPA not supported/authorized; skipping", kTestName);
+        reporter.SetSkipped("not_supported");
+        return reporter.Pass();
+      }
+      return reporter.Fail("READ_GPA preflight failed (NTSTATUS=0x%08lX)", (unsigned long)st_probe);
+    }
+  }
+
   const uint32_t tail_before = (uint32_t)before.tail;
 
   // Trigger a GPU->CPU readback (GetRenderTargetData) which should emit a COPY_TEXTURE2D WRITEBACK_DST submission
