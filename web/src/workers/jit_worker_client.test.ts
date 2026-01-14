@@ -130,4 +130,49 @@ describe("JitWorkerClient", () => {
 
     await expect(client.compile(new ArrayBuffer(8), { timeoutMs: 1000 })).rejects.toThrow(/destroyed/i);
   });
+
+  it("sends jit:tier1 and resolves with a compiled module result", async () => {
+    const worker = new FakeWorker();
+    const client = new JitWorkerClient(worker as unknown as Worker);
+
+    const promise = client.compileTier1(0n, { maxBytes: 1024, bitness: 64, memoryShared: true, timeoutMs: 1000 });
+
+    expect(worker.postMessageCalls).toHaveLength(1);
+    const { msg } = worker.postMessageCalls[0]!;
+    expect(msg).toMatchObject({ type: "jit:tier1", entryRip: 0n, maxBytes: 1024, bitness: 64, memoryShared: true });
+    const id = (msg as { id: number }).id;
+
+    worker.dispatchMessage({
+      type: "jit:tier1:compiled",
+      id,
+      entryRip: 0n,
+      module: {},
+      codeByteLen: 4,
+      exitToInterpreter: false,
+    });
+
+    await expect(promise).resolves.toEqual({ module: {}, entryRip: 0n, codeByteLen: 4, exitToInterpreter: false });
+  });
+
+  it("compileTier1 handles wasm-bytes fallback responses", async () => {
+    const worker = new FakeWorker();
+    const client = new JitWorkerClient(worker as unknown as Worker);
+
+    const promise = client.compileTier1(123, { maxBytes: 1024, bitness: 32, memoryShared: true, timeoutMs: 1000 });
+
+    const { msg } = worker.postMessageCalls[0]!;
+    const id = (msg as { id: number }).id;
+    const wasmBytes = new ArrayBuffer(16);
+
+    worker.dispatchMessage({
+      type: "jit:tier1:compiled",
+      id,
+      entryRip: 123,
+      wasmBytes,
+      codeByteLen: 8,
+      exitToInterpreter: true,
+    });
+
+    await expect(promise).resolves.toEqual({ wasmBytes, entryRip: 123, codeByteLen: 8, exitToInterpreter: true });
+  });
 });

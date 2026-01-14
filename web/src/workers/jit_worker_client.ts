@@ -1,9 +1,16 @@
 import {
   type JitCompileRequest,
+  type JitTier1Bitness,
+  type JitTier1CompileRequest,
+  type JitTier1CompiledResponse,
   type JitWorkerResponse,
   isJitWorkerResponse,
   type JitImportsHint,
 } from "./jit_protocol";
+
+export type Tier1CompileResult =
+  | { module: WebAssembly.Module; entryRip: number | bigint; codeByteLen: number; exitToInterpreter: boolean }
+  | { wasmBytes: ArrayBuffer; entryRip: number | bigint; codeByteLen: number; exitToInterpreter: boolean };
 
 export class JitWorkerClient {
   readonly #worker: Worker;
@@ -77,6 +84,89 @@ export class JitWorkerClient {
 
       try {
         this.#worker.postMessage(req, [wasmBytes]);
+      } catch (err) {
+        globalThis.clearTimeout(timeoutId);
+        this.#pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  compileTier1(
+    entryRip: number | bigint,
+    opts?: { codeBytes?: Uint8Array; maxBytes?: number; bitness?: JitTier1Bitness; memoryShared?: boolean; timeoutMs?: number },
+  ): Promise<Tier1CompileResult> {
+    if (this.#destroyed) {
+      return Promise.reject(new Error("JitWorkerClient is destroyed."));
+    }
+    const id = this.#nextId++;
+    const timeoutMs = Math.max(0, opts?.timeoutMs ?? 10_000);
+
+    const req: JitTier1CompileRequest = {
+      type: "jit:tier1",
+      id,
+      entryRip,
+      maxBytes: opts?.maxBytes ?? 1024,
+      bitness: opts?.bitness ?? 64,
+      memoryShared: opts?.memoryShared ?? true,
+      ...(opts?.codeBytes ? { codeBytes: opts.codeBytes } : {}),
+    };
+
+    const transfer: Transferable[] = [];
+    const bytes = opts?.codeBytes;
+    if (
+      bytes &&
+      bytes.buffer instanceof ArrayBuffer &&
+      bytes.byteOffset === 0 &&
+      bytes.byteLength === bytes.buffer.byteLength
+    ) {
+      transfer.push(bytes.buffer);
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = globalThis.setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error("Timed out waiting for JIT worker response."));
+      }, timeoutMs);
+      (timeoutId as unknown as { unref?: () => void }).unref?.();
+
+      this.#pending.set(id, {
+        resolve: (value) => {
+          if (value.type === "jit:error") {
+            reject(new Error(value.message));
+            return;
+          }
+          if (value.type !== "jit:tier1:compiled") {
+            reject(new Error(`Unexpected JIT worker response type: ${value.type}`));
+            return;
+          }
+          const response = value as JitTier1CompiledResponse;
+          if ("module" in response) {
+            resolve({
+              module: response.module,
+              entryRip: response.entryRip,
+              codeByteLen: response.codeByteLen,
+              exitToInterpreter: response.exitToInterpreter,
+            });
+            return;
+          }
+          resolve({
+            wasmBytes: response.wasmBytes,
+            entryRip: response.entryRip,
+            codeByteLen: response.codeByteLen,
+            exitToInterpreter: response.exitToInterpreter,
+          });
+        },
+        reject,
+        timeoutId,
+      });
+
+      try {
+        if (transfer.length) {
+          this.#worker.postMessage(req, transfer);
+        } else {
+          this.#worker.postMessage(req);
+        }
       } catch (err) {
         globalThis.clearTimeout(timeoutId);
         this.#pending.delete(id);
