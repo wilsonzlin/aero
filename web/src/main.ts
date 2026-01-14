@@ -5224,6 +5224,9 @@ function renderAudioPanel(): HTMLElement {
               `Key files:`,
               `- audio-metrics.json: consolidated host-side audio counters + worker snapshot + config snapshot`,
               `- manifest.json: list of all files in this tar (paths + byte sizes)`,
+              `- aero-config.json: effective runtime config snapshot (sensitive fields redacted)`,
+              `- aero.version.json / aero.version-meta.json: build/version endpoint snapshot (best-effort) + metadata`,
+              `- workers.json: worker coordinator snapshot (state/health + wasm variants)`,
               `- host-media-devices.json: browser media device inventory + mic permission state (device/group IDs hashed)`,
               `- audio-output-*.wav: buffered output ring snapshots (PCM16 WAV)`,
               `- audio-output-*.json: metadata for each output WAV (sample rate, ring indices/counters, signal stats)`,
@@ -5269,10 +5272,27 @@ function renderAudioPanel(): HTMLElement {
           const res = await fetch("/aero.version.json", { cache: "no-store" });
           if (!res.ok) throw new Error(`Failed to fetch /aero.version.json (HTTP ${res.status})`);
           const text = await res.text();
-          entries.push({ path: `${dir}/aero.version.json`, data: encoder.encode(text) });
+          const payload = encoder.encode(text);
+          entries.push({ path: `${dir}/aero.version.json`, data: payload });
+          entries.push({
+            path: `${dir}/aero.version-meta.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                { timeIso, build: getBuildInfoForExport(), ok: true, file: "aero.version.json", bytes: payload.byteLength },
+                null,
+                2,
+              ),
+            ),
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/aero.version-error.txt`, data: encoder.encode(message) });
+          entries.push({
+            path: `${dir}/aero.version-meta.json`,
+            data: encoder.encode(
+              JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: "aero.version.json", error: message }, null, 2),
+            ),
+          });
         }
 
         // Host media device inventory (best-effort). Useful for debugging microphone failures
