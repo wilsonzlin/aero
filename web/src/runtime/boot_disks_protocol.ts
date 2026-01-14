@@ -40,10 +40,17 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
   // accept only string values so downstream code can treat them as opaque IDs without re-validating.
   const mountsRaw = (rec as { mounts?: unknown }).mounts;
   const mounts: MountConfig = {};
+  const sanitizeMountId = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  };
   if (isObjectLikeRecord(mountsRaw)) {
     const raw = mountsRaw as { hddId?: unknown; cdId?: unknown };
-    if (typeof raw.hddId === "string") mounts.hddId = raw.hddId;
-    if (typeof raw.cdId === "string") mounts.cdId = raw.cdId;
+    const hddId = sanitizeMountId(raw.hddId);
+    if (hddId) mounts.hddId = hddId;
+    const cdId = sanitizeMountId(raw.cdId);
+    if (cdId) mounts.cdId = cdId;
   }
 
   const hddRaw = (rec as { hdd?: unknown }).hdd;
