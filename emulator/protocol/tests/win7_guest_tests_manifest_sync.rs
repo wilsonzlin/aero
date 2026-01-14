@@ -8,14 +8,25 @@ fn parse_manifest_tests(manifest_text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for raw_line in manifest_text.lines() {
         let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+        if line.is_empty() {
             continue;
         }
 
+        // Mirror the Windows-side manifest parsing logic (tokens=1 with comment guards).
         let name = line.split_whitespace().next().unwrap_or("");
-        if !name.is_empty() {
-            out.push(name.to_string());
+        // Strip UTF-8 BOM if present on the first line.
+        let name = name.trim_start_matches('\u{feff}');
+        if name.is_empty() {
+            continue;
         }
+        if name.starts_with('#')
+            || name.starts_with(';')
+            || name.starts_with("::")
+            || name.eq_ignore_ascii_case("rem")
+        {
+            continue;
+        }
+        out.push(name.to_string());
     }
     out
 }
