@@ -3717,6 +3717,12 @@ impl XhciController {
         if !self.pending_dma_on_run {
             return;
         }
+        if self.host_controller_error {
+            // Once HCE is latched, the guest must reset the controller. Avoid any further DMA,
+            // including the DMA-on-RUN probe used by wrapper tests.
+            self.pending_dma_on_run = false;
+            return;
+        }
         if !mem.dma_enabled() {
             return;
         }
