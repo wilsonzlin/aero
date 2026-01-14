@@ -17,6 +17,7 @@ import {
 import {
   decodeUsbSnapshotContainer,
   encodeUsbSnapshotContainer,
+  isUsbSnapshotContainer,
   USB_SNAPSHOT_TAG_EHCI,
   USB_SNAPSHOT_TAG_UHCI,
   USB_SNAPSHOT_TAG_XHCI,
@@ -128,8 +129,22 @@ function mergeUsbSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Arra
   const cachedDecoded = decodeUsbSnapshotContainer(cached);
   const freshDecoded = decodeUsbSnapshotContainer(fresh);
 
+  const cachedLooksLikeContainer = !cachedDecoded && isUsbSnapshotContainer(cached);
+  const freshLooksLikeContainer = !freshDecoded && isUsbSnapshotContainer(fresh);
+  if (freshLooksLikeContainer) {
+    // AUSB magic present but the container framing is invalid/corrupt. Treat this as a hard
+    // failure to merge; returning the fresh bytes avoids accidentally splicing in cached
+    // controller sub-blobs with a corrupted frame.
+    console.warn("[io.worker] USB snapshot appears to be an AUSB container but failed to decode; skipping merge.");
+    return fresh;
+  }
+
   // Interpret legacy bytes as a UHCI-only snapshot for backward compatibility.
-  const cachedEntries = cachedDecoded ? cachedDecoded.entries : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: cached }];
+  const cachedEntries = cachedDecoded
+    ? cachedDecoded.entries
+    : cachedLooksLikeContainer
+      ? []
+      : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: cached }];
   const freshEntries = freshDecoded ? freshDecoded.entries : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: fresh }];
 
   // Start with cached entries so unknown tags are preserved, then override with fresh entries so
@@ -386,6 +401,14 @@ export function restoreUsbDeviceState(
         }
       }
     }
+    return;
+  }
+
+  // If the blob begins with the AUSB magic but fails to decode as a container, treat it as corrupt
+  // and do not attempt the legacy raw restore path. Feeding corrupt container bytes into
+  // controller restore hooks can lead to confusing failures.
+  if (isUsbSnapshotContainer(bytes)) {
+    console.warn("[io.worker] Snapshot USB blob has AUSB container magic but is corrupt; ignoring blob.");
     return;
   }
 

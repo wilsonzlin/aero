@@ -209,6 +209,32 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     ]);
   });
 
+  it("ignores corrupt AUSB container blobs instead of attempting legacy raw restore", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      // AUSB header + 1 trailing byte (insufficient for an entry header) -> decode fails.
+      const corrupt = new Uint8Array([0x41, 0x55, 0x53, 0x42, 0x01, 0x00, 0x00, 0x00, 0xff]);
+      const xhciLoad = vi.fn();
+      const uhciLoad = vi.fn();
+
+      restoreUsbDeviceState(
+        {
+          usbXhciControllerBridge: { load_state: xhciLoad },
+          usbUhciRuntime: { load_state: uhciLoad },
+          usbUhciControllerBridge: null,
+          usbEhciControllerBridge: null,
+        },
+        corrupt,
+      );
+
+      expect(xhciLoad).not.toHaveBeenCalled();
+      expect(uhciLoad).not.toHaveBeenCalled();
+      expect(warn.mock.calls.some((args) => String(args[0]).includes("AUSB"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("restores USB state from legacy usb.uhci kinds", async () => {
     const usbState = new Uint8Array([0x01, 0x02]);
 
@@ -307,6 +333,46 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
 
     expect(xhciLoad).toHaveBeenCalledWith(usbState);
     expect(uhciLoad).not.toHaveBeenCalled();
+  });
+
+  it("does not treat corrupt AUSB bytes as a legacy UHCI blob during restore → save merge", async () => {
+    const xhciState = new Uint8Array([0xaa]);
+    const corrupt = new Uint8Array([0x41, 0x55, 0x53, 0x42, 0x01, 0x00, 0x00, 0x00, 0xff]);
+
+    const calls: Array<{ devices: unknown }> = [];
+    const api = {
+      vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
+        calls.push({ devices });
+      },
+    } as unknown as WasmApi;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: { save_state: () => xhciState },
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      restoredDevices: [{ kind: "usb", bytes: corrupt }],
+    });
+
+    expect(calls).toHaveLength(1);
+    const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
+    expect(devices).toHaveLength(1);
+    expect(devices[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_USB}`);
+
+    const decoded = decodeUsbSnapshotContainer(devices[0]!.bytes);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes).toEqual(xhciState);
+    expect(decoded!.entries.some((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)).toBe(false);
   });
 
   it("forwards device blobs to WorkerVmSnapshot builder when free-function exports are absent", async () => {
