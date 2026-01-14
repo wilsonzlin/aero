@@ -2446,6 +2446,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--with-input-wheel",
         "--with-virtio-input-wheel",
+        "--require-virtio-input-wheel",
         "--enable-virtio-input-wheel",
         dest="with_input_wheel",
         action="store_true",

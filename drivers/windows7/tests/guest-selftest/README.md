@@ -89,7 +89,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Runs as part of the `--test-input-events` flow (no separate guest flag).
     - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
       - PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
-      - Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--enable-virtio-input-wheel`)
+      - Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
     - Validates that the mouse HID input reports include:
       - vertical wheel (HID Generic Desktop `Wheel`)
       - horizontal wheel (HID Consumer `AC Pan`, sourced from Linux `REL_HWHEEL`)

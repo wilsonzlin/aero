@@ -93,7 +93,11 @@ class HarnessArgAliasTests(unittest.TestCase):
                 self.assertTrue(args.with_input_events)
 
     def test_virtio_input_wheel_aliases_set_flag(self) -> None:
-        for flag in ("--with-virtio-input-wheel", "--enable-virtio-input-wheel"):
+        for flag in (
+            "--with-virtio-input-wheel",
+            "--require-virtio-input-wheel",
+            "--enable-virtio-input-wheel",
+        ):
             with self.subTest(flag=flag):
                 args = self._parse(
                     [

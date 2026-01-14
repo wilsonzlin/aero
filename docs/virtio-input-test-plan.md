@@ -482,7 +482,7 @@ Notes:
 Host harness flags:
 
 - PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
-- Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--enable-virtio-input-wheel`)
+- Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
 
 When enabled, the harness:
 

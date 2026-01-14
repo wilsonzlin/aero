@@ -408,7 +408,7 @@ To also regression-test **mouse scrolling** end-to-end (including **horizontal s
 HID Consumer `AC Pan`), run the harness with:
 
 - PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
-- Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--enable-virtio-input-wheel`)
+- Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
 
 This:
 
