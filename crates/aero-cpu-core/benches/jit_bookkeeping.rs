@@ -27,7 +27,7 @@ use aero_cpu_core::jit::runtime::{
     PAGE_SIZE,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
@@ -871,19 +871,20 @@ fn bench_jit_runtime_prepare_block_compile_request(c: &mut Criterion) {
             ..JitConfig::default()
         };
 
-        let compile_counter = Arc::new(AtomicU64::new(0));
-        let mut jit = JitRuntime::new(config, NullBackend, AtomicCompileSink(compile_counter));
-
         // Pre-generate a stable RIP set so no allocations occur in the measured loop.
         let rips: Vec<u64> = (0..OPS_PER_ITER as u64).map(|i| 0xA000u64 + i).collect();
 
-        b.iter(|| {
-            jit.reset();
-            for &rip in &rips {
-                black_box(jit.prepare_block(black_box(rip)));
-            }
-            black_box(jit.stats_snapshot());
-        });
+        let compile_counter = Arc::new(AtomicU64::new(0));
+        b.iter_batched_ref(
+            || JitRuntime::new(config.clone(), NullBackend, AtomicCompileSink(compile_counter.clone())),
+            |jit| {
+                for &rip in &rips {
+                    black_box(jit.prepare_block(black_box(rip)));
+                }
+                black_box(jit.stats_snapshot());
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.bench_function("prepare_block_trigger_compile_metrics_sink", |b| {
@@ -897,20 +898,23 @@ fn bench_jit_runtime_prepare_block_compile_request(c: &mut Criterion) {
             ..JitConfig::default()
         };
 
-        let compile_counter = Arc::new(AtomicU64::new(0));
-        let metrics = Arc::new(CountingMetricsSink::default());
-        let mut jit = JitRuntime::new(config, NullBackend, AtomicCompileSink(compile_counter))
-            .with_metrics_sink(metrics);
-
         let rips: Vec<u64> = (0..OPS_PER_ITER as u64).map(|i| 0xB000u64 + i).collect();
 
-        b.iter(|| {
-            jit.reset();
-            for &rip in &rips {
-                black_box(jit.prepare_block(black_box(rip)));
-            }
-            black_box(jit.stats_snapshot());
-        });
+        let compile_counter = Arc::new(AtomicU64::new(0));
+        let metrics = Arc::new(CountingMetricsSink::default());
+        b.iter_batched_ref(
+            || {
+                JitRuntime::new(config.clone(), NullBackend, AtomicCompileSink(compile_counter.clone()))
+                    .with_metrics_sink(metrics.clone())
+            },
+            |jit| {
+                for &rip in &rips {
+                    black_box(jit.prepare_block(black_box(rip)));
+                }
+                black_box(jit.stats_snapshot());
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
