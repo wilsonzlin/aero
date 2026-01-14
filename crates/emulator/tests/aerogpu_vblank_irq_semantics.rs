@@ -49,8 +49,7 @@ fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
     // IRQ latching so that old vblanks while masked do not immediately appear as a pending IRQ.
     dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK);
 
-    // Even though the vblank counter advanced during catch-up, the IRQ status bit must not be
-    // set until the next vblank edge *after* the enable.
+    // The IRQ status bit must not be set until the next vblank edge *after* the enable.
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
 
     // An immediate tick at the current time should *not* produce a pending IRQ (the next vblank
