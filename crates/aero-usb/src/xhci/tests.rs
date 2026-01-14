@@ -918,7 +918,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     // Mutate port state (start a reset so the timer is non-zero).
     xhci.write_portsc(0, PORTSC_PR);
     for _ in 0..10 {
-        xhci.tick_1ms();
+        xhci.tick_1ms(&mut mem);
     }
 
     // Also mutate device state so the nested device snapshot isn't trivially default.
