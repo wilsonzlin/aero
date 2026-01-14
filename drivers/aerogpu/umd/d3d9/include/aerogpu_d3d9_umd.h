@@ -412,25 +412,28 @@ typedef struct _D3DPSHADERCAPS2_0 {
 } D3DPSHADERCAPS2_0;
 
 // Full D3DCAPS9 layout (Win7-era; from d3d9caps.h).
-typedef struct _D3DCAPS9 {
-  DWORD DeviceType;
-  UINT AdapterOrdinal;
-  DWORD Caps;
-  DWORD Caps2;
-  DWORD Caps3;
-  DWORD PresentationIntervals;
-  DWORD CursorCaps;
-  DWORD DevCaps;
-  DWORD PrimitiveMiscCaps;
-  DWORD RasterCaps;
-  DWORD ZCmpCaps;
-  DWORD SrcBlendCaps;
-  DWORD DestBlendCaps;
-  DWORD AlphaCmpCaps;
-  DWORD ShadeCaps;
-  DWORD TextureCaps;
-  DWORD TextureFilterCaps;
-  DWORD CubeTextureFilterCaps;
+ typedef struct _D3DCAPS9 {
+   DWORD DeviceType;
+   UINT AdapterOrdinal;
+   DWORD Caps;
+   DWORD Caps2;
+   DWORD Caps3;
+   DWORD PresentationIntervals;
+   DWORD CursorCaps;
+   DWORD DevCaps;
+   DWORD PrimitiveMiscCaps;
+   DWORD RasterCaps;
+   DWORD ZCmpCaps;
+   DWORD SrcBlendCaps;
+   DWORD DestBlendCaps;
+   // Supported blend operations (D3DBLENDOPCAPS_*). Present in the Win7-era
+   // D3DCAPS9 layout and required to correctly advertise D3DRS_BLENDOP support.
+   DWORD BlendOpCaps;
+   DWORD AlphaCmpCaps;
+   DWORD ShadeCaps;
+   DWORD TextureCaps;
+   DWORD TextureFilterCaps;
+   DWORD CubeTextureFilterCaps;
   DWORD VolumeTextureFilterCaps;
   DWORD TextureAddressCaps;
   DWORD VolumeTextureAddressCaps;

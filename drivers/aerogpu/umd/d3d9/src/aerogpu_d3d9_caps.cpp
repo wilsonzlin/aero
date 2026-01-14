@@ -255,14 +255,7 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                            // alpha blending are exercised by DWM-style workloads
                            // and are implemented by the AeroGPU shader pipeline.
                            D3DPMISCCAPS_BLENDOP |
-                           D3DPMISCCAPS_SEPARATEALPHABLEND |
-                           // The host executor supports sRGB texture sampling
-                           // (SRGBTEXTURE) and sRGB write conversion
-                           // (SRGBWRITEENABLE) via sRGB texture views when
-                           // available.
-                           D3DPMISCCAPS_SRGBREAD |
-                           D3DPMISCCAPS_SRGBWRITE |
-                           D3DPMISCCAPS_POSTBLENDSRGBCONVERT;
+                           D3DPMISCCAPS_SEPARATEALPHABLEND;
 
   // DWM relies heavily on scissoring for window clipping. Include depth-test and
   // cull bits as they are commonly queried by apps and are expected for a HAL
