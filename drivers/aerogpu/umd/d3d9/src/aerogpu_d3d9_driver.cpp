@@ -2858,6 +2858,12 @@ bool clamp_rect(const RECT* in, uint32_t width, uint32_t height, RECT* out) {
 
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+// XYZB* encodes a float3 POSITION followed by 1..5 blending "beta" values.
+constexpr uint32_t kD3dFvfXyzB1 = 0x00000006u;
+constexpr uint32_t kD3dFvfXyzB2 = 0x00000008u;
+constexpr uint32_t kD3dFvfXyzB3 = 0x0000000Au;
+constexpr uint32_t kD3dFvfXyzB4 = 0x0000000Cu;
+constexpr uint32_t kD3dFvfXyzB5 = 0x0000000Eu;
 // D3DFVF_XYZW (float4 POSITION). The position-mask includes the high bit (0x4000).
 constexpr uint32_t kD3dFvfXyzw = 0x00004002u;
 constexpr uint32_t kD3dFvfNormal = 0x00000010u;
@@ -2867,6 +2873,9 @@ constexpr uint32_t kD3dFvfSpecular = 0x00000080u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 constexpr uint32_t kD3dFvfTexCountMask = 0x00000F00u;
 constexpr uint32_t kD3dFvfTexCountShift = 8u;
+// Optional blend indices are encoded via LASTBETA flags when using XYZB*.
+constexpr uint32_t kD3dFvfLastBetaUByte4 = 0x00001000u;
+constexpr uint32_t kD3dFvfLastBetaD3dColor = 0x00008000u;
 // D3DFVF_POSITION_MASK (from d3d9types.h). Includes the XYZW high bit (0x4000).
 constexpr uint32_t kD3dFvfPositionMask = 0x0000400Eu;
 // D3DFVF_TEXCOORDSIZE* encodes 2 bits per texcoord set starting at bit 16.
@@ -2934,11 +2943,14 @@ constexpr uint8_t kD3dDeclTypeFloat2 = 1;
 constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
+constexpr uint8_t kD3dDeclTypeUByte4 = 5;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
 
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageBlendWeight = 1;
+constexpr uint8_t kD3dDeclUsageBlendIndices = 2;
 constexpr uint8_t kD3dDeclUsageNormal = 3;
 constexpr uint8_t kD3dDeclUsagePSize = 4;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
@@ -3025,14 +3037,15 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
 // layouts.
 //
 // Supported subset (layout only; does not imply fixed-function emulation):
-// - POSITION: D3DFVF_XYZ, D3DFVF_XYZW, or D3DFVF_XYZRHW
+// - POSITION: D3DFVF_XYZ, D3DFVF_XYZW, D3DFVF_XYZRHW, or D3DFVF_XYZB1..D3DFVF_XYZB5
+// - BLENDWEIGHT: XYZB* (BLENDWEIGHT0) with optional LASTBETA_* (BLENDINDICES0)
 // - NORMAL: D3DFVF_NORMAL
 // - PSIZE: D3DFVF_PSIZE
 // - DIFFUSE: D3DFVF_DIFFUSE (COLOR0)
 // - SPECULAR: D3DFVF_SPECULAR (COLOR1)
 // - TEXn: D3DFVF_TEX0..D3DFVF_TEX8 with per-set D3DFVF_TEXCOORDSIZE[1..4]
 //
-// Unsupported bits (e.g. blending weights) return false so callers
+// Unsupported bits return false so callers
 // can fall back to "cache-only" SetFVF behavior (GetFVF/state-block compatibility).
 struct FvfVertexDeclTranslation {
   std::array<D3DVERTEXELEMENT9_COMPAT, 16> elems{};
@@ -3095,9 +3108,11 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
 
   // Reject FVFs that include bits we don't understand. This keeps behavior
   // deterministic and avoids binding mismatched layouts for complicated legacy
-  // formats (e.g. XYZB*, blend indices).
+  // formats.
   constexpr uint32_t kSupportedMask =
       kD3dFvfPositionMask |
+      kD3dFvfLastBetaUByte4 |
+      kD3dFvfLastBetaD3dColor |
       kD3dFvfNormal |
       kD3dFvfPSize |
       kD3dFvfDiffuse |
@@ -3113,7 +3128,36 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
   const bool pos_xyz = (pos == kD3dFvfXyz);
   const bool pos_xyzrhw = (pos == kD3dFvfXyzRhw);
   const bool pos_xyzw = (pos == kD3dFvfXyzw);
-  if (!pos_xyz && !pos_xyzrhw && !pos_xyzw) {
+  uint32_t blend_weights = 0;
+  switch (pos) {
+    case kD3dFvfXyzB1:
+      blend_weights = 1;
+      break;
+    case kD3dFvfXyzB2:
+      blend_weights = 2;
+      break;
+    case kD3dFvfXyzB3:
+      blend_weights = 3;
+      break;
+    case kD3dFvfXyzB4:
+      blend_weights = 4;
+      break;
+    case kD3dFvfXyzB5:
+      blend_weights = 5;
+      break;
+    default:
+      break;
+  }
+  if (!pos_xyz && !pos_xyzrhw && !pos_xyzw && blend_weights == 0) {
+    return false;
+  }
+  const bool has_lastbeta_ubyte4 = (fvf & kD3dFvfLastBetaUByte4) != 0;
+  const bool has_lastbeta_color = (fvf & kD3dFvfLastBetaD3dColor) != 0;
+  if (has_lastbeta_ubyte4 && has_lastbeta_color) {
+    return false;
+  }
+  if ((has_lastbeta_ubyte4 || has_lastbeta_color) && blend_weights == 0) {
+    // LASTBETA flags only make sense for XYZB* encodings.
     return false;
   }
 
@@ -3151,6 +3195,53 @@ bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* ou
       return false;
     }
     offset += 12;
+  } else if (blend_weights != 0) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat3, kD3dDeclUsagePosition, 0)) {
+      return false;
+    }
+    offset += 12;
+
+    uint8_t weight_type = kD3dDeclTypeFloat1;
+    uint32_t weight_bytes = 0;
+    switch (blend_weights) {
+      case 1:
+        weight_type = kD3dDeclTypeFloat1;
+        weight_bytes = 4;
+        break;
+      case 2:
+        weight_type = kD3dDeclTypeFloat2;
+        weight_bytes = 8;
+        break;
+      case 3:
+        weight_type = kD3dDeclTypeFloat3;
+        weight_bytes = 12;
+        break;
+      case 4:
+      case 5:
+        // D3D9 encodes 5-matrix blending using 4 explicit weights; the last
+        // weight is implied. Map both XYZB4 and XYZB5 to FLOAT4.
+        weight_type = kD3dDeclTypeFloat4;
+        weight_bytes = 16;
+        break;
+      default:
+        return false;
+    }
+    if (!add(/*stream=*/0, offset, weight_type, kD3dDeclUsageBlendWeight, 0)) {
+      return false;
+    }
+    offset += weight_bytes;
+
+    if (has_lastbeta_ubyte4) {
+      if (!add(/*stream=*/0, offset, kD3dDeclTypeUByte4, kD3dDeclUsageBlendIndices, 0)) {
+        return false;
+      }
+      offset += 4;
+    } else if (has_lastbeta_color) {
+      if (!add(/*stream=*/0, offset, kD3dDeclTypeD3dColor, kD3dDeclUsageBlendIndices, 0)) {
+        return false;
+      }
+      offset += 4;
+    }
   } else if (pos_xyzw) {
     if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat4, kD3dDeclUsagePosition, 0)) {
       return false;

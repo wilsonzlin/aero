@@ -19,12 +19,14 @@ namespace {
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfXyzw = 0x00004002u;
+constexpr uint32_t kD3dFvfXyzB4 = 0x0000000Cu;
 constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfPSize = 0x00000020u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfSpecular = 0x00000080u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 constexpr uint32_t kD3dFvfTex2 = 0x00000200u;
+constexpr uint32_t kD3dFvfLastBetaUByte4 = 0x00001000u;
 
 // D3DFVF_TEXCOUNT_* encoding bits (4-bit field).
 constexpr uint32_t kD3dFvfTexCountMask = 0x00000F00u;
@@ -71,12 +73,15 @@ constexpr uint8_t kD3dDeclTypeFloat2 = 1;
 constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
+constexpr uint8_t kD3dDeclTypeUByte4 = 5;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
 
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 // D3DDECLUSAGE values (from d3d9types.h).
 constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageBlendWeight = 1;
+constexpr uint8_t kD3dDeclUsageBlendIndices = 2;
 constexpr uint8_t kD3dDeclUsageNormal = 3;
 constexpr uint8_t kD3dDeclUsagePSize = 4;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
@@ -248,6 +253,7 @@ bool TestFvfVertexDeclTranslation() {
                          D3dFvfTexCoordSize4(1);
   const uint32_t kFvfD =
       kD3dFvfXyzw | kD3dFvfNormal | kD3dFvfPSize | kD3dFvfDiffuse | kD3dFvfSpecular | kD3dFvfTex1;
+  const uint32_t kFvfE = kD3dFvfXyzB4 | kD3dFvfLastBetaUByte4 | kD3dFvfNormal | kD3dFvfTex1;
 
   auto set_and_get_layout = [&](uint32_t fvf, aerogpu_handle_t* out_handle) -> bool {
     if (!out_handle) {
@@ -270,10 +276,12 @@ bool TestFvfVertexDeclTranslation() {
   aerogpu_handle_t layout_b0 = 0;
   aerogpu_handle_t layout_c0 = 0;
   aerogpu_handle_t layout_d0 = 0;
+  aerogpu_handle_t layout_e0 = 0;
   aerogpu_handle_t layout_a1 = 0;
   aerogpu_handle_t layout_b1 = 0;
   aerogpu_handle_t layout_c1 = 0;
   aerogpu_handle_t layout_d1 = 0;
+  aerogpu_handle_t layout_e1 = 0;
 
   if (!set_and_get_layout(kFvfA, &layout_a0)) {
     return false;
@@ -285,6 +293,9 @@ bool TestFvfVertexDeclTranslation() {
     return false;
   }
   if (!set_and_get_layout(kFvfD, &layout_d0)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfE, &layout_e0)) {
     return false;
   }
   // Repeat to validate caching (no new CREATE_INPUT_LAYOUT for the same FVF).
@@ -300,6 +311,9 @@ bool TestFvfVertexDeclTranslation() {
   if (!set_and_get_layout(kFvfD, &layout_d1)) {
     return false;
   }
+  if (!set_and_get_layout(kFvfE, &layout_e1)) {
+    return false;
+  }
 
   if (!Check(layout_a0 == layout_a1, "FVF A input layout handle is cached")) {
     return false;
@@ -313,6 +327,9 @@ bool TestFvfVertexDeclTranslation() {
   if (!Check(layout_d0 == layout_d1, "FVF D input layout handle is cached")) {
     return false;
   }
+  if (!Check(layout_e0 == layout_e1, "FVF E input layout handle is cached")) {
+    return false;
+  }
 
   dev.cmd.finalize();
   const uint8_t* buf = dev.cmd.data();
@@ -322,7 +339,7 @@ bool TestFvfVertexDeclTranslation() {
   }
 
   // Exactly one CREATE_INPUT_LAYOUT per distinct FVF.
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_INPUT_LAYOUT) == 4, "expected 4 CREATE_INPUT_LAYOUT packets")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_INPUT_LAYOUT) == 5, "expected 5 CREATE_INPUT_LAYOUT packets")) {
     return false;
   }
 
@@ -357,6 +374,14 @@ bool TestFvfVertexDeclTranslation() {
       {0, 32, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
       {0, 36, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 1},
       {0, 40, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+  const D3DVERTEXELEMENT9_COMPAT expected_e[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsageBlendWeight, 0},
+      {0, 28, kD3dDeclTypeUByte4, kD3dDeclMethodDefault, kD3dDeclUsageBlendIndices, 0},
+      {0, 32, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+      {0, 44, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
   };
 
@@ -396,6 +421,15 @@ bool TestFvfVertexDeclTranslation() {
     return false;
   }
 
+  blob = nullptr;
+  blob_size = 0;
+  if (!Check(FindCreateInputLayoutBlob(buf, len, layout_e0, &blob, &blob_size), "found CREATE_INPUT_LAYOUT for FVF E")) {
+    return false;
+  }
+  if (!Check(BlobEqualsDecl(blob, blob_size, expected_e, std::size(expected_e)), "FVF E input-layout blob")) {
+    return false;
+  }
+
   // Ensure SET_INPUT_LAYOUT binds the expected handles at least once.
   auto saw_set = [&](aerogpu_handle_t handle) -> bool {
     for (const aerogpu_cmd_hdr* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
@@ -420,6 +454,9 @@ bool TestFvfVertexDeclTranslation() {
     return false;
   }
   if (!Check(saw_set(layout_d0), "SET_INPUT_LAYOUT binds FVF D handle")) {
+    return false;
+  }
+  if (!Check(saw_set(layout_e0), "SET_INPUT_LAYOUT binds FVF E handle")) {
     return false;
   }
 

@@ -416,7 +416,8 @@ FVF-derived input layouts for user shaders:
 - `device_set_fvf()` therefore also translates a broader common subset of FVFs into an internal vertex declaration
   (input layout) even when the fixed-function fallback is not active.
 - Supported for **input layout translation only** (does *not* imply fixed-function lighting/stage-state emulation):
-  - `D3DFVF_XYZ`, `D3DFVF_XYZW`, or `D3DFVF_XYZRHW`
+  - `D3DFVF_XYZ`, `D3DFVF_XYZW`, `D3DFVF_XYZRHW`, or `D3DFVF_XYZB1..D3DFVF_XYZB5`
+    - optional `D3DFVF_LASTBETA_UBYTE4` / `D3DFVF_LASTBETA_D3DCOLOR` (BLENDINDICES)
   - optional `D3DFVF_NORMAL`
   - optional `D3DFVF_PSIZE`
   - optional `D3DFVF_DIFFUSE` (COLOR0) and `D3DFVF_SPECULAR` (COLOR1)
@@ -426,6 +427,7 @@ FVF-derived input layouts for user shaders:
 Not yet implemented for **fixed-function emulation** (examples; expected by some fixed-function apps):
 
 - Any FVF requiring fixed-function lighting/material (`D3DFVF_NORMAL`, `D3DFVF_SPECULAR`, etc)
+- Vertex blending / indexed vertex blending (`D3DFVF_XYZB*`, `D3DRS_VERTEXBLEND`, `D3DRS_INDEXEDVERTEXBLENDENABLE`, etc)
 - Multiple texture coordinate sets (`D3DFVF_TEX2+`) or non-`float2` `TEXCOORD0` encodings
 - Full stage-state-driven fixed-function emulation beyond the minimal stage0 subset (stages `> 0`, full D3DTSS_* shader generation, etc)
 
