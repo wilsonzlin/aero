@@ -893,6 +893,10 @@ struct Device {
   VertexDecl* fvf_vertex_decl_xyz_diffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_tex1 = nullptr;
+  // Internal FVF-derived vertex declarations synthesized by `SetFVF` for the
+  // programmable pipeline (user shaders with FVF instead of an explicit vertex
+  // declaration). Keyed by the full FVF DWORD.
+  std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
   Shader* fixedfunc_vs = nullptr;
   Shader* fixedfunc_vs_xyz_diffuse = nullptr;
   Shader* fixedfunc_ps = nullptr;

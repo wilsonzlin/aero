@@ -1899,6 +1899,7 @@ bool TestCreateResourceRejectsUnknownNonBufferType() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
 
   // Bind a span-backed command buffer so we can assert that no CREATE_TEXTURE2D
   // packets are emitted when CreateResource fails validation.

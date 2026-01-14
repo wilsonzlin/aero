@@ -2849,8 +2849,17 @@ bool clamp_rect(const RECT* in, uint32_t width, uint32_t height, RECT* out) {
 
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfNormal = 0x00000010u;
+constexpr uint32_t kD3dFvfPSize = 0x00000020u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+constexpr uint32_t kD3dFvfSpecular = 0x00000080u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
+constexpr uint32_t kD3dFvfTexCountMask = 0x00000F00u;
+constexpr uint32_t kD3dFvfTexCountShift = 8u;
+// D3DFVF_POSITION_MASK (from d3d9types.h). Includes the XYZW high bit (0x4000).
+constexpr uint32_t kD3dFvfPositionMask = 0x0000400Eu;
+// D3DFVF_TEXCOORDSIZE* encodes 2 bits per texcoord set starting at bit 16.
+constexpr uint32_t kD3dFvfTexCoordSizeMask = 0xFFFF0000u;
 
 constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
@@ -2905,6 +2914,7 @@ struct D3DVERTEXELEMENT9_COMPAT {
 
 static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
 
+constexpr uint8_t kD3dDeclTypeFloat1 = 0;
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
 constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
@@ -2914,6 +2924,7 @@ constexpr uint8_t kD3dDeclTypeUnused = 17;
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageNormal = 3;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
@@ -2985,6 +2996,188 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
     out[r * 4 + 2] = a0 * b[0 * 4 + 2] + a1 * b[1 * 4 + 2] + a2 * b[2 * 4 + 2] + a3 * b[3 * 4 + 2];
     out[r * 4 + 3] = a0 * b[0 * 4 + 3] + a1 * b[1 * 4 + 3] + a2 * b[2 * 4 + 3] + a3 * b[3 * 4 + 3];
   }
+}
+
+// -----------------------------------------------------------------------------
+// FVF -> internal vertex declaration translation (programmable pipeline)
+// -----------------------------------------------------------------------------
+//
+// Some D3D9 apps use `SetFVF` even when binding user shaders. In that case, the
+// runtime expects the driver to derive a vertex declaration / input layout from
+// the FVF. AeroGPU's fixed-function bring-up path only handled a small hardcoded
+// subset; translate a broader common subset so user-shader apps see correct input
+// layouts.
+//
+// Supported subset (layout only; does not imply fixed-function emulation):
+// - POSITION: D3DFVF_XYZ or D3DFVF_XYZRHW
+// - NORMAL: D3DFVF_NORMAL
+// - DIFFUSE: D3DFVF_DIFFUSE (COLOR0)
+// - SPECULAR: D3DFVF_SPECULAR (COLOR1)
+// - TEXn: D3DFVF_TEX0..D3DFVF_TEX8 with per-set D3DFVF_TEXCOORDSIZE[1..4]
+//
+// Unsupported bits (e.g. blending weights, PSIZE, XYZW) return false so callers
+// can fall back to "cache-only" SetFVF behavior (GetFVF/state-block compatibility).
+struct FvfVertexDeclTranslation {
+  std::array<D3DVERTEXELEMENT9_COMPAT, 16> elems{};
+  uint32_t elem_count = 0;
+  uint32_t stride_bytes = 0;
+};
+
+constexpr uint32_t kMaxFvfTexCoordSets = 8u;
+
+uint32_t fvf_decode_texcoord_size(uint32_t fvf, uint32_t tex_index) {
+  if (tex_index >= kMaxFvfTexCoordSets) {
+    return 0;
+  }
+  // D3DFVF_TEXCOORDSIZE* uses two bits per texcoord set, with the same encoding
+  // as D3DFVF_TEXTUREFORMAT[1..4]:
+  //   0 -> float2 (default)
+  //   1 -> float3
+  //   2 -> float4
+  //   3 -> float1
+  const uint32_t shift = 16u + tex_index * 2u;
+  const uint32_t code = (fvf >> shift) & 0x3u;
+  switch (code) {
+    case 0u:
+      return 2u;
+    case 1u:
+      return 3u;
+    case 2u:
+      return 4u;
+    case 3u:
+      return 1u;
+    default:
+      return 2u;
+  }
+}
+
+uint8_t fvf_texcoord_size_to_decl_type(uint32_t size) {
+  switch (size) {
+    case 1u:
+      return kD3dDeclTypeFloat1;
+    case 2u:
+      return kD3dDeclTypeFloat2;
+    case 3u:
+      return kD3dDeclTypeFloat3;
+    case 4u:
+      return kD3dDeclTypeFloat4;
+    default:
+      return kD3dDeclTypeFloat2;
+  }
+}
+
+bool try_translate_fvf_to_vertex_decl(uint32_t fvf, FvfVertexDeclTranslation* out) {
+  if (!out) {
+    return false;
+  }
+  *out = FvfVertexDeclTranslation{};
+
+  if (fvf == 0) {
+    return false;
+  }
+
+  // Reject FVFs that include bits we don't understand. This keeps behavior
+  // deterministic and avoids binding mismatched layouts for complicated legacy
+  // formats (e.g. XYZB*, XYZW, PSIZE, blend indices).
+  constexpr uint32_t kSupportedMask =
+      kD3dFvfPositionMask |
+      kD3dFvfNormal |
+      kD3dFvfDiffuse |
+      kD3dFvfSpecular |
+      kD3dFvfTexCountMask |
+      kD3dFvfTexCoordSizeMask;
+  if ((fvf & ~kSupportedMask) != 0) {
+    return false;
+  }
+
+  // POSITION
+  const uint32_t pos = fvf & kD3dFvfPositionMask;
+  const bool pos_xyz = (pos == kD3dFvfXyz);
+  const bool pos_xyzrhw = (pos == kD3dFvfXyzRhw);
+  if (!pos_xyz && !pos_xyzrhw) {
+    return false;
+  }
+
+  // TEXn count.
+  const uint32_t tex_count = (fvf & kD3dFvfTexCountMask) >> kD3dFvfTexCountShift;
+  if (tex_count > kMaxFvfTexCoordSets) {
+    return false;
+  }
+
+  auto add = [&](uint32_t stream,
+                 uint32_t offset_bytes,
+                 uint8_t type,
+                 uint8_t usage,
+                 uint8_t usage_index) -> bool {
+    if (out->elem_count >= out->elems.size()) {
+      return false;
+    }
+    if (stream > 0xFFFFu || offset_bytes > 0xFFFFu) {
+      return false;
+    }
+    out->elems[out->elem_count++] = D3DVERTEXELEMENT9_COMPAT{
+        static_cast<uint16_t>(stream),
+        static_cast<uint16_t>(offset_bytes),
+        type,
+        kD3dDeclMethodDefault,
+        usage,
+        usage_index,
+    };
+    return true;
+  };
+
+  uint32_t offset = 0;
+  if (pos_xyz) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat3, kD3dDeclUsagePosition, 0)) {
+      return false;
+    }
+    offset += 12;
+  } else {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat4, kD3dDeclUsagePositionT, 0)) {
+      return false;
+    }
+    offset += 16;
+  }
+
+  if (fvf & kD3dFvfNormal) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeFloat3, kD3dDeclUsageNormal, 0)) {
+      return false;
+    }
+    offset += 12;
+  }
+  if (fvf & kD3dFvfDiffuse) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeD3dColor, kD3dDeclUsageColor, 0)) {
+      return false;
+    }
+    offset += 4;
+  }
+  if (fvf & kD3dFvfSpecular) {
+    if (!add(/*stream=*/0, offset, kD3dDeclTypeD3dColor, kD3dDeclUsageColor, 1)) {
+      return false;
+    }
+    offset += 4;
+  }
+
+  for (uint32_t i = 0; i < tex_count; ++i) {
+    const uint32_t dim = fvf_decode_texcoord_size(fvf, i);
+    if (dim < 1u || dim > 4u) {
+      return false;
+    }
+    const uint8_t type = fvf_texcoord_size_to_decl_type(dim);
+    if (!add(/*stream=*/0, offset, type, kD3dDeclUsageTexcoord, static_cast<uint8_t>(i))) {
+      return false;
+    }
+    offset += dim * 4u;
+  }
+
+  // D3DDECL_END terminator.
+  if (out->elem_count >= out->elems.size()) {
+    return false;
+  }
+  out->elems[out->elem_count++] = D3DVERTEXELEMENT9_COMPAT{0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0};
+
+  out->stride_bytes = offset;
+  return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -5928,6 +6121,15 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   const bool src_xyzrhw_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
   const bool src_xyzrhw_tex1 = (dev->fvf == kSupportedFvfXyzrhwTex1);
   const bool src_xyzrhw = (src_xyzrhw_diffuse || src_xyzrhw_diffuse_tex1 || src_xyzrhw_tex1);
+  // Note: XYZRHW inputs are already pre-transformed. We still handle a minimal
+  // subset here to support fixed-function default values (e.g. diffuse=white
+  // when requested by the destination decl) and basic TEX0 relocation.
+  //
+  // The fixed-function XYZ (transform) path produces fully deterministic output,
+  // and clears the destination vertex so output padding / extra decl elements are
+  // predictable. For XYZRHW pass-through we preserve destination bytes we do not
+  // explicitly write, matching the memcpy-style fallback behavior and the unit
+  // test expectations for "extra" output fields.
   if (!(fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }
@@ -6267,7 +6469,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       // by the source FVF/decl mapping (e.g. dst has TEX0 but src does not).
       // Honor D3DPV_DONOTCOPYDATA by preserving the existing destination vertex
       // data where we are not explicitly writing.
-      if (!do_not_copy_data) {
+      //
+      // For XYZRHW pass-through, do not clear the full destination stride (this
+      // keeps non-written fields untouched).
+      if (!do_not_copy_data && !src_is_xyzrhw) {
         std::memset(dst, 0, dst_stride);
       }
 
@@ -8573,6 +8778,16 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fvf_vertex_decl_xyz_tex1;
       dev->fvf_vertex_decl_xyz_tex1 = nullptr;
     }
+    // Additional internal FVF-derived declarations for the programmable pipeline.
+    for (auto& it : dev->fvf_vertex_decl_cache) {
+      VertexDecl* decl = it.second;
+      if (!decl) {
+        continue;
+      }
+      (void)emit_destroy_input_layout_locked(dev, decl->handle);
+      delete decl;
+    }
+    dev->fvf_vertex_decl_cache.clear();
     if (dev->fixedfunc_vs) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs->handle);
       delete dev->fixedfunc_vs;
@@ -13033,6 +13248,44 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
       // switching back to FVF mode).
       dev->fixedfunc_matrix_dirty = true;
     }
+    stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
+    return trace.ret(S_OK);
+  }
+
+  // Programmable pipeline path: synthesize an input layout for a common subset
+  // of FVFs beyond the minimal fixed-function bring-up list above. This is
+  // required for apps that use user shaders with SetFVF instead of an explicit
+  // vertex declaration.
+  FvfVertexDeclTranslation translated{};
+  if (try_translate_fvf_to_vertex_decl(fvf, &translated)) {
+    VertexDecl* decl = nullptr;
+    const auto it = dev->fvf_vertex_decl_cache.find(fvf);
+    if (it != dev->fvf_vertex_decl_cache.end()) {
+      decl = it->second;
+    } else {
+      // Bounded cache: FVFs are 32-bit and in theory unbounded; keep a generous
+      // per-device cap to avoid unbounded growth under pathological inputs.
+      constexpr size_t kMaxCachedFvfDecls = 256;
+      if (dev->fvf_vertex_decl_cache.size() >= kMaxCachedFvfDecls) {
+        static std::once_flag warn_once;
+        std::call_once(warn_once, [] {
+          logf("aerogpu-d3d9: FVF input-layout cache overflow; refusing to create more internal declarations\n");
+        });
+        return trace.ret(E_OUTOFMEMORY);
+      }
+
+      const uint32_t decl_size = translated.elem_count * static_cast<uint32_t>(sizeof(D3DVERTEXELEMENT9_COMPAT));
+      decl = create_internal_vertex_decl_locked(dev, translated.elems.data(), decl_size);
+      if (!decl) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      dev->fvf_vertex_decl_cache.emplace(fvf, decl);
+    }
+
+    if (!emit_set_input_layout_locked(dev, decl)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    dev->fvf = fvf;
     stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
     return trace.ret(S_OK);
   }

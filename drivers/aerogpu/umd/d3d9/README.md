@@ -393,7 +393,20 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
   - `device_set_vertex_decl()` pattern-matches common decl layouts and sets an implied `dev->fvf` so the fixed-function
     fallback path can activate even when `SetFVF` is never invoked.
 
-Not yet implemented (examples; expected by some fixed-function apps):
+FVF-derived input layouts for user shaders:
+
+- Many D3D9 apps bind **user shaders** but still use `SetFVF` (instead of `SetVertexDeclaration`) to describe vertex
+  inputs. In this case the runtime expects the driver to derive an input layout from the FVF.
+- `device_set_fvf()` therefore also translates a broader common subset of FVFs into an internal vertex declaration
+  (input layout) even when the fixed-function fallback is not active.
+- Supported for **input layout translation only** (does *not* imply fixed-function lighting/stage-state emulation):
+  - `D3DFVF_XYZ` or `D3DFVF_XYZRHW`
+  - optional `D3DFVF_NORMAL`
+  - optional `D3DFVF_DIFFUSE` (COLOR0) and `D3DFVF_SPECULAR` (COLOR1)
+  - `D3DFVF_TEX0..D3DFVF_TEX8` with per-set `D3DFVF_TEXCOORDSIZE1/2/3/4`
+  - Note: internal decls are cached per-device keyed by the full FVF DWORD and capped at 256 entries.
+
+Not yet implemented for **fixed-function emulation** (examples; expected by some fixed-function apps):
 
 - Any FVF requiring fixed-function lighting/material (`D3DFVF_NORMAL`, `D3DFVF_SPECULAR`, etc)
 - Multiple texture coordinate sets (`D3DFVF_TEX2+`) or non-`float2` `TEXCOORD0` encodings
@@ -430,7 +443,9 @@ Limitations (bring-up):
   from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD via
   `ensure_fixedfunc_wvp_constants_locked()`). Fixed-function lighting/material is still not implemented.
   (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
-- `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
+- The fixed-function fallback's `TEX1` path assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`).
+  Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets require user shaders (layout translation
+  is supported; fixed-function shading is not).
 - Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
    `d3d9ex_fixedfunc_texture_stage_state`):
   - `D3DTSS_COLOROP`/`ALPHAOP` supported ops:
