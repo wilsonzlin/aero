@@ -81,7 +81,8 @@ Keyboard: PCI device 1af4:1052
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse; **Aero VirtIO Mouse**)
   - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer; **Aero VirtIO Tablet Device**):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`
-  - Optional legacy filename alias `inf/virtio-input.inf.disabled` (disabled by default; rename to `virtio-input.inf` to enable):
+  - Optional legacy filename alias / opt-in strict generic fallback: `inf/virtio-input.inf.disabled`
+    (disabled by default; rename to `virtio-input.inf` to enable):
     - Compatibility filename for workflows/tools that still reference `virtio-input.inf`.
     - Adds the strict revision-gated generic fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
       (**Aero VirtIO Input Device**).

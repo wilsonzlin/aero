@@ -10,7 +10,7 @@ test images where you want input working immediately).
 >
 > Driver packages:
 >
-> - Keyboard/mouse: `aero_virtio_input.inf`
+> - Keyboard/mouse: `aero_virtio_input.inf` (canonical)
 >   - Contract keyboard HWID: `...&SUBSYS_00101AF4&REV_01`
 >   - Contract mouse HWID: `...&SUBSYS_00111AF4&REV_01`
 >   - Note: canonical INF is intentionally **SUBSYS-only** (no strict generic fallback).
