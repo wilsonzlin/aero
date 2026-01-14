@@ -29,6 +29,9 @@ struct HostState {
     /// When set, the first `mmu_translate` call will return a translation without `TLB_FLAG_WRITE`
     /// set. This forces the inline-TLB permission check path to re-translate.
     drop_write_flag_on_first_call: bool,
+    /// When set, the first `mmu_translate` call will return a translation without `TLB_FLAG_READ`
+    /// set. This forces the inline-TLB permission check path to re-translate.
+    drop_read_flag_on_first_call: bool,
 }
 
 fn validate_wasm(bytes: &[u8]) {
@@ -378,6 +381,9 @@ fn define_mmu_translate(
                         | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
                     if caller.data().drop_write_flag_on_first_call && call_idx == 1 {
                         flags &= !TLB_FLAG_WRITE;
+                    }
+                    if caller.data().drop_read_flag_on_first_call && call_idx == 1 {
+                        flags &= !TLB_FLAG_READ;
                     }
                     let data = phys_base | flags;
 
@@ -801,6 +807,84 @@ fn tier2_inline_tlb_store_permission_check_retranslates_on_missing_write_flag() 
     );
 
     assert_eq!(got_ram[0x1000], 0xAB);
+    assert_eq!(host.mmu_translate_calls, 2);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_load_from_non_ram_uses_slow_helper() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1234),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1234..0x1234 + 4].copy_from_slice(&0xDDCC_BBAAu32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+    let (_ret, _got_ram, gpr, host) = run_trace_with_host_state(
+        &trace,
+        ram,
+        cpu_ptr,
+        HostState {
+            // Mark only the first 0x1000 bytes as RAM so 0x1234 is classified as non-RAM.
+            ram_size: 0x1000,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0xDDCC_BBAA);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 1);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_load_permission_check_retranslates_on_missing_read_flag() {
+    // Force `mmu_translate` to return a translation without read permission on its first call. The
+    // inline-TLB permission check should detect the missing flag and re-translate.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1000),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+    let (_ret, _got_ram, gpr, host) = run_trace_with_host_state(
+        &trace,
+        ram,
+        cpu_ptr,
+        HostState {
+            ram_size: 0x20_000,
+            drop_read_flag_on_first_call: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x1122_3344);
     assert_eq!(host.mmu_translate_calls, 2);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
