@@ -128,6 +128,9 @@ The driver uses virtio-input config space to validate and classify the device:
 - `ID_NAME` must be exactly one of:
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
+- If the PCI **Subsystem Device ID** indicates a specific kind, it must match `ID_NAME`:
+  - `SUBSYS_00101AF4` (`0x0010`, keyboard) → `ID_NAME` must be `Aero Virtio Keyboard`
+  - `SUBSYS_00111AF4` (`0x0011`, mouse) → `ID_NAME` must be `Aero Virtio Mouse`
 - `EV_BITS` must be implemented and must advertise the minimum required event types/codes.
   - If `EV_BITS` is missing or empty, the driver will refuse to start.
 

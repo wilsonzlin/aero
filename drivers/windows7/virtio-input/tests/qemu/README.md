@@ -17,6 +17,11 @@ It uses QEMU to provide virtio-input keyboard/mouse devices, then verifies:
 3. Windows built-in `kbdhid.sys` and `mouhid.sys` attach to the resulting HID keyboard/mouse collections
 4. Keyboard/mouse input reports are correct (validated with `hidtest`)
 
+> Note: The in-tree Win7 virtio-input driver is **contract-first** and requires the
+> Aero virtio-input `ID_NAME` strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`).
+> If your QEMU virtio-input devices report different `ID_NAME` strings (as stock QEMU
+> often does), the driver will refuse to start (typically Code 10 / `STATUS_NOT_SUPPORTED`).
+
 Hardware ID (HWID) references are documented in:
 
 - `drivers/windows7/virtio-input/docs/pci-hwids.md`
