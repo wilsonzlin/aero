@@ -2027,6 +2027,22 @@ export class AerogpuCmdWriter {
     vs: AerogpuHandle,
     ps: AerogpuHandle,
     cs: AerogpuHandle,
+    gs: AerogpuHandle,
+    hs: AerogpuHandle,
+    ds: AerogpuHandle,
+    mirrorGsToReserved0?: boolean,
+  ): void;
+  bindShadersEx(
+    vs: AerogpuHandle,
+    ps: AerogpuHandle,
+    cs: AerogpuHandle,
+    ex: BindShadersEx,
+    mirrorGsToReserved0?: boolean,
+  ): void;
+  bindShadersEx(
+    vs: AerogpuHandle,
+    ps: AerogpuHandle,
+    cs: AerogpuHandle,
     gsOrEx: AerogpuHandle | BindShadersEx,
     hsOrMirror?: AerogpuHandle | boolean,
     ds?: AerogpuHandle,
