@@ -2903,11 +2903,12 @@ bool fixedfunc_fvf_supported(uint32_t fvf) {
   // Fixed-function bring-up paths which require a known internal FVF-driven
   // vertex declaration (e.g. patch emulation) are limited to pre-transformed
   // XYZRHW + DIFFUSE variants (optionally TEX1).
-  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
-  // Fixed-function TEX1 assumes float2 texcoords; reject other encodings.
+  const uint32_t base = fixedfunc_fvf_base(fvf);
+  // Patch tessellation only consumes (u, v). Reject TEXCOORDSIZE1(0) (float1),
+  // but allow float2/3/4 since the first two components are still available.
   if ((base & kD3dFvfTex1) != 0) {
-    // Texcoord-0 size bits (two bits at offset 16): 0 -> float2.
-    if ((fvf & (0x3u << 16u)) != 0) {
+    // Texcoord-0 size bits (two bits at offset 16): 3 -> float1.
+    if ((fvf & (0x3u << 16u)) == (0x3u << 16u)) {
       return false;
     }
   }
@@ -20579,8 +20580,9 @@ namespace {
 bool patch_sig_equal(const PatchCacheSignature& a, const PatchCacheSignature& b) {
   if (a.kind != b.kind) return false;
   // D3DFVF_TEXCOORDSIZE* bits can contain garbage for *unused* texcoord sets.
-  // Patch emulation only supports float2 TEX0 when TEX1 is present, so ignore
-  // all TEXCOORDSIZE bits when matching patch cache signatures.
+  // Patch emulation only consumes TEXCOORD0.xy when TEX1 is present, so ignore
+  // all TEXCOORDSIZE bits when matching patch cache signatures (stride_bytes
+  // still distinguishes float2 vs float3/float4 layouts).
   if ((a.fvf & ~kD3dFvfTexCoordSizeMask) != (b.fvf & ~kD3dFvfTexCoordSizeMask)) return false;
   if (a.stride_bytes != b.stride_bytes) return false;
   if (a.start_vertex_offset != b.start_vertex_offset) return false;
