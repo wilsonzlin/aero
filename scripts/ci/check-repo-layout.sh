@@ -659,24 +659,23 @@ for test in manifest_tests:
                 "Tip: include --json in --help/usage output so automation users can discover the feature"
             )
 
-mentioned_list = []
-for raw in readme_path.read_text(encoding="utf-8").splitlines():
+mentioned_lines = {}
+for line_no, raw in enumerate(readme_path.read_text(encoding="utf-8").splitlines(), start=1):
     # Only consider top-level bullets (`* ...`), not nested bullets.
     m = re.match(r"^\* `([a-z0-9_]+)`", raw)
     if m:
-        mentioned_list.append(m.group(1))
+        name = m.group(1)
+        mentioned_lines.setdefault(name, []).append(line_no)
 
-mentioned_counts = {}
-for name in mentioned_list:
-    mentioned_counts[name] = mentioned_counts.get(name, 0) + 1
-duplicates = sorted([name for name, count in mentioned_counts.items() if count > 1])
+duplicates = sorted([name for name, lines in mentioned_lines.items() if len(lines) > 1])
 if duplicates:
+    details = ", ".join(f"{name} (lines {', '.join(str(n) for n in mentioned_lines[name])})" for name in duplicates)
     raise SystemExit(
-        f"{readme_path}: duplicate Expected results bullets for test(s): {', '.join(duplicates)}\n"
+        f"{readme_path}: duplicate Expected results bullets for test(s): {details}\n"
         "Tip: ensure each test appears exactly once under '## Expected results'"
     )
 
-missing = [t for t in manifest_tests if t not in mentioned_counts]
+missing = [t for t in manifest_tests if t not in mentioned_lines]
 if missing:
     raise SystemExit(
         f"{readme_path}: missing Expected results bullets for manifest test(s): {', '.join(missing)}\n"
