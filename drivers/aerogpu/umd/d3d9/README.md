@@ -28,7 +28,7 @@ The Win7 D3D9 runtime exposes a device-managed cursor API (`SetCursorProperties`
 AeroGPU implements this as a **software cursor overlay** composited over the present source surface immediately before emitting
 `AEROGPU_CMD_PRESENT_EX`. Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8`, `A8B8G8R8`.
 
-Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
+Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 
 - Cursor state DDIs: `device_set_cursor_properties_dispatch()` / `device_set_cursor_position_dispatch()` / `device_show_cursor_dispatch()`
 - Cursor overlay at present time: `overlay_device_cursor_locked()` (called by `device_present()` / `device_present_ex()`)
@@ -362,7 +362,7 @@ Supported FVF combinations (bring-up subset):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform)
 
-Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
+Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
   `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
@@ -370,6 +370,7 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
+- Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsPassthroughPosColor`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
