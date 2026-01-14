@@ -13,6 +13,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - Auth token verification (`aero-auth-tokens`)
 - AeroSparse disk image parsing/open (`aero-storage`)
 - AeroGPU command stream + alloc-table parsing (`aero-gpu` / `aero-protocol`)
+- AeroGPU trace container + record parsing (`aero-gpu-trace`)
 - DXBC container + shader bytecode parsing (`aero-dxbc`)
 - D3D9 SM2/SM3 shader decoding + IR/WGSL lowering (`aero-d3d9::sm3`)
 - D3D9 shader token stream parsing + disassembly formatting (`aero-d3d9-shader`)
@@ -50,6 +51,7 @@ cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_aerogpu_trace_read
 cargo +"$nightly" fuzz run fuzz_i8042
 cargo +"$nightly" fuzz run fuzz_uhci
 cargo +"$nightly" fuzz run fuzz_hid_report_descriptor
@@ -172,6 +174,10 @@ cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
 cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
+
+# AeroGPU trace container + record parsing (tries to be resilient to malformed/corrupt traces)
+cd fuzz && cargo fuzz run fuzz_aerogpu_trace_read -- -runs=10000
+cd fuzz && cargo fuzz run fuzz_aerogpu_trace_read -- -runs=10000 -dict=fuzz_targets/fuzz_aerogpu_trace_read.dict
 
 # AeroGPU CPU BCn decompression (BC1/BC2/BC3/BC7) + hostile dims/truncated inputs
 cd fuzz && cargo fuzz run fuzz_aerogpu_bc_decompress -- -runs=10000
