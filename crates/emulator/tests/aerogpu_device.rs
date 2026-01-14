@@ -369,6 +369,7 @@ fn error_mmio_registers_are_populated_on_decode_error_irq() {
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
 
@@ -428,6 +429,7 @@ fn error_mmio_registers_support_u64_fence_values() {
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
 
@@ -477,6 +479,7 @@ fn error_mmio_payload_is_sticky_across_irq_ack_and_overwritten_by_next_error() {
     mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence0); // signal_fence
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
     assert!(dev.irq_level());
@@ -514,6 +517,7 @@ fn error_mmio_payload_is_sticky_across_irq_ack_and_overwritten_by_next_error() {
     // Queue the second submission.
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2);
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
 
     assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
     assert!(dev.irq_level());
@@ -539,6 +543,7 @@ fn ring_reset_clears_error_mmio_payload() {
 
     // Ring reset is a recovery point: it clears any previously latched error payload.
     dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::RESET);
+    dev.tick(&mut mem, 0);
 
     assert_eq!(
         dev.mmio_read(&mut mem, mmio::ERROR_CODE, 4),
@@ -1315,6 +1320,7 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
     // Doorbell: submission becomes in-flight, but fence does not complete without an external
     // completion.
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
@@ -1435,6 +1441,7 @@ fn drain_pending_submissions_and_complete_fence_across_u32_boundary() {
 
     // Doorbell: submissions become in-flight, but fences do not complete without external completions.
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
 

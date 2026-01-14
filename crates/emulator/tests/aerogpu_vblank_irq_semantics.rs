@@ -52,16 +52,16 @@ fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
     // Even though the vblank counter advanced during catch-up, the IRQ status bit must not be
     // set until the next vblank edge *after* the enable.
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
-    assert!(
-        dev.regs.scanout0_vblank_seq > 0,
-        "vblank counters must advance even when IRQ delivery is masked"
-    );
 
     // An immediate tick at the current time should *not* produce a pending IRQ (the next vblank
     // deadline should be in the future).
     let after_enable = now;
     dev.tick(&mut mem, after_enable);
     assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(
+        dev.regs.scanout0_vblank_seq > 0,
+        "vblank counters must advance even when IRQ delivery is masked"
+    );
 
     // The first tick that crosses the next vblank edge should latch the IRQ status bit.
     dev.tick(&mut mem, after_enable + period_ns);
