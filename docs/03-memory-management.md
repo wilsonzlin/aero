@@ -558,8 +558,8 @@ BIOS/bootloader/Windows writes to `0xB8000` (text mode) are visible on the canva
 In the canonical machine, this is implemented by:
 
 - `aero_gpu_vga` when `MachineConfig::enable_vga=true` (transitional boot display path), or
-- the AeroGPU BAR1-backed VRAM alias when `MachineConfig::enable_aerogpu=true` (legacy decode
-  foundation).
+- the AeroGPU BAR1-backed VRAM + VRAM-backed legacy VGA/VBE decode when `MachineConfig::enable_aerogpu=true`
+  (legacy decode foundation).
 
 Separately, VBE graphics modes use a linear framebuffer (LFB) at a different physical address:
 
