@@ -71,13 +71,14 @@ fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
 
 fn push_bind_shaders(stream: &mut Vec<u8>, vs: u32, ps: u32, cs: u32, gs: u32) {
     // Encode the append-only `BIND_SHADERS` extension so the executor sees `{gs,hs,ds}` via the
-    // canonical decoder, while also duplicating `gs` into the legacy `reserved0` field for backwards
-    // compatibility (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
+    // canonical decoder (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
+    //
+    // In the extended form, the trailing handles are authoritative and `reserved0` should be 0.
     let start = begin_cmd(stream, AerogpuCmdOpcode::BindShaders as u32);
     stream.extend_from_slice(&vs.to_le_bytes());
     stream.extend_from_slice(&ps.to_le_bytes());
     stream.extend_from_slice(&cs.to_le_bytes());
-    stream.extend_from_slice(&gs.to_le_bytes()); // reserved0 (legacy GS)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0 (unused for extended packet)
     stream.extend_from_slice(&gs.to_le_bytes()); // gs (extension)
     stream.extend_from_slice(&0u32.to_le_bytes()); // hs (extension)
     stream.extend_from_slice(&0u32.to_le_bytes()); // ds (extension)
