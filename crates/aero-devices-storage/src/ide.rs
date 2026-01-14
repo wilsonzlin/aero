@@ -242,7 +242,7 @@ impl IdeChannel {
             return 0xFF;
         }
 
-        // ATA/ATAPI defines DADR as:
+        // ATA/ATAPI defines DADR as the active-low versions of the drive/head select lines:
         //   bits 7..6: 1
         //   bit 5: nDS1 (active low drive-select 1)
         //   bit 4: nDS0 (active low drive-select 0)
