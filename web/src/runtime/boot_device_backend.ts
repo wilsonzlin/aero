@@ -50,15 +50,27 @@ export function installBootDeviceBackendOnAeroGlobal(coordinator: WorkerCoordina
 
   const backend: BootDeviceBackend = {
     getBootDisks: () => {
-      const msg = coordinator.getBootDisks();
-      if (!msg) return null;
-      const mounts = msg.mounts ?? {};
-      const bootDevice = msg.bootDevice;
+      const msg = coordinator.getBootDisks() as unknown;
+      if (!msg || typeof msg !== "object") return null;
+      const rec = msg as Partial<{ mounts: unknown; bootDevice: unknown }>;
+      const mountsRec = rec.mounts && typeof rec.mounts === "object" ? (rec.mounts as Record<string, unknown>) : {};
+      const sanitize = (value: unknown): string | undefined => {
+        if (typeof value !== "string") return undefined;
+        const trimmed = value.trim();
+        return trimmed ? trimmed : undefined;
+      };
+      const hddId = sanitize(mountsRec.hddId);
+      const cdId = sanitize(mountsRec.cdId);
+      const mounts = { ...(hddId ? { hddId } : {}), ...(cdId ? { cdId } : {}) };
+
+      const bootDevice = rec.bootDevice === "hdd" || rec.bootDevice === "cdrom" ? rec.bootDevice : undefined;
       return bootDevice ? { mounts, bootDevice } : { mounts };
     },
-    getMachineCpuActiveBootDevice: () => coordinator.getMachineCpuActiveBootDevice(),
+    getMachineCpuActiveBootDevice: () => {
+      const raw = coordinator.getMachineCpuActiveBootDevice() as unknown;
+      return raw === "hdd" || raw === "cdrom" ? raw : null;
+    },
   };
 
   Object.assign(debug, backend);
 }
-
