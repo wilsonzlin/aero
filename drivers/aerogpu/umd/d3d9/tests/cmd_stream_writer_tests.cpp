@@ -17200,6 +17200,153 @@ bool TestProcessVerticesInPlaceOverlapSafeWithStridesDestBeforeSrc() {
   return ValidateStream(dev->cmd.data(), dev->cmd.bytes_used());
 }
 
+bool TestProcessVerticesInPlaceOverlapSafeWithEqualStrides() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  constexpr uint32_t kStride = 8;
+  constexpr uint32_t kVertexCount = 4;
+  constexpr uint32_t kDestIndex = 1;
+  constexpr uint32_t kBufSize = 64;
+
+  D3D9DDIARG_CREATERESOURCE create_buf{};
+  create_buf.type = 0;
+  create_buf.format = 0;
+  create_buf.width = 0;
+  create_buf.height = 0;
+  create_buf.depth = 1;
+  create_buf.mip_levels = 1;
+  create_buf.usage = 0;
+  create_buf.pool = 0;
+  create_buf.size = kBufSize;
+  create_buf.hResource.pDrvPrivate = nullptr;
+  create_buf.pSharedHandle = nullptr;
+  create_buf.pPrivateDriverData = nullptr;
+  create_buf.PrivateDriverDataSize = 0;
+  create_buf.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_buf);
+  if (!Check(hr == S_OK, "CreateResource(host buffer)")) {
+    return false;
+  }
+  if (!Check(create_buf.hResource.pDrvPrivate != nullptr, "CreateResource returned buffer handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_buf.hResource);
+
+  auto* res = reinterpret_cast<Resource*>(create_buf.hResource.pDrvPrivate);
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(res && dev, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= kBufSize, "buffer has CPU storage")) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < kBufSize; ++i) {
+    res->storage[i] = static_cast<uint8_t>(i ^ 0x3Cu);
+  }
+  const std::vector<uint8_t> original = res->storage;
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice,
+                                               /*stream=*/0,
+                                               create_buf.hResource,
+                                               /*offset_bytes=*/0,
+                                               /*stride_bytes=*/kStride);
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=buf)")) {
+    return false;
+  }
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = kDestIndex;
+  pv.VertexCount = kVertexCount;
+  pv.hDestBuffer = create_buf.hResource;
+  pv.hVertexDecl.pDrvPrivate = nullptr;
+  pv.Flags = 0;
+  pv.DestStride = kStride;
+  hr = cleanup.device_funcs.pfnProcessVertices(create_dev.hDevice, &pv);
+  if (!Check(hr == S_OK, "ProcessVertices(in-place equal-stride overlap)")) {
+    return false;
+  }
+
+  // Ensure the equal-stride in-place overlap path (directional per-vertex memmove)
+  // preserves memmove-like semantics.
+  if (!Check(std::memcmp(res->storage.data() + 0, original.data() + 0, 8) == 0, "src prefix untouched")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + 8, original.data() + 0, 8) == 0, "dst[8..15] == original src[0..7]")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + 16, original.data() + 8, 8) == 0, "dst[16..23] == original src[8..15]")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + 24, original.data() + 16, 8) == 0, "dst[24..31] == original src[16..23]")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + 32, original.data() + 24, 8) == 0, "dst[32..39] == original src[24..31]")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  return ValidateStream(dev->cmd.data(), dev->cmd.bytes_used());
+}
+
 bool TestProcessVerticesEmitsDirtyRangeForGuestBackedDest() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -18971,6 +19118,7 @@ int main() {
   failures += !aerogpu::TestProcessVerticesCopiesBytesAndUploadsHostBuffer();
   failures += !aerogpu::TestProcessVerticesInPlaceOverlapSafeWithStrides();
   failures += !aerogpu::TestProcessVerticesInPlaceOverlapSafeWithStridesDestBeforeSrc();
+  failures += !aerogpu::TestProcessVerticesInPlaceOverlapSafeWithEqualStrides();
   failures += !aerogpu::TestProcessVerticesEmitsDirtyRangeForGuestBackedDest();
   failures += !aerogpu::TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull();
   failures += !aerogpu::TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload();
