@@ -69,8 +69,11 @@ Descriptor** that advertises the El Torito boot catalog.
 2. If we hit the terminator without finding a valid El Torito Boot Record VD, the ISO is treated as
    **not BIOS-bootable via El Torito**.
 
-Implementation note: Aero scans until it sees the Volume Descriptor Set Terminator (`0xFF`) or
-encounters a non-ISO9660 descriptor; there is no separate fixed scan cap beyond the image boundary.
+Implementation note: Aero bounds this scan for robustness and safety. It stops when it sees the
+Volume Descriptor Set Terminator (`0xFF`), encounters a non-ISO9660 descriptor, reaches the end of
+the image, **or after a fixed maximum descriptor count** (`MAX_VOLUME_DESCRIPTOR_SCAN`, currently
+`128` ISO blocks). If the image ends while scanning, Aero treats it as **missing the El Torito boot
+record** rather than surfacing a disk read error.
 
 ---
 
