@@ -134,13 +134,17 @@ services in Rust.
 
   - `Machine::handle_bios_interrupt(vector)` → `bios.dispatch_interrupt(vector, ...)`
 
-In the canonical machine, BIOS INT 13h is wired to a **multi-drive disk set** so that:
+In the canonical machine, BIOS INT 13h is wired to a **single selected boot medium**:
 
-- `DL=0x80` routes to the primary HDD backend (also attached to AHCI port 0).
-- `DL=0xE0` routes to the install-media ISO backend (also attached to IDE secondary master ATAPI).
+- If `boot_drive` is an HDD drive number (`DL=0x80..=0xDF`), INT 13h routes to the primary HDD
+  backend (also attached to AHCI port 0).
+- If `boot_drive` is a CD drive number (`DL=0xE0..=0xEF`), INT 13h routes to the install-media ISO
+  backend (also attached to IDE secondary master ATAPI).
 
-If you embed `firmware::bios` outside of `aero-machine` and only need a single boot disk, you can
-still use the legacy “single disk” adapter that exposes that disk as `DL=0x80` (HDD0).
+Note: the BIOS currently models only the selected boot drive as “present” to INT 13h; other drive
+numbers are treated as not present. The host selects which medium firmware sees by setting
+`boot_drive` (via `MachineConfig::boot_drive` at construction time, or via
+`Machine::set_boot_drive(...)` + `Machine::reset()`).
 
 Boot selection note: `Machine` defaults to `boot_drive=0x80`. For install-media boot, callers
 should attach an ISO and set `Machine::set_boot_drive(0xE0)` **before** invoking
