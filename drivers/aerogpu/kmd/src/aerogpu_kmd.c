@@ -656,6 +656,33 @@ typedef struct _AEROGPU_PENDING_INTERNAL_SUBMISSION {
     SIZE_T CmdSizeBytes;
 } AEROGPU_PENDING_INTERNAL_SUBMISSION;
 
+static __forceinline AEROGPU_PENDING_INTERNAL_SUBMISSION*
+AeroGpuAllocPendingInternalSubmission(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter) {
+        return NULL;
+    }
+
+    AEROGPU_PENDING_INTERNAL_SUBMISSION* sub = (AEROGPU_PENDING_INTERNAL_SUBMISSION*)ExAllocateFromNPagedLookasideList(
+        &Adapter->PendingInternalSubmissionLookaside);
+    if (!sub) {
+        return NULL;
+    }
+
+    RtlZeroMemory(sub, sizeof(*sub));
+    return sub;
+}
+
+static __forceinline VOID AeroGpuFreePendingInternalSubmission(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                                               _In_opt_ AEROGPU_PENDING_INTERNAL_SUBMISSION* Sub)
+{
+    if (!Adapter || !Sub) {
+        return;
+    }
+
+    ExFreeToNPagedLookasideList(&Adapter->PendingInternalSubmissionLookaside, Sub);
+}
+
 static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
     if (!Adapter) {
@@ -1702,7 +1729,7 @@ static VOID AeroGpuFreeAllInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
         }
 
         AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+        AeroGpuFreePendingInternalSubmission(Adapter, sub);
     }
 }
 
@@ -1734,7 +1761,7 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
         }
 
         AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+        AeroGpuFreePendingInternalSubmission(Adapter, sub);
     }
 }
 
@@ -2104,12 +2131,25 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
+    AEROGPU_PENDING_INTERNAL_SUBMISSION* internal = AeroGpuAllocPendingInternalSubmission(Adapter);
+    if (!internal) {
+#if DBG
+        static volatile LONG g_ReleaseSharedSurfaceAllocFailLogs = 0;
+        AEROGPU_LOG_RATELIMITED(g_ReleaseSharedSurfaceAllocFailLogs,
+                                8,
+                                "ReleaseSharedSurface: token=0x%I64x failed to allocate tracking node; skipping submit",
+                                ShareToken);
+#endif
+        return;
+    }
+
     const ULONG cmdSizeBytes =
         (ULONG)(sizeof(struct aerogpu_cmd_stream_header) + sizeof(struct aerogpu_cmd_release_shared_surface));
     PHYSICAL_ADDRESS cmdPa;
     cmdPa.QuadPart = 0;
     PVOID cmdVa = AeroGpuAllocContiguous(cmdSizeBytes, &cmdPa);
     if (!cmdVa) {
+        AeroGpuFreePendingInternalSubmission(Adapter, internal);
         return;
     }
 
@@ -2147,37 +2187,25 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
                                      0,
                                      signalFence,
                                      &ringTailAfter);
+
+        if (NT_SUCCESS(st)) {
+            internal->RingTailAfter = ringTailAfter;
+            internal->ShareToken = ShareToken;
+            internal->CmdVa = cmdVa;
+            internal->CmdSizeBytes = cmdSizeBytes;
+            InsertTailList(&Adapter->PendingInternalSubmissions, &internal->ListEntry);
+        }
         KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
     }
     if (!NT_SUCCESS(st)) {
         AeroGpuFreeContiguousNonCached(cmdVa, cmdSizeBytes);
+        AeroGpuFreePendingInternalSubmission(Adapter, internal);
         return;
     }
 
     /* Track internal submissions for dbgctl perf counters. */
     InterlockedIncrement64(&Adapter->PerfTotalSubmissions);
     InterlockedIncrement64(&Adapter->PerfTotalInternalSubmits);
-
-    AEROGPU_PENDING_INTERNAL_SUBMISSION* internal =
-        (AEROGPU_PENDING_INTERNAL_SUBMISSION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*internal), AEROGPU_POOL_TAG);
-    if (!internal) {
-        AEROGPU_LOG("ReleaseSharedSurface: submitted token=0x%I64x but failed to allocate tracking node; leaking DMA buffer",
-                    ShareToken);
-        return;
-    }
-
-    RtlZeroMemory(internal, sizeof(*internal));
-    internal->RingTailAfter = ringTailAfter;
-    internal->ShareToken = ShareToken;
-    internal->CmdVa = cmdVa;
-    internal->CmdSizeBytes = cmdSizeBytes;
-
-    {
-        KIRQL pendingIrql;
-        KeAcquireSpinLock(&Adapter->PendingLock, &pendingIrql);
-        InsertTailList(&Adapter->PendingInternalSubmissions, &internal->ListEntry);
-        KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
-    }
 }
 
 static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
@@ -2454,6 +2482,13 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->PendingLock);
     InitializeListHead(&adapter->PendingSubmissions);
     InitializeListHead(&adapter->PendingInternalSubmissions);
+    ExInitializeNPagedLookasideList(&adapter->PendingInternalSubmissionLookaside,
+                                    NULL,
+                                    NULL,
+                                    0,
+                                    sizeof(AEROGPU_PENDING_INTERNAL_SUBMISSION),
+                                    AEROGPU_POOL_TAG,
+                                    64);
     InitializeListHead(&adapter->RecentSubmissions);
     adapter->RecentSubmissionCount = 0;
     adapter->RecentSubmissionBytes = 0;
@@ -3280,7 +3315,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                 AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
                     CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
                 AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-                ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+                AeroGpuFreePendingInternalSubmission(adapter, sub);
             }
         }
 
@@ -3868,6 +3903,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     AeroGpuFreeAllShareTokenRefs(adapter);
     AeroGpuFreeAllInternalSubmissions(adapter);
     AeroGpuFreeSharedHandleTokens(adapter);
+    ExDeleteNPagedLookasideList(&adapter->PendingInternalSubmissionLookaside);
     ExFreePoolWithTag(adapter, AEROGPU_POOL_TAG);
     return STATUS_SUCCESS;
 }
@@ -8229,7 +8265,7 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
             CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
         AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+        AeroGpuFreePendingInternalSubmission(adapter, sub);
     }
     return STATUS_SUCCESS;
 }
