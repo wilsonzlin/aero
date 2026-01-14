@@ -37,7 +37,7 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     assert_eq!(portsc & EHCI_PORT_HSP, 0, "full-speed device should clear HSP");
     assert_eq!(
         (portsc & EHCI_PORT_LS_MASK) >> 10,
-        0b01,
+        0b10,
         "full-speed device should report idle J-state via LS"
     );
 
@@ -51,8 +51,7 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     assert_eq!(portsc & EHCI_PORT_HSP, 0, "low-speed device should clear HSP");
     assert_eq!(
         (portsc & EHCI_PORT_LS_MASK) >> 10,
-        0b10,
+        0b01,
         "low-speed device should report idle K-state via LS"
     );
 }
-

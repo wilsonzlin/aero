@@ -430,12 +430,16 @@ impl Usb2MuxPort {
                             v &= !HSP;
                             if !self.ehci.reset {
                                 let ls = if self.ehci.resuming {
-                                    // Preserve existing behaviour: resuming drives a K-state.
-                                    0b10
+                                    // EHCI line status reports the raw D+/D- levels. While resuming,
+                                    // the host drives a K-state (D- high).
+                                    0b01
                                 } else {
                                     match dev.speed() {
-                                        UsbSpeed::Full => 0b01, // J-state
-                                        UsbSpeed::Low => 0b10,  // K-state
+                                        // EHCI 1.0 spec 2.3.9:
+                                        // - 0b10 = J-state (D+ high) -> full-speed idle
+                                        // - 0b01 = K-state (D- high) -> low-speed idle
+                                        UsbSpeed::Full => 0b10,
+                                        UsbSpeed::Low => 0b01,
                                         UsbSpeed::High => unreachable!(),
                                     }
                                 };
@@ -445,12 +449,12 @@ impl Usb2MuxPort {
                     }
                 } else if !self.ehci.reset {
                     // No device object (should be rare); preserve previous MVP behaviour.
-                    let ls = if self.ehci.resuming { 0b10 } else { 0b01 };
+                    let ls = if self.ehci.resuming { 0b01 } else { 0b10 };
                     v |= (ls as u32) << 10;
                 }
             } else if !self.ehci.reset {
                 // Port is not owned by EHCI; retain the previous MVP line status behaviour.
-                let ls = if self.ehci.resuming { 0b10 } else { 0b01 };
+                let ls = if self.ehci.resuming { 0b01 } else { 0b10 };
                 v |= ((ls as u32) << 10) & LS_MASK;
 
                 if let Some(dev) = self.device.as_ref() {
