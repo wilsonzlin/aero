@@ -7410,6 +7410,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             } else {
                 /* Best-effort: no structured error payload; still record "internal" as the last seen error kind. */
                 InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)AEROGPU_ERROR_INTERNAL);
+                InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, 0);
             }
             /*
              * Choose a faulted fence ID that dxgkrnl can associate with a DMA buffer.
@@ -7683,6 +7684,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                     InterlockedExchange(&adapter->DeviceErrorLatched, 1);
                     /* Legacy device models do not expose structured error MMIO registers; treat as INTERNAL. */
                     InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)AEROGPU_ERROR_INTERNAL);
+                    InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, 0);
                     AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
 
                     /*
