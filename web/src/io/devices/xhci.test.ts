@@ -125,6 +125,7 @@ describe("io/devices/xhci", () => {
       mmio_read: vi.fn(() => 0),
       mmio_write: vi.fn(),
       step_frame: vi.fn(),
+      poll: vi.fn(),
       irq_asserted: vi.fn(() => false),
       free: vi.fn(),
     };
@@ -134,11 +135,12 @@ describe("io/devices/xhci", () => {
     dev.tick(0);
     dev.tick(8);
     expect(bridge.step_frame).not.toHaveBeenCalled();
+    expect(bridge.poll).not.toHaveBeenCalled();
 
     // Enable bus mastering; the device should start stepping from "now" without catching up.
     dev.onPciCommandWrite(1 << 2);
     dev.tick(9);
     expect(bridge.step_frame).toHaveBeenCalledTimes(1);
+    expect(bridge.poll).toHaveBeenCalledTimes(1);
   });
 });
-

@@ -22,6 +22,12 @@ export type XhciControllerBridgeLike = {
   tick?: (frames: number) => void;
   step_frame?: () => void;
   tick_1ms?: () => void;
+  /**
+   * Optional non-advancing progress hook.
+   *
+   * Treated as equivalent to `step_frames(0)` for legacy/alternate WASM builds.
+   */
+  poll?: () => void;
   irq_asserted(): boolean;
   free(): void;
 };
@@ -195,6 +201,17 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
         // ignore device errors during tick
       }
       this.#accumulatedMs -= frames * XHCI_FRAME_MS;
+    }
+
+    // Some WASM bridges expose a `poll()` hook that performs non-time-advancing work (e.g. draining
+    // pending completions). Treat it as a legacy alias for `step_frames(0)`.
+    const poll = this.#bridge.poll;
+    if (typeof poll === "function") {
+      try {
+        poll.call(this.#bridge);
+      } catch {
+        // ignore device errors during poll
+      }
     }
 
     this.#syncIrq();
