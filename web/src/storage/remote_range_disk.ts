@@ -1195,6 +1195,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     await this.metaWriteChain.catch(() => {
       // best-effort metadata persistence
     });
+    if (this.persistentCacheWritesDisabled) {
+      // Metadata persistence can observe quota pressure and disable caching. Avoid flushing the
+      // sparse cache after we've already decided to stop persistent writes.
+      return;
+    }
     try {
       await this.ensureOpen().flush();
     } catch (err) {
