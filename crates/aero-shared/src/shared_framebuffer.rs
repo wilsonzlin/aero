@@ -494,6 +494,13 @@ impl SharedFramebufferWriter {
     /// 2. `active_index = N`
     /// 3. `frame_seq = new_seq` (last; used as the `Atomics.wait` address)
     /// 4. `frame_dirty = 1` (consumer may clear after it is finished copying/presenting)
+    ///
+    /// Note: double buffering alone does not prevent producer/consumer overlap if the producer
+    /// publishes faster than the consumer can process, because the buffer the consumer is reading
+    /// becomes the *next* back buffer. When the backing store is shared across threads (e.g. a
+    /// threaded wasm build using `WebAssembly.Memory` + `atomics`), that overlap can become a Rust
+    /// data race (UB). Producers may avoid this by treating `frame_dirty` as a best-effort consumer
+    /// acknowledgement (ACK) and throttling publishing until it is cleared.
     pub fn write_frame<F>(&self, f: F) -> u32
     where
         F: FnOnce(&mut [u8], Option<&mut [u32]>, SharedFramebufferLayout),
