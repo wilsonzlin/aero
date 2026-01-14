@@ -17,7 +17,7 @@ class PowerShellHarnessQemuPciPreflightFlagTests(unittest.TestCase):
         # Ensure the parameter exists and supports the documented alias.
         self.assertRegex(
             self.text,
-            r"(?s)\[Alias\(\"QmpPreflightPci\"\)\]\s*\[switch\]\$QemuPreflightPci",
+            r'(?s)\[Alias\s*\((?=[^)]*"QmpPreflightPci")[^)]*\)\]\s*\[switch\]\$QemuPreflightPci',
             "missing -QemuPreflightPci parameter (or its -QmpPreflightPci alias)",
         )
 

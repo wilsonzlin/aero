@@ -21,7 +21,7 @@ class PowerShellNetUdpCsumOffloadGatingTests(unittest.TestCase):
         self.assertRegex(
             self.text,
             re.compile(
-                r'\[Alias\("RequireVirtioNetUdpCsumOffload"\)\]\s*\r?\n\s*\[switch\]\s*\$RequireNetUdpCsumOffload\b',
+                r'\[Alias\s*\((?=[^)]*"RequireVirtioNetUdpCsumOffload")[^)]*\)\]\s*\r?\n\s*\[switch\]\s*\$RequireNetUdpCsumOffload\b',
                 re.IGNORECASE,
             ),
         )

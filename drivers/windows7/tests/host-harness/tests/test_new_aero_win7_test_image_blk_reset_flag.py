@@ -22,7 +22,7 @@ class NewAeroWin7TestImageBlkResetFlagTests(unittest.TestCase):
         self.assertRegex(
             self.text,
             re.compile(
-                r'\[Alias\("TestVirtioBlkReset"\)\]\s*\r?\n\s*\[switch\]\$TestBlkReset\b',
+                r'\[Alias\s*\((?=[^)]*"TestVirtioBlkReset")[^)]*\)\]\s*\r?\n\s*\[switch\]\$TestBlkReset\b',
                 re.IGNORECASE,
             ),
         )
@@ -48,4 +48,3 @@ class NewAeroWin7TestImageBlkResetFlagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

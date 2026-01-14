@@ -21,7 +21,7 @@ class PowerShellNetCsumOffloadGatingTests(unittest.TestCase):
         self.assertRegex(
             self.text,
             re.compile(
-                r'\[Alias\("RequireVirtioNetCsumOffload"\)\]\s*\r?\n\s*\[switch\]\s*\$RequireNetCsumOffload\b',
+                r'\[Alias\s*\((?=[^)]*"RequireVirtioNetCsumOffload")[^)]*\)\]\s*\r?\n\s*\[switch\]\s*\$RequireNetCsumOffload\b',
                 re.IGNORECASE,
             ),
         )
@@ -64,4 +64,3 @@ class PowerShellNetCsumOffloadGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
