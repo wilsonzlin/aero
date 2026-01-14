@@ -2,13 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
-
-function decodeFirstEventWords(buffer: ArrayBuffer): Int32Array {
-  const words = new Int32Array(buffer);
-  expect(words[0]).toBeGreaterThan(0);
-  return words;
-}
+import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture wheel handling", () => {
   it("scales wheel delta based on WheelEvent.deltaMode (pixel/line/page)", () => {
@@ -67,21 +61,21 @@ describe("InputCapture wheel handling", () => {
       expect(stopPropagation).toHaveBeenCalledTimes(3);
 
       expect(posted).toHaveLength(3);
-      const pixelWords = decodeFirstEventWords((posted[0] as { buffer: ArrayBuffer }).buffer);
-      const lineWords = decodeFirstEventWords((posted[1] as { buffer: ArrayBuffer }).buffer);
-      const pageWords = decodeFirstEventWords((posted[2] as { buffer: ArrayBuffer }).buffer);
+      const pixelEvents = decodeInputBatchEvents((posted[0] as { buffer: ArrayBuffer }).buffer);
+      const lineEvents = decodeInputBatchEvents((posted[1] as { buffer: ArrayBuffer }).buffer);
+      const pageEvents = decodeInputBatchEvents((posted[2] as { buffer: ArrayBuffer }).buffer);
 
       // Sanity check: each flush should contain one wheel event.
-      expect(pixelWords[0]).toBe(1);
-      expect(pixelWords[2]).toBe(InputEventType.MouseWheel);
-      expect(lineWords[0]).toBe(1);
-      expect(lineWords[2]).toBe(InputEventType.MouseWheel);
-      expect(pageWords[0]).toBe(1);
-      expect(pageWords[2]).toBe(InputEventType.MouseWheel);
+      expect(pixelEvents).toHaveLength(1);
+      expect(pixelEvents[0]!.type).toBe(InputEventType.MouseWheel);
+      expect(lineEvents).toHaveLength(1);
+      expect(lineEvents[0]!.type).toBe(InputEventType.MouseWheel);
+      expect(pageEvents).toHaveLength(1);
+      expect(pageEvents[0]!.type).toBe(InputEventType.MouseWheel);
 
-      const pixelDz = pixelWords[4];
-      const lineDz = lineWords[4];
-      const pageDz = pageWords[4];
+      const pixelDz = pixelEvents[0]!.a;
+      const lineDz = lineEvents[0]!.a;
+      const pageDz = pageEvents[0]!.a;
 
       // DOM: deltaY > 0 is scroll down; PS/2: positive is wheel up.
       expect(pixelDz).toBeLessThan(0);
@@ -142,12 +136,11 @@ describe("InputCapture wheel handling", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = decodeFirstEventWords(msg.buffer);
-
-      expect(words[0]).toBe(1); // count
-      expect(words[2]).toBe(InputEventType.MouseWheel);
-      expect(words[4]).toBe(-1); // DOM deltaY > 0 => wheel down => PS/2 negative
-      expect(words[5]).toBe(0);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseWheel);
+      expect(events[0]!.a).toBe(-1); // DOM deltaY > 0 => wheel down => PS/2 negative
+      expect(events[0]!.b).toBe(0);
     });
   });
 
@@ -205,12 +198,11 @@ describe("InputCapture wheel handling", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = decodeFirstEventWords(msg.buffer);
-
-      expect(words[0]).toBe(1); // count
-      expect(words[2]).toBe(InputEventType.MouseWheel);
-      expect(words[4]).toBe(0);
-      expect(words[5]).toBe(1); // deltaX > 0 => wheel right
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseWheel);
+      expect(events[0]!.a).toBe(0);
+      expect(events[0]!.b).toBe(1); // deltaX > 0 => wheel right
     });
   });
 
@@ -300,12 +292,11 @@ describe("InputCapture wheel handling", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = decodeFirstEventWords(msg.buffer);
-
-      expect(words[0]).toBe(1); // count
-      expect(words[2]).toBe(InputEventType.MouseWheel);
-      expect(words[4]).toBe(-2);
-      expect(words[5]).toBe(0);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseWheel);
+      expect(events[0]!.a).toBe(-2);
+      expect(events[0]!.b).toBe(0);
     });
   });
 
@@ -346,12 +337,11 @@ describe("InputCapture wheel handling", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = decodeFirstEventWords(msg.buffer);
-
-      expect(words[0]).toBe(1);
-      expect(words[2]).toBe(InputEventType.MouseWheel);
-      expect(words[4]).toBe(0);
-      expect(words[5]).toBe(1);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseWheel);
+      expect(events[0]!.a).toBe(0);
+      expect(events[0]!.b).toBe(1);
     });
   });
 
@@ -388,14 +378,13 @@ describe("InputCapture wheel handling", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = decodeFirstEventWords(msg.buffer);
-
-      expect(words[0]).toBe(1);
-      expect(words[2]).toBe(InputEventType.MouseWheel);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseWheel);
       // DOM deltaY>0 is scroll down => wheel down => dz negative (PS/2/virtio convention is positive=up).
-      expect(words[4]).toBe(-1);
+      expect(events[0]!.a).toBe(-1);
       // DOM deltaX>0 => dx positive (wheel right).
-      expect(words[5]).toBe(1);
+      expect(events[0]!.b).toBe(1);
     });
   });
 

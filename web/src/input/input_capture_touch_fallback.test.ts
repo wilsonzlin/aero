@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
 function touch(identifier: number, clientX: number, clientY: number): Touch {
   return { identifier, clientX, clientY } as unknown as Touch;
@@ -65,12 +65,12 @@ describe("InputCapture touch fallback", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
 
-      expect(words[0]).toBe(1); // event count
-      expect(words[2]).toBe(InputEventType.MouseMove);
-      expect(words[4]).toBe(1); // dx
-      expect(words[5]).toBe(0); // dy
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseMove);
+      expect(events[0]!.a).toBe(1); // dx
+      expect(events[0]!.b).toBe(0); // dy
     });
   });
 
@@ -118,15 +118,15 @@ describe("InputCapture touch fallback", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
 
-      expect(words[0]).toBe(2); // event count
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(2);
       // First: left down.
-      expect(words[2]).toBe(InputEventType.MouseButtons);
-      expect(words[4]).toBe(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseButtons);
+      expect(events[0]!.a).toBe(1);
       // Second: left up.
-      expect(words[6]).toBe(InputEventType.MouseButtons);
-      expect(words[8]).toBe(0);
+      expect(events[1]!.type).toBe(InputEventType.MouseButtons);
+      expect(events[1]!.a).toBe(0);
     });
   });
 

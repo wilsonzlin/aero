@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture key repeat behavior", () => {
   it("emits repeated PS/2 make scancodes but does not emit repeated HID usage events", () => {
@@ -60,13 +60,13 @@ describe("InputCapture key repeat behavior", () => {
       capture.flushNow();
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
-      expect(words[0] >>> 0).toBe(3);
-
-      const base = 2;
-      expect(words[base + 0]).toBe(InputEventType.KeyHidUsage);
-      expect(words[base + 4]).toBe(InputEventType.KeyScancode);
-      expect(words[base + 8]).toBe(InputEventType.KeyScancode);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(3);
+      expect(events.map((e) => e.type)).toEqual([
+        InputEventType.KeyHidUsage,
+        InputEventType.KeyScancode,
+        InputEventType.KeyScancode,
+      ]);
     });
   });
 });

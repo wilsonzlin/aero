@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture mouseup outside canvas handling", () => {
   it("releases tracked mouse buttons even if mouseup target is not the canvas (prevents stuck buttons)", () => {
@@ -52,14 +52,14 @@ describe("InputCapture mouseup outside canvas handling", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
+      const events = decodeInputBatchEvents(msg.buffer);
 
       // Expect both the press and release MouseButtons snapshots to have been flushed.
-      expect(words[0]).toBe(2); // count
-      expect(words[2]).toBe(InputEventType.MouseButtons);
-      expect(words[4]).toBe(1);
-      expect(words[6]).toBe(InputEventType.MouseButtons);
-      expect(words[8]).toBe(0);
+      expect(events).toHaveLength(2);
+      expect(events[0]!.type).toBe(InputEventType.MouseButtons);
+      expect(events[0]!.a).toBe(1);
+      expect(events[1]!.type).toBe(InputEventType.MouseButtons);
+      expect(events[1]!.a).toBe(0);
     });
   });
 

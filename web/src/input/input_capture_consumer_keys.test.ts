@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture consumer/media keys", () => {
   it("emits HidUsage16 Consumer Control events for AudioVolumeUp", () => {
@@ -48,17 +48,16 @@ describe("InputCapture consumer/media keys", () => {
 
       expect(posted).toHaveLength(1);
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
-      expect(words[0] >>> 0).toBe(2);
+      const events = decodeInputBatchEvents(msg.buffer);
+      expect(events).toHaveLength(2);
 
-      const base = 2;
-      expect(words[base + 0] >>> 0).toBe(InputEventType.HidUsage16);
-      expect(words[base + 2] >>> 0).toBe(0x0000_000c | (1 << 16));
-      expect(words[base + 3] >>> 0).toBe(0x00e9);
+      expect(events[0]!.type).toBe(InputEventType.HidUsage16);
+      expect(events[0]!.a).toBe(0x0000_000c | (1 << 16));
+      expect(events[0]!.b).toBe(0x00e9);
 
-      expect(words[base + 4] >>> 0).toBe(InputEventType.HidUsage16);
-      expect(words[base + 6] >>> 0).toBe(0x0000_000c);
-      expect(words[base + 7] >>> 0).toBe(0x00e9);
+      expect(events[1]!.type).toBe(InputEventType.HidUsage16);
+      expect(events[1]!.a).toBe(0x0000_000c);
+      expect(events[1]!.b).toBe(0x00e9);
     });
   });
 });
