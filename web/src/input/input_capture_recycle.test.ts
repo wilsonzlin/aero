@@ -37,6 +37,23 @@ function withStubbedWindow<T>(run: (win: any) => T): T {
   }
 }
 
+function makeCanvasStub(): HTMLCanvasElement {
+  return {
+    tabIndex: 0,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    focus: () => {},
+  } as unknown as HTMLCanvasElement;
+}
+
+function transferToWorker(buffer: ArrayBuffer): ArrayBuffer {
+  return structuredClone(buffer, { transfer: [buffer] });
+}
+
+function transferFromWorker(buffer: ArrayBuffer): ArrayBuffer {
+  return structuredClone(buffer, { transfer: [buffer] });
+}
+
 function keyDownEvent(code: string, timeStamp: number): KeyboardEvent {
   return {
     code,
@@ -55,12 +72,7 @@ describe("InputCapture buffer recycling", () => {
   it("listens for worker recycle messages via start()'s message handler wiring", () => {
     withStubbedDocument((doc) =>
       withStubbedWindow(() => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub();
 
         doc.activeElement = canvas;
 
@@ -85,8 +97,8 @@ describe("InputCapture buffer recycling", () => {
             expect(onMessage).not.toBeNull();
 
             // Mimic transfer -> worker -> transfer-back, which yields a *new* ArrayBuffer instance.
-            const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
-            const recycled = structuredClone(workerSide, { transfer: [workerSide] });
+            const workerSide = transferToWorker(msg.buffer);
+            const recycled = transferFromWorker(workerSide);
 
             postCount++;
             if (postCount === 1) {
@@ -118,12 +130,7 @@ describe("InputCapture buffer recycling", () => {
   it("removes the worker message listener on stop()", () => {
     withStubbedDocument((doc) =>
       withStubbedWindow(() => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub();
 
         doc.activeElement = canvas;
 
@@ -157,12 +164,7 @@ describe("InputCapture buffer recycling", () => {
   it("does not request buffer recycling on stop() flush (even when recycleBuffers=true)", () => {
     withStubbedDocument((doc) =>
       withStubbedWindow(() => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub();
 
         doc.activeElement = canvas;
 
@@ -193,12 +195,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("reuses recycled buffers even when the recycle response arrives after flush (one-flush delay)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: ArrayBuffer[] = [];
       const workerSideCopies: ArrayBuffer[] = [];
@@ -210,7 +207,7 @@ describe("InputCapture buffer recycling", () => {
           expect(msg.recycle).toBe(true);
           expect(transfer).toContain(msg.buffer);
           // Detach the sender-side buffer, but do not immediately return it.
-          const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+          const workerSide = transferToWorker(msg.buffer);
           workerSideCopies.push(workerSide);
         },
       };
@@ -227,7 +224,7 @@ describe("InputCapture buffer recycling", () => {
 
       // Deliver the recycle response *after* the flush (mimics real worker scheduling).
       const workerSide0 = workerSideCopies[0]!;
-      const recycled0 = structuredClone(workerSide0, { transfer: [workerSide0] });
+      const recycled0 = transferFromWorker(workerSide0);
       (capture as any).handleWorkerMessage({
         data: { type: "in:input-batch-recycle", buffer: recycled0 },
       } as unknown as MessageEvent<unknown>);
@@ -249,12 +246,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("does not reuse recycled buffers of the wrong size after the internal queue grows", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const postedByteLengths: number[] = [];
       const workerSideCopies: ArrayBuffer[] = [];
@@ -265,7 +257,7 @@ describe("InputCapture buffer recycling", () => {
           postedByteLengths.push(msg.buffer.byteLength);
           expect(msg.recycle).toBe(true);
           expect(transfer).toContain(msg.buffer);
-          const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+          const workerSide = transferToWorker(msg.buffer);
           workerSideCopies.push(workerSide);
         },
       };
@@ -282,7 +274,7 @@ describe("InputCapture buffer recycling", () => {
 
       // Recycle the small buffer after flush.
       const workerSide0 = workerSideCopies[0]!;
-      const recycled0 = structuredClone(workerSide0, { transfer: [workerSide0] });
+      const recycled0 = transferFromWorker(workerSide0);
       (capture as any).handleWorkerMessage({
         data: { type: "in:input-batch-recycle", buffer: recycled0 },
       } as unknown as MessageEvent<unknown>);
@@ -313,12 +305,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("reuses ArrayBuffers returned by the worker when recycleBuffers=true", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: ArrayBuffer[] = [];
       const postedByteLengths: number[] = [];
@@ -342,8 +329,8 @@ describe("InputCapture buffer recycling", () => {
             // preserved across threads. The sender's buffer is detached and the receiver sees a new
             // ArrayBuffer instance. Use `structuredClone(..., { transfer })` to mimic that behavior
             // (including detaching the sender-side buffer).
-            const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
-            const recycled = structuredClone(workerSide, { transfer: [workerSide] });
+            const workerSide = transferToWorker(msg.buffer);
+            const recycled = transferFromWorker(workerSide);
             if (postCount === 1) {
               recycledFromFirstFlush = recycled;
             }
@@ -377,12 +364,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("reuses recycled buffers even after the internal queue grows (larger byteLength buckets)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: ArrayBuffer[] = [];
       const postedByteLengths: number[] = [];
@@ -398,8 +380,8 @@ describe("InputCapture buffer recycling", () => {
           expect(transfer).toContain(msg.buffer);
           if (msg.recycle === true) {
             postCount++;
-            const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
-            const recycled = structuredClone(workerSide, { transfer: [workerSide] });
+            const workerSide = transferToWorker(msg.buffer);
+            const recycled = transferFromWorker(workerSide);
             if (postCount === 1) {
               recycledFromFirstFlush = recycled;
             }
@@ -439,12 +421,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("does not cache buffers when recycleBuffers=false", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: ArrayBuffer[] = [];
       let capture: InputCapture;
@@ -455,10 +432,10 @@ describe("InputCapture buffer recycling", () => {
           expect(msg.recycle).not.toBe(true);
           expect(transfer).toContain(msg.buffer);
           // Detach the sender-side buffer to match real transfer semantics.
-          const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+          const workerSide = transferToWorker(msg.buffer);
           // Even if the worker tries to recycle, InputCapture should ignore it when disabled.
           (capture as any).handleWorkerMessage({
-            data: { type: "in:input-batch-recycle", buffer: structuredClone(workerSide, { transfer: [workerSide] }) },
+            data: { type: "in:input-batch-recycle", buffer: transferFromWorker(workerSide) },
           } as unknown as MessageEvent<unknown>);
         },
       };
@@ -480,12 +457,7 @@ describe("InputCapture buffer recycling", () => {
   });
   it("caps distinct recycled buffer sizes so buckets do not grow unbounded", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
@@ -510,12 +482,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("caps the number of buffers stored per bucket", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
@@ -536,12 +503,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("ignores invalid recycle messages", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
