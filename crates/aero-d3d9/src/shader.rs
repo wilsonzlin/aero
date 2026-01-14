@@ -128,6 +128,8 @@ pub enum Op {
     Mul,
     Mad,
     Lrp,
+    /// `dp2add`: dot2 + add (`dot(a.xy, b.xy) + c.x`), replicated to all components.
+    Dp2Add,
     Dp3,
     Dp4,
     Exp,
@@ -459,6 +461,7 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x0054 => Some(Op::Seq),
         0x0055 => Some(Op::Sne),
         0x0058 => Some(Op::Cmp),
+        0x0059 => Some(Op::Dp2Add),
         0xFFFF => Some(Op::End),
         _ => None,
     }
@@ -807,6 +810,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Mul
             | Op::Mad
             | Op::Lrp
+            | Op::Dp2Add
             | Op::Dp3
             | Op::Dp4
             | Op::Exp
@@ -1578,6 +1582,22 @@ fn emit_inst(
             let b = src_expr(&inst.src[1], const_defs_f32, const_base);
             let c = src_expr(&inst.src[2], const_defs_f32, const_base);
             let mut expr = format!("fma({}, {}, {})", a, b, c);
+            expr = apply_result_modifier(expr, inst.result_modifier);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Dp2Add => {
+            let dst = inst.dst.unwrap();
+            let a = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[1], const_defs_f32, const_base);
+            let c = src_expr(&inst.src[2], const_defs_f32, const_base);
+            let mut expr = format!("vec4<f32>(dot(({a}).xy, ({b}).xy) + ({c}).x)");
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {

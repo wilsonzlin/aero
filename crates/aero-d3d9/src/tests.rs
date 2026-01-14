@@ -280,6 +280,16 @@ fn assemble_ps_math_ops() -> Vec<u32> {
             enc_src(2, 12, 0xE4),
         ],
     ));
+    // dp2add r10, c0, c1, c2
+    out.extend(enc_inst(
+        0x0059,
+        &[
+            enc_dst(0, 10, 0xF),
+            enc_src(2, 0, 0xE4),
+            enc_src(2, 1, 0xE4),
+            enc_src(2, 2, 0xE4),
+        ],
+    ));
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
@@ -1432,6 +1442,8 @@ fn translates_additional_ps_ops_to_wgsl() {
     assert!(wgsl.wgsl.contains("log2("));
     assert!(wgsl.wgsl.contains("pow("));
     assert!(wgsl.wgsl.contains("select("));
+    assert!(wgsl.wgsl.contains("dot(("));
+    assert!(wgsl.wgsl.contains(").xy"));
 }
 
 #[test]
