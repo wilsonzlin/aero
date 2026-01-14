@@ -230,6 +230,13 @@ typedef struct _VIRTIO_SND_EVENT_PARSED {
     } u;
 } VIRTIO_SND_EVENT_PARSED, *PVIRTIO_SND_EVENT_PARSED;
 
+/* Parsed events are an internal representation, but keep their layout stable for host tests. */
+C_ASSERT(sizeof(VIRTIO_SND_EVENT_PARSED) == 16);
+C_ASSERT(FIELD_OFFSET(VIRTIO_SND_EVENT_PARSED, Type) == 0);
+C_ASSERT(FIELD_OFFSET(VIRTIO_SND_EVENT_PARSED, Data) == 4);
+C_ASSERT(FIELD_OFFSET(VIRTIO_SND_EVENT_PARSED, Kind) == 8);
+C_ASSERT(FIELD_OFFSET(VIRTIO_SND_EVENT_PARSED, u) == 12);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
