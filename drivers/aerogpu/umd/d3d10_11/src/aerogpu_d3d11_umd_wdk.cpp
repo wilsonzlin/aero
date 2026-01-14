@@ -7999,6 +7999,121 @@ void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   cmd->first_instance = StartInstanceLocation;
 }
 
+void AEROGPU_APIENTRY DrawInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                              D3D11DDI_HRESOURCE hBufferForArgs,
+                                              UINT AlignedByteOffsetForArgs) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  if (!hBufferForArgs.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  auto* buf = FromHandle<D3D11DDI_HRESOURCE, Resource>(hBufferForArgs);
+  if (!buf || buf->kind != ResourceKind::Buffer) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if ((AlignedByteOffsetForArgs & 3u) != 0) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint64_t off = static_cast<uint64_t>(AlignedByteOffsetForArgs);
+  if (off > buf->size_bytes || buf->size_bytes - off < 16) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (buf->storage.size() < off + 16) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  uint32_t vertex_count_per_instance = 0;
+  uint32_t instance_count = 0;
+  uint32_t start_vertex = 0;
+  uint32_t start_instance = 0;
+  std::memcpy(&vertex_count_per_instance, buf->storage.data() + static_cast<size_t>(off) + 0, sizeof(vertex_count_per_instance));
+  std::memcpy(&instance_count, buf->storage.data() + static_cast<size_t>(off) + 4, sizeof(instance_count));
+  std::memcpy(&start_vertex, buf->storage.data() + static_cast<size_t>(off) + 8, sizeof(start_vertex));
+  std::memcpy(&start_instance, buf->storage.data() + static_cast<size_t>(off) + 12, sizeof(start_instance));
+  if (vertex_count_per_instance == 0 || instance_count == 0) {
+    return;
+  }
+
+  TrackDrawStateLocked(dev);
+  // The bring-up software renderer does not understand instance data. Draw a
+  // single instance so staging readback tests still have sensible contents.
+  SoftwareDrawTriangleList(dev, vertex_count_per_instance, start_vertex);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  cmd->vertex_count = vertex_count_per_instance;
+  cmd->instance_count = instance_count;
+  cmd->first_vertex = start_vertex;
+  cmd->first_instance = start_instance;
+}
+
+void AEROGPU_APIENTRY DrawIndexedInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                                     D3D11DDI_HRESOURCE hBufferForArgs,
+                                                     UINT AlignedByteOffsetForArgs) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  if (!hBufferForArgs.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  auto* buf = FromHandle<D3D11DDI_HRESOURCE, Resource>(hBufferForArgs);
+  if (!buf || buf->kind != ResourceKind::Buffer) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if ((AlignedByteOffsetForArgs & 3u) != 0) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint64_t off = static_cast<uint64_t>(AlignedByteOffsetForArgs);
+  if (off > buf->size_bytes || buf->size_bytes - off < 20) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (buf->storage.size() < off + 20) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  uint32_t index_count_per_instance = 0;
+  uint32_t instance_count = 0;
+  uint32_t start_index = 0;
+  int32_t base_vertex = 0;
+  uint32_t start_instance = 0;
+  std::memcpy(&index_count_per_instance, buf->storage.data() + static_cast<size_t>(off) + 0, sizeof(index_count_per_instance));
+  std::memcpy(&instance_count, buf->storage.data() + static_cast<size_t>(off) + 4, sizeof(instance_count));
+  std::memcpy(&start_index, buf->storage.data() + static_cast<size_t>(off) + 8, sizeof(start_index));
+  std::memcpy(&base_vertex, buf->storage.data() + static_cast<size_t>(off) + 12, sizeof(base_vertex));
+  std::memcpy(&start_instance, buf->storage.data() + static_cast<size_t>(off) + 16, sizeof(start_instance));
+  if (index_count_per_instance == 0 || instance_count == 0) {
+    return;
+  }
+
+  TrackDrawStateLocked(dev);
+  // The bring-up software renderer does not understand instance data. Draw a
+  // single instance so staging readback tests still have sensible contents.
+  SoftwareDrawIndexedTriangleList(dev, index_count_per_instance, start_index, base_vertex);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  cmd->index_count = index_count_per_instance;
+  cmd->instance_count = instance_count;
+  cmd->first_index = start_index;
+  cmd->base_vertex = base_vertex;
+  cmd->first_instance = start_instance;
+}
+
 void AEROGPU_APIENTRY Dispatch11(D3D11DDI_HDEVICECONTEXT hCtx,
                                  UINT ThreadGroupCountX,
                                  UINT ThreadGroupCountY,
@@ -10408,6 +10523,22 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs->pfnDrawIndexed = &DrawIndexed11;
   ctx_funcs->pfnDrawInstanced = &DrawInstanced11;
   ctx_funcs->pfnDrawIndexedInstanced = &DrawIndexedInstanced11;
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDrawInstancedIndirect) {
+    using Fn = decltype(ctx_funcs->pfnDrawInstancedIndirect);
+    if constexpr (std::is_convertible_v<decltype(&DrawInstancedIndirect11), Fn>) {
+      ctx_funcs->pfnDrawInstancedIndirect = &DrawInstancedIndirect11;
+    } else {
+      ctx_funcs->pfnDrawInstancedIndirect = &DdiStub<Fn>::Call;
+    }
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDrawIndexedInstancedIndirect) {
+    using Fn = decltype(ctx_funcs->pfnDrawIndexedInstancedIndirect);
+    if constexpr (std::is_convertible_v<decltype(&DrawIndexedInstancedIndirect11), Fn>) {
+      ctx_funcs->pfnDrawIndexedInstancedIndirect = &DrawIndexedInstancedIndirect11;
+    } else {
+      ctx_funcs->pfnDrawIndexedInstancedIndirect = &DdiStub<Fn>::Call;
+    }
+  }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatch) { ctx_funcs->pfnDispatch = &Dispatch11; }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatchIndirect) {
     using Fn = decltype(ctx_funcs->pfnDispatchIndirect);
