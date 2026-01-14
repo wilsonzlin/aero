@@ -3115,23 +3115,22 @@ impl XhciController {
         // basic doorbell gating semantics: only Running endpoints execute transfers. If the Endpoint
         // Context cannot be read (e.g. test harnesses that only configure controller-local ring
         // cursors), fall back to the legacy behavior and allow progress.
+        // Always respect controller-local shadow halt/stop state. This protects against malformed
+        // snapshots (or hostile guests) that might otherwise leave a halted endpoint queued in
+        // `active_endpoints` while the guest Device Context advertises a running state.
+        const EP_STATE_HALTED: u8 = 2;
+        const EP_STATE_STOPPED: u8 = 3;
+        let idx = usize::from(endpoint_id.saturating_sub(1));
+        if let Some(ctx) = slot.endpoint_contexts.get(idx) {
+            let state = ctx.endpoint_state();
+            if state == EP_STATE_HALTED || state == EP_STATE_STOPPED {
+                return EndpointOutcome::idle();
+            }
+        }
+
         if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id) {
             if !matches!(state, context::EndpointState::Running) {
                 return EndpointOutcome::idle();
-            }
-        } else {
-            // If the guest Device Context is unavailable (e.g. DCBAAP=0 in a harness), we still want
-            // to respect controller-local halt/stop state to avoid processing rings that we have
-            // already faulted. This also ensures snapshot restore cannot "resurrect" a halted
-            // endpoint by leaving it queued in `active_endpoints` without any guest contexts.
-            const EP_STATE_HALTED: u8 = 2;
-            const EP_STATE_STOPPED: u8 = 3;
-            let idx = usize::from(endpoint_id.saturating_sub(1));
-            if let Some(ctx) = slot.endpoint_contexts.get(idx) {
-                let state = ctx.endpoint_state();
-                if state == EP_STATE_HALTED || state == EP_STATE_STOPPED {
-                    return EndpointOutcome::idle();
-                }
             }
         }
 
@@ -3252,8 +3251,6 @@ impl XhciController {
 
         // If an endpoint is Stopped/Halted, ignore doorbells and do not touch its transfer ring.
         // (This also prevents retrying a known-malformed ring forever.)
-        const EP_STATE_HALTED: u8 = 2;
-        const EP_STATE_STOPPED: u8 = 3;
         let ep_state = slot.endpoint_contexts[0].endpoint_state();
         if ep_state == EP_STATE_HALTED || ep_state == EP_STATE_STOPPED {
             return EndpointOutcome::idle();
