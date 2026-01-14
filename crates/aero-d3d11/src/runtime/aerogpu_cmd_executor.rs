@@ -3423,6 +3423,7 @@ impl AerogpuD3d11Executor {
         gs_instance_count: u32,
         instance_count: u32,
         vertex_pulling_draw: VertexPullingDrawParams,
+        indexed_draw: bool,
     ) -> Result<(
         ExpansionScratchAlloc,
         ExpansionScratchAlloc,
@@ -3514,7 +3515,64 @@ impl AerogpuD3d11Executor {
             &uniform_bytes,
         );
 
-        let vp_bgl_entries = pulling.bind_group_layout_entries();
+        let mut vp_bgl_entries = pulling.bind_group_layout_entries();
+        let mut index_pulling_params_alloc: Option<ExpansionScratchAlloc> = None;
+        let mut index_pulling_buffer: Option<&wgpu::Buffer> = None;
+        if indexed_draw {
+            let ib = self
+                .state
+                .index_buffer
+                .expect("DRAW_INDEXED without index buffer checked before GS prepass");
+            let ib_buf = self
+                .resources
+                .buffers
+                .get(&ib.buffer)
+                .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+            index_pulling_buffer = Some(&ib_buf.buffer);
+
+            let index_format = match ib.format {
+                wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
+                wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
+            };
+            let params = IndexPullingParams {
+                first_index: vertex_pulling_draw.first_index,
+                base_vertex: vertex_pulling_draw.base_vertex,
+                index_format,
+                _pad0: 0,
+            };
+            let params_bytes = params.to_le_bytes();
+            let params_alloc = self
+                .expansion_uniform_scratch
+                .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+                .map_err(|e| anyhow!("GS prepass: alloc index pulling params: {e}"))?;
+            self.queue.write_buffer(
+                params_alloc.buffer.as_ref(),
+                params_alloc.offset,
+                &params_bytes,
+            );
+            index_pulling_params_alloc = Some(params_alloc);
+
+            vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: INDEX_PULLING_PARAMS_BINDING,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            });
+            vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: INDEX_PULLING_BUFFER_BINDING,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+        }
         let vp_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &vp_bgl_entries);
@@ -3535,6 +3593,22 @@ impl AerogpuD3d11Executor {
                 size: wgpu::BufferSize::new(uniform_alloc.size),
             }),
         });
+        if let (Some(params_alloc), Some(ib_buffer)) =
+            (index_pulling_params_alloc.as_ref(), index_pulling_buffer)
+        {
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: INDEX_PULLING_PARAMS_BINDING,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: params_alloc.buffer.as_ref(),
+                    offset: params_alloc.offset,
+                    size: wgpu::BufferSize::new(params_alloc.size),
+                }),
+            });
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: INDEX_PULLING_BUFFER_BINDING,
+                resource: ib_buffer.as_entire_binding(),
+            });
+        }
         let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu_cmd gs prepass vertex pulling bind group"),
             layout: vp_bgl.layout.as_ref(),
@@ -3590,6 +3664,14 @@ impl AerogpuD3d11Executor {
             let mut out = String::new();
             out.push_str(&pulling.wgsl_prelude());
             out.push('\n');
+            if indexed_draw {
+                out.push_str(&super::index_pulling::wgsl_index_pulling_lib(
+                    VERTEX_PULLING_GROUP,
+                    INDEX_PULLING_PARAMS_BINDING,
+                    INDEX_PULLING_BUFFER_BINDING,
+                ));
+                out.push('\n');
+            }
             out.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n");
             out.push_str(
                 "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
@@ -3659,7 +3741,11 @@ impl AerogpuD3d11Executor {
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
-            out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
+            if indexed_draw {
+                out.push_str("  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id));\n");
+            } else {
+                out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
+            }
             out.push_str("  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n");
             out.push_str("    let idx: u32 = prim_id * GS_INPUT_REG_COUNT + reg;\n");
             out.push_str("    gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
@@ -4475,7 +4561,7 @@ impl AerogpuD3d11Executor {
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
 
-        let gs_prepass = if opcode == OPCODE_DRAW
+        let gs_prepass = if (opcode == OPCODE_DRAW || opcode == OPCODE_DRAW_INDEXED)
             && self.state.primitive_topology == CmdPrimitiveTopology::PointList
         {
             self.state.gs.and_then(|gs_handle| {
@@ -4884,6 +4970,7 @@ impl AerogpuD3d11Executor {
                 gs_instance_count,
                 instance_count,
                 vertex_pulling_draw,
+                opcode == OPCODE_DRAW_INDEXED,
             )?;
             expanded_vertex_alloc = v_alloc;
             expanded_index_alloc = i_alloc;
