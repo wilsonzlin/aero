@@ -12,8 +12,13 @@
 // Cursor position fields (`x`, `y`) are logically signed `i32` (allow negative coordinates) and
 // should be read via `| 0`.
 
-export const CURSOR_FORMAT_B8G8R8A8 = 0 as const;
-export const CURSOR_FORMAT_B8G8R8X8 = 1 as const;
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+
+// Cursor format values use the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants.
+export const CURSOR_FORMAT_B8G8R8A8 = AerogpuFormat.B8G8R8A8Unorm;
+export const CURSOR_FORMAT_B8G8R8X8 = AerogpuFormat.B8G8R8X8Unorm;
+export const CURSOR_FORMAT_R8G8B8A8 = AerogpuFormat.R8G8B8A8Unorm;
+export const CURSOR_FORMAT_R8G8B8X8 = AerogpuFormat.R8G8B8X8Unorm;
 
 export const CURSOR_STATE_U32_LEN = 12 as const;
 export const CURSOR_STATE_BYTE_LEN = CURSOR_STATE_U32_LEN * 4;
@@ -164,4 +169,3 @@ export function publishCursorState(words: Int32Array, update: CursorStateUpdate)
   Atomics.store(words, CursorStateIndex.GENERATION, newGeneration | 0);
   return newGeneration;
 }
-

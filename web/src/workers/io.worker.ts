@@ -4282,18 +4282,26 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       // synthetic cursor demos can continue to drive the overlay without being overridden.
       try {
         if (!guestLayout) throw new Error("guestLayout is not initialized");
-        aerogpuDevice = new AeroGpuPciDevice({
-          guestU8,
-          guestLayout,
-          sink: {
-            setImage: (width, height, rgba8) => {
-              ctx.postMessage({ kind: "cursor.set_image", width, height, rgba8 } satisfies CursorSetImageMessage, [rgba8]);
-            },
-            setState: (enabled, x, y, hotX, hotY) => {
-              ctx.postMessage({ kind: "cursor.set_state", enabled, x, y, hotX, hotY } satisfies CursorSetStateMessage);
-            },
-          },
-        });
+        const cursorStateWords = views.cursorStateI32;
+        aerogpuDevice = new AeroGpuPciDevice(
+          cursorStateWords
+            ? { guestU8, guestLayout, cursorStateWords }
+            : {
+                guestU8,
+                guestLayout,
+                sink: {
+                  setImage: (width, height, rgba8) => {
+                    ctx.postMessage(
+                      { kind: "cursor.set_image", width, height, rgba8 } satisfies CursorSetImageMessage,
+                      [rgba8],
+                    );
+                  },
+                  setState: (enabled, x, y, hotX, hotY) => {
+                    ctx.postMessage({ kind: "cursor.set_state", enabled, x, y, hotX, hotY } satisfies CursorSetStateMessage);
+                  },
+                },
+              },
+        );
         mgr.registerPciDevice(aerogpuDevice);
         mgr.addTickable(aerogpuDevice);
       } catch (err) {

@@ -69,8 +69,6 @@ import {
   type ScanoutStateSnapshot,
 } from "../ipc/scanout_state";
 import {
-  CURSOR_FORMAT_B8G8R8A8,
-  CURSOR_FORMAT_B8G8R8X8,
   snapshotCursorState,
   type CursorStateSnapshot,
 } from "../ipc/cursor_state";
@@ -135,6 +133,7 @@ import {
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "./scanout_swizzle.ts";
 
@@ -615,9 +614,24 @@ const tryReadHwCursorImageRgba8 = (
   const rowBytes = w * 4;
   if (pitch < rowBytes) return null;
 
-  const requiredBytesBig = BigInt(pitch) * BigInt(h);
+  // Required bytes = pitch*(h-1) + rowBytes (same as Rust cursor validation), not pitch*h.
+  // The last row only needs `rowBytes` bytes, even if `pitch` is larger.
+  const requiredBytesBig = BigInt(pitch) * BigInt(h - 1) + BigInt(rowBytes);
   if (requiredBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
   const requiredBytes = Number(requiredBytesBig);
+
+  const fmt = format >>> 0;
+  const kind: "bgra" | "bgrx" | "rgba" | "rgbx" | null =
+    fmt === AerogpuFormat.B8G8R8A8Unorm || fmt === AerogpuFormat.B8G8R8A8UnormSrgb
+      ? "bgra"
+      : fmt === AerogpuFormat.B8G8R8X8Unorm || fmt === AerogpuFormat.B8G8R8X8UnormSrgb
+        ? "bgrx"
+        : fmt === AerogpuFormat.R8G8B8A8Unorm || fmt === AerogpuFormat.R8G8B8A8UnormSrgb
+          ? "rgba"
+          : fmt === AerogpuFormat.R8G8B8X8Unorm || fmt === AerogpuFormat.R8G8B8X8UnormSrgb
+            ? "rgbx"
+            : null;
+  if (!kind) return null;
 
   // VRAM aperture fast path (BAR1 backing).
   //
@@ -638,21 +652,66 @@ const tryReadHwCursorImageRgba8 = (
           const src = vram.subarray(start, end);
           const out = new Uint8Array(rowBytes * h);
 
-          const isBgra = (format >>> 0) === CURSOR_FORMAT_B8G8R8A8;
-          const isBgrx = (format >>> 0) === CURSOR_FORMAT_B8G8R8X8;
-          if (!isBgra && !isBgrx) return null;
-          const kind: ScanoutSwizzleKind = isBgra ? "bgra" : "bgrx";
+          const canScanoutSwizzle = BigInt(pitch) * BigInt(h) <= BigInt(vram.byteLength - start);
+          if (kind === "bgra" || kind === "bgrx") {
+            if (canScanoutSwizzle) {
+              try {
+                convertScanoutToRgba8({
+                  src,
+                  srcStrideBytes: pitch,
+                  dst: out,
+                  dstStrideBytes: rowBytes,
+                  width: w,
+                  height: h,
+                  kind: kind as ScanoutSwizzleKind,
+                });
+                return out;
+              } catch {
+                // Fall back to the byte-wise shuffle when the u32 fast-path view would be OOB.
+              }
+            }
 
-          convertScanoutToRgba8({
-            src,
-            srcStrideBytes: pitch,
-            dst: out,
-            dstStrideBytes: rowBytes,
-            width: w,
-            height: h,
-            kind,
-          });
+            const preserveAlpha = kind === "bgra";
+            for (let y = 0; y < h; y += 1) {
+              let srcOff = y * pitch;
+              let dstOff = y * rowBytes;
+              for (let x = 0; x < w; x += 1) {
+                const b = src[srcOff + 0]!;
+                const g = src[srcOff + 1]!;
+                const r = src[srcOff + 2]!;
+                const a = preserveAlpha ? src[srcOff + 3]! : 0xff;
+                out[dstOff + 0] = r;
+                out[dstOff + 1] = g;
+                out[dstOff + 2] = b;
+                out[dstOff + 3] = a;
+                srcOff += 4;
+                dstOff += 4;
+              }
+            }
+            return out;
+          }
 
+          if (kind === "rgba") {
+            for (let y = 0; y < h; y += 1) {
+              const srcOff = y * pitch;
+              out.set(src.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+            }
+            return out;
+          }
+
+          // RGBX -> RGBA with forced alpha=255.
+          for (let y = 0; y < h; y += 1) {
+            let srcOff = y * pitch;
+            let dstOff = y * rowBytes;
+            for (let x = 0; x < w; x += 1) {
+              out[dstOff + 0] = src[srcOff + 0]!;
+              out[dstOff + 1] = src[srcOff + 1]!;
+              out[dstOff + 2] = src[srcOff + 2]!;
+              out[dstOff + 3] = 0xff;
+              srcOff += 4;
+              dstOff += 4;
+            }
+          }
           return out;
         }
       }
@@ -682,20 +741,66 @@ const tryReadHwCursorImageRgba8 = (
   const src = guest.subarray(start, end);
   const out = new Uint8Array(rowBytes * h);
 
-  const isBgra = (format >>> 0) === CURSOR_FORMAT_B8G8R8A8;
-  const isBgrx = (format >>> 0) === CURSOR_FORMAT_B8G8R8X8;
-  if (!isBgra && !isBgrx) return null;
-  const kind: ScanoutSwizzleKind = isBgra ? "bgra" : "bgrx";
+  const canScanoutSwizzle = BigInt(pitch) * BigInt(h) <= BigInt(guest.byteLength - start);
+  if (kind === "bgra" || kind === "bgrx") {
+    if (canScanoutSwizzle) {
+      try {
+        convertScanoutToRgba8({
+          src,
+          srcStrideBytes: pitch,
+          dst: out,
+          dstStrideBytes: rowBytes,
+          width: w,
+          height: h,
+          kind: kind as ScanoutSwizzleKind,
+        });
+        return out;
+      } catch {
+        // Fall back to byte shuffle when the u32 view would be OOB (pitch*h > guest RAM region).
+      }
+    }
 
-  convertScanoutToRgba8({
-    src,
-    srcStrideBytes: pitch,
-    dst: out,
-    dstStrideBytes: rowBytes,
-    width: w,
-    height: h,
-    kind,
-  });
+    const preserveAlpha = kind === "bgra";
+    for (let y = 0; y < h; y += 1) {
+      let srcOff = y * pitch;
+      let dstOff = y * rowBytes;
+      for (let x = 0; x < w; x += 1) {
+        const b = src[srcOff + 0]!;
+        const g = src[srcOff + 1]!;
+        const r = src[srcOff + 2]!;
+        const a = preserveAlpha ? src[srcOff + 3]! : 0xff;
+        out[dstOff + 0] = r;
+        out[dstOff + 1] = g;
+        out[dstOff + 2] = b;
+        out[dstOff + 3] = a;
+        srcOff += 4;
+        dstOff += 4;
+      }
+    }
+    return out;
+  }
+
+  if (kind === "rgba") {
+    for (let y = 0; y < h; y += 1) {
+      const srcOff = y * pitch;
+      out.set(src.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+    }
+    return out;
+  }
+
+  // RGBX -> RGBA with forced alpha=255.
+  for (let y = 0; y < h; y += 1) {
+    let srcOff = y * pitch;
+    let dstOff = y * rowBytes;
+    for (let x = 0; x < w; x += 1) {
+      out[dstOff + 0] = src[srcOff + 0]!;
+      out[dstOff + 1] = src[srcOff + 1]!;
+      out[dstOff + 2] = src[srcOff + 2]!;
+      out[dstOff + 3] = 0xff;
+      srcOff += 4;
+      dstOff += 4;
+    }
+  }
 
   return out;
 };
@@ -723,10 +828,6 @@ const syncHardwareCursorFromState = (): void => {
   }
 
   const gen = snap.generation >>> 0;
-  if (hwCursorLastGeneration === gen) {
-    return;
-  }
-  hwCursorLastGeneration = gen;
 
   const w = Math.min(snap.width >>> 0, MAX_HW_CURSOR_DIM);
   const h = Math.min(snap.height >>> 0, MAX_HW_CURSOR_DIM);
@@ -735,8 +836,12 @@ const syncHardwareCursorFromState = (): void => {
   const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
 
   const imageKey = `${basePaddr.toString(16)}:${w}:${h}:${pitchBytes}:${format}`;
+  const generationChanged = hwCursorLastGeneration !== gen;
+  const keyChanged = hwCursorLastImageKey !== imageKey;
+
   let imageUpdated = false;
-  if (hwCursorLastImageKey !== imageKey) {
+  if (generationChanged || keyChanged) {
+    hwCursorLastGeneration = gen;
     hwCursorLastImageKey = imageKey;
     imageUpdated = true;
 

@@ -18,8 +18,15 @@ use std::sync::atomic::AtomicU32;
 
 use std::sync::atomic::Ordering;
 
-pub const CURSOR_FORMAT_B8G8R8A8: u32 = 0;
-pub const CURSOR_FORMAT_B8G8R8X8: u32 = 1;
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+
+/// Cursor format values use the AeroGPU `AerogpuFormat` (`u32`) discriminants.
+///
+/// This must stay in sync with `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat`.
+pub const CURSOR_FORMAT_B8G8R8A8: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
+pub const CURSOR_FORMAT_B8G8R8X8: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
+pub const CURSOR_FORMAT_R8G8B8A8: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+pub const CURSOR_FORMAT_R8G8B8X8: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
 
 /// Internal bit used to mark `generation` as "being updated".
 ///
@@ -562,4 +569,3 @@ mod loom_tests {
         });
     }
 }
-

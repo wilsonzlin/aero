@@ -3,6 +3,11 @@ import type { PciBar, PciDevice } from "../bus/pci.ts";
 import type { TickableDevice } from "../device_manager.ts";
 import { guestPaddrToRamOffset, guestRangeInBounds, type GuestRamLayout } from "../../runtime/shared_layout.ts";
 import {
+  CursorStateIndex,
+  publishCursorState,
+  type CursorStateUpdate,
+} from "../../ipc/cursor_state.ts";
+import {
   AEROGPU_ABI_VERSION_U32,
   AEROGPU_FEATURE_CURSOR,
   AEROGPU_FEATURE_FENCE_PAGE,
@@ -105,7 +110,8 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
 
   readonly #guestU8: Uint8Array;
   readonly #guestLayout: GuestRamLayout;
-  readonly #sink: AeroGpuCursorSink;
+  readonly #sink: AeroGpuCursorSink | null;
+  readonly #cursorStateWords: Int32Array | null;
 
   // Cursor register file.
   #cursorEnable = false;
@@ -135,10 +141,25 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
   #lastSentImageKey: string | null = null;
   #lastSentImageHash = 0;
 
-  constructor(opts: { guestU8: Uint8Array; guestLayout: GuestRamLayout; sink: AeroGpuCursorSink }) {
+  constructor(opts: {
+    guestU8: Uint8Array;
+    guestLayout: GuestRamLayout;
+    /**
+     * Preferred output: shared CursorState words (SharedArrayBuffer-backed Int32Array).
+     *
+     * When provided, the device publishes cursor descriptors here and does *not* post legacy
+     * cursor.set_image/state messages.
+     */
+    cursorStateWords?: Int32Array;
+    /**
+     * Legacy sink fallback used when `cursorStateWords` is unavailable.
+     */
+    sink?: AeroGpuCursorSink;
+  }) {
     this.#guestU8 = opts.guestU8;
     this.#guestLayout = opts.guestLayout;
-    this.#sink = opts.sink;
+    this.#cursorStateWords = opts.cursorStateWords ?? null;
+    this.#sink = opts.sink ?? null;
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
@@ -311,15 +332,48 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       plan = this.#computeCursorImagePlan();
       renderEnabled = this.#cursorEnable && plan !== null;
 
+      // Shared CursorState path: publish image parameter changes even if the cursor is disabled or
+      // invalid so consumers can observe the guest-programmed registers (and so the GPU worker can
+      // treat the hardware cursor path as authoritative once the guest starts touching it).
+      if (this.#cursorStateWords && this.#imageParamsDirty) {
+        const words = this.#cursorStateWords;
+        // Establish a new baseline hash if we can safely read the image (enabled + valid plan).
+        this.#lastSentImageKey = plan?.key ?? null;
+        this.#lastSentImageHash = renderEnabled && plan ? this.#hashCursor(plan) : 0;
+        this.#lastImagePollMs = nowMs;
+        const update = this.#cursorUpdateForPublish(this.#cursorEnable, plan);
+        publishCursorState(words, update);
+        // The publish wrote dynamic fields too; keep the fast-path caches consistent.
+        this.#lastSentEnabled = !!this.#cursorEnable;
+        this.#lastSentX = update.x;
+        this.#lastSentY = update.y;
+        this.#lastSentHotX = update.hotX;
+        this.#lastSentHotY = update.hotY;
+        this.#stateDirty = false;
+        this.#imageParamsDirty = false;
+      }
+
       // Image updates: only when enabled and either parameters changed or the backing bytes changed.
       if (renderEnabled && plan) {
         const shouldPoll = nowMs - this.#lastImagePollMs >= CURSOR_IMAGE_POLL_INTERVAL_MS;
         const needImage = this.#imageParamsDirty || this.#lastSentImageKey !== plan.key;
         if (needImage || shouldPoll) {
           this.#lastImagePollMs = nowMs;
-          if (this.#maybeSendCursorImage(plan, { force: needImage })) {
-            // Ensure the presenter sees pixels before we enable the cursor state.
-            this.#stateDirty = true;
+          if (this.#cursorStateWords) {
+            // Shared CursorState path: bump generation to signal the GPU worker to re-read the
+            // cursor image from guest RAM.
+            const didUpdate = this.#maybeBumpCursorStateImage(plan, { force: needImage });
+            if (didUpdate) {
+              // In the legacy path we delay enabling until after `setImage` completes. In the
+              // shared-memory path there is no such ordering guarantee, but publishing an updated
+              // descriptor still implies cursor state may need to be refreshed.
+              this.#stateDirty = true;
+            }
+          } else if (this.#sink) {
+            if (this.#maybeSendCursorImage(plan, { force: needImage })) {
+              // Ensure the presenter sees pixels before we enable the cursor state.
+              this.#stateDirty = true;
+            }
           }
           this.#imageParamsDirty = false;
         }
@@ -336,8 +390,14 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       this.#stateDirty = true;
     }
 
-    if (!this.#stateDirty && this.#lastSentEnabled === renderEnabled) {
+    const effectiveEnabled = this.#cursorStateWords ? this.#cursorEnable : renderEnabled;
+    if (!this.#stateDirty && this.#lastSentEnabled === effectiveEnabled) {
       // Avoid building objects/doing comparisons on the hot path.
+      return;
+    }
+    if (this.#cursorStateWords) {
+      this.#writeCursorStateIfChanged(effectiveEnabled, plan);
+      this.#stateDirty = false;
       return;
     }
     const sentOk = this.#sendCursorStateIfChanged(renderEnabled);
@@ -528,6 +588,8 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
   }
 
   #maybeSendCursorImage(plan: CursorImagePlan, opts: { force: boolean }): boolean {
+    const sink = this.#sink;
+    if (!sink) return false;
     const keyChanged = this.#lastSentImageKey !== plan.key;
     if (!opts.force && !keyChanged) {
       const nextHash = this.#hashCursor(plan);
@@ -542,7 +604,7 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       return false;
     }
     try {
-      this.#sink.setImage(plan.width, plan.height, out.buffer);
+      sink.setImage(plan.width, plan.height, out.buffer);
     } catch {
       // Best-effort: cursor forwarding should never crash the IO worker. If posting fails (e.g. worker shutdown),
       // keep the previous sent key/hash so we'll retry on the next poll when possible.
@@ -554,7 +616,81 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     return true;
   }
 
+  #cursorUpdateForPublish(enabled: boolean, plan: CursorImagePlan | null): CursorStateUpdate {
+    const fbGpa64 = this.#cursorFbGpa();
+    const width = plan ? plan.width : Math.min(this.#cursorWidth >>> 0, MAX_CURSOR_DIM);
+    const height = plan ? plan.height : Math.min(this.#cursorHeight >>> 0, MAX_CURSOR_DIM);
+    const format = plan ? plan.format : (this.#cursorFormat >>> 0);
+    const pitchBytes = plan ? plan.pitchBytes : (this.#cursorPitchBytes >>> 0);
+    return {
+      enable: enabled ? 1 : 0,
+      x: this.#cursorX | 0,
+      y: this.#cursorY | 0,
+      hotX: this.#cursorHotX >>> 0,
+      hotY: this.#cursorHotY >>> 0,
+      width,
+      height,
+      pitchBytes,
+      format,
+      basePaddrLo: Number(fbGpa64 & 0xffff_ffffn) >>> 0,
+      basePaddrHi: Number((fbGpa64 >> 32n) & 0xffff_ffffn) >>> 0,
+    };
+  }
+
+  #maybeBumpCursorStateImage(plan: CursorImagePlan, opts: { force: boolean }): boolean {
+    const words = this.#cursorStateWords;
+    if (!words) return false;
+    const keyChanged = this.#lastSentImageKey !== plan.key;
+    if (!opts.force && !keyChanged) {
+      const nextHash = this.#hashCursor(plan);
+      if (nextHash === this.#lastSentImageHash) {
+        return false;
+      }
+      // Hash changed: bump generation and update baseline.
+      this.#lastSentImageHash = nextHash;
+    } else {
+      // Forced refresh: update the baseline hash so polling can detect subsequent in-place updates.
+      this.#lastSentImageHash = this.#hashCursor(plan);
+    }
+    this.#lastSentImageKey = plan.key;
+    publishCursorState(words, this.#cursorUpdateForPublish(true, plan));
+    return true;
+  }
+
+  #writeCursorStateIfChanged(enabled: boolean, plan: CursorImagePlan | null): void {
+    const words = this.#cursorStateWords;
+    if (!words) return;
+
+    const update = this.#cursorUpdateForPublish(enabled, plan);
+
+    if (
+      this.#lastSentEnabled === !!enabled &&
+      this.#lastSentX === update.x &&
+      this.#lastSentY === update.y &&
+      this.#lastSentHotX === update.hotX &&
+      this.#lastSentHotY === update.hotY
+    ) {
+      return;
+    }
+
+    this.#lastSentEnabled = !!enabled;
+    this.#lastSentX = update.x;
+    this.#lastSentY = update.y;
+    this.#lastSentHotX = update.hotX;
+    this.#lastSentHotY = update.hotY;
+
+    // Note: only update the "dynamic" fields here. Surface parameters and generation are
+    // published via `publishCursorState()` when they change (or when we detect in-place updates).
+    Atomics.store(words, CursorStateIndex.ENABLE, update.enable | 0);
+    Atomics.store(words, CursorStateIndex.X, update.x | 0);
+    Atomics.store(words, CursorStateIndex.Y, update.y | 0);
+    Atomics.store(words, CursorStateIndex.HOT_X, update.hotX | 0);
+    Atomics.store(words, CursorStateIndex.HOT_Y, update.hotY | 0);
+  }
+
   #sendCursorStateIfChanged(enabled: boolean): boolean {
+    const sink = this.#sink;
+    if (!sink) return false;
     const x = this.#cursorX | 0;
     const y = this.#cursorY | 0;
     const hotX = this.#cursorHotX >>> 0;
@@ -570,7 +706,7 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       return true;
     }
     try {
-      this.#sink.setState(enabled, x, y, hotX, hotY);
+      sink.setState(enabled, x, y, hotX, hotY);
     } catch {
       // Best-effort: do not crash the IO worker if the sink throws (e.g. during shutdown).
       return false;

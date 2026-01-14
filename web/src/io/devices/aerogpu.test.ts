@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { AerogpuFormat } from "../../../../emulator/protocol/aerogpu/aerogpu_pci";
+import {
+  AEROGPU_MMIO_REG_CURSOR_X,
+  AerogpuFormat,
+} from "../../../../emulator/protocol/aerogpu/aerogpu_pci";
 import type { GuestRamLayout } from "../../runtime/shared_layout";
+import { snapshotCursorState, wrapCursorState, CURSOR_STATE_U32_LEN } from "../../ipc/cursor_state";
 import { AeroGpuPciDevice } from "./aerogpu";
 
 function mkLayout(bytes: number): GuestRamLayout {
@@ -16,30 +20,25 @@ function mkLayout(bytes: number): GuestRamLayout {
 describe("io/devices/aerogpu cursor forwarding", () => {
   it("stays inert until the guest touches cursor MMIO regs", () => {
     const guest = new Uint8Array(4096);
-    const sink = { setImage: vi.fn(), setState: vi.fn() };
-    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), sink });
+    const cursorWords = wrapCursorState(new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4), 0);
+    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), cursorStateWords: cursorWords });
 
     dev.tick(0);
-    expect(sink.setImage).not.toHaveBeenCalled();
-    expect(sink.setState).not.toHaveBeenCalled();
+    const snap = snapshotCursorState(cursorWords);
+    expect(snap.generation >>> 0).toBe(0);
+    expect(snap.enable >>> 0).toBe(0);
+    expect(snap.width >>> 0).toBe(0);
+    expect(snap.height >>> 0).toBe(0);
   });
 
-  it("converts BGRA cursor data to RGBA8888 (and preserves alpha)", () => {
+  it("publishes CursorState on cursor programming (generation bump + surface pointer)", () => {
     const guest = new Uint8Array(4096);
     const gpa = 0x100;
 
-    // Two pixels, BGRA:
-    // (R=1,G=2,B=3,A=4), (R=10,G=20,B=30,A=40)
-    guest.set([3, 2, 1, 4, 30, 20, 10, 40], gpa);
-
-    let image: Uint8Array | null = null;
-    const sink = {
-      setImage: (_w: number, _h: number, rgba8: ArrayBuffer) => {
-        image = new Uint8Array(rgba8);
-      },
-      setState: vi.fn(),
-    };
-    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), sink });
+    // One pixel, BGRA.
+    guest.set([3, 2, 1, 4], gpa);
+    const cursorWords = wrapCursorState(new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4), 0);
+    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), cursorStateWords: cursorWords });
 
     dev.debugProgramCursor({
       enabled: true,
@@ -47,32 +46,35 @@ describe("io/devices/aerogpu cursor forwarding", () => {
       y: 0,
       hotX: 0,
       hotY: 0,
-      width: 2,
+      width: 1,
       height: 1,
       format: AerogpuFormat.B8G8R8A8Unorm,
       fbGpa: gpa,
-      pitchBytes: 8,
+      pitchBytes: 4,
     });
     dev.tick(0);
 
-    expect(image).toBeTruthy();
-    expect(Array.from(image!)).toEqual([1, 2, 3, 4, 10, 20, 30, 40]);
+    const snap = snapshotCursorState(cursorWords);
+    expect(snap.generation >>> 0).toBe(1);
+    expect(snap.enable >>> 0).toBe(1);
+    expect(snap.x | 0).toBe(0);
+    expect(snap.y | 0).toBe(0);
+    expect(snap.hotX >>> 0).toBe(0);
+    expect(snap.hotY >>> 0).toBe(0);
+    expect(snap.width >>> 0).toBe(1);
+    expect(snap.height >>> 0).toBe(1);
+    expect(snap.pitchBytes >>> 0).toBe(4);
+    expect(snap.format >>> 0).toBe(AerogpuFormat.B8G8R8A8Unorm);
+    expect(snap.basePaddrLo >>> 0).toBe(gpa >>> 0);
+    expect(snap.basePaddrHi >>> 0).toBe(0);
   });
 
-  it("treats X8 formats as opaque (alpha=0xff)", () => {
+  it("updates cursor position without bumping generation", () => {
     const guest = new Uint8Array(4096);
     const gpa = 0x180;
-    // One pixel BGRX with X=0x00 (should become alpha=0xff).
     guest.set([3, 2, 1, 0], gpa);
-
-    let image: Uint8Array | null = null;
-    const sink = {
-      setImage: (_w: number, _h: number, rgba8: ArrayBuffer) => {
-        image = new Uint8Array(rgba8);
-      },
-      setState: vi.fn(),
-    };
-    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), sink });
+    const cursorWords = wrapCursorState(new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4), 0);
+    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), cursorStateWords: cursorWords });
 
     dev.debugProgramCursor({
       enabled: true,
@@ -88,35 +90,46 @@ describe("io/devices/aerogpu cursor forwarding", () => {
     });
     dev.tick(0);
 
-    expect(image).toBeTruthy();
-    expect(Array.from(image!)).toEqual([1, 2, 3, 255]);
+    const g1 = snapshotCursorState(cursorWords).generation >>> 0;
+    expect(g1).toBe(1);
+
+    dev.mmioWrite(0, BigInt(AEROGPU_MMIO_REG_CURSOR_X), 4, 123);
+    dev.tick(1);
+
+    const snap = snapshotCursorState(cursorWords);
+    expect(snap.generation >>> 0).toBe(g1);
+    expect(snap.x | 0).toBe(123);
   });
 
-  it("disables cursor overlay when the programmed cursor layout is invalid (pitch < rowBytes)", () => {
+  it("bumps generation when the guest updates the cursor bytes in-place", () => {
     const guest = new Uint8Array(4096);
     const gpa = 0x200;
-    guest.set([0, 0, 0, 0], gpa);
+    guest.set([0, 0, 0, 255], gpa);
 
-    const sink = { setImage: vi.fn(), setState: vi.fn() };
-    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), sink });
+    const cursorWords = wrapCursorState(new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4), 0);
+    const dev = new AeroGpuPciDevice({ guestU8: guest, guestLayout: mkLayout(guest.byteLength), cursorStateWords: cursorWords });
 
     dev.debugProgramCursor({
       enabled: true,
-      x: 123,
-      y: 456,
+      x: 0,
+      y: 0,
       hotX: 0,
       hotY: 0,
-      width: 2,
+      width: 1,
       height: 1,
-      format: AerogpuFormat.R8G8B8A8Unorm,
+      format: AerogpuFormat.B8G8R8A8Unorm,
       fbGpa: gpa,
-      pitchBytes: 4, // invalid (needs 8)
+      pitchBytes: 4,
     });
     dev.tick(0);
+    const g1 = snapshotCursorState(cursorWords).generation >>> 0;
+    expect(g1).toBe(1);
 
-    expect(sink.setImage).not.toHaveBeenCalled();
-    // The device reports cursor.set_state enabled=false when it can't safely read pixels.
-    expect(sink.setState).toHaveBeenCalledWith(false, 123, 456, 0, 0);
+    // Mutate the guest pixel (BGRA): change blue from 0 to 255.
+    guest.set([255, 0, 0, 255], gpa);
+    // Poll interval is 64ms; advance past it so the device hashes the bytes and bumps generation.
+    dev.tick(65);
+    const g2 = snapshotCursorState(cursorWords).generation >>> 0;
+    expect(g2).toBe(2);
   });
 });
-
