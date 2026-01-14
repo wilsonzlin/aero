@@ -36,6 +36,15 @@ pub struct ShaderReflection {
 pub struct IoParam {
     pub semantic_name: String,
     pub semantic_index: u32,
+    /// D3D signature register index (e.g. `v#`, `o#`).
+    ///
+    /// Most parameters map directly to a register number from the DXBC `ISGN`/`OSGN` signature
+    /// tables. However, some builtins do not have an explicit `v#` register (notably SM5 compute
+    /// thread-ID operand types like `D3D11_SB_OPERAND_TYPE_INPUT_THREAD_ID`).
+    ///
+    /// In those cases, Aero assigns a stable *synthetic* register index in a reserved range
+    /// (`0xffff_ff00..`) so reflection consumers can still differentiate inputs. When [`Self::builtin`]
+    /// is `Some`, callers should prefer that field over relying on the numeric register value.
     pub register: u32,
     pub location: Option<u32>,
     pub builtin: Option<Builtin>,
