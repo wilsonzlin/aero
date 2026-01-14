@@ -45,6 +45,36 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_SKIPPED:"))
 
+    def test_virtio_snd_force_null_backend_token(self) -> None:
+        h = self.harness
+
+        tail = (
+            b"virtio-snd: ForceNullBackend=1 set (pnp_id=PCI\\\\VEN_1AF4&DEV_1059&REV_01\\\\3&11583659&0&28 source=device_parameters); "
+            b"virtio transport disabled (host wav capture will be silent)\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend|irq_mode=msix|irq_message_count=3\n"
+        )
+        msg = h._try_virtio_snd_force_null_backend_failure_message(tail)
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_FORCE_NULL_BACKEND:"))
+        self.assertIn("ForceNullBackend", msg)
+        self.assertIn(
+            "HKLM\\SYSTEM\\CurrentControlSet\\Enum\\<DeviceInstancePath>\\Device Parameters\\Parameters\\ForceNullBackend",
+            msg,
+        )
+        self.assertIn("pnp_id=", msg)
+        self.assertIn("source=", msg)
+
+        # Marker-only fallback (no diagnostic line).
+        msg2 = h._try_virtio_snd_force_null_backend_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend\n"
+        )
+        self.assertIsNotNone(msg2)
+        assert msg2 is not None
+        self.assertRegex(msg2, _TOKEN_RE)
+        self.assertTrue(msg2.startswith("FAIL: VIRTIO_SND_FORCE_NULL_BACKEND:"))
+
     def test_virtio_snd_capture_skip_tokens(self) -> None:
         h = self.harness
 

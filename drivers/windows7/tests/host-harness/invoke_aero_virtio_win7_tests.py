@@ -108,6 +108,11 @@ via the dedicated `virtio-blk-counters` marker, emitting:
 
 - `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
 
+When the guest virtio-snd selftest fails due to the `ForceNullBackend` bring-up toggle (which disables the virtio
+transport and makes host-side wav verification silent), the harness emits:
+
+- `FAIL: VIRTIO_SND_FORCE_NULL_BACKEND: ...`
+
 Note: virtio-blk miniport IRQ diagnostics may report `mode=msi` even when MSI-X vectors are assigned; the harness infers
 MSI-X (`irq_mode=msix`) when any `msix_*_vector` field is non-`0xFFFF`.
 
@@ -1897,6 +1902,60 @@ def _virtio_snd_skip_failure_message(tail: bytes) -> str:
     if b"virtio-snd:" in tail and b"device not detected" in tail:
         return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (device missing) but --with-virtio-snd was enabled"
     return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped but --with-virtio-snd was enabled"
+
+
+_VIRTIO_SND_FORCE_NULL_BACKEND_REG_PATH = (
+    r"HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend"
+)
+
+
+def _try_virtio_snd_force_null_backend_failure_message(tail: bytes) -> Optional[str]:
+    """
+    If the guest virtio-snd tests failed due to ForceNullBackend, return a specific failure token/message.
+
+    The guest selftest emits machine-friendly markers:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend|...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|force_null_backend
+      AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|force_null_backend
+    """
+
+    markers = (
+        b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend",
+        b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|force_null_backend",
+        b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|force_null_backend",
+    )
+    if not any(m in tail for m in markers):
+        return None
+
+    pnp_id: Optional[str] = None
+    source: Optional[str] = None
+    try:
+        text = tail.decode("utf-8", errors="replace")
+        m = re.search(r"ForceNullBackend=1 set \(pnp_id=([^\s]+) source=([^)]+)\)", text)
+        if m:
+            pnp_id = m.group(1)
+            source = m.group(2)
+        else:
+            m2 = re.search(r"ForceNullBackend=1 set \(source=([^)]+)\)", text)
+            if m2:
+                source = m2.group(1)
+    except Exception:
+        # Best-effort: failure tokens must never raise.
+        pnp_id = None
+        source = None
+
+    diag: list[str] = []
+    if pnp_id:
+        diag.append(f"pnp_id={pnp_id}")
+    if source:
+        diag.append(f"source={source}")
+    diag_str = f" ({' '.join(diag)})" if diag else ""
+
+    return (
+        "FAIL: VIRTIO_SND_FORCE_NULL_BACKEND: virtio-snd selftest reported force_null_backend"
+        f"{diag_str}; ForceNullBackend=1 disables the virtio-snd transport (host wav capture will be silent). "
+        f"Clear the registry toggle to enable virtio-snd: {_VIRTIO_SND_FORCE_NULL_BACKEND_REG_PATH} (DWORD 0)."
+    )
 
 
 def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
@@ -5321,7 +5380,11 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-                        print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
+                        msg = _try_virtio_snd_force_null_backend_failure_message(tail)
+                        if msg is not None:
+                            print(msg)
+                        else:
+                            print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                         _print_tail(serial_log)
                         result_code = 1
                         break
@@ -6623,7 +6686,11 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-                            print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
+                            msg = _try_virtio_snd_force_null_backend_failure_message(tail)
+                            if msg is not None:
+                                print(msg)
+                            else:
+                                print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                             _print_tail(serial_log)
                             result_code = 1
                             break
