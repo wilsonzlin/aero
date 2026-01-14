@@ -1478,9 +1478,26 @@ struct AeroGpuPciConfigDevice {
 
 impl AeroGpuPciConfigDevice {
     fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
+        let cfg = aero_devices::pci::profile::AEROGPU.build_config_space();
+        debug_assert_eq!(
+            cfg.bar_definition(aero_devices::pci::profile::AEROGPU_BAR0_INDEX),
+            Some(PciBarDefinition::Mmio32 {
+                size: u32::try_from(aero_devices::pci::profile::AEROGPU_BAR0_SIZE)
+                    .expect("AeroGPU BAR0 size should fit in u32"),
+                prefetchable: false,
+            }),
+            "unexpected AeroGPU BAR0 definition"
+        );
+        debug_assert_eq!(
+            cfg.bar_definition(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX),
+            Some(PciBarDefinition::Mmio32 {
+                size: u32::try_from(aero_devices::pci::profile::AEROGPU_VRAM_SIZE)
+                    .expect("AeroGPU VRAM size should fit in u32"),
+                prefetchable: true,
+            }),
+            "unexpected AeroGPU BAR1 definition"
+        );
+        Self { cfg }
     }
 }
 
