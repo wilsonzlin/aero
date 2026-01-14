@@ -38,7 +38,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
 
     const status = views.status;

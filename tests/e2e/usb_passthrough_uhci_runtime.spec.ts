@@ -43,7 +43,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
 
     // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`

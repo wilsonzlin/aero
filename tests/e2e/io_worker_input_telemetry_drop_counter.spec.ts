@@ -30,10 +30,17 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
   test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
 
   const result = await page.evaluate(async () => {
-    const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
+    const { allocateHarnessSharedMemorySegments } = await import("/web/src/runtime/harness_shared_memory.ts");
+    const { createIoIpcSab, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab(),
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
 

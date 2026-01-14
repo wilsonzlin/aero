@@ -44,7 +44,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
 
     // Keep the guest RAM allocation modest to avoid unnecessary memory pressure when Playwright
     // runs tests fully-parallel across multiple browsers.
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
     const guestBase = views.guestLayout.guest_base >>> 0;

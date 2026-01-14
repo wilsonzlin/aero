@@ -31,7 +31,8 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
         HEADER_INDEX_FRAME_COUNTER,
         initFramebufferHeader,
       } from "/web/src/display/framebuffer_protocol.ts";
-      import { allocateSharedMemorySegments, createSharedMemoryViews } from "/web/src/runtime/shared_layout.ts";
+        import { allocateHarnessSharedMemorySegments } from "/web/src/runtime/harness_shared_memory.ts";
+        import { createSharedMemoryViews } from "/web/src/runtime/shared_layout.ts";
       import {
         CURSOR_FORMAT_B8G8R8A8,
         publishCursorState,
@@ -53,8 +54,14 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
 
       (async () => {
         try {
-          const segments = allocateSharedMemorySegments({ guestRamMiB: 8 });
-          const views = createSharedMemoryViews(segments);
+           const segments = allocateHarnessSharedMemorySegments({
+             guestRamBytes: 8 * 1024 * 1024,
+             sharedFramebuffer: new SharedArrayBuffer(8),
+             sharedFramebufferOffsetBytes: 0,
+             ioIpcBytes: 0,
+             vramBytes: 0,
+           });
+           const views = createSharedMemoryViews(segments);
 
           // Frame pacing SAB.
           const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);

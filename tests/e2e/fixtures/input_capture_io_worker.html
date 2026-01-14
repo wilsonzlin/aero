@@ -20,9 +20,10 @@
   <body>
     <canvas id="emu" width="640" height="480"></canvas>
       <script type="module">
-        import { InputCapture } from "/web/src/input/input_capture.ts";
-        import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from "/web/src/runtime/shared_layout.ts";
-        import { emptySetBootDisksMessage } from "/web/src/runtime/boot_disks_protocol.ts";
+         import { InputCapture } from "/web/src/input/input_capture.ts";
+         import { allocateHarnessSharedMemorySegments } from "/web/src/runtime/harness_shared_memory.ts";
+         import { createIoIpcSab, createSharedMemoryViews, StatusIndex } from "/web/src/runtime/shared_layout.ts";
+         import { emptySetBootDisksMessage } from "/web/src/runtime/boot_disks_protocol.ts";
 
       const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("emu"));
 
@@ -46,9 +47,18 @@
         document.dispatchEvent(new Event("pointerlockchange"));
       };
 
-      // Create a real IO worker and expose its shared status view so Playwright can assert receipt.
-      const segments = allocateSharedMemorySegments();
-      const views = createSharedMemoryViews(segments);
+       // Create a real IO worker and expose its shared status view so Playwright can assert receipt.
+       //
+       // Use the harness allocator to keep memory usage low (avoid the full runtime's large wasm32
+       // reserved region + default VRAM allocation).
+       const segments = allocateHarnessSharedMemorySegments({
+         guestRamBytes: 1 * 1024 * 1024,
+         sharedFramebuffer: new SharedArrayBuffer(8),
+         sharedFramebufferOffsetBytes: 0,
+         ioIpc: createIoIpcSab(),
+         vramBytes: 0,
+       });
+       const views = createSharedMemoryViews(segments);
        window.__ioStatus = views.status;
        window.__ioReadyIndex = StatusIndex.IoReady;
         window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
