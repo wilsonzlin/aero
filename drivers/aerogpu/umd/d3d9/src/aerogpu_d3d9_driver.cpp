@@ -13764,10 +13764,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  stateblock_record_sampler_state_locked(dev, stage, state, value);
   if (stage < 16 && state < 16) {
+    if (dev->sampler_states[stage][state] == value) {
+      // Skip redundant sampler state uploads: setting identical state again is a
+      // no-op, but still record it for state blocks above.
+      return trace.ret(S_OK);
+    }
     dev->sampler_states[stage][state] = value;
   }
-  stateblock_record_sampler_state_locked(dev, stage, state, value);
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_sampler_state>(dev, AEROGPU_CMD_SET_SAMPLER_STATE);
   if (!cmd) {
