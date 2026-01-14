@@ -51,9 +51,18 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
         patch_first_bind_shaders_set_dummy_gs(&mut stream, 0xCAFE_BABE);
 
         let mut guest_mem = VecGuestMemory::new(0);
-        let report = exec
-            .execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("execute_cmd_stream should succeed");
+        let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            Ok(report) => report,
+            Err(err) => {
+                // This test forces the GS/HS/DS compute-prepass path. Skip cleanly on downlevel
+                // backends without compute pipeline support.
+                if err.to_string().contains("Unsupported(\"compute\")") {
+                    common::skip_or_panic(module_path!(), "compute unsupported");
+                    return;
+                }
+                panic!("execute_cmd_stream failed: {err:#}");
+            }
+        };
         exec.poll_wait();
 
         let render_target = report
@@ -76,4 +85,3 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
         }
     });
 }
-
