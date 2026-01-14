@@ -148,7 +148,7 @@ relevant crates/tests.
 
 | ID | Task | Status | Priority | Dependencies | Complexity | Pointers |
 |----|------|--------|----------|--------------|------------|----------|
-| DM-001 | PIC (8259A) | Implemented | P0 | None | Medium | `crates/devices/src/pic8259.rs` |
+| DM-001 | PIC (8259A) | Implemented | P0 | None | Medium | Core model: `crates/aero-interrupts/src/pic8259.rs`; port wrapper + platform registration: `crates/devices/src/pic8259.rs` |
 | DM-002 | PIT (8254) | Implemented | P0 | None | Medium | `crates/devices/src/pit8254.rs` |
 | DM-003 | CMOS/RTC | Implemented | P0 | None | Medium | `crates/devices/src/rtc_cmos.rs` |
 | DM-004 | Local APIC | Implemented (multi-LAPIC topology; BSP-centric delivery) | P0 | None | High | Core model: `crates/aero-interrupts/src/apic/local_apic.rs`; routing glue in `crates/platform/src/interrupts/router.rs`; MMIO adapters in `crates/aero-machine/src/lib.rs` |
@@ -460,6 +460,10 @@ bash ./scripts/safe-run.sh cargo test -p aero-acpi --locked
 # Run device model tests
 bash ./scripts/safe-run.sh cargo test -p aero-devices --locked
 bash ./scripts/safe-run.sh cargo test -p aero-interrupts --locked
+bash ./scripts/safe-run.sh cargo test -p aero-platform --locked
+
+# Optional: legacy timer/time crates (not used by canonical machine/platform wiring today)
+bash ./scripts/safe-run.sh cargo test -p aero-time --locked
 bash ./scripts/safe-run.sh cargo test -p aero-timers --locked
 
 # Run canonical integration tests (PCI wiring, snapshots, storage topologies, etc.)
