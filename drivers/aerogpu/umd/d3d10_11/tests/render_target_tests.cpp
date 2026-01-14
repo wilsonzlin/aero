@@ -252,6 +252,39 @@ bool TestDestroyAfterFailedCreateResourceIsSafe() {
   return true;
 }
 
+bool TestDestroyAfterNotImplCreateResourceIsSafe() {
+  TestDevice dev{};
+  if (!Check(CreateDevice(&dev), "CreateDevice(NOTIMPL CreateResource)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATERESOURCE desc{};
+  // Use an invalid/unsupported resource dimension to force E_NOTIMPL.
+  desc.Dimension = static_cast<AEROGPU_DDI_RESOURCE_DIMENSION>(999u);
+
+  TestResource res{};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize(NOTIMPL)")) {
+    return false;
+  }
+  // Fill with a sentinel so DestroyResource would crash if CreateResource did
+  // not construct the private object.
+  res.storage.assign(static_cast<size_t>(size), 0xCC);
+  res.hResource.pDrvPrivate = res.storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, &desc, res.hResource);
+  if (!Check(hr == E_NOTIMPL, "CreateResource returns E_NOTIMPL for unsupported dimension")) {
+    return false;
+  }
+
+  // Some runtimes may still call Destroy on failure; this must not crash.
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, res.hResource);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool CreateRenderTargetTexture2D(TestDevice* dev, TestResource* out) {
   if (!dev || !out) {
     return false;
@@ -491,6 +524,7 @@ bool TestUnbindAllRtvs() {
 int main() {
   bool ok = true;
   ok &= TestDestroyAfterFailedCreateResourceIsSafe();
+  ok &= TestDestroyAfterNotImplCreateResourceIsSafe();
   ok &= TestTwoRtvs();
   ok &= TestClampAndNullEntries();
   ok &= TestUnbindAllRtvs();

@@ -1536,9 +1536,18 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                        pDesc ? pDesc->Height : 0,
                        pDesc ? pDesc->MipLevels : 0,
                        pDesc ? pDesc->ArraySize : 0,
-                       pDesc ? pDesc->Format : 0,
-                       pDesc ? pDesc->InitialDataCount : 0);
-  if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
+                        pDesc ? pDesc->Format : 0,
+                        pDesc ? pDesc->InitialDataCount : 0);
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+
+  // Always construct the private object so DestroyResource is safe even if we
+  // reject the descriptor (some runtimes may still call Destroy on failure).
+  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+  res->handle = kInvalidHandle;
+
+  if (!pDesc) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
@@ -1554,7 +1563,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
 
   if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER) {
-    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
     res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Buffer;
     res->usage = pDesc->Usage;
@@ -1653,8 +1661,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           // Guest-backed resources must be initialized via the WDDM allocation +
           // RESOURCE_DIRTY_RANGE path; inline UPLOAD_RESOURCE is only valid for
           // host-owned resources.
-          res->~AeroGpuResource();
-          return E_FAIL;
+          return FailCreateResource(res, E_FAIL);
         }
 
         auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
@@ -1711,7 +1718,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(E_NOTIMPL);
     }
 
-    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
     res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Texture2D;
     res->usage = pDesc->Usage;
@@ -1906,8 +1912,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       const uint64_t dirty_size = total_bytes;
       if (is_guest_backed) {
         if (!wddm_initial_upload) {
-          res->~AeroGpuResource();
-          return E_FAIL;
+          return FailCreateResource(res, E_FAIL);
         }
 
         auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
