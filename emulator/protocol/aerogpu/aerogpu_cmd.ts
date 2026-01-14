@@ -1765,9 +1765,7 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setShaderConstantsF}.
    *
-   * Encodes `stageEx` using the `stage_ex` ABI rules:
-   * - VS/PS/CS use the legacy `stage` field with `reserved0 = 0`.
-   * - GS/HS/DS are encoded as `stage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+   * Encodes `stageEx` via `(stage = COMPUTE, reserved0 = stageEx)` (non-zero).
    */
   setShaderConstantsFEx(
     stageEx: AerogpuShaderStageEx,
@@ -1944,9 +1942,7 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setTexture}.
    *
-   * Encodes `stageEx` using the `stage_ex` ABI rules:
-   * - VS/PS/CS use the legacy `shaderStage` field with `reserved0 = 0`.
-   * - GS/HS/DS are encoded as `shaderStage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+   * Encodes `stageEx` via `(shaderStage = COMPUTE, reserved0 = stageEx)` (non-zero).
    */
   setTextureEx(stageEx: AerogpuShaderStageEx, slot: number, texture: AerogpuHandle): void {
     const [shaderStage, reserved0] = encodeStageEx(stageEx);
@@ -2007,9 +2003,7 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setSamplers}.
    *
-   * Encodes `stageEx` using the `stage_ex` ABI rules:
-   * - VS/PS/CS use the legacy `shaderStage` field with `reserved0 = 0`.
-   * - GS/HS/DS are encoded as `shaderStage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+   * Encodes `stageEx` via `(shaderStage = COMPUTE, reserved0 = stageEx)` (non-zero).
    */
   setSamplersEx(stageEx: AerogpuShaderStageEx, startSlot: number, handles: ArrayLike<AerogpuHandle>): void {
     const [shaderStage, reserved0] = encodeStageEx(stageEx);
@@ -2050,9 +2044,7 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setConstantBuffers}.
    *
-   * Encodes `stageEx` using the `stage_ex` ABI rules:
-   * - VS/PS/CS use the legacy `shaderStage` field with `reserved0 = 0`.
-   * - GS/HS/DS are encoded as `shaderStage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+   * Encodes `stageEx` via `(shaderStage = COMPUTE, reserved0 = stageEx)` (non-zero).
    */
   setConstantBuffersEx(
     stageEx: AerogpuShaderStageEx,

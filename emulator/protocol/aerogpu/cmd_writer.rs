@@ -809,9 +809,7 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::set_texture`].
     ///
-    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
-    /// - VS/PS/CS use the legacy `shader_stage` field with `reserved0 = 0`.
-    /// - GS/HS/DS are encoded as `shader_stage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+    /// Encodes `stage_ex` via `(shader_stage = COMPUTE, reserved0 = stage_ex)` (non-zero).
     pub fn set_texture_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -956,9 +954,7 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::set_samplers`].
     ///
-    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
-    /// - VS/PS/CS use the legacy `shader_stage` field with `reserved0 = 0`.
-    /// - GS/HS/DS are encoded as `shader_stage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+    /// Encodes `stage_ex` via `(shader_stage = COMPUTE, reserved0 = stage_ex)` (non-zero).
     pub fn set_samplers_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -1066,9 +1062,7 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::set_constant_buffers`].
     ///
-    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
-    /// - VS/PS/CS use the legacy `shader_stage` field with `reserved0 = 0`.
-    /// - GS/HS/DS are encoded as `shader_stage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+    /// Encodes `stage_ex` via `(shader_stage = COMPUTE, reserved0 = stage_ex)` (non-zero).
     pub fn set_constant_buffers_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -1398,9 +1392,7 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::set_shader_constants_f`].
     ///
-    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
-    /// - VS/PS/CS use the legacy `stage` field with `reserved0 = 0`.
-    /// - GS/HS/DS are encoded as `stage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
+    /// Encodes `stage_ex` via `(stage = COMPUTE, reserved0 = stage_ex)` (non-zero).
     pub fn set_shader_constants_f_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
