@@ -17,6 +17,8 @@ static VOID AerovblkCaptureInterruptMode(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
 
   devExt->UseMsi = FALSE;
   devExt->MsiMessageCount = 0;
+  devExt->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  devExt->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
 
   /*
    * StorPort exposes message-signaled interrupt assignments via
@@ -59,6 +61,8 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
      * INTx path: ensure MSI-X vectors are unassigned so the device must fall
      * back to INTx + ISR semantics even if MSI-X is present/enabled.
      */
+    devExt->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    devExt->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
     (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
     return TRUE;
   }
@@ -86,6 +90,8 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   }
 
   if (NT_SUCCESS(st)) {
+    devExt->MsixConfigVector = configVec;
+    devExt->MsixQueue0Vector = queueVec;
     return TRUE;
   }
 
@@ -96,6 +102,8 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
    */
   devExt->UseMsi = FALSE;
   devExt->MsiMessageCount = 0;
+  devExt->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  devExt->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
   (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
   return TRUE;
 }
@@ -479,6 +487,7 @@ static VOID AerovblkHandleConfigInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   ULONG newLogicalSectorSize;
   BOOLEAN changed;
   STOR_LOCK_HANDLE lock;
+  UCHAR gen;
 
   if (devExt == NULL) {
     return;
@@ -488,7 +497,22 @@ static VOID AerovblkHandleConfigInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
     return;
   }
 
+  if (devExt->ResetInProgress != 0) {
+    return;
+  }
+
   if (devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
+    return;
+  }
+
+  /*
+   * Config-change interrupts are keyed by `config_generation` (virtio-pci modern).
+   * When MSI-X vectors are shared (e.g. only one message was granted), queue
+   * interrupts may arrive on the same message ID as config interrupts; avoid an
+   * expensive config read unless the generation has actually changed.
+   */
+  gen = READ_REGISTER_UCHAR((volatile UCHAR*)&devExt->Vdev.CommonCfg->config_generation);
+  if (gen == devExt->LastConfigGeneration) {
     return;
   }
 
@@ -512,6 +536,9 @@ static VOID AerovblkHandleConfigInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   if (!devExt->Removed) {
     const ULONGLONG oldCapacitySectors = AerovblkReadCapacitySectors(devExt);
     const ULONG oldLogicalSectorSize = devExt->LogicalSectorSize;
+
+    /* Record the generation we handled so we can skip redundant config checks. */
+    devExt->LastConfigGeneration = gen;
 
     if (newCapacitySectors != oldCapacitySectors || newLogicalSectorSize != oldLogicalSectorSize) {
       /*
@@ -739,6 +766,15 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   }
 
   VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER_OK);
+
+  /*
+   * Seed config-generation tracking so MSI/MSI-X shared-vector paths can cheaply
+   * detect real config changes without re-reading the device config on every
+   * interrupt.
+   */
+  if (devExt->Vdev.CommonCfg != NULL) {
+    devExt->LastConfigGeneration = READ_REGISTER_UCHAR((volatile UCHAR*)&devExt->Vdev.CommonCfg->config_generation);
+  }
 
   InterlockedExchange(&devExt->ResetInProgress, 0);
   StorPortNotification(NextRequest, devExt, NULL);
@@ -1782,13 +1818,15 @@ BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId) 
    * - There is no shared INTx line to ACK/deassert.
    * - Do NOT read the virtio ISR status byte here (read-to-ack is for INTx).
    *
-   * virtio-blk (contract v1) uses one virtqueue (queue 0). We program config
-   * on message 0 and queue 0 on message 1 when available, with fallback to
-   * sharing message 0. When queue and config share a single message ID, we
-   * cannot reliably distinguish config changes from I/O completions, so only
-   * process config interrupts when a dedicated config message is available.
+   * virtio-blk (contract v1) uses one virtqueue (queue 0). We program config on
+   * message 0 and queue 0 on message 1 when available, with fallback to sharing
+   * message 0.
+   *
+   * When config and queue share a single message ID, we may see queue interrupts
+   * on the config vector. AerovblkHandleConfigInterrupt() uses config_generation
+   * to cheaply skip work unless the device actually changed config.
    */
-  if (messageId == 0 && devExt->MsiMessageCount >= 2u) {
+  if (devExt->MsixConfigVector != VIRTIO_PCI_MSI_NO_VECTOR && messageId == (ULONG)devExt->MsixConfigVector) {
     AerovblkHandleConfigInterrupt(devExt);
   }
 

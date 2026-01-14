@@ -115,6 +115,10 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
      */
     BOOLEAN UseMsi;
     USHORT MsiMessageCount;
+    USHORT MsixConfigVector;
+    USHORT MsixQueue0Vector;
+    volatile UCHAR LastConfigGeneration;
+    UCHAR Reserved1;
 
     virtio_os_ops_t VirtioOps;
     virtio_os_storport_ctx_t VirtioOpsCtx;
