@@ -559,12 +559,13 @@ bool TestCreateRasterizerStateRejectsUnsupportedCullMode() {
   }
 
   AEROGPU_DDIARG_CREATERASTERIZERSTATE desc = {};
-  desc.FillMode = kD3D10FillWireframe;
-  desc.CullMode = 4; // invalid (D3D10_CULL_MODE valid values are 1..3)
-  desc.FrontCounterClockwise = 0;
-  desc.DepthBias = 0;
-  desc.DepthClipEnable = 1;
-  desc.ScissorEnable = 0;
+  desc.fill_mode = AEROGPU_FILL_WIREFRAME;
+  // Invalid: `cull_mode` is `enum aerogpu_cull_mode` (0..3).
+  desc.cull_mode = AEROGPU_CULL_BACK + 1u;
+  desc.front_ccw = 0;
+  desc.scissor_enable = 0;
+  desc.depth_bias = 0;
+  desc.depth_clip_enable = 1;
 
   D3D10DDI_HRASTERIZERSTATE hState = {};
   const SIZE_T size = dev.device_funcs.pfnCalcPrivateRasterizerStateSize(dev.hDevice, &desc);
@@ -575,7 +576,7 @@ bool TestCreateRasterizerStateRejectsUnsupportedCullMode() {
   hState.pDrvPrivate = storage.data();
 
   const HRESULT hr = dev.device_funcs.pfnCreateRasterizerState(dev.hDevice, &desc, hState);
-  if (!Check(hr == E_NOTIMPL, "CreateRasterizerState should return E_NOTIMPL for invalid CullMode")) {
+  if (!Check(hr == E_INVALIDARG, "CreateRasterizerState should return E_INVALIDARG for invalid cull_mode")) {
     return false;
   }
 

@@ -3344,7 +3344,6 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
   // Copy reads from the source resource and writes the destination resource.
   track_resource_alloc_for_submit_locked(dev, dst, /*write=*/true);
   track_resource_alloc_for_submit_locked(dev, src, /*write=*/false);
-  TrackStagingWriteLocked(dev, dst);
 
   struct CopySimMapping {
     uint8_t* data = nullptr;
@@ -3407,6 +3406,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
       ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
       return;
     }
+    TrackStagingWriteLocked(dev, dst);
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -3455,6 +3455,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
     const uint32_t array_layers = std::min(dst->array_size, src->array_size);
 
     // Emit one COPY_TEXTURE2D per subresource.
+    bool tracked_dst_write = false;
     for (uint32_t layer = 0; layer < array_layers; layer++) {
       for (uint32_t mip = 0; mip < mip_levels; mip++) {
         const uint32_t dst_w = aerogpu_mip_dim(dst->width, mip);
@@ -3471,6 +3472,10 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
         if (!cmd) {
           ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
           return;
+        }
+        if (!tracked_dst_write) {
+          TrackStagingWriteLocked(dev, dst);
+          tracked_dst_write = true;
         }
         cmd->dst_texture = dst->handle;
         cmd->src_texture = src->handle;
@@ -3588,7 +3593,6 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
   // Copy reads from the source resource and writes the destination resource.
   track_resource_alloc_for_submit_locked(dev, dst, /*write=*/true);
   track_resource_alloc_for_submit_locked(dev, src, /*write=*/false);
-  TrackStagingWriteLocked(dev, dst);
 
   struct CopySimMapping {
     uint8_t* data = nullptr;
@@ -3650,6 +3654,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     if (!cmd) {
       return E_OUTOFMEMORY;
     }
+    TrackStagingWriteLocked(dev, dst);
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -3770,6 +3775,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     if (!cmd) {
       return E_OUTOFMEMORY;
     }
+    TrackStagingWriteLocked(dev, dst);
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = dst_layout.mip_level;
@@ -4320,8 +4326,9 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
   constexpr uint32_t kD3D11CullNone = 1;
   constexpr uint32_t kD3D11CullFront = 2;
   constexpr uint32_t kD3D11CullBack = 3;
-  if (s->cull_mode != 0 && s->cull_mode != kD3D11CullNone && s->cull_mode != kD3D11CullFront && s->cull_mode != kD3D11CullBack) {
-    s->cull_mode = kD3D11CullBack;
+  if (s->state.cull_mode != 0 && s->state.cull_mode != kD3D11CullNone && s->state.cull_mode != kD3D11CullFront &&
+      s->state.cull_mode != kD3D11CullBack) {
+    s->state.cull_mode = kD3D11CullBack;
     AEROGPU_D3D10_RET_HR(E_NOTIMPL);
   }
 
