@@ -2828,6 +2828,10 @@ function renderDisksPanel(): HTMLElement {
   let disks: DiskImageMetadata[] = [];
   let mounts: MountConfig = {};
   let adoptedLegacy = false;
+  // Best-effort compatibility: `AeroConfig.activeDiskImage` is deprecated but older links/harnesses
+  // may still set it via `?disk=...`. Treat it as an initial mount hint (once per session) so those
+  // flows keep working, without using it as a runtime mode toggle.
+  let appliedActiveDiskImage: string | null = null;
 
   function setProgress(phase: string, processed: number, total?: number): void {
     progress.hidden = false;
@@ -3023,6 +3027,37 @@ function renderDisksPanel(): HTMLElement {
 
     disks = await manager.listDisks();
     mounts = await manager.getMounts();
+
+    // Legacy `activeDiskImage` compat: if present, try to resolve it to an existing disk and
+    // apply it to DiskManager mounts (once). This keeps `?disk=...` links functional even though
+    // disk selection is now driven by mounts + `setBootDisks` (not by config).
+    const legacyActiveDiskImage = configManager.getState().effective.activeDiskImage;
+    if (legacyActiveDiskImage && appliedActiveDiskImage !== legacyActiveDiskImage) {
+      const trimmed = legacyActiveDiskImage.trim();
+      if (trimmed) {
+        // Try to match by disk ID, name, or local filename (supports legacy OPFS `images/` adoptions).
+        const fileName = trimmed.includes("/") ? trimmed.split("/").filter(Boolean).at(-1) ?? trimmed : trimmed;
+        const resolved =
+          disks.find((d) => d.id === trimmed) ??
+          disks.find((d) => d.name === trimmed) ??
+          disks.find((d) => d.source === "local" && d.fileName === trimmed) ??
+          (fileName && fileName !== trimmed ? disks.find((d) => d.source === "local" && d.fileName === fileName) : undefined);
+        if (resolved) {
+          const nextMounts: MountConfig = { ...mounts };
+          if (resolved.kind === "hdd") nextMounts.hddId = resolved.id;
+          if (resolved.kind === "cd") nextMounts.cdId = resolved.id;
+          const changed = nextMounts.hddId !== mounts.hddId || nextMounts.cdId !== mounts.cdId;
+          if (changed) {
+            try {
+              mounts = await manager.setMounts(nextMounts);
+            } catch {
+              // ignore (best-effort; invalid refs should not break the disks panel)
+            }
+          }
+          appliedActiveDiskImage = legacyActiveDiskImage;
+        }
+      }
+    }
 
     // Propagate the current DiskManager mount selection to the runtime workers (CPU + IO) via the
     // coordinator. This is the canonical disk selection flow; `activeDiskImage` is deprecated and
