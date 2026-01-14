@@ -13,6 +13,59 @@ struct Vertex {
   DWORD color;
 };
 
+static bool FillRectPatchInfo(D3DRECTPATCH_INFO* out) {
+  if (!out) {
+    return false;
+  }
+  ZeroMemory(out, sizeof(*out));
+
+  // D3DRECTPATCH_INFO layout varies across header vintages; use sizeof() to pick
+  // a compatible layout and memcpy into the runtime struct so this test can
+  // build on older toolchains/SDKs.
+  //
+  // Known layouts:
+  // - 16 bytes: {StartVertexOffset, NumVertices, Basis, Degree}
+  // - 28 bytes: {StartVertexOffsetWidth, StartVertexOffsetHeight, Width, Height, Stride, Basis, Degree}
+  if (sizeof(D3DRECTPATCH_INFO) == 16) {
+    struct Info16 {
+      UINT StartVertexOffset;
+      UINT NumVertices;
+      D3DBASISTYPE Basis;
+      D3DDEGREETYPE Degree;
+    };
+    Info16 info;
+    info.StartVertexOffset = 0;
+    info.NumVertices = 16;
+    info.Basis = D3DBASIS_BEZIER;
+    info.Degree = D3DDEGREE_CUBIC;
+    memcpy(out, &info, sizeof(info));
+    return true;
+  }
+  if (sizeof(D3DRECTPATCH_INFO) == 28) {
+    struct Info28 {
+      UINT StartVertexOffsetWidth;
+      UINT StartVertexOffsetHeight;
+      UINT Width;
+      UINT Height;
+      UINT Stride;
+      D3DBASISTYPE Basis;
+      D3DDEGREETYPE Degree;
+    };
+    Info28 info;
+    info.StartVertexOffsetWidth = 0;
+    info.StartVertexOffsetHeight = 0;
+    info.Width = 4;
+    info.Height = 4;
+    info.Stride = 4;
+    info.Basis = D3DBASIS_BEZIER;
+    info.Degree = D3DDEGREE_CUBIC;
+    memcpy(out, &info, sizeof(info));
+    return true;
+  }
+
+  return false;
+}
+
 static void DumpBytesToFile(const char* test_name,
                             aerogpu_test::TestReporter* reporter,
                             const wchar_t* file_name,
@@ -556,11 +609,13 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
   }
 
   D3DRECTPATCH_INFO rect_info;
-  ZeroMemory(&rect_info, sizeof(rect_info));
-  rect_info.StartVertexOffset = 0;
-  rect_info.NumVertices = 16;
-  rect_info.Basis = D3DBASIS_BEZIER;
-  rect_info.Degree = D3DDEGREE_CUBIC;
+  if (!FillRectPatchInfo(&rect_info)) {
+    aerogpu_test::PrintfStdout("INFO: %s: unknown D3DRECTPATCH_INFO layout (size=%u); skipping",
+                               kTestName,
+                               (unsigned)sizeof(D3DRECTPATCH_INFO));
+    reporter.SetSkipped("rect_patch_info_layout_unknown");
+    return reporter.Pass();
+  }
 
   D3DTRIPATCH_INFO tri_info;
   ZeroMemory(&tri_info, sizeof(tri_info));
