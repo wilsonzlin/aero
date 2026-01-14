@@ -46,7 +46,7 @@ use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
 };
 use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
-use memory::{DenseMemory, GuestMemory, MmioHandler};
+use memory::{DenseMemory, GuestMemory, GuestMemoryResult, MmioHandler, PhysicalMemoryBus};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -59,6 +59,56 @@ type NvmeDisk = Box<dyn VirtualDisk>;
 type VirtioBlkDisk = Box<dyn VirtualDisk + Send>;
 #[cfg(target_arch = "wasm32")]
 type VirtioBlkDisk = Box<dyn VirtualDisk>;
+
+/// Cloneable [`GuestMemory`] wrapper used to share a single RAM backing store across multiple
+/// memory buses.
+///
+/// `PcPlatform` primarily exposes an [`aero_platform::memory::MemoryBus`] that owns a
+/// `memory::PhysicalMemoryBus` (RAM + ROM + MMIO). Some device models (notably xHCI) perform DMA as
+/// an immediate side effect of MMIO writes. Because the MMIO handler trait does not supply a handle
+/// to the platform memory bus, those devices accept an optional independent DMA bus via
+/// `set_dma_memory_bus`.
+///
+/// To keep DMA accesses coherent with the main platform memory bus, we wrap the RAM backend in an
+/// `Rc<RefCell<_>>` and instantiate a minimal `PhysicalMemoryBus` for device-local DMA that shares
+/// the same underlying storage.
+///
+/// Note: this wrapper intentionally does not expose `get_slice` fast paths (it always returns
+/// `None`) because returning references into a `RefCell`-borrowed inner buffer is not sound.
+#[derive(Clone)]
+struct SharedGuestMemory {
+    inner: Rc<RefCell<Box<dyn GuestMemory>>>,
+}
+
+impl SharedGuestMemory {
+    fn new(inner: Box<dyn GuestMemory>) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(inner)),
+        }
+    }
+}
+
+impl GuestMemory for SharedGuestMemory {
+    fn size(&self) -> u64 {
+        self.inner.borrow().size()
+    }
+
+    fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+        self.inner.borrow().read_into(paddr, dst)
+    }
+
+    fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+        self.inner.borrow_mut().write_from(paddr, src)
+    }
+
+    fn get_slice(&self, _paddr: u64, _len: usize) -> Option<&[u8]> {
+        None
+    }
+
+    fn get_slice_mut(&mut self, _paddr: u64, _len: usize) -> Option<&mut [u8]> {
+        None
+    }
+}
 
 mod cpu_core;
 pub use aero_devices::pci::{PciBarMmioHandler, PciBarMmioRouter, PciConfigSyncedMmioBar};
@@ -1391,10 +1441,36 @@ impl PcPlatform {
         let filter = AddressFilter::new(chipset.a20());
 
         let mut io = IoPortBus::new();
-        let mut memory = match dirty_page_size {
-            Some(page_size) => MemoryBus::with_ram_dirty_tracking(filter, ram, page_size),
-            None => MemoryBus::with_ram(filter, ram),
-        };
+        let (mut memory, xhci_dma_bus): (MemoryBus, Option<Rc<RefCell<dyn memory::MemoryBus>>>) =
+            if config.enable_xhci {
+                // xHCI performs DMA as an immediate side effect of some MMIO writes (notably
+                // USBCMD.RUN edges and doorbell processing). The xHCI PCI wrapper therefore accepts
+                // an optional independent DMA bus via `set_dma_memory_bus`.
+                //
+                // To keep those MMIO-triggered DMA accesses coherent with the platform memory bus,
+                // share the RAM backing store and construct a minimal `PhysicalMemoryBus` for the
+                // controller's DMA path.
+                let shared_ram = SharedGuestMemory::new(ram);
+                let dma_bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(
+                    PhysicalMemoryBus::new(Box::new(shared_ram.clone())),
+                ));
+
+                let memory = match dirty_page_size {
+                    Some(page_size) => {
+                        MemoryBus::with_ram_dirty_tracking(filter, Box::new(shared_ram), page_size)
+                    }
+                    None => MemoryBus::with_ram(filter, Box::new(shared_ram)),
+                };
+                (memory, Some(dma_bus))
+            } else {
+                // Fast path: keep the original RAM backend unchanged (including optional
+                // `get_slice`/`get_slice_mut` support needed by virtio).
+                let memory = match dirty_page_size {
+                    Some(page_size) => MemoryBus::with_ram_dirty_tracking(filter, ram, page_size),
+                    None => MemoryBus::with_ram(filter, ram),
+                };
+                (memory, None)
+            };
 
         let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new_with_cpu_count(
             config.cpu_count,
@@ -1782,6 +1858,10 @@ impl PcPlatform {
             let bdf = profile.bdf;
 
             let xhci = Rc::new(RefCell::new(XhciPciDevice::default()));
+            // xHCI performs DMA as an immediate side effect of some MMIO writes (notably USBCMD.RUN
+            // edges). Provide a dedicated DMA bus backed by the same underlying guest RAM so these
+            // accesses are coherent with the main platform memory bus.
+            xhci.borrow_mut().set_dma_memory_bus(xhci_dma_bus.clone());
             // Provide an MSI sink so the xHCI device model can deliver MSI when the guest enables
             // it via PCI config space.
             xhci.borrow_mut()
