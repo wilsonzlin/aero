@@ -3661,6 +3661,27 @@ impl Machine {
             .map_err(|e| opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e))
     }
 
+    /// Open an existing OPFS-backed ISO image (using the file's current size), attach it as the
+    /// machine's canonical install media / ATAPI CD-ROM (`disk_id=1`), and set the snapshot overlay
+    /// reference (`DISKS` entry).
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// This method is intentionally separate from [`Machine::attach_install_media_iso_opfs_existing`]
+    /// so callers do not silently overwrite previously configured overlay refs unless they opt in.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_iso_opfs_existing_and_set_overlay_ref(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        self.attach_install_media_iso_opfs_existing(path).await?;
+        self.set_ide_secondary_master_atapi_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
     /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
     ///
     /// This enables large disks without fully loading the image into RAM.

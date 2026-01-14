@@ -96,7 +96,8 @@ impl MsiTrigger for PlatformInterrupts {
                 return;
             }
 
-            for lapic in self.lapics_iter() {
+            for cpu_index in 0..self.cpu_count() {
+                let lapic = self.lapic(cpu_index);
                 let apic_id = lapic.apic_id();
                 if apic_id < 8 && (dest & (1u8 << apic_id)) != 0 {
                     lapic.inject_fixed_interrupt(vector);
