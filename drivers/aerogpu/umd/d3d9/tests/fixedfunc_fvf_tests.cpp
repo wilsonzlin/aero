@@ -8838,6 +8838,51 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
   }
 
   // ---------------------------------------------------------------------------
+  // Enable a second light: should mark the lighting block dirty and re-upload.
+  // (Portable builds use the host-side SetLight/LightEnable entrypoints.)
+  // ---------------------------------------------------------------------------
+  D3DLIGHT9 light_slot1{};
+  light_slot1.Type = D3DLIGHT_DIRECTIONAL;
+  light_slot1.Direction = {0.0f, 0.0f, -1.0f};
+  light_slot1.Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
+  light_slot1.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light_slot1);
+  if (!Check(hr == S_OK, "SetLight(1)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(1, TRUE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(lighting constants; light1 enabled)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(lighting constants; light1 enabled)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
+             "lighting constant upload re-emitted after enabling light1")) {
+    return false;
+  }
+  payload = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
+  if (!Check(payload != nullptr, "lighting payload present (light1 enabled)")) {
+    return false;
+  }
+  constexpr uint32_t kLight1DiffuseRel = (215u - kLightingStart);
+  if (!Check(payload[kLight1DiffuseRel * 4 + 0] == 0.0f && payload[kLight1DiffuseRel * 4 + 1] == 1.0f &&
+             payload[kLight1DiffuseRel * 4 + 2] == 0.0f && payload[kLight1DiffuseRel * 4 + 3] == 1.0f,
+             "directional light1 diffuse is packed into slot1")) {
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
   // Change D3DRS_AMBIENT: should mark the lighting block dirty and re-upload.
   // ---------------------------------------------------------------------------
   hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFFFF0000u);
