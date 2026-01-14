@@ -26871,6 +26871,9 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
 namespace {
 
 auto* const kDeviceSetFvfImpl = device_set_fvf;
+auto* const kDeviceSetStreamSourceImpl = device_set_stream_source;
+auto* const kDeviceSetIndicesImpl = device_set_indices;
+auto* const kDeviceSetViewportImpl = device_set_viewport;
 auto* const kDeviceCreateVertexDeclImpl = device_create_vertex_decl;
 auto* const kDeviceSetVertexDeclImpl = device_set_vertex_decl;
 auto* const kDeviceDestroyVertexDeclImpl = device_destroy_vertex_decl;
@@ -26931,6 +26934,54 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
     D3DDDI_HDEVICE hDevice,
     D3D9DDI_HSHADER hShader) {
   return kDeviceDestroyShaderImpl(hDevice, hShader);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stream,
+    D3DDDI_HRESOURCE hVb,
+    uint32_t offset_bytes,
+    uint32_t stride_bytes) {
+  return kDeviceSetStreamSourceImpl(hDevice, stream, hVb, offset_bytes, stride_bytes);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_indices(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hIb,
+    D3DDDIFORMAT fmt,
+    uint32_t offset_bytes) {
+  return kDeviceSetIndicesImpl(hDevice, hIb, fmt, offset_bytes);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_viewport(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIVIEWPORTINFO* pViewport) {
+  return kDeviceSetViewportImpl(hDevice, pViewport);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_stream_source_freq(D3DDDI_HDEVICE hDevice, uint32_t stream, uint32_t value) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  if (stream >= 16) {
+    // Match D3DERR_INVALIDCALL (kD3DErrInvalidCall) without relying on internal-linkage constants.
+    return static_cast<HRESULT>(0x8876086CL);
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->stream_source_freq[stream] = value;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_transform(
+    D3DDDI_HDEVICE hDevice,
+    D3DTRANSFORMSTATETYPE state,
+    const D3DMATRIX* pMatrix) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_set_transform_dispatch(hDevice, state, pMatrix);
+#else
+  return device_set_transform_portable(hDevice, state, pMatrix);
+#endif
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(

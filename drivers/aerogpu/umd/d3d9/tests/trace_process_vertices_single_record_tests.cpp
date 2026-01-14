@@ -14,6 +14,15 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     D3DDDI_HDEVICE hDevice,
     const D3DDDIARG_PROCESSVERTICES* pProcessVertices);
 
+// Portable host-test wrapper: allows unit tests that instantiate `Device`
+// directly to drive the cached stream bindings via the normal DDI path.
+HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stream,
+    D3DDDI_HRESOURCE hVb,
+    uint32_t offset_bytes,
+    uint32_t stride_bytes);
+
 namespace {
 
 int failf(const char* fmt, const std::string& log_path, const std::string& output) {
@@ -59,10 +68,6 @@ int main() {
     aerogpu::Adapter adapter;
     aerogpu::Device dev(&adapter);
 
-    // Pick an FVF that is not handled by the fixed-function helper so we exercise
-    // the common memcpy-style ProcessVertices path as used by the Win7 smoke test.
-    dev.fvf = 0;
-
     aerogpu::Resource src;
     src.kind = aerogpu::ResourceKind::Buffer;
     src.size_bytes = 16;
@@ -75,9 +80,18 @@ int main() {
     dst.storage.resize(dst.size_bytes);
     std::memset(dst.storage.data(), 0xCD, dst.storage.size());
 
-    dev.streams[0].vb = &src;
-    dev.streams[0].offset_bytes = 0;
-    dev.streams[0].stride_bytes = 16;
+    D3DDDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = &dev;
+
+    D3DDDI_HRESOURCE hSrc{};
+    hSrc.pDrvPrivate = &src;
+    const HRESULT ss_hr = aerogpu::device_set_stream_source(
+        hDevice, /*stream=*/0, hSrc, /*offset_bytes=*/0, /*stride_bytes=*/16);
+    if (FAILED(ss_hr)) {
+      const std::string output = slurp_file_after_closing_stderr(out_path);
+      std::remove(out_path.c_str());
+      return aerogpu::failf("expected SetStreamSource to succeed (log=%s)", out_path, output);
+    }
 
     D3DDDIARG_PROCESSVERTICES pv{};
     pv.SrcStartIndex = 0;
@@ -87,9 +101,6 @@ int main() {
     pv.Flags = 0;
     // Ensure the call succeeds without requiring any vertex decl setup.
     pv.DestStride = 0;
-
-    D3DDDI_HDEVICE hDevice{};
-    hDevice.pDrvPrivate = &dev;
 
     const HRESULT hr = aerogpu::device_process_vertices(hDevice, &pv);
     if (FAILED(hr)) {

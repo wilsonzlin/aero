@@ -3,6 +3,7 @@
 #endif
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -15,6 +16,26 @@ namespace aerogpu {
 HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     D3DDDI_HDEVICE hDevice,
     const D3DDDIARG_PROCESSVERTICES* pProcessVertices);
+
+// Portable host-test wrappers (implemented in aerogpu_d3d9_driver.cpp under
+// "Host-side test entrypoints"). These allow tests to drive cached device state
+// via the same code paths used by the DDI function tables.
+HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf);
+HRESULT AEROGPU_D3D9_CALL device_set_viewport(D3DDDI_HDEVICE hDevice, const D3DDDIVIEWPORTINFO* pViewport);
+HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stream,
+    D3DDDI_HRESOURCE hVb,
+    uint32_t offset_bytes,
+    uint32_t stride_bytes);
+HRESULT AEROGPU_D3D9_CALL device_set_transform(
+    D3DDDI_HDEVICE hDevice,
+    D3DTRANSFORMSTATETYPE state,
+    const D3DMATRIX* pMatrix);
+HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSHADER user_vs,
+    D3D9DDI_HSHADER user_ps);
 
 namespace {
 
@@ -74,15 +95,66 @@ void write_pattern(std::vector<uint8_t>& bytes, size_t offset, size_t len, uint8
   std::memset(bytes.data() + offset, v, len);
 }
 
+D3DDDI_HDEVICE make_device_handle(Device* dev) {
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = dev;
+  return hDevice;
+}
+
+D3DDDI_HRESOURCE make_resource_handle(Resource* res) {
+  D3DDDI_HRESOURCE hRes{};
+  hRes.pDrvPrivate = res;
+  return hRes;
+}
+
+D3DMATRIX make_identity_matrix() {
+  D3DMATRIX m{};
+  m.m[0][0] = 1.0f;
+  m.m[1][1] = 1.0f;
+  m.m[2][2] = 1.0f;
+  m.m[3][3] = 1.0f;
+  return m;
+}
+
+void set_fvf_or_die(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
+  const HRESULT hr = device_set_fvf(hDevice, fvf);
+  if (hr != S_OK) {
+    // Help diagnose DDI validation failures (portable tests run without the
+    // D3D9 runtime, so this is our only breadcrumb).
+    std::fprintf(stderr, "device_set_fvf failed: fvf=0x%08x hr=0x%08x\n", fvf, static_cast<uint32_t>(hr));
+  }
+  assert(hr == S_OK);
+}
+
+void set_viewport_or_die(D3DDDI_HDEVICE hDevice, float x, float y, float w, float h, float minz, float maxz) {
+  const D3DDDIVIEWPORTINFO vp = {x, y, w, h, minz, maxz};
+  const HRESULT hr = device_set_viewport(hDevice, &vp);
+  assert(hr == S_OK);
+}
+
+void set_world_translate_x_or_die(D3DDDI_HDEVICE hDevice, float tx) {
+  D3DMATRIX world = make_identity_matrix();
+  // Row-major, row-vector convention (matches `Device::transform_matrices` layout).
+  world.m[3][0] = tx;
+  const HRESULT hr = device_set_transform(hDevice, static_cast<D3DTRANSFORMSTATETYPE>(D3DTS_WORLD), &world);
+  assert(hr == S_OK);
+}
+
+void set_stream0_or_die(D3DDDI_HDEVICE hDevice, Resource* vb, uint32_t stride_bytes, uint32_t offset_bytes = 0) {
+  D3DDDI_HRESOURCE hVb = make_resource_handle(vb);
+  const HRESULT hr = device_set_stream_source(hDevice, 0, hVb, offset_bytes, stride_bytes);
+  assert(hr == S_OK);
+}
+
 void test_xyz_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-
-  // WORLD translate +1 in X (row-major, row-vector convention).
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  // WORLD translate +1 in X.
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|DIFFUSE (float3 + u32) = 16 bytes.
   Resource src;
@@ -110,9 +182,7 @@ void test_xyz_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -124,9 +194,6 @@ void test_xyz_diffuse() {
   // Some runtimes may omit DestStride; ensure we infer it from the destination
   // vertex declaration.
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -150,12 +217,11 @@ void test_xyz_diffuse() {
 void test_xyz_diffuse_dest_decl_position_usage0() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-
-  // WORLD translate +1 in X (row-major, row-vector convention).
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -182,9 +248,7 @@ void test_xyz_diffuse_dest_decl_position_usage0() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -194,9 +258,6 @@ void test_xyz_diffuse_dest_decl_position_usage0() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -218,39 +279,19 @@ void test_xyz_diffuse_dest_decl_position_usage0() {
 void test_process_vertices_device_lost() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   dev.device_lost.store(true, std::memory_order_release);
   dev.device_lost_hr.store(static_cast<int32_t>(E_FAIL), std::memory_order_release);
-
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-
-  Resource src;
-  src.kind = ResourceKind::Buffer;
-  src.size_bytes = 16;
-  src.storage.resize(16);
-  write_f32(src.storage, 0, 0.0f);
-  write_f32(src.storage, 4, 0.0f);
-  write_f32(src.storage, 8, 0.0f);
-  write_u32(src.storage, 12, 0x01020304u);
 
   Resource dst;
   dst.kind = ResourceKind::Buffer;
   dst.size_bytes = 20;
   dst.storage.resize(20);
 
-  const D3DVERTEXELEMENT9_COMPAT elems[] = {
-      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
-      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
-      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
-  };
-  VertexDecl decl;
-  decl.blob.resize(sizeof(elems));
-  std::memcpy(decl.blob.data(), elems, sizeof(elems));
-
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  // When the device is lost, ProcessVertices should return the device-lost HRESULT
+  // before validating vertex state (FVF/stream source/etc). Keep arguments simple.
+  VertexDecl decl{};
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -261,9 +302,6 @@ void test_process_vertices_device_lost() {
   pv.Flags = 0;
   pv.DestStride = 0;
 
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
-
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(hr == D3DERR_DEVICELOST);
 }
@@ -271,16 +309,19 @@ void test_process_vertices_device_lost() {
 void test_xyz_diffuse_with_pixel_shader_bound() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Even if a pixel shader is bound (shader-stage interop), ProcessVertices should
   // still use fixed-function vertex processing when no user VS is set.
-  dev.user_ps = reinterpret_cast<Shader*>(0x1);
+  D3D9DDI_HSHADER fake_ps{};
+  fake_ps.pDrvPrivate = reinterpret_cast<void*>(0x1);
+  const HRESULT shader_hr = device_test_set_unmaterialized_user_shaders(
+      hDevice, /*user_vs=*/{}, /*user_ps=*/fake_ps);
+  assert(shader_hr == S_OK);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-
-  // WORLD translate +1 in X (row-major, row-vector convention).
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -305,9 +346,7 @@ void test_xyz_diffuse_with_pixel_shader_bound() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -317,9 +356,6 @@ void test_xyz_diffuse_with_pixel_shader_bound() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -341,10 +377,11 @@ void test_xyz_diffuse_with_pixel_shader_bound() {
 void test_xyz_diffuse_padded_dest_stride() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -371,9 +408,7 @@ void test_xyz_diffuse_padded_dest_stride() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -383,9 +418,6 @@ void test_xyz_diffuse_padded_dest_stride() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = kDestStride;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -399,10 +431,11 @@ void test_xyz_diffuse_padded_dest_stride() {
 void test_xyz_diffuse_inplace_overlap_safe() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Single buffer used as both src (XYZ|DIFFUSE, stride 16) and dst
   // (XYZRHW|DIFFUSE, stride 20). The destination range overlaps the source range
@@ -433,9 +466,7 @@ void test_xyz_diffuse_inplace_overlap_safe() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &buf;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &buf, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -445,9 +476,6 @@ void test_xyz_diffuse_inplace_overlap_safe() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 20;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -475,10 +503,11 @@ void test_xyz_diffuse_inplace_overlap_safe() {
 void test_xyz_diffuse_tex1_inplace_overlap_safe() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Single buffer used as both src (XYZ|DIFFUSE|TEX1, stride 24) and dst
   // (XYZRHW|DIFFUSE|TEX1, stride 28). The destination range overlaps the source
@@ -514,9 +543,7 @@ void test_xyz_diffuse_tex1_inplace_overlap_safe() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &buf;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &buf, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -526,9 +553,6 @@ void test_xyz_diffuse_tex1_inplace_overlap_safe() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 28;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -560,11 +584,12 @@ void test_xyz_diffuse_tex1_inplace_overlap_safe() {
 void test_xyz_diffuse_z_stays_ndc() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
   // Non-default depth range: ProcessVertices output z should stay in NDC (0..1)
   // rather than being mapped to MinZ/MaxZ.
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.25f, 0.75f};
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.25f, 0.75f);
 
   // Source VB: XYZ|DIFFUSE (float3 + u32) = 16 bytes.
   Resource src;
@@ -590,9 +615,7 @@ void test_xyz_diffuse_z_stays_ndc() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -602,9 +625,6 @@ void test_xyz_diffuse_z_stays_ndc() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 20;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -616,10 +636,11 @@ void test_xyz_diffuse_z_stays_ndc() {
 void test_xyz_diffuse_tex1() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|DIFFUSE|TEX1 = float3 + u32 + float2 = 24 bytes.
   Resource src;
@@ -649,9 +670,7 @@ void test_xyz_diffuse_tex1() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -662,9 +681,6 @@ void test_xyz_diffuse_tex1() {
   pv.Flags = 0;
   // Exercise DestStride inference from the vertex declaration (DestStride=0).
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -691,10 +707,11 @@ void test_xyz_diffuse_tex1() {
 void test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -723,9 +740,7 @@ void test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -735,9 +750,6 @@ void test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = kPvDoNotCopyData;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -760,10 +772,11 @@ void test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest() {
 void test_xyz_tex1() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|TEX1 = float3 + float2 = 20 bytes.
   Resource src;
@@ -791,9 +804,7 @@ void test_xyz_tex1() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -803,9 +814,6 @@ void test_xyz_tex1() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -828,10 +836,11 @@ void test_xyz_tex1() {
 void test_xyz_tex1_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|TEX1 = float3 + float2 = 20 bytes.
   Resource src;
@@ -862,9 +871,7 @@ void test_xyz_tex1_defaults_white_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -874,9 +881,6 @@ void test_xyz_tex1_defaults_white_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -903,10 +907,11 @@ void test_xyz_tex1_defaults_white_diffuse() {
 void test_xyz_tex1_dest_decl_tex_usage0() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -935,9 +940,7 @@ void test_xyz_tex1_dest_decl_tex_usage0() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -947,9 +950,6 @@ void test_xyz_tex1_dest_decl_tex_usage0() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -976,10 +976,11 @@ void test_xyz_tex1_dest_decl_tex_usage0() {
 void test_xyz_tex1_float4_dest_decl_tex_usage0() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
   // TEXCOORDSIZE4(0): 2 -> float4.
-  dev.fvf = kFvfXyz | kFvfTex1 | (2u << 16);
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfTex1 | (2u << 16));
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|TEX1(float4) = float3 + float4 = 28 bytes.
   Resource src;
@@ -1013,9 +1014,7 @@ void test_xyz_tex1_float4_dest_decl_tex_usage0() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 28;
+  set_stream0_or_die(hDevice, &src, 28);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1025,9 +1024,6 @@ void test_xyz_tex1_float4_dest_decl_tex_usage0() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1058,11 +1054,12 @@ void test_xyz_tex1_float4_dest_decl_tex_usage0() {
 void test_xyz_tex1_float3_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // TEXCOORDSIZE3(0): 1 -> float3.
-  dev.fvf = kFvfXyz | kFvfTex1 | (1u << 16);
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfTex1 | (1u << 16));
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|TEX1(float3) = float3 + float3 = 24 bytes.
   Resource src;
@@ -1092,9 +1089,7 @@ void test_xyz_tex1_float3_defaults_white_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1104,9 +1099,6 @@ void test_xyz_tex1_float3_defaults_white_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1135,9 +1127,10 @@ void test_xyz_tex1_float3_defaults_white_diffuse() {
 void test_xyzw_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyzw;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  set_fvf_or_die(hDevice, kFvfXyzw);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
 
   // Source VB: XYZW = float4 = 16 bytes.
   Resource src;
@@ -1164,9 +1157,7 @@ void test_xyzw_defaults_white_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1176,9 +1167,6 @@ void test_xyzw_defaults_white_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1200,9 +1188,10 @@ void test_xyzw_defaults_white_diffuse() {
 void test_xyzw_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyzw | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  set_fvf_or_die(hDevice, kFvfXyzw | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
 
   // Source VB: XYZW|DIFFUSE = float4 + u32 = 20 bytes.
   Resource src;
@@ -1230,9 +1219,7 @@ void test_xyzw_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1242,9 +1229,6 @@ void test_xyzw_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1266,10 +1250,11 @@ void test_xyzw_diffuse() {
 void test_xyz_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ = float3 = 12 bytes.
   Resource src;
@@ -1296,9 +1281,7 @@ void test_xyz_defaults_white_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 12;
+  set_stream0_or_die(hDevice, &src, 12);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1308,9 +1291,6 @@ void test_xyz_defaults_white_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1332,11 +1312,12 @@ void test_xyz_defaults_white_diffuse() {
 void test_xyzrhw_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyzrhw;
+  set_fvf_or_die(hDevice, kFvfXyzrhw);
   // XYZRHW vertices should be passed through; transforms/viewport must not affect output.
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 123.0f;
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 123.0f);
 
   // Source VB: XYZRHW = float4 = 16 bytes.
   Resource src;
@@ -1363,9 +1344,7 @@ void test_xyzrhw_defaults_white_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1375,9 +1354,6 @@ void test_xyzrhw_defaults_white_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1399,10 +1375,11 @@ void test_xyzrhw_defaults_white_diffuse() {
 void test_xyz_do_not_copy_data_preserves_dest() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -1427,9 +1404,7 @@ void test_xyz_do_not_copy_data_preserves_dest() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 12;
+  set_stream0_or_die(hDevice, &src, 12);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1439,9 +1414,6 @@ void test_xyz_do_not_copy_data_preserves_dest() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = kPvDoNotCopyData;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1464,8 +1436,9 @@ void test_xyz_do_not_copy_data_preserves_dest() {
 void test_xyzrhw_do_not_copy_data_preserves_dest() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyzrhw;
+  set_fvf_or_die(hDevice, kFvfXyzrhw);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -1491,9 +1464,7 @@ void test_xyzrhw_do_not_copy_data_preserves_dest() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1503,9 +1474,6 @@ void test_xyzrhw_do_not_copy_data_preserves_dest() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = kPvDoNotCopyData;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1527,11 +1495,12 @@ void test_xyzrhw_do_not_copy_data_preserves_dest() {
 void test_xyzrhw_tex1_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyzrhw | kFvfTex1;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfTex1);
   // XYZRHW vertices should be passed through; transforms/viewport must not affect output.
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 123.0f;
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 123.0f);
 
   // Source VB: XYZRHW|TEX1 = float4 + float2 = 24 bytes.
   Resource src;
@@ -1563,9 +1532,7 @@ void test_xyzrhw_tex1_defaults_white_diffuse() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1575,9 +1542,6 @@ void test_xyzrhw_tex1_defaults_white_diffuse() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1604,8 +1568,9 @@ void test_xyzrhw_tex1_defaults_white_diffuse() {
 void test_xyzrhw_tex1_do_not_copy_data_preserves_dest() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyzrhw | kFvfTex1;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfTex1);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -1634,9 +1599,7 @@ void test_xyzrhw_tex1_do_not_copy_data_preserves_dest() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1646,9 +1609,6 @@ void test_xyzrhw_tex1_do_not_copy_data_preserves_dest() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = kPvDoNotCopyData;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1671,9 +1631,10 @@ void test_xyzrhw_tex1_do_not_copy_data_preserves_dest() {
 void test_process_vertices_dest_decl_ignores_other_streams() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Pre-transformed vertices: should be handled by the fixed-function CPU path.
-  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfDiffuse);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -1705,9 +1666,7 @@ void test_process_vertices_dest_decl_ignores_other_streams() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1718,9 +1677,6 @@ void test_process_vertices_dest_decl_ignores_other_streams() {
   pv.Flags = 0;
   pv.DestStride = 0;
 
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
-
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
   assert(dst.storage == src.storage);
@@ -1729,10 +1685,11 @@ void test_process_vertices_dest_decl_ignores_other_streams() {
 void test_xyz_diffuse_tex1_padded_dest_stride() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: XYZ|DIFFUSE|TEX1 = float3 + u32 + float2 = 24 bytes.
   Resource src;
@@ -1764,9 +1721,7 @@ void test_xyz_diffuse_tex1_padded_dest_stride() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1776,9 +1731,6 @@ void test_xyz_diffuse_tex1_padded_dest_stride() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = kDestStride;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1810,10 +1762,11 @@ void test_xyz_diffuse_tex1_padded_dest_stride() {
 void test_xyz_diffuse_tex1_dest_decl_extra_elements() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   Resource src;
   src.kind = ResourceKind::Buffer;
@@ -1845,9 +1798,7 @@ void test_xyz_diffuse_tex1_dest_decl_extra_elements() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -1857,9 +1808,6 @@ void test_xyz_diffuse_tex1_dest_decl_extra_elements() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1890,10 +1838,11 @@ void test_xyz_diffuse_tex1_dest_decl_extra_elements() {
 void test_xyz_diffuse_offsets() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: 2 vertices.
   Resource src;
@@ -1927,9 +1876,7 @@ void test_xyz_diffuse_offsets() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 16;
+  set_stream0_or_die(hDevice, &src, 16);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 1;
@@ -1939,9 +1886,6 @@ void test_xyz_diffuse_offsets() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 20;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -1969,10 +1913,11 @@ void test_xyz_diffuse_offsets() {
 void test_xyz_diffuse_tex1_offsets() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
-  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
-  dev.transform_matrices[256][12] = 1.0f;
+  set_fvf_or_die(hDevice, kFvfXyz | kFvfDiffuse | kFvfTex1);
+  set_viewport_or_die(hDevice, 0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f);
+  set_world_translate_x_or_die(hDevice, 1.0f);
 
   // Source VB: 2 vertices, each 24 bytes.
   Resource src;
@@ -2013,9 +1958,7 @@ void test_xyz_diffuse_tex1_offsets() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 24;
+  set_stream0_or_die(hDevice, &src, 24);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 1;
@@ -2026,9 +1969,6 @@ void test_xyz_diffuse_tex1_offsets() {
   pv.Flags = 0;
   // Exercise DestStride inference for the TEX1 variant as well.
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -2061,10 +2001,11 @@ void test_xyz_diffuse_tex1_offsets() {
 void test_copy_xyzrhw_diffuse_offsets() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Use a non-fixedfunc-supported FVF so the DDI falls back to the memcpy-style
   // ProcessVertices implementation (used by the Win7 smoke test path).
-  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfDiffuse);
 
   // Source VB: XYZRHW|DIFFUSE (float4 + u32) = 20 bytes.
   Resource src;
@@ -2127,9 +2068,7 @@ void test_copy_xyzrhw_diffuse_offsets() {
   decl.blob.resize(sizeof(elems));
   std::memcpy(decl.blob.data(), elems, sizeof(elems));
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 20; // non-zero stream offset
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20, /*offset_bytes=*/20); // non-zero stream offset
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 1;
@@ -2139,9 +2078,6 @@ void test_copy_xyzrhw_diffuse_offsets() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
   pv.DestStride = 20;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -2170,12 +2106,13 @@ void test_copy_xyzrhw_diffuse_offsets() {
 void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Pre-transformed vertices (XYZRHW) should be passed through by the fixed-function
   // ProcessVertices CPU path. If the destination declaration includes extra
   // elements (e.g. TEX0) not present in the source FVF, those fields should be
   // deterministically zeroed.
-  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfDiffuse);
 
   // Source VB: 2 vertices of XYZRHW|DIFFUSE = 20 bytes each.
   Resource src;
@@ -2219,9 +2156,7 @@ void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
   dst.storage.resize(dst.size_bytes);
   std::memset(dst.storage.data(), 0xCD, dst.storage.size());
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -2247,9 +2182,6 @@ void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
                 20);
   }
 
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
-
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
   assert(dst.storage == expected);
@@ -2258,11 +2190,15 @@ void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
 void test_process_vertices_fallback_infer_dest_stride_from_decl() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Force the memcpy-style fallback path (unsupported vertex processing).
-  dev.user_vs = reinterpret_cast<Shader*>(0x1);
+  D3D9DDI_HSHADER fake_vs{};
+  fake_vs.pDrvPrivate = reinterpret_cast<void*>(0x1);
+  const HRESULT sh_hr = device_test_set_unmaterialized_user_shaders(hDevice, fake_vs, D3D9DDI_HSHADER{});
+  assert(sh_hr == S_OK);
 
-  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfDiffuse);
 
   // Source VB: 2 vertices of XYZRHW|DIFFUSE = 20 bytes each.
   Resource src;
@@ -2304,9 +2240,7 @@ void test_process_vertices_fallback_infer_dest_stride_from_decl() {
   dst.storage.resize(dst.size_bytes);
   std::memset(dst.storage.data(), 0xCD, dst.storage.size());
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -2327,9 +2261,6 @@ void test_process_vertices_fallback_infer_dest_stride_from_decl() {
     std::memcpy(expected.data() + dst_off, src.storage.data() + src_off, 20);
   }
 
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
-
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
   assert(dst.storage == expected);
@@ -2338,11 +2269,15 @@ void test_process_vertices_fallback_infer_dest_stride_from_decl() {
 void test_process_vertices_fallback_do_not_copy_data_xyzrhw() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Force the memcpy-style fallback path.
-  dev.user_vs = reinterpret_cast<Shader*>(0x1);
+  D3D9DDI_HSHADER fake_vs{};
+  fake_vs.pDrvPrivate = reinterpret_cast<void*>(0x1);
+  const HRESULT sh_hr = device_test_set_unmaterialized_user_shaders(hDevice, fake_vs, D3D9DDI_HSHADER{});
+  assert(sh_hr == S_OK);
 
-  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+  set_fvf_or_die(hDevice, kFvfXyzrhw | kFvfDiffuse);
 
   // Source VB: 1 vertex of XYZRHW|DIFFUSE.
   Resource src;
@@ -2372,9 +2307,7 @@ void test_process_vertices_fallback_do_not_copy_data_xyzrhw() {
   dst.storage.resize(28);
   std::memset(dst.storage.data(), 0xCD, dst.storage.size());
 
-  dev.streams[0].vb = &src;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = 20;
+  set_stream0_or_die(hDevice, &src, 20);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = 0;
@@ -2384,9 +2317,6 @@ void test_process_vertices_fallback_do_not_copy_data_xyzrhw() {
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = kPvDoNotCopyData;
   pv.DestStride = 0;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
@@ -2401,9 +2331,13 @@ void test_process_vertices_fallback_do_not_copy_data_xyzrhw() {
 void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Force the ProcessVertices memcpy-style fallback path.
-  dev.user_vs = reinterpret_cast<Shader*>(0x1);
+  D3D9DDI_HSHADER fake_vs{};
+  fake_vs.pDrvPrivate = reinterpret_cast<void*>(0x1);
+  const HRESULT sh_hr = device_test_set_unmaterialized_user_shaders(hDevice, fake_vs, D3D9DDI_HSHADER{});
+  assert(sh_hr == S_OK);
 
   constexpr uint32_t kVertexCount = 4;
   constexpr uint32_t kSrcStride = 16;
@@ -2434,9 +2368,7 @@ void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
                 kCopyStride);
   }
 
-  dev.streams[0].vb = &buf;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = kSrcStride;
+  set_stream0_or_die(hDevice, &buf, kSrcStride);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = kSrcStartIndex;
@@ -2447,9 +2379,6 @@ void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
   pv.Flags = 0;
   pv.DestStride = kDstStride;
 
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
-
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
   assert(buf.storage == expected);
@@ -2458,9 +2387,13 @@ void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
 void test_process_vertices_fallback_inplace_overlap_src_inside_dst() {
   Adapter adapter;
   Device dev(&adapter);
+  const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
   // Force the ProcessVertices memcpy-style fallback path.
-  dev.user_ps = reinterpret_cast<Shader*>(0x1);
+  D3D9DDI_HSHADER fake_ps{};
+  fake_ps.pDrvPrivate = reinterpret_cast<void*>(0x1);
+  const HRESULT sh_hr = device_test_set_unmaterialized_user_shaders(hDevice, D3D9DDI_HSHADER{}, fake_ps);
+  assert(sh_hr == S_OK);
 
   constexpr uint32_t kVertexCount = 4;
   constexpr uint32_t kSrcStride = 8;
@@ -2491,9 +2424,7 @@ void test_process_vertices_fallback_inplace_overlap_src_inside_dst() {
                 kCopyStride);
   }
 
-  dev.streams[0].vb = &buf;
-  dev.streams[0].offset_bytes = 0;
-  dev.streams[0].stride_bytes = kSrcStride;
+  set_stream0_or_die(hDevice, &buf, kSrcStride);
 
   D3DDDIARG_PROCESSVERTICES pv{};
   pv.SrcStartIndex = kSrcStartIndex;
@@ -2503,9 +2434,6 @@ void test_process_vertices_fallback_inplace_overlap_src_inside_dst() {
   pv.hVertexDecl.pDrvPrivate = nullptr;
   pv.Flags = 0;
   pv.DestStride = kDstStride;
-
-  D3DDDI_HDEVICE hDevice{};
-  hDevice.pDrvPrivate = &dev;
 
   const HRESULT hr = device_process_vertices(hDevice, &pv);
   assert(SUCCEEDED(hr));
