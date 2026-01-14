@@ -226,7 +226,6 @@ impl Opcode {
             Self::Min => 10,
             Self::Max => 11,
             Self::Abs => 35,
-            Self::Dst => 17,
             Self::Crs => 33,
             Self::Sgn => 34,
             Self::Slt => 12,
