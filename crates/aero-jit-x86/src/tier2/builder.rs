@@ -767,8 +767,8 @@ impl<'a> BlockLowerer<'a> {
     ) {
         debug_assert!(matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar));
 
-        // Tier-1 IR uses a constant rhs for shifts (the Tier-1 front-end only decodes the
-        // immediate-count shift forms). If that ever changes, conservatively deopt.
+        // Correct x86 shift flag semantics depend on the exact shift count. Tier-2 lowering for
+        // shift-with-flags currently supports only constant counts; conservatively deopt otherwise.
         let Some(shift_imm) = self.const_values.get(&rhs).copied() else {
             self.unsupported = true;
             return;
