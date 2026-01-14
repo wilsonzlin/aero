@@ -37,6 +37,10 @@ export const PCI_MMIO_BASE = 0xe000_0000;
  * and GPU worker (scanout readback) can share the same bytes without embedding VRAM in WASM
  * linear memory.
  *
+ * The I/O worker maps `[VRAM_BASE_PADDR, VRAM_BASE_PADDR + vram.byteLength)` as a memory-backed
+ * MMIO region and reserves the same range from PCI MMIO BAR allocation so other devices cannot
+ * overlap the VRAM aperture.
+ *
  * NOTE: Keep this in sync with any Rust-side BAR / guest layout constants that assume a fixed
  * BAR1/VRAM placement.
  */
