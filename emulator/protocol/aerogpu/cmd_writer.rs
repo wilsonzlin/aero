@@ -1541,7 +1541,7 @@ impl AerogpuCmdWriter {
         for (i, &v) in data.iter().enumerate() {
             let v = if v == 0 { 0 } else { 1 };
             let reg_base = payload_base + i * 16;
-            self.write_u32_at(reg_base + 0, v);
+            self.write_u32_at(reg_base, v);
             self.write_u32_at(reg_base + 4, v);
             self.write_u32_at(reg_base + 8, v);
             self.write_u32_at(reg_base + 12, v);
