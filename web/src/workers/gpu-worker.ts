@@ -1440,11 +1440,37 @@ const ensureScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null => 
   return wddmScanoutRgba;
 };
 
+function isWddmDisabledScanoutDescriptor(snap: Pick<ScanoutStateSnapshot, "source" | "basePaddrLo" | "basePaddrHi" | "width" | "height" | "pitchBytes">): boolean {
+  if ((snap.source >>> 0) !== SCANOUT_SOURCE_WDDM) return false;
+  const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+  if (hasBasePaddr) return false;
+  return (snap.width >>> 0) === 0 && (snap.height >>> 0) === 0 && (snap.pitchBytes >>> 0) === 0;
+}
+
+function isWddmDisabledScanoutState(words: Int32Array): boolean {
+  // Defensive: a disabled scanout descriptor is defined by all-zero geometry + base_paddr.
+  // Read the values individually using Atomics so we can make a best-effort determination even if
+  // `snapshotScanoutState` is temporarily failing due to a wedged busy bit.
+  const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+  if (source !== SCANOUT_SOURCE_WDDM) return false;
+  const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
+  const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
+  if (((lo | hi) >>> 0) !== 0) return false;
+  const width = Atomics.load(words, ScanoutStateIndex.WIDTH) >>> 0;
+  const height = Atomics.load(words, ScanoutStateIndex.HEIGHT) >>> 0;
+  const pitchBytes = Atomics.load(words, ScanoutStateIndex.PITCH_BYTES) >>> 0;
+  return width === 0 && height === 0 && pitchBytes === 0;
+}
+
 const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null => {
   if (snapshotPaused) return null;
   const source = snap.source >>> 0;
   const wantsScanout = source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
   if (!wantsScanout) return null;
+
+  // WDDM publishes `base/width/height/pitch=0` when scanout is disabled but ownership is retained.
+  // Treat this as a valid "blank" state (not an invalid descriptor).
+  if (isWddmDisabledScanoutDescriptor(snap)) return null;
 
   const fmt = snap.format >>> 0;
   const isSrgb =
@@ -2792,7 +2818,10 @@ const tryReadScanoutFrame = (snap: ScanoutStateSnapshot): ScanoutFrameInfo | nul
 
   const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
   // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
-  if (source === SCANOUT_SOURCE_WDDM && !hasBasePaddr) return null;
+  // However, once WDDM has claimed scanout it may also publish a *disabled* descriptor
+  // (`base/width/height/pitch=0`) when scanout is turned off. That must still suppress legacy
+  // output; present a blank frame instead of falling back.
+  if (source === SCANOUT_SOURCE_WDDM && !hasBasePaddr && !isWddmDisabledScanoutDescriptor(snap)) return null;
 
   const shot = tryReadScanoutRgba8(snap);
   if (shot) {
@@ -2816,7 +2845,9 @@ const tryReadScanoutFrame = (snap: ScanoutStateSnapshot): ScanoutFrameInfo | nul
 
   const out = ensureScanoutRgbaCapacity(outputBytes);
   if (!out) return null;
-  fillRgba8Solid(out, 0, 0, 0, 0xff);
+  // `ensureScanoutRgbaCapacity` may return an oversized cached buffer; only populate the prefix
+  // the presenter will consume so we don't spend O(capacity) time blanking after a large mode.
+  fillRgba8Solid(out.subarray(0, outputBytes), 0, 0, 0, 0xff);
 
   wddmScanoutWidth = width;
   wddmScanoutHeight = height;
@@ -2842,7 +2873,8 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
       if (wantsScanout) {
         const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
         // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
-        if (source !== SCANOUT_SOURCE_WDDM || hasBasePaddr) {
+        const scanoutIsWddmDisabled = isWddmDisabledScanoutDescriptor(snap);
+        if (source !== SCANOUT_SOURCE_WDDM || hasBasePaddr || scanoutIsWddmDisabled) {
           const frame = tryReadScanoutFrame(snap);
           if (frame) {
             // Scanout descriptors use guest physical addresses (base_paddr) and can point at padded
@@ -2851,7 +2883,7 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
             const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
             return { ...frame, frameSeq: seq, outputSource: "wddm_scanout" };
           }
-
+ 
           // Scanout owns output (WDDM with a real base_paddr, or legacy VBE), but we failed to
           // read/convert it. Do not fall back to the legacy shared framebuffer, which would cause
           // output to "flash back" over the scanout-owned output.
@@ -2867,11 +2899,11 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
           const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
           const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
           const hasBasePaddr = ((lo | hi) >>> 0) !== 0;
-          if (source === SCANOUT_SOURCE_WDDM && !hasBasePaddr) return null;
-
+          if (source === SCANOUT_SOURCE_WDDM && !hasBasePaddr && !isWddmDisabledScanoutState(words)) return null;
+ 
           const out = ensureScanoutRgbaCapacity(BYTES_PER_PIXEL_RGBA8);
           if (!out) return null;
-          fillRgba8Solid(out, 0, 0, 0, 0xff);
+          fillRgba8Solid(out.subarray(0, BYTES_PER_PIXEL_RGBA8), 0, 0, 0, 0xff);
           wddmScanoutWidth = 1;
           wddmScanoutHeight = 1;
           const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
@@ -3059,9 +3091,13 @@ const presentOnce = async (): Promise<boolean> => {
         lastPresentUploadKind = predictedKind;
         lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
         const hasBasePaddr = !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
+        const wddmDisabled =
+          wddmOwnsScanout &&
+          !hasBasePaddr &&
+          (scanoutSnap ? isWddmDisabledScanoutDescriptor(scanoutSnap) : (scanoutState ? isWddmDisabledScanoutState(scanoutState) : false));
         // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
         // does not clobber the active scanout with a stale shared framebuffer upload.
-        aerogpuLastOutputSource = wddmOwnsScanout ? (hasBasePaddr ? "wddm_scanout" : "aerogpu") : (frame?.outputSource ?? "framebuffer");
+        aerogpuLastOutputSource = wddmOwnsScanout ? (hasBasePaddr || wddmDisabled ? "wddm_scanout" : "aerogpu") : (frame?.outputSource ?? "framebuffer");
       }
       // Even when a frame is intentionally dropped (e.g. surface timeout/outdated), clear the shared
       // framebuffer dirty flag: the frame was consumed by the worker and retrying immediately can cause
@@ -3083,11 +3119,41 @@ const presentOnce = async (): Promise<boolean> => {
       if (wddmOwnsScanout) {
         const hasBasePaddr =
           !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
+        const wddmDisabled =
+          !hasBasePaddr && (scanoutSnap ? isWddmDisabledScanoutDescriptor(scanoutSnap) : (scanoutState ? isWddmDisabledScanoutState(scanoutState) : false));
         // When the scanout descriptor points at a real guest surface (base_paddr != 0),
         // `getCurrentFrameInfo()` will attempt to read/present it directly from guest RAM.
         // Only use the last AeroGPU-presented texture as a fallback for legacy placeholder
         // descriptors (base_paddr == 0) or when `scanoutState` is unavailable.
         if (!hasBasePaddr) {
+          if (wddmDisabled) {
+            const out = ensureScanoutRgbaCapacity(BYTES_PER_PIXEL_RGBA8);
+            if (!out) {
+              clearSharedFramebufferDirty();
+              return false;
+            }
+            fillRgba8Solid(out.subarray(0, BYTES_PER_PIXEL_RGBA8), 0, 0, 0, 0xff);
+            wddmScanoutWidth = 1;
+            wddmScanoutHeight = 1;
+            if (1 !== presenterSrcWidth || 1 !== presenterSrcHeight) {
+              presenterSrcWidth = 1;
+              presenterSrcHeight = 1;
+              if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+              presenter.resize(1, 1, outputDpr);
+              presenterNeedsFullUpload = true;
+            }
+            const result = presenter.present(out, BYTES_PER_PIXEL_RGBA8);
+            presenterNeedsFullUpload = false;
+            const didPresent = didPresenterPresent(result);
+            if (didPresent) {
+              lastPresentUploadKind = "full";
+              lastPresentUploadDirtyRectCount = 0;
+              aerogpuLastOutputSource = "wddm_scanout";
+            }
+            clearSharedFramebufferDirty();
+            return didPresent;
+          }
+
           const last = aerogpuLastPresentedFrame;
           if (last) {
             if (last.width !== presenterSrcWidth || last.height !== presenterSrcHeight) {
@@ -3212,7 +3278,11 @@ const presentOnce = async (): Promise<boolean> => {
       scanoutSnap.source === SCANOUT_SOURCE_WDDM &&
       ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0 &&
       frame?.outputSource === "wddm_scanout";
-    if (scanoutUsesGuestBuffer) {
+    const headlessWddmDisabled =
+      wddmOwnsScanout &&
+      !scanoutUsesGuestBuffer &&
+      (scanoutSnap ? isWddmDisabledScanoutDescriptor(scanoutSnap) : (scanoutState ? isWddmDisabledScanoutState(scanoutState) : false));
+    if (scanoutUsesGuestBuffer || headlessWddmDisabled) {
       aerogpuLastOutputSource = "wddm_scanout";
     } else if (wddmOwnsScanout && aerogpuLastPresentedFrame) {
       aerogpuLastOutputSource = "aerogpu";
@@ -4497,6 +4567,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       postStub(typeof seq === "number" ? seq : undefined);
                       return true;
                     }
+                    if (source === SCANOUT_SOURCE_WDDM && isWddmDisabledScanoutState(words)) {
+                      postStub(typeof seq === "number" ? seq : undefined);
+                      return true;
+                    }
                   }
                 } catch {
                   // Ignore and fall through to the legacy screenshot paths.
@@ -4511,7 +4585,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
               const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
               // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
-              if (scanoutIsWddm && !hasBasePaddr) return false;
+              if (scanoutIsWddm && !hasBasePaddr) {
+                if (isWddmDisabledScanoutDescriptor(snap)) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                return false;
+              }
               if (scanoutIsVbe && !hasBasePaddr) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
