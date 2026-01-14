@@ -254,6 +254,13 @@ The Win7 correctness requirement is:
 * `Map(READ)` on `D3D11_USAGE_STAGING + CPU_ACCESS_READ` **must not return until the GPU has completed all prior work that writes the staging resource**, including the `CopyResource`.
 * The returned `pData` must contain the **final bytes** produced by the GPU copy.
 
+Practical AeroGPU guidance:
+
+* Avoid waiting on (or polling) the device’s “latest submitted fence” for staging readback.
+  Instead, track a **per-resource fence** (`last_gpu_write_fence`) that is updated only when a command that *writes that resource* is recorded/submitted (e.g. `CopyResource(staging, …)` / `CopySubresourceRegion`).
+  * This prevents `Map(DO_NOT_WAIT)` from spuriously returning `DXGI_ERROR_WAS_STILL_DRAWING` due to unrelated in-flight work.
+  * It also reduces unnecessary stalls when a different command stream is still executing but the staging destination is already complete.
+
 Unless:
 
 * `D3D11_MAP_FLAG_DO_NOT_WAIT` is set, in which case:
