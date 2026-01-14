@@ -54,7 +54,10 @@ def _list_iso_files_with_pycdlib(iso_path: Path) -> set[str]:
         ) from e
 
     iso = pycdlib.PyCdlib()
-    iso.open(str(iso_path))
+    try:
+        iso.open(str(iso_path))
+    except Exception as e:
+        raise SystemExit(f"pycdlib failed to open ISO: {e}") from e
     try:
         last_err = None
         for mode in ("joliet", "rr", "iso"):
@@ -330,7 +333,12 @@ def main() -> int:
 
     manifest = _load_manifest(args.manifest)
     packages = _validate_manifest(manifest)
-    files = _list_iso_files(args.iso.resolve())
+
+    iso_path = args.iso.resolve()
+    if not iso_path.is_file():
+        raise SystemExit(f"ISO not found: {iso_path}")
+
+    files = _list_iso_files(iso_path)
 
     missing: list[str] = []
     readme_name = manifest.get("iso", {}).get("readme_filename") or "README.txt"
