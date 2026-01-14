@@ -10738,6 +10738,246 @@ bool TestFvfXyzNormalDiffuseTransformsPointLightPositionByView() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseDoesNotTransformLightDirectionByWorld() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Set WORLD to a 90-degree rotation about Z (row-vector convention) while keeping VIEW identity.
+  // Fixed-function lighting should transform light directions by VIEW only, not world*view.
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[0][0] = 0.0f;
+  world.m[0][1] = 1.0f;
+  world.m[1][0] = -1.0f;
+  world.m[1][1] = 0.0f;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0 rotated)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION identity)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  // Direction points along +X; with VIEW identity, the driver should produce vertex->light = (-1,0,0).
+  light0.Direction = {1.0f, 0.0f, 0.0f};
+  light0.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(directional0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(directional0, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(world rotated directional light)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(world rotated directional light)")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "world rotated: lighting constant upload emitted once")) {
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "world rotated: lighting payload present")) {
+    return false;
+  }
+
+  // c208..c210 should match the world*view columns 0..2 (VIEW is identity so this is WORLD0).
+  if (!Check(payload[0] == 0.0f && payload[1] == -1.0f && payload[2] == 0.0f && payload[3] == 0.0f &&
+             payload[4] == 1.0f && payload[5] == 0.0f && payload[6] == 0.0f && payload[7] == 0.0f &&
+             payload[8] == 0.0f && payload[9] == 0.0f && payload[10] == 1.0f && payload[11] == 0.0f,
+             "world rotated: c208..c210 pack world*view columns")) {
+    return false;
+  }
+
+  // Directional slot0 direction (c211) should be transformed by VIEW only (identity), so it must
+  // not be affected by the WORLD rotation above.
+  constexpr uint32_t kLight0DirRel = (211u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kLight0DirRel * 4 + 0] == -1.0f &&
+             payload[kLight0DirRel * 4 + 1] == 0.0f &&
+             payload[kLight0DirRel * 4 + 2] == 0.0f &&
+             payload[kLight0DirRel * 4 + 3] == 0.0f,
+             "world rotated: directional light direction transformed by VIEW only")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseDoesNotTransformPointLightPositionByWorld() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Set WORLD translation while keeping VIEW identity.
+  // Point light positions should be transformed by VIEW only, not by world*view.
+  constexpr float wx = 5.0f;
+  constexpr float wy = -7.0f;
+  constexpr float wz = 3.0f;
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = wx;
+  world.m[3][1] = wy;
+  world.m[3][2] = wz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0 translated)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION identity)")) {
+    return false;
+  }
+
+  D3DLIGHT9 point{};
+  point.Type = D3DLIGHT_POINT;
+  point.Position = {1.0f, 2.0f, 3.0f};
+  point.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  point.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  point.Attenuation0 = 1.0f;
+  point.Range = 1.0f;
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &point);
+  if (!Check(hr == S_OK, "SetLight(point0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(point0, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(world translated point light)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(world translated point light)")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "lighting payload present")) {
+    return false;
+  }
+
+  // c208..c210: world*view columns 0..2 (VIEW identity so this is WORLD0, including translation).
+  if (!Check(payload[0] == 1.0f && payload[1] == 0.0f && payload[2] == 0.0f && payload[3] == wx &&
+             payload[4] == 0.0f && payload[5] == 1.0f && payload[6] == 0.0f && payload[7] == wy &&
+             payload[8] == 0.0f && payload[9] == 0.0f && payload[10] == 1.0f && payload[11] == wz,
+             "world translated: c208..c210 pack world*view columns")) {
+    return false;
+  }
+
+  // Point slot0 position (c223) should be transformed by VIEW only (identity), so it must not
+  // include WORLD translation.
+  constexpr uint32_t kPoint0PosRel = (223u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kPoint0PosRel * 4 + 0] == 1.0f &&
+             payload[kPoint0PosRel * 4 + 1] == 2.0f &&
+             payload[kPoint0PosRel * 4 + 2] == 3.0f &&
+             payload[kPoint0PosRel * 4 + 3] == 1.0f,
+             "world translated: point light position transformed by VIEW only")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogTogglesShaderVariant() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -11100,6 +11340,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTransformsPointLightPositionByView()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseDoesNotTransformLightDirectionByWorld()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseDoesNotTransformPointLightPositionByWorld()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTex1LightingSelectsLitVs()) {
