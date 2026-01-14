@@ -153,7 +153,8 @@ The `id` correlates an action with its completion and is also how we prevent dup
 WebUSB calls when the guest retries a NAKed TD.
 
 ⚠️ **WASM note:** ids are generated in Rust and must fit in a JS `number` without loss.
-The canonical wire contract uses **`u32` ids** (`0..=0xFFFF_FFFF`). The worker-side runtime
+The canonical wire contract uses **non-zero `u32` ids** (`1..=0xFFFF_FFFF`; `0` is reserved/invalid).
+The worker-side runtime
 (`web/src/usb/webusb_passthrough_runtime.ts`) accepts `number` or `bigint` ids from WASM, but
 will reject and reset the bridge if an action id is missing or out of the `u32` range (to avoid
 deadlocking the Rust-side action queue on an action we can never complete).

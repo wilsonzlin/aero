@@ -13,8 +13,8 @@ export interface SetupPacket {
   wLength: number;
 }
 
-// `id` is a Rust-generated u32 used to correlate an action with its completion.
-// Keep it representable as a JS number (<= 0xffff_ffff).
+// `id` is a Rust-generated *non-zero* u32 used to correlate an action with its completion.
+// Keep it representable as a JS number (`1..=0xffff_ffff`; `0` is reserved/invalid).
 //
 // For bulk transfers, `endpoint` is a USB endpoint *address* (not just the endpoint number):
 // - IN endpoints have bit7 set (e.g. `0x81`)
