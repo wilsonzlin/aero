@@ -2590,3 +2590,113 @@ fn sm4_gs_bitfield_ops_translate_to_wgsl_compute_prepass() {
     );
     assert_wgsl_validates(&wgsl);
 }
+
+#[test]
+fn sm4_gs_addc_subc_ops_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // iaddc r0.xyzw, r1.xyzw, r2.xyzw, r3.xyzw
+    let mut iaddc = vec![opcode_token(OPCODE_IADDC, 0)];
+    iaddc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    iaddc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    iaddc.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    iaddc.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    iaddc[0] = opcode_token(OPCODE_IADDC, iaddc.len() as u32);
+    tokens.extend_from_slice(&iaddc);
+
+    // uaddc r4.xyzw, r5.xyzw, r2.xyzw, r3.xyzw
+    let mut uaddc = vec![opcode_token(OPCODE_UADDC, 0)];
+    uaddc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    uaddc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    uaddc.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    uaddc.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    uaddc[0] = opcode_token(OPCODE_UADDC, uaddc.len() as u32);
+    tokens.extend_from_slice(&uaddc);
+
+    // isubc r6.xyzw, r7.xyzw, r2.xyzw, r3.xyzw
+    let mut isubc = vec![opcode_token(OPCODE_ISUBC, 0)];
+    isubc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    isubc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 7, WriteMask::XYZW));
+    isubc.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    isubc.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    isubc[0] = opcode_token(OPCODE_ISUBC, isubc.len() as u32);
+    tokens.extend_from_slice(&isubc);
+
+    // usubb r8.xyzw, r9.xyzw, r2.xyzw, r3.xyzw
+    let mut usubb = vec![opcode_token(OPCODE_USUBB, 0)];
+    usubb.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 8, WriteMask::XYZW));
+    usubb.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    usubb.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    usubb.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    usubb[0] = opcode_token(OPCODE_USUBB, usubb.len() as u32);
+    tokens.extend_from_slice(&usubb);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("select(vec4<u32>(0u), vec4<u32>(1u)"),
+        "expected add/sub-with-carry lowering to use select(..., vec4<u32>(1u), ...):\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_int_mul_hi_ops_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // umul r0.xyzw, r1.xyzw, r2.xyzw, r3.xyzw
+    let mut umul = vec![opcode_token(OPCODE_UMUL, 0)];
+    umul.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    umul.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    umul.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    umul.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    umul[0] = opcode_token(OPCODE_UMUL, umul.len() as u32);
+    tokens.extend_from_slice(&umul);
+
+    // imul r4.xyzw, r5.xyzw, r2.xyzw, r3.xyzw
+    let mut imul = vec![opcode_token(OPCODE_IMUL, 0)];
+    imul.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    imul.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    imul.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    imul.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    imul[0] = opcode_token(OPCODE_IMUL, imul.len() as u32);
+    tokens.extend_from_slice(&imul);
+
+    // umad r6.xyzw, r7.xyzw, r2.xyzw, r3.xyzw, r8.xyzw
+    let mut umad = vec![opcode_token(OPCODE_UMAD, 0)];
+    umad.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    umad.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 7, WriteMask::XYZW));
+    umad.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    umad.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    umad.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 8));
+    umad[0] = opcode_token(OPCODE_UMAD, umad.len() as u32);
+    tokens.extend_from_slice(&umad);
+
+    // imad r9.xyzw, r10.xyzw, r2.xyzw, r3.xyzw, r8.xyzw
+    let mut imad = vec![opcode_token(OPCODE_IMAD, 0)];
+    imad.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    imad.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 10, WriteMask::XYZW));
+    imad.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    imad.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    imad.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 8));
+    imad[0] = opcode_token(OPCODE_IMAD, imad.len() as u32);
+    tokens.extend_from_slice(&imad);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains(">> 32u"),
+        "expected mul/mad hi-part lowering to shift by 32:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("u64(("),
+        "expected unsigned hi-part lowering to use u64 intermediates:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("i64(("),
+        "expected signed hi-part lowering to use i64 intermediates:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
