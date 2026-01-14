@@ -106,6 +106,70 @@ constexpr uint32_t kD3D11UsageImmutable = 1;
 constexpr uint32_t kD3D11UsageDynamic = 2;
 constexpr uint32_t kD3D11UsageStaging = 3;
 
+// D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
+constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
+
+// D3D11_FORMAT_SUPPORT subset (numeric values from d3d11.h).
+// These values are stable across Windows versions and are used by
+// ID3D11Device::CheckFormatSupport.
+constexpr uint32_t kD3D11FormatSupportBuffer = 0x1;
+constexpr uint32_t kD3D11FormatSupportIaVertexBuffer = 0x2;
+constexpr uint32_t kD3D11FormatSupportIaIndexBuffer = 0x4;
+constexpr uint32_t kD3D11FormatSupportTexture2D = 0x20;
+constexpr uint32_t kD3D11FormatSupportShaderLoad = 0x100;
+constexpr uint32_t kD3D11FormatSupportShaderSample = 0x200;
+constexpr uint32_t kD3D11FormatSupportRenderTarget = 0x4000;
+constexpr uint32_t kD3D11FormatSupportBlendable = 0x8000;
+constexpr uint32_t kD3D11FormatSupportDepthStencil = 0x10000;
+constexpr uint32_t kD3D11FormatSupportCpuLockable = 0x20000;
+constexpr uint32_t kD3D11FormatSupportDisplay = 0x80000;
+
+// D3D11_RESOURCE_MISC_* subset (numeric values from d3d11.h).
+constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
+
+inline uint32_t D3D11FormatSupportFlagsFromDxgiCapsMask(uint32_t caps) {
+  uint32_t support = 0;
+  if (caps & kAerogpuDxgiFormatCapTexture2D) {
+    support |= kD3D11FormatSupportTexture2D;
+  }
+  if (caps & kAerogpuDxgiFormatCapRenderTarget) {
+    support |= kD3D11FormatSupportRenderTarget;
+  }
+  if (caps & kAerogpuDxgiFormatCapDepthStencil) {
+    support |= kD3D11FormatSupportDepthStencil;
+  }
+  if (caps & kAerogpuDxgiFormatCapShaderSample) {
+    support |= kD3D11FormatSupportShaderSample;
+  }
+  if (caps & kAerogpuDxgiFormatCapDisplay) {
+    support |= kD3D11FormatSupportDisplay;
+  }
+  if (caps & kAerogpuDxgiFormatCapBlendable) {
+    support |= kD3D11FormatSupportBlendable;
+  }
+  if (caps & kAerogpuDxgiFormatCapCpuLockable) {
+    support |= kD3D11FormatSupportCpuLockable;
+  }
+  if (caps & kAerogpuDxgiFormatCapBuffer) {
+    // Buffers are accessed via shader-load operations (not sampling). Report
+    // SHADER_LOAD for the buffer formats we expose so the runtime can validate
+    // Buffer/BufferEx SRVs (including RAW views).
+    support |= kD3D11FormatSupportBuffer | kD3D11FormatSupportShaderLoad;
+  }
+  if (caps & kAerogpuDxgiFormatCapIaVertexBuffer) {
+    support |= kD3D11FormatSupportIaVertexBuffer;
+  }
+  if (caps & kAerogpuDxgiFormatCapIaIndexBuffer) {
+    support |= kD3D11FormatSupportIaIndexBuffer;
+  }
+  return support;
+}
+
+template <typename T>
+inline uint32_t D3D11FormatSupportFlags(const T* dev_or_adapter, uint32_t dxgi_format) {
+  return D3D11FormatSupportFlagsFromDxgiCapsMask(AerogpuDxgiFormatCapsMask(dev_or_adapter, dxgi_format));
+}
+
 // D3D11 supports up to 128 shader-resource view slots per stage. We track the
 // currently bound SRV resources so RotateResourceIdentities can re-emit bindings
 // when swapchain backbuffer handles are rotated.

@@ -2335,44 +2335,7 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       zero_out();
       *reinterpret_cast<DXGI_FORMAT*>(data) = format;
 
-      const uint32_t caps = AerogpuDxgiFormatCapsMask(adapter, static_cast<uint32_t>(format));
-      UINT support = 0;
-      if (caps & kAerogpuDxgiFormatCapTexture2D) {
-        support |= D3D11_FORMAT_SUPPORT_TEXTURE2D;
-      }
-      if (caps & kAerogpuDxgiFormatCapRenderTarget) {
-        support |= D3D11_FORMAT_SUPPORT_RENDER_TARGET;
-      }
-      if (caps & kAerogpuDxgiFormatCapDepthStencil) {
-        support |= D3D11_FORMAT_SUPPORT_DEPTH_STENCIL;
-      }
-      if (caps & kAerogpuDxgiFormatCapShaderSample) {
-        support |= D3D11_FORMAT_SUPPORT_SHADER_SAMPLE;
-      }
-      // Buffers are accessed via shader-load operations (not sampling). Report
-      // SHADER_LOAD for the buffer formats we expose so the runtime can validate
-      // Buffer/BufferEx SRVs (including RAW views).
-      if (caps & kAerogpuDxgiFormatCapBuffer) {
-        support |= D3D11_FORMAT_SUPPORT_SHADER_LOAD;
-      }
-      if (caps & kAerogpuDxgiFormatCapDisplay) {
-        support |= D3D11_FORMAT_SUPPORT_DISPLAY;
-      }
-      if (caps & kAerogpuDxgiFormatCapBlendable) {
-        support |= D3D11_FORMAT_SUPPORT_BLENDABLE;
-      }
-      if (caps & kAerogpuDxgiFormatCapCpuLockable) {
-        support |= D3D11_FORMAT_SUPPORT_CPU_LOCKABLE;
-      }
-      if (caps & kAerogpuDxgiFormatCapBuffer) {
-        support |= D3D11_FORMAT_SUPPORT_BUFFER;
-      }
-      if (caps & kAerogpuDxgiFormatCapIaVertexBuffer) {
-        support |= D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER;
-      }
-      if (caps & kAerogpuDxgiFormatCapIaIndexBuffer) {
-        support |= D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER;
-      }
+      const UINT support = static_cast<UINT>(D3D11FormatSupportFlags(adapter, static_cast<uint32_t>(format)));
 
       auto* out_bytes = reinterpret_cast<uint8_t*>(data);
       if (size >= sizeof(DXGI_FORMAT) + sizeof(UINT)) {

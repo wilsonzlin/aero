@@ -290,59 +290,15 @@ using aerogpu::d3d10_11::kDxgiFormatBc7Unorm;
 using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
-constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
-
-// D3D11_FORMAT_SUPPORT subset (numeric values from d3d11.h).
-// These values are stable across Windows versions and are used by
-// ID3D11Device::CheckFormatSupport.
-constexpr uint32_t kD3D11FormatSupportBuffer = 0x1;
-constexpr uint32_t kD3D11FormatSupportIaVertexBuffer = 0x2;
-constexpr uint32_t kD3D11FormatSupportIaIndexBuffer = 0x4;
-constexpr uint32_t kD3D11FormatSupportTexture2D = 0x20;
-constexpr uint32_t kD3D11FormatSupportShaderLoad = 0x100;
-constexpr uint32_t kD3D11FormatSupportShaderSample = 0x200;
-constexpr uint32_t kD3D11FormatSupportRenderTarget = 0x4000;
-constexpr uint32_t kD3D11FormatSupportBlendable = 0x8000;
-constexpr uint32_t kD3D11FormatSupportDepthStencil = 0x10000;
-constexpr uint32_t kD3D11FormatSupportCpuLockable = 0x20000;
-constexpr uint32_t kD3D11FormatSupportDisplay = 0x80000;
+using aerogpu::d3d10_11::kD3DFeatureLevel10_0;
 
 // D3D11_RESOURCE_MISC_SHARED (numeric value from d3d11.h).
-constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
+using aerogpu::d3d10_11::kD3D11ResourceMiscShared;
 
 struct AeroGpuAdapter;
 
 uint32_t d3d11_format_support_flags(const AeroGpuAdapter* adapter, uint32_t dxgi_format) {
-  const uint32_t caps = aerogpu::d3d10_11::AerogpuDxgiFormatCapsMask(adapter, dxgi_format);
-  uint32_t support = 0;
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapTexture2D) {
-    support |= kD3D11FormatSupportTexture2D;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapRenderTarget) {
-    support |= kD3D11FormatSupportRenderTarget | kD3D11FormatSupportBlendable;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapDepthStencil) {
-    support |= kD3D11FormatSupportDepthStencil;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapShaderSample) {
-    support |= kD3D11FormatSupportShaderSample;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapCpuLockable) {
-    support |= kD3D11FormatSupportCpuLockable;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapDisplay) {
-    support |= kD3D11FormatSupportDisplay;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapBuffer) {
-    support |= kD3D11FormatSupportBuffer | kD3D11FormatSupportShaderLoad;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaVertexBuffer) {
-    support |= kD3D11FormatSupportIaVertexBuffer;
-  }
-  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaIndexBuffer) {
-    support |= kD3D11FormatSupportIaIndexBuffer;
-  }
-  return support;
+  return aerogpu::d3d10_11::D3D11FormatSupportFlags(adapter, dxgi_format);
 }
 
 uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
