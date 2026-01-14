@@ -4,6 +4,22 @@
 #[allow(dead_code)]
 mod drain_queue;
 
+#[cfg(target_arch = "wasm32")]
+fn install_panic_hook_once() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            // Panics in wasm32 builds currently abort (trap with `unreachable`). Without a hook,
+            // these show up as opaque `RuntimeError: unreachable` errors in browser/Playwright.
+            //
+            // Emit the panic message to the JS console so E2E failures can be diagnosed.
+            let msg = info.to_string();
+            web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&msg));
+        }));
+    });
+}
+
 // -----------------------------------------------------------------------------
 // Guest physical address translation (PC/Q35 E820)
 // -----------------------------------------------------------------------------
@@ -3129,6 +3145,7 @@ mod wasm {
         dpr: f64,
         options: Option<JsValue>,
     ) -> Result<(), JsValue> {
+        crate::install_panic_hook_once();
         let options = options.unwrap_or(JsValue::UNDEFINED);
 
         // Align default behavior with the TS runtime worker: try WebGPU unless explicitly
@@ -3223,6 +3240,7 @@ mod wasm {
         offscreen_canvas: Option<OffscreenCanvas>,
         options: Option<JsValue>,
     ) -> Result<(), JsValue> {
+        crate::install_panic_hook_once();
         let options = options.unwrap_or(JsValue::UNDEFINED);
 
         let prefer_webgpu = parse_bool(&options, "preferWebGpu").unwrap_or(true);

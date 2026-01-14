@@ -2267,10 +2267,7 @@ impl AerogpuD3d9Executor {
         slice.map_async(wgpu::MapMode::Read, move |res| {
             sender.send(res).ok();
         });
-        self.poll();
-
-        receiver
-            .receive()
+        crate::wgpu_async::receive_oneshot_with_wgpu_poll(&self.device, receiver)
             .await
             .ok_or_else(|| AerogpuD3d9Error::Validation("map_async sender dropped".into()))?
             .map_err(|err| AerogpuD3d9Error::Validation(format!("map_async failed: {err:?}")))?;
@@ -3630,12 +3627,23 @@ impl AerogpuD3d9Executor {
                         ))),
                     }
                 } else {
-                    let mut buffer_usage = wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::VERTEX
-                        | wgpu::BufferUsages::INDEX;
+                    // Respect the guest-provided usage flags. The WebGL2 backend in particular has
+                    // stricter downlevel limits for some usages (e.g. INDEX buffers), so avoid
+                    // over-allocating capabilities on buffers that are only ever used as vertex
+                    // buffers.
+                    let mut buffer_usage =
+                        wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+                    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
+                        buffer_usage |= wgpu::BufferUsages::VERTEX;
+                    }
+                    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
+                        buffer_usage |= wgpu::BufferUsages::INDEX;
+                    }
                     if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
                         buffer_usage |= wgpu::BufferUsages::UNIFORM;
+                    }
+                    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_STORAGE) != 0 {
+                        buffer_usage |= wgpu::BufferUsages::STORAGE;
                     }
 
                     let shadow_len = usize::try_from(size_bytes).map_err(|_| {
@@ -9267,7 +9275,6 @@ impl AerogpuD3d9Executor {
                 }
                 let tex_binding = slot as u32 * 2;
                 let samp_binding = tex_binding + 1;
-
                 let tex_handle = self.state.textures_vs[slot];
                 let srgb_texture = srgb_enabled(&self.state.sampler_states_vs[slot]);
                 let sampler = self.samplers_vs[slot].as_ref();
@@ -9360,7 +9367,6 @@ impl AerogpuD3d9Executor {
                 }
                 let tex_binding = slot as u32 * 2;
                 let samp_binding = tex_binding + 1;
-
                 let tex_handle = self.state.textures_ps[slot];
                 let srgb_texture = srgb_enabled(&self.state.sampler_states_ps[slot]);
                 let sampler = self.samplers_ps[slot].as_ref();

@@ -2612,14 +2612,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         slice.map_async(wgpu::MapMode::Read, move |res| {
             sender.send(res).ok();
         });
-
-        #[cfg(not(target_arch = "wasm32"))]
-        self.device.poll(wgpu::Maintain::Wait);
-        #[cfg(target_arch = "wasm32")]
-        self.device.poll(wgpu::Maintain::Poll);
-
-        receiver
-            .receive()
+        crate::wgpu_async::receive_oneshot_with_wgpu_poll(&self.device, receiver)
             .await
             .ok_or_else(|| {
                 ExecutorError::Validation(format!("{context}: map_async sender dropped"))

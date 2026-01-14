@@ -28,15 +28,7 @@ pub async fn readback_buffer(
     slice.map_async(wgpu::MapMode::Read, move |res| {
         sender.send(res).ok();
     });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    device.poll(wgpu::Maintain::Wait);
-
-    #[cfg(target_arch = "wasm32")]
-    device.poll(wgpu::Maintain::Poll);
-
-    receiver
-        .receive()
+    crate::wgpu_async::receive_oneshot_with_wgpu_poll(device, receiver)
         .await
         .expect("map_async sender dropped")
         .expect("map_async failed");
@@ -105,15 +97,7 @@ pub async fn readback_rgba8(
     slice.map_async(wgpu::MapMode::Read, move |res| {
         sender.send(res).ok();
     });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    device.poll(wgpu::Maintain::Wait);
-
-    #[cfg(target_arch = "wasm32")]
-    device.poll(wgpu::Maintain::Poll);
-
-    receiver
-        .receive()
+    crate::wgpu_async::receive_oneshot_with_wgpu_poll(device, receiver)
         .await
         .expect("map_async sender dropped")
         .expect("map_async failed");
@@ -192,15 +176,7 @@ pub async fn readback_stencil8(
     slice.map_async(wgpu::MapMode::Read, move |res| {
         sender.send(res).ok();
     });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    device.poll(wgpu::Maintain::Wait);
-
-    #[cfg(target_arch = "wasm32")]
-    device.poll(wgpu::Maintain::Poll);
-
-    receiver
-        .receive()
+    crate::wgpu_async::receive_oneshot_with_wgpu_poll(device, receiver)
         .await
         .expect("map_async sender dropped")
         .expect("map_async failed");
@@ -276,15 +252,7 @@ pub async fn readback_depth32f(
     slice.map_async(wgpu::MapMode::Read, move |res| {
         sender.send(res).ok();
     });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    device.poll(wgpu::Maintain::Wait);
-
-    #[cfg(target_arch = "wasm32")]
-    device.poll(wgpu::Maintain::Poll);
-
-    receiver
-        .receive()
+    crate::wgpu_async::receive_oneshot_with_wgpu_poll(device, receiver)
         .await
         .expect("map_async sender dropped")
         .expect("map_async failed");

@@ -37,6 +37,7 @@ pub mod shader_lib;
 mod surface;
 mod time;
 mod upload;
+mod wgpu_async;
 mod wgpu_integration;
 
 mod acmd_executor;
