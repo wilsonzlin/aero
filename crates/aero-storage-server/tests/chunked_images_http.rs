@@ -160,8 +160,16 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
             .unwrap(),
         "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
     );
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        expected_manifest.as_bytes().len().to_string()
+    );
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -221,6 +229,10 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
@@ -661,6 +673,16 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
@@ -702,6 +724,13 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
     );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
@@ -1210,6 +1239,22 @@ async fn invalid_chunk_name_is_rejected_without_traversal() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -1358,6 +1403,18 @@ async fn chunk_larger_than_limit_is_rejected() {
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
     );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
