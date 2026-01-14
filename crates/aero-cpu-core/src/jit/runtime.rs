@@ -205,6 +205,7 @@ impl PageVersionTracker {
     /// never resized, so the table pointer returned by [`Self::table_ptr_len`] remains stable for
     /// the lifetime of the tracker.
     pub fn new(max_pages: usize) -> Self {
+        // Safety/DoS hardening: clamp to the hard cap so callers can't trigger absurd allocations.
         let max_pages = max_pages.min(Self::MAX_TRACKED_PAGES);
         let mut versions = Vec::with_capacity(max_pages);
         versions.resize_with(max_pages, || Cell::new(0));
@@ -344,6 +345,11 @@ impl PageVersionTracker {
         self.versions.len()
     }
 
+    /// Zero all tracked page versions in-place.
+    ///
+    /// This preserves the exported table pointer/length: any generated JIT code that has cached
+    /// the pointer returned by [`Self::table_ptr_len`] will continue to observe a valid table
+    /// after reset, with all entries set to 0.
     pub fn reset(&self) {
         for v in self.versions.iter() {
             v.set(0);
@@ -368,6 +374,12 @@ where
     C: CompileRequestSink,
 {
     pub fn new(config: JitConfig, backend: B, compile: C) -> Self {
+        let mut config = config;
+        // Clamp the configured table size to the hard safety cap so `JitRuntime::config()` always
+        // reflects the actual JIT-visible table length.
+        config.code_version_max_pages =
+            config.code_version_max_pages.min(PageVersionTracker::MAX_TRACKED_PAGES);
+
         let page_versions = PageVersionTracker::new(config.code_version_max_pages);
         let cache = CodeCache::new(config.cache_max_blocks, config.cache_max_bytes);
         let profile_capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
