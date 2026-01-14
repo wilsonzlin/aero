@@ -177,7 +177,8 @@ alive and call `reset()` on disconnect instead of recreating it. See `docs/webus
 - Keep the USB passthrough and host controller behavior (UHCI/EHCI/xHCI) covered by `crates/aero-usb` tests:
   - Unit tests in `crates/aero-usb/src/passthrough.rs`
   - UHCI + passthrough integration tests in `crates/aero-usb/tests/webusb_passthrough_uhci.rs`
-  - EHCI bring-up tests (regs + root hub timers): `crates/aero-usb/tests/ehci.rs`
+  - EHCI tests (regs + root hub timers + async/periodic schedule walking + snapshot roundtrips):
+    `crates/aero-usb/tests/ehci*.rs` (see [`docs/usb-ehci.md`](../usb-ehci.md))
   - xHCI controller tests: `crates/aero-usb/tests/xhci_*.rs`
   - WebHID descriptor synthesis/passthrough tests in `crates/aero-usb/tests/webhid_passthrough.rs`
 - Keep the wire contract fixture stable:
