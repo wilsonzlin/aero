@@ -136,8 +136,8 @@ pub(crate) fn set_ehci_webusb_connected(
 mod tests {
     use super::*;
 
-    use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionOut};
     use aero_usb::hub::UsbHubDevice;
+    use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionOut};
     use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
     fn is_external_hub_attached(ctrl: &mut EhciController) -> bool {

@@ -5,11 +5,7 @@ mod util;
 
 use util::TestMemory;
 
-fn find_ext_cap(
-    xhci: &mut XhciController,
-    first: u64,
-    id: u8,
-) -> Option<u64> {
+fn find_ext_cap(xhci: &mut XhciController, first: u64, id: u8) -> Option<u64> {
     // xHCI Extended Capabilities form a linked list. The "next" pointer is expressed in DWORDs.
     // Keep a small iteration bound so malformed guest-visible structures cannot loop forever.
     let mut off = first;

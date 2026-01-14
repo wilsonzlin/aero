@@ -437,7 +437,9 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
     // CI enforces that the strict fallback HWID does not appear in the canonical INF at all
     // (including comments) to prevent cargo-culted reintroduction.
     assert!(
-        !inf_contents.to_ascii_lowercase().contains(&hwid_fallback.to_ascii_lowercase()),
+        !inf_contents
+            .to_ascii_lowercase()
+            .contains(&hwid_fallback.to_ascii_lowercase()),
         "canonical INF must not contain the strict generic fallback HWID {hwid_fallback} anywhere"
     );
 

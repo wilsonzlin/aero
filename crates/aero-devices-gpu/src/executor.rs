@@ -929,7 +929,8 @@ fn write_scanout0_rgba8(
     }
 
     let pitch_u64 = u64::from(regs.scanout0.pitch_bytes);
-    let row_bytes_u64 = u64::try_from(row_bytes).map_err(|_| "scanout row bytes overflow".to_string())?;
+    let row_bytes_u64 =
+        u64::try_from(row_bytes).map_err(|_| "scanout row bytes overflow".to_string())?;
     let last_row_gpa = regs
         .scanout0
         .fb_gpa
@@ -1606,10 +1607,7 @@ mod tests {
         };
 
         let err = write_scanout0_rgba8(&regs, &mut mem, &scanout).unwrap_err();
-        assert!(
-            err.contains("too large"),
-            "expected size error, got: {err}"
-        );
+        assert!(err.contains("too large"), "expected size error, got: {err}");
     }
 
     #[test]

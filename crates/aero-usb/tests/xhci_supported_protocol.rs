@@ -3,11 +3,7 @@ use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbSpeed};
 
 mod util;
 
-fn find_ext_cap(
-    xhci: &mut XhciController,
-    first: u64,
-    id: u8,
-) -> Option<u64> {
+fn find_ext_cap(xhci: &mut XhciController, first: u64, id: u8) -> Option<u64> {
     let mut off = first;
     for _ in 0..32 {
         if off == 0 {
@@ -54,11 +50,7 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     let xecp_dwords = (hccparams1 >> 16) & 0xffff;
     assert_ne!(xecp_dwords, 0, "HCCPARAMS1.xECP must be non-zero");
     let xecp = (xecp_dwords as u64) * 4;
-    let Some(xecp) = find_ext_cap(
-        &mut xhci,
-        xecp,
-        regs::EXT_CAP_ID_SUPPORTED_PROTOCOL,
-    ) else {
+    let Some(xecp) = find_ext_cap(&mut xhci, xecp, regs::EXT_CAP_ID_SUPPORTED_PROTOCOL) else {
         panic!("missing Supported Protocol extended capability");
     };
 

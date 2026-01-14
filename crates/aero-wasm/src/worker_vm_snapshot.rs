@@ -38,10 +38,15 @@ pub struct WorkerVmSnapshot {
 impl WorkerVmSnapshot {
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        let guest_size_u64 =
-            crate::validate_shared_guest_ram_layout("WorkerVmSnapshot.new", guest_base, guest_size)?;
+        let guest_size_u64 = crate::validate_shared_guest_ram_layout(
+            "WorkerVmSnapshot.new",
+            guest_base,
+            guest_size,
+        )?;
         if guest_size_u64 == 0 {
-            return Err(js_error("WorkerVmSnapshot.new: guest_size must be non-zero"));
+            return Err(js_error(
+                "WorkerVmSnapshot.new: guest_size must be non-zero",
+            ));
         }
         let guest_size: u32 = guest_size_u64
             .try_into()

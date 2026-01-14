@@ -295,10 +295,7 @@ fn setup_webhid_set_report_control_out_frame_list(
     // DATA OUT TD.
     guest.write_u32(data_td + 0x00, status_td);
     guest.write_u32(data_td + 0x04, td_ctrl(true, false));
-    guest.write_u32(
-        data_td + 0x08,
-        td_token(0xE1, 0, 0, true, payload.len()),
-    );
+    guest.write_u32(data_td + 0x08, td_token(0xE1, 0, 0, true, payload.len()));
     guest.write_u32(data_td + 0x0C, data_buf);
 
     // STATUS IN TD (ZLP, IOC).

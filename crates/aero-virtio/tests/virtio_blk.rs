@@ -393,9 +393,7 @@ fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
     (dev, caps, mem, backing, flushes)
 }
 
-fn setup_tracking_discard_disk(
-    disk_len: usize,
-) -> SetupTrackingDiscardDisk {
+fn setup_tracking_discard_disk(disk_len: usize) -> SetupTrackingDiscardDisk {
     let backing = Rc::new(RefCell::new(vec![0u8; disk_len]));
     let discards = Rc::new(Cell::new(0u32));
     let writes = Rc::new(Cell::new(0u32));

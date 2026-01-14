@@ -360,7 +360,11 @@ fn boot_sector_vbe_64x64x32_strided_and_panned_red_pixel() -> [u8; 512] {
     // offset_bytes = (y_offset * virt_width + x_offset) * 4 = (2*128 + 8)*4 = 1056.
     let offset_bytes: u16 = 1056;
     // mov di, offset_bytes
-    sector[i..i + 3].copy_from_slice(&[0xBF, (offset_bytes & 0xFF) as u8, (offset_bytes >> 8) as u8]);
+    sector[i..i + 3].copy_from_slice(&[
+        0xBF,
+        (offset_bytes & 0xFF) as u8,
+        (offset_bytes >> 8) as u8,
+    ]);
     i += 3;
 
     // Write a red pixel in BGRX format expected by the SVGA renderer.

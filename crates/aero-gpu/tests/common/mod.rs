@@ -94,9 +94,8 @@ pub fn d3d9_executor(
 #[cfg(target_arch = "wasm32")]
 pub async fn aerogpu_executor(
     test_name: &str,
-) -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     // `AeroGpuExecutor` uses JS-backed WebGPU handles on wasm32 which are not Send/Sync. Keep the
     // host-style integration tests buildable by treating them as skipped.
     skip_or_panic(test_name, "AeroGpuExecutor is host-only");
@@ -107,9 +106,8 @@ pub async fn aerogpu_executor(
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn aerogpu_executor(
     test_name: &str,
-) -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     #[cfg(target_arch = "wasm32")]
     {
         let _ = test_name;
