@@ -4,6 +4,10 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
+function decodeFirstEventWords(buffer: ArrayBuffer): Int32Array {
+  return new Int32Array(buffer);
+}
+
 describe("InputCapture wheel handling", () => {
   it("scales wheel delta based on WheelEvent.deltaMode (pixel/line/page)", () => {
     withStubbedDocument(() => {
