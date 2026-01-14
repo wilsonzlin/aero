@@ -10022,6 +10022,20 @@ impl Machine {
                     let usage = (a & 0xff) as u8;
                     let pressed = ((a >> 8) & 1) != 0;
 
+                    // Defensive: only track the pressed state for HID usages that are representable
+                    // as a USB boot keyboard report (0x01..=0x89) or a standard modifier
+                    // (0xE0..=0xE7). This prevents hostile/malformed inputs from "pinning" the
+                    // backend selection by inventing arbitrary usage IDs that are not supported by
+                    // any input backend.
+                    //
+                    // Keep the max usage aligned with `aero_usb::hid::keyboard::KEY_USAGE_MAX`.
+                    const USB_KEYBOARD_USAGE_MAX: u8 = 0x89;
+                    let usage_trackable = usage != 0
+                        && (usage <= USB_KEYBOARD_USAGE_MAX || (0xE0..=0xE7).contains(&usage));
+                    if !usage_trackable {
+                        continue;
+                    }
+
                     // Track pressed keyboard usages regardless of the current backend selection so
                     // backend switching can be gated on "any key is held".
                     let idx = usage as usize;
@@ -17410,6 +17424,45 @@ mod tests {
 
         // Unknown event type should be ignored.
         m.inject_input_batch(&[1, 0, 0xDEAD_BEEF, 0, 0, 0]);
+    }
+
+    #[test]
+    fn inject_input_batch_does_not_track_invalid_keyboard_hid_usages() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            // Keep deterministic and focused.
+            enable_serial: false,
+            enable_vga: false,
+            enable_reset_ctrl: false,
+            enable_debugcon: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(
+            m.input_batch_pressed_keyboard_usage_count, 0,
+            "sanity: pressed-key tracking should start empty"
+        );
+
+        // Inject an invalid keyboard usage (0xFF) press. The USB keyboard model ignores this
+        // usage, and `inject_input_batch` should not treat it as a "held key" for backend
+        // selection purposes.
+        let words_invalid_press: [u32; 6] = [1, 0, 6, 0, 0x01ff, 0];
+        m.inject_input_batch(&words_invalid_press);
+        assert_eq!(
+            m.input_batch_pressed_keyboard_usage_count, 0,
+            "invalid keydown should not be tracked as held"
+        );
+
+        // Standard modifiers are still trackable. Press and release Left Control (usage 0xE0) and
+        // ensure the held-key counter is updated.
+        let words_ctrl_press: [u32; 6] = [1, 0, 6, 0, 0x01e0, 0];
+        m.inject_input_batch(&words_ctrl_press);
+        assert_eq!(m.input_batch_pressed_keyboard_usage_count, 1);
+
+        let words_ctrl_release: [u32; 6] = [1, 0, 6, 0, 0x00e0, 0];
+        m.inject_input_batch(&words_ctrl_release);
+        assert_eq!(m.input_batch_pressed_keyboard_usage_count, 0);
     }
 
     #[test]
