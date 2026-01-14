@@ -136,9 +136,11 @@ configuration.
 To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
 
 - Request a larger MSI-X table size from QEMU (best-effort):
-  - PowerShell: `-VirtioMsixVectors N`
-  - Python: `--virtio-msix-vectors N`
-- Fail the harness if QEMU reports MSI-X **disabled** (QMP introspection check):
+  - PowerShell (global): `-VirtioMsixVectors N`
+  - PowerShell (per device): `-VirtioNetVectors N`, `-VirtioBlkVectors N`, `-VirtioInputVectors N`, `-VirtioSndVectors N`
+  - Python (global): `--virtio-msix-vectors N`
+  - Python (per device): `--virtio-net-vectors N`, `--virtio-blk-vectors N`, `--virtio-input-vectors N`, `--virtio-snd-vectors N`
+  - Fail the harness if QEMU reports MSI-X **disabled** (QMP introspection check):
   - PowerShell: `-RequireVirtioBlkMsix` / `-RequireVirtioNetMsix` / `-RequireVirtioSndMsix`
   - Python: `--require-virtio-blk-msix` / `--require-virtio-net-msix` / `--require-virtio-snd-msix`
 - For virtio-blk specifically, you can also make MSI/MSI-X a **guest-side** hard requirement:
@@ -183,9 +185,10 @@ attach an additional virtio disk with a drive letter (or run the selftest with `
   - virtio-blk disk (**modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
   - virtio-net NIC (user-mode networking / slirp; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
   - virtio-input keyboard + mouse devices (`virtio-keyboard-pci`, `virtio-mouse-pci`; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
-  - (optional) virtio-input tablet device (`virtio-tablet-pci`) when enabled via `-WithInputTabletEvents` / `-WithTabletEvents` /
-    `--with-input-tablet-events` / `--with-tablet-events`
-    (**modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
+  - (optional) virtio-input tablet device (`virtio-tablet-pci`):
+    - attach-only: `-WithVirtioTablet` / `--with-virtio-tablet`
+    - end-to-end tablet report delivery test: `-WithInputTabletEvents` / `-WithTabletEvents` / `--with-input-tablet-events` / `--with-tablet-events`
+    (**modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01` in default mode)
   - (optional) virtio-snd device (when enabled via `-WithVirtioSnd` / `--with-virtio-snd`; **modern-only** virtio-pci: `disable-legacy=on,x-pci-revision=0x01`)
 - COM1 redirected to a host log file
   - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
