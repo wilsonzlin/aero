@@ -194,7 +194,7 @@ export async function reattachMachineSnapshotDisks(opts: {
     if (diskId === (diskIdInstall >>> 0)) {
       if (typeof attachIso !== "function") {
         throw new Error(
-          "Snapshot restore requires Machine.attach_install_media_iso_opfs(path) / Machine.attach_install_media_opfs_iso(path) but it is unavailable in this WASM build.",
+          "Snapshot restore requires an install-media ISO OPFS attach export (e.g. Machine.attach_install_media_iso_opfs, Machine.attach_install_media_iso_opfs_existing, Machine.attach_install_media_opfs_iso, or *_for_restore variants) but none are available in this WASM build.",
         );
       }
       if (overlay) {
