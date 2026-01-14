@@ -5,13 +5,13 @@ use aero_protocol::aerogpu::aerogpu_pci as pci;
 // Constants mirrored from `drivers/aerogpu/protocol/aerogpu_pci.h` via `aero-protocol`.
 
 pub use pci::{
-    AerogpuErrorCode, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
+    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
     AEROGPU_FEATURE_CURSOR as FEATURE_CURSOR, AEROGPU_FEATURE_FENCE_PAGE as FEATURE_FENCE_PAGE,
     AEROGPU_FEATURE_SCANOUT as FEATURE_SCANOUT, AEROGPU_FEATURE_TRANSFER as FEATURE_TRANSFER,
     AEROGPU_FEATURE_VBLANK as FEATURE_VBLANK, AEROGPU_MMIO_MAGIC,
     AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF,
     AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
-    AEROGPU_PCI_VENDOR_ID,
+    AEROGPU_PCI_VENDOR_ID, AerogpuErrorCode,
 };
 
 pub const AEROGPU_PCI_BAR0_SIZE_BYTES: u64 = pci::AEROGPU_PCI_BAR0_SIZE_BYTES as u64;
@@ -132,6 +132,7 @@ pub struct AeroGpuRegs {
     /// Monotonic count of errors recorded (ABI 1.3+).
     pub error_count: u32,
 
+    pub current_submission_fence: u64,
     pub scanout0: AeroGpuScanoutConfig,
     pub scanout0_vblank_seq: u64,
     pub scanout0_vblank_time_ns: u64,
@@ -156,6 +157,7 @@ impl Default for AeroGpuRegs {
             error_code: AerogpuErrorCode::None as u32,
             error_fence: 0,
             error_count: 0,
+            current_submission_fence: 0,
             scanout0: AeroGpuScanoutConfig::default(),
             scanout0_vblank_seq: 0,
             scanout0_vblank_time_ns: 0,
@@ -198,5 +200,20 @@ mod tests {
         }
 
         assert_eq!(AeroGpuRegs::default().features, SUPPORTED_FEATURES);
+    }
+
+    #[test]
+    fn record_error_latches_error_fields_and_irq() {
+        let mut regs = AeroGpuRegs::default();
+        assert_eq!(regs.error_code, AerogpuErrorCode::None as u32);
+        assert_eq!(regs.error_fence, 0);
+        assert_eq!(regs.error_count, 0);
+        assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
+
+        regs.record_error(AerogpuErrorCode::CmdDecode, 123);
+        assert_eq!(regs.error_code, AerogpuErrorCode::CmdDecode as u32);
+        assert_eq!(regs.error_fence, 123);
+        assert_eq!(regs.error_count, 1);
+        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
     }
 }
