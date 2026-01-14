@@ -261,7 +261,7 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
     - Runtime registers (subset): MFINDEX (advances **8 microframes per 1ms tick**, wraps to **14 bits**),
       and Interrupter 0 regs (`IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`).
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
-    - command ring doorbell (doorbell 0) is latched; while the controller is running it triggers
+    - command ring doorbell (doorbell 0) is latched; while `USBCMD.RUN=1` it triggers
       bounded command ring processing (`No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`,
       `Configure Endpoint`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`,
       `Set TR Dequeue Pointer`; most other commands complete with TRB Error) and queues
@@ -273,8 +273,9 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
       - endpoint 0 control transfers (Setup/Data/Status TRBs), and
       - bulk/interrupt endpoints via Normal TRBs (via `transfer::XhciTransferExecutor`).
       Transfer execution is performed by the controller’s tick path (e.g. `tick_1ms` / `step_1ms`)
-      when DMA is enabled **and** the controller is running (`USBCMD.RUN=1`). MMIO doorbell writes
-      only latch work, so wrappers must drive periodic ticks for forward progress.
+      when DMA is enabled and the controller is running (`USBCMD.RUN=1`). Endpoint doorbells may be
+      rung while halted, but no DMA or transfer-ring progress occurs until RUN is set. MMIO doorbell
+      writes only latch work, so wrappers must drive periodic ticks for forward progress.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A small DMA read on the rising edge of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
