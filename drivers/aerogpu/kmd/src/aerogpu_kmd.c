@@ -1090,6 +1090,12 @@ static BOOLEAN AeroGpuGetScanoutMmioSnapshot(_In_ const AEROGPU_ADAPTER* Adapter
         return FALSE;
     }
 
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+        DxgkDevicePowerStateD0) {
+        /* Avoid MMIO reads while the adapter is not in D0. */
+        return FALSE;
+    }
+
     RtlZeroMemory(Out, sizeof(*Out));
     Out->FbPa.QuadPart = 0;
 
