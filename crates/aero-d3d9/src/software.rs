@@ -871,6 +871,21 @@ fn run_vertex_shader(
                     Op::Texld => {
                         // Unused in vs for our supported subset.
                     }
+                    Op::Dsx | Op::Dsy => {
+                        // The software renderer does not currently model screen-space derivatives.
+                        // Emit a deterministic value so shaders that use derivatives still execute.
+                        let dst = inst.dst.unwrap();
+                        let v = apply_result_modifier(Vec4::ZERO, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut o_pos,
+                            &mut o_attr,
+                            &mut o_tex,
+                            &mut dummy_color,
+                            v,
+                        );
+                    }
                     Op::If | Op::Ifc | Op::Else | Op::EndIf | Op::End => unreachable!(),
                 }
             }
@@ -1311,6 +1326,21 @@ fn run_pixel_shader(
                             &mut dummy_tex,
                             &mut o_color,
                             sampled,
+                        );
+                    }
+                    Op::Dsx | Op::Dsy => {
+                        // The software renderer does not currently model screen-space derivatives.
+                        // Emit a deterministic value so shaders that use derivatives still execute.
+                        let dst = inst.dst.unwrap();
+                        let v = apply_result_modifier(Vec4::ZERO, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut dummy_pos,
+                            &mut dummy_attr,
+                            &mut dummy_tex,
+                            &mut o_color,
+                            v,
                         );
                     }
                     Op::If | Op::Ifc | Op::Else | Op::EndIf | Op::End => unreachable!(),

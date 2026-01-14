@@ -361,6 +361,31 @@ fn assemble_ps_with_unknown_opcode() -> Vec<u32> {
     out
 }
 
+fn assemble_ps_with_unknown_opcode_and_derivatives() -> Vec<u32> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+    // dsx r0, t0
+    out.extend(enc_inst(0x0056, &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4)]));
+    // dsy r1, t0
+    out.extend(enc_inst(0x0057, &[enc_dst(0, 1, 0xF), enc_src(3, 0, 0xE4)]));
+    // add r0, r0, r1
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src(0, 1, 0xE4),
+        ],
+    ));
+    // Unknown opcode with 0 operands. The legacy translator skips this, while the SM3 decoder
+    // errors out with "unsupported opcode".
+    out.extend(enc_inst(0x1234, &[]));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps2_dp2_masked_xy() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
@@ -1840,6 +1865,30 @@ fn translate_entrypoint_rejects_invalid_predicate_modifier() {
         matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
         "{err:?}"
     );
+}
+
+#[test]
+fn translate_entrypoint_legacy_fallback_supports_derivatives() {
+    // Ensure the legacy fallback translator implements `dsx`/`dsy` so shaders that fall back due
+    // to unrelated SM3-pipeline limitations can still compute derivatives.
+    let ps_bytes = to_bytes(&assemble_ps_with_unknown_opcode_and_derivatives());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::LegacyFallback
+    );
+    assert!(translated.wgsl.contains("dpdx("));
+    assert!(translated.wgsl.contains("dpdy("));
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
 }
 
 #[test]

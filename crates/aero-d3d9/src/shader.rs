@@ -145,6 +145,10 @@ pub enum Op {
     Sge,
     Seq,
     Sne,
+    /// `dsx`: screen-space x derivative (ddx), replicated per component.
+    Dsx,
+    /// `dsy`: screen-space y derivative (ddy), replicated per component.
+    Dsy,
     Frc,
     If,
     Ifc,
@@ -461,6 +465,8 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x0042 => Some(Op::Texld), // D3DSIO_TEX
         0x0054 => Some(Op::Seq),
         0x0055 => Some(Op::Sne),
+        0x0056 => Some(Op::Dsx),
+        0x0057 => Some(Op::Dsy),
         0x0058 => Some(Op::Cmp),
         0x0059 => Some(Op::Dp2Add),
         0x005A => Some(Op::Dp2),
@@ -827,11 +833,13 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Sge
             | Op::Seq
             | Op::Sne
+            | Op::Dsx
+            | Op::Dsy
             | Op::Frc
             | Op::Pow => {
                 let required_params = match op {
                     // dst + 1 src
-                    Op::Mov | Op::Exp | Op::Log | Op::Rcp | Op::Rsq | Op::Frc => 2,
+                    Op::Mov | Op::Exp | Op::Log | Op::Rcp | Op::Rsq | Op::Frc | Op::Dsx | Op::Dsy => 2,
                     // dst + 2 src
                     Op::Add
                     | Op::Sub
@@ -1748,6 +1756,24 @@ fn emit_inst(
             let mut expr = format!("log2({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
             emit_assign(wgsl, *indent, dst, &expr);
+        }
+        Op::Dsx => {
+            if stage == ShaderStage::Pixel {
+                let dst = inst.dst.unwrap();
+                let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
+                let mut expr = format!("dpdx({})", src0);
+                expr = apply_result_modifier(expr, inst.result_modifier);
+                emit_assign(wgsl, *indent, dst, &expr);
+            }
+        }
+        Op::Dsy => {
+            if stage == ShaderStage::Pixel {
+                let dst = inst.dst.unwrap();
+                let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
+                let mut expr = format!("dpdy({})", src0);
+                expr = apply_result_modifier(expr, inst.result_modifier);
+                emit_assign(wgsl, *indent, dst, &expr);
+            }
         }
         Op::Pow => {
             let dst = inst.dst.unwrap();
