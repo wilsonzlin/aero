@@ -123,6 +123,8 @@ cargo xtask input
 cargo xtask input --rust-only
 cargo xtask input --usb-all
 cargo xtask input --machine
+cargo xtask input --with-wasm
+cargo xtask input --rust-only --with-wasm
 cargo xtask input --wasm --rust-only
 cargo xtask input --e2e
 ```
