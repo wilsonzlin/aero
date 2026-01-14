@@ -251,10 +251,10 @@ wasm-pack test --node crates/aero-wasm --test xhci_webusb_bridge
 # can still break this command.
 
 # Canonical machine library tests (covers snapshot + USB container wiring).
-cargo test -p aero-machine --lib
+cargo test -p aero-machine --lib --locked
 
 # Canonical USB stack tests (catches UHCI/EHCI/xHCI regressions).
-cargo test -p aero-usb --lib
+cargo test -p aero-usb --locked
 
 # Optional: also run a small input-focused Playwright subset.
 # (Defaults to Chromium + 1 worker; sets `AERO_WASM_PACKAGES=core` unless already configured.)
