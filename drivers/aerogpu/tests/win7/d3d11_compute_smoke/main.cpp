@@ -68,14 +68,28 @@ static void DumpBytesToFile(const char* test_name,
   CloseHandle(h);
 }
 
-static const char kComputeHlsl[] = R"(
+static const UINT kNumElements = 64;
+
+static const char kComputeStructuredHlsl[] = R"(
 StructuredBuffer<uint> in_buf : register(t0);
 RWStructuredBuffer<uint> out_buf : register(u0);
 
 [numthreads(1, 1, 1)]
-void cs_main(uint3 tid : SV_DispatchThreadID) {
+void cs_structured_main(uint3 tid : SV_DispatchThreadID) {
   const uint idx = tid.x;
   out_buf[idx] = in_buf[idx] * 3u + 7u;
+}
+)";
+
+static const char kComputeRawHlsl[] = R"(
+ByteAddressBuffer in_buf : register(t0);
+RWByteAddressBuffer out_buf : register(u0);
+
+[numthreads(1, 1, 1)]
+void cs_raw_main(uint3 tid : SV_DispatchThreadID) {
+  const uint idx = tid.x;
+  const uint v = in_buf.Load(idx * 4u);
+  out_buf.Store(idx * 4u, v * 3u + 7u);
 }
 )";
 
@@ -246,36 +260,42 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
     return reporter.Pass();
   }
 
-  // Compile shader at runtime (no fxc.exe build-time dependency).
-  std::vector<unsigned char> cs_bytes;
+  std::vector<unsigned char> cs_structured_bytes;
+  std::vector<unsigned char> cs_raw_bytes;
   std::string shader_err;
-  if (!aerogpu_test::CompileHlslToBytecode(kComputeHlsl,
-                                           strlen(kComputeHlsl),
-                                           "d3d11_compute_smoke.hlsl",
-                                           "cs_main",
+
+  std::vector<uint32_t> input(kNumElements);
+  for (UINT i = 0; i < kNumElements; ++i) {
+    input[i] = i * 3u + 1u;
+  }
+
+  // -----------------------------
+  // Structured buffer path (SRV + UAV)
+  // -----------------------------
+  if (!aerogpu_test::CompileHlslToBytecode(kComputeStructuredHlsl,
+                                           strlen(kComputeStructuredHlsl),
+                                           "d3d11_compute_smoke_structured.hlsl",
+                                           "cs_structured_main",
                                            "cs_4_0",
-                                           &cs_bytes,
+                                           &cs_structured_bytes,
                                            &shader_err)) {
-    return reporter.Fail("failed to compile compute shader: %s", shader_err.c_str());
+    return reporter.Fail("failed to compile structured compute shader: %s", shader_err.c_str());
   }
   if (dump) {
     DumpBytesToFile(kTestName,
                     &reporter,
-                    L"d3d11_compute_smoke_cs.dxbc",
-                    cs_bytes.empty() ? NULL : &cs_bytes[0],
-                    (UINT)cs_bytes.size());
+                    L"d3d11_compute_smoke_cs_structured.dxbc",
+                    cs_structured_bytes.empty() ? NULL : &cs_structured_bytes[0],
+                    (UINT)cs_structured_bytes.size());
   }
 
-  ComPtr<ID3D11ComputeShader> cs;
-  hr = device->CreateComputeShader(&cs_bytes[0], cs_bytes.size(), NULL, cs.put());
+  ComPtr<ID3D11ComputeShader> cs_structured;
+  hr = device->CreateComputeShader(&cs_structured_bytes[0],
+                                   cs_structured_bytes.size(),
+                                   NULL,
+                                   cs_structured.put());
   if (FAILED(hr)) {
-    return reporter.FailHresult("CreateComputeShader", hr);
-  }
-
-  const UINT kNumElements = 64;
-  std::vector<uint32_t> input(kNumElements);
-  for (UINT i = 0; i < kNumElements; ++i) {
-    input[i] = i * 3u + 1u;
+    return reporter.FailHresult("CreateComputeShader(structured)", hr);
   }
 
   // Input structured buffer (SRV).
@@ -342,7 +362,7 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
   }
 
   // Dispatch compute work.
-  context->CSSetShader(cs.get(), NULL, 0);
+  context->CSSetShader(cs_structured.get(), NULL, 0);
   ID3D11ShaderResourceView* srvs[] = {srv.get()};
   context->CSSetShaderResources(0, 1, srvs);
   ID3D11UnorderedAccessView* uavs[] = {uav.get()};
@@ -357,10 +377,14 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
   context->CSSetUnorderedAccessViews(0, 1, null_uavs, NULL);
 
   // Copy the output to a staging buffer and read it back on the CPU.
-  D3D11_BUFFER_DESC st_desc = out_desc;
+  D3D11_BUFFER_DESC st_desc;
+  ZeroMemory(&st_desc, sizeof(st_desc));
+  st_desc.ByteWidth = out_desc.ByteWidth;
   st_desc.Usage = D3D11_USAGE_STAGING;
   st_desc.BindFlags = 0;
   st_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  st_desc.MiscFlags = 0;
+  st_desc.StructureByteStride = 0;
 
   ComPtr<ID3D11Buffer> staging;
   hr = device->CreateBuffer(&st_desc, NULL, staging.put());
@@ -402,7 +426,7 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
   if (dump) {
     DumpBytesToFile(kTestName,
                     &reporter,
-                    L"d3d11_compute_smoke_out.bin",
+                    L"d3d11_compute_smoke_out_structured.bin",
                     map.pData,
                     out_desc.ByteWidth);
   }
@@ -417,6 +441,166 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
                          (unsigned long)mismatch_expected);
   }
 
+  // -----------------------------
+  // Raw buffer path (ByteAddressBuffer + RWByteAddressBuffer)
+  // -----------------------------
+  if (!aerogpu_test::CompileHlslToBytecode(kComputeRawHlsl,
+                                           strlen(kComputeRawHlsl),
+                                           "d3d11_compute_smoke_raw.hlsl",
+                                           "cs_raw_main",
+                                           "cs_4_0",
+                                           &cs_raw_bytes,
+                                           &shader_err)) {
+    return reporter.Fail("failed to compile raw compute shader: %s", shader_err.c_str());
+  }
+  if (dump) {
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_compute_smoke_cs_raw.dxbc",
+                    cs_raw_bytes.empty() ? NULL : &cs_raw_bytes[0],
+                    (UINT)cs_raw_bytes.size());
+  }
+
+  ComPtr<ID3D11ComputeShader> cs_raw;
+  hr = device->CreateComputeShader(&cs_raw_bytes[0], cs_raw_bytes.size(), NULL, cs_raw.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateComputeShader(raw)", hr);
+  }
+
+  // Input raw buffer (SRV).
+  D3D11_BUFFER_DESC raw_in_desc;
+  ZeroMemory(&raw_in_desc, sizeof(raw_in_desc));
+  raw_in_desc.ByteWidth = kNumElements * sizeof(uint32_t);
+  raw_in_desc.Usage = D3D11_USAGE_DEFAULT;
+  raw_in_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  raw_in_desc.CPUAccessFlags = 0;
+  raw_in_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+  raw_in_desc.StructureByteStride = 0;
+
+  ComPtr<ID3D11Buffer> raw_in_buf;
+  hr = device->CreateBuffer(&raw_in_desc, &in_init, raw_in_buf.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(input raw SRV)", hr);
+  }
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC raw_srv_desc;
+  ZeroMemory(&raw_srv_desc, sizeof(raw_srv_desc));
+  raw_srv_desc.Format = DXGI_FORMAT_R32_TYPELESS;
+  raw_srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+  raw_srv_desc.BufferEx.FirstElement = 0;
+  raw_srv_desc.BufferEx.NumElements = kNumElements;
+  raw_srv_desc.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
+
+  ComPtr<ID3D11ShaderResourceView> raw_srv;
+  hr = device->CreateShaderResourceView(raw_in_buf.get(), &raw_srv_desc, raw_srv.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateShaderResourceView(input raw SRV)", hr);
+  }
+
+  // Output raw buffer (UAV).
+  D3D11_BUFFER_DESC raw_out_desc;
+  ZeroMemory(&raw_out_desc, sizeof(raw_out_desc));
+  raw_out_desc.ByteWidth = kNumElements * sizeof(uint32_t);
+  raw_out_desc.Usage = D3D11_USAGE_DEFAULT;
+  raw_out_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+  raw_out_desc.CPUAccessFlags = 0;
+  raw_out_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+  raw_out_desc.StructureByteStride = 0;
+
+  ComPtr<ID3D11Buffer> raw_out_buf;
+  hr = device->CreateBuffer(&raw_out_desc, NULL, raw_out_buf.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(output raw UAV)", hr);
+  }
+
+  D3D11_UNORDERED_ACCESS_VIEW_DESC raw_uav_desc;
+  ZeroMemory(&raw_uav_desc, sizeof(raw_uav_desc));
+  raw_uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
+  raw_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+  raw_uav_desc.Buffer.FirstElement = 0;
+  raw_uav_desc.Buffer.NumElements = kNumElements;
+  raw_uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+
+  ComPtr<ID3D11UnorderedAccessView> raw_uav;
+  hr = device->CreateUnorderedAccessView(raw_out_buf.get(), &raw_uav_desc, raw_uav.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateUnorderedAccessView(output raw UAV)", hr);
+  }
+
+  context->CSSetShader(cs_raw.get(), NULL, 0);
+  ID3D11ShaderResourceView* raw_srvs[] = {raw_srv.get()};
+  context->CSSetShaderResources(0, 1, raw_srvs);
+  ID3D11UnorderedAccessView* raw_uavs[] = {raw_uav.get()};
+  context->CSSetUnorderedAccessViews(0, 1, raw_uavs, NULL);
+  context->Dispatch(kNumElements, 1, 1);
+
+  context->CSSetShader(NULL, NULL, 0);
+  context->CSSetShaderResources(0, 1, null_srvs);
+  context->CSSetUnorderedAccessViews(0, 1, null_uavs, NULL);
+
+  D3D11_BUFFER_DESC raw_st_desc;
+  ZeroMemory(&raw_st_desc, sizeof(raw_st_desc));
+  raw_st_desc.ByteWidth = raw_out_desc.ByteWidth;
+  raw_st_desc.Usage = D3D11_USAGE_STAGING;
+  raw_st_desc.BindFlags = 0;
+  raw_st_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  raw_st_desc.MiscFlags = 0;
+  raw_st_desc.StructureByteStride = 0;
+
+  ComPtr<ID3D11Buffer> raw_staging;
+  hr = device->CreateBuffer(&raw_st_desc, NULL, raw_staging.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(staging raw)", hr);
+  }
+
+  context->CopyResource(raw_staging.get(), raw_out_buf.get());
+  context->Flush();
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(raw_staging.get(), 0, D3D11_MAP_READ, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging raw)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(raw_staging.get(), 0);
+    return reporter.Fail("Map(staging raw) returned NULL pData");
+  }
+
+  out_u32 = (const uint32_t*)map.pData;
+  mismatch_index = 0;
+  mismatch_got = 0;
+  mismatch_expected = 0;
+  mismatch = false;
+  for (UINT i = 0; i < kNumElements; ++i) {
+    const uint32_t expected = input[i] * 3u + 7u;
+    const uint32_t got = out_u32[i];
+    if (got != expected) {
+      mismatch = true;
+      mismatch_index = i;
+      mismatch_got = got;
+      mismatch_expected = expected;
+      break;
+    }
+  }
+
+  if (dump) {
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_compute_smoke_out_raw.bin",
+                    map.pData,
+                    raw_out_desc.ByteWidth);
+  }
+
+  context->Unmap(raw_staging.get(), 0);
+
+  if (mismatch) {
+    PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
+    return reporter.Fail("raw output mismatch at index %u: got 0x%08lX expected 0x%08lX",
+                         (unsigned)mismatch_index,
+                         (unsigned long)mismatch_got,
+                         (unsigned long)mismatch_expected);
+  }
+
   return reporter.Pass();
 }
 
@@ -424,4 +608,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D11ComputeSmoke(argc, argv);
 }
-
