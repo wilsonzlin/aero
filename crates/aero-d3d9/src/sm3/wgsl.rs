@@ -1079,6 +1079,9 @@ fn emit_op_line(
             src,
             modifiers,
         } => {
+            if stage != ShaderStage::Pixel {
+                return Err(err("dsx is only supported in pixel shaders"));
+            }
             let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("dsx only supports float sources in WGSL lowering"));
@@ -1095,6 +1098,9 @@ fn emit_op_line(
             src,
             modifiers,
         } => {
+            if stage != ShaderStage::Pixel {
+                return Err(err("dsy is only supported in pixel shaders"));
+            }
             let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("dsy only supports float sources in WGSL lowering"));
@@ -1646,6 +1652,9 @@ fn emit_stmt(
                         src,
                         modifiers,
                     } => {
+                        if stage != ShaderStage::Pixel {
+                            return Err(err("dsx is only supported in pixel shaders"));
+                        }
                         let pred_cond = predicate_expr(pred)?;
                         let (s, ty) = src_expr(src, f32_defs)?;
                         if ty != ScalarTy::F32 {
@@ -1668,6 +1677,9 @@ fn emit_stmt(
                         src,
                         modifiers,
                     } => {
+                        if stage != ShaderStage::Pixel {
+                            return Err(err("dsy is only supported in pixel shaders"));
+                        }
                         let pred_cond = predicate_expr(pred)?;
                         let (s, ty) = src_expr(src, f32_defs)?;
                         if ty != ScalarTy::F32 {

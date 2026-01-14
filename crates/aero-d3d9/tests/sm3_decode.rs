@@ -388,3 +388,20 @@ fn decode_rejects_out_of_range_sampler_register() {
     assert!(err.message.contains("Sampler"), "{err}");
     assert!(err.message.contains("exceeds maximum"), "{err}");
 }
+
+#[test]
+fn decode_rejects_dsx_in_vertex_shader() {
+    // vs_3_0 dsx r0, v0
+    //
+    // D3D9 derivatives (`dsx`/`dsy`) are pixel-shader-only.
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 3, 0),
+        opcode_token(86, 2),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let err = decode_u32_tokens(&tokens).unwrap_err();
+    assert!(err.message.contains("only valid in pixel shaders"), "{err}");
+}
