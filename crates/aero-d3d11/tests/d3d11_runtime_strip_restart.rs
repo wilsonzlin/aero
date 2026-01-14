@@ -477,6 +477,42 @@ fn d3d11_runtime_line_strip_draw_indexed_supports_primitive_restart_u32() {
 }
 
 #[test]
+fn d3d11_runtime_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u32(
+) {
+    pollster::block_on(async {
+        let vertices = [
+            VertexPos2 { pos: [-0.9, -0.5] },
+            VertexPos2 { pos: [-0.1, -0.5] },
+            VertexPos2 { pos: [-0.5, 0.5] },
+            VertexPos2 { pos: [0.1, -0.5] },
+            VertexPos2 { pos: [0.9, -0.5] },
+            VertexPos2 { pos: [0.5, 0.5] },
+        ];
+
+        // Three u32 padding values at the start (12 bytes) so we can bind the IB with a non-zero
+        // offset and draw with a non-zero `first_index`.
+        //
+        // After applying `index_buffer_offset_bytes=8` and `first_index=1`, the draw sees:
+        // [0, 1, 2, 0xFFFF_FFFF, 3, 4, 5].
+        let indices: [u32; 10] = [10, 11, 12, 0, 1, 2, 0xFFFF_FFFF, 3, 4, 5];
+
+        run_triangle_strip_restart_test(
+            concat!(
+                module_path!(),
+                "::d3d11_runtime_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u32"
+            ),
+            IndexFormat::Uint32,
+            &vertices,
+            &indices,
+            7,
+            8,
+            1,
+        )
+        .await;
+    });
+}
+
+#[test]
 fn d3d11_runtime_triangle_strip_draw_indexed_restart_after_copy_buffer_to_buffer_u16() {
     pollster::block_on(async {
         let test_name = concat!(
