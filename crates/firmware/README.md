@@ -263,7 +263,14 @@ To verify the fixture is up to date without modifying it:
 cargo xtask fixtures --check
 ```
 
-Or, to regenerate/check just the BIOS ROM fixture:
+Preferred (regen/check BIOS ROM only):
+
+```bash
+cargo xtask bios-rom
+cargo xtask bios-rom --check
+```
+
+Or, to regenerate/check just the BIOS ROM fixture via the standalone generator binary:
 
 ```bash
 cargo run -p firmware --bin gen_bios_rom --locked
