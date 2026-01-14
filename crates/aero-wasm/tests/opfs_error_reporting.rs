@@ -279,3 +279,42 @@ async fn snapshot_full_to_opfs_unavailable_error_includes_operation_and_hint() {
         "expected DedicatedWorker hint in message, got: {msg}"
     );
 }
+
+#[wasm_bindgen_test(async)]
+async fn primary_hdd_opfs_cow_unavailable_error_includes_operation_and_both_paths_and_hint() {
+    if aero_opfs::opfs_sync_access_supported() {
+        return;
+    }
+
+    let base_path = unique_path("opfs-error-primary-hdd-base", "img");
+    let overlay_path = unique_path("opfs-error-primary-hdd-overlay", "aerospar");
+    let mut m = aero_wasm::Machine::new(2 * 1024 * 1024).expect("Machine::new");
+    let err = m
+        .set_primary_hdd_opfs_cow(base_path.clone(), overlay_path.clone(), 32 * 1024)
+        .await
+        .expect_err("expected OPFS-backed primary HDD COW attach to fail when OPFS sync access unavailable");
+
+    let msg = js_error_message(err);
+    if !is_opfs_unavailable_message(&msg) {
+        if should_skip_opfs_message(&msg) {
+            return;
+        }
+        panic!("unexpected error (expected NotSupported/BackendUnavailable): {msg}");
+    }
+    assert!(
+        msg.contains("Machine.set_primary_hdd_opfs_cow"),
+        "expected operation name in message, got: {msg}"
+    );
+    assert!(
+        msg.contains(&base_path),
+        "expected base_path in message, got: {msg}"
+    );
+    assert!(
+        msg.contains(&overlay_path),
+        "expected overlay_path in message, got: {msg}"
+    );
+    assert!(
+        msg.contains("DedicatedWorker"),
+        "expected DedicatedWorker hint in message, got: {msg}"
+    );
+}

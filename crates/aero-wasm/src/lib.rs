@@ -4235,34 +4235,29 @@ impl Machine {
         overlay_path: String,
         overlay_block_size_bytes: u32,
     ) -> Result<(), JsValue> {
+        let paths = format!("base={base_path}, overlay={overlay_path}");
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
             .map_err(|e| {
-                JsValue::from_str(&format!("Failed to open base OPFS disk '{base_path}': {e}"))
+                opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_cow(base)", &paths, e)
             })?;
 
         let base_disk = aero_storage::RawDisk::open(base_storage).map_err(|e| {
-            JsValue::from_str(&format!("Failed to open base raw disk '{base_path}': {e}"))
+            opfs_context_error_to_js("Machine.set_primary_hdd_opfs_cow(base)", &paths, e)
         })?;
 
         let overlay_storage = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
             .await
             .map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to open/create overlay OPFS disk '{overlay_path}': {e}"
-                ))
+                opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_cow(overlay)", &paths, e)
             })?;
 
         let cow_disk = open_or_create_cow_disk(base_disk, overlay_storage, overlay_block_size_bytes)
-            .map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to prepare COW disk (base='{base_path}', overlay='{overlay_path}'): {e}"
-                ))
-            })?;
+            .map_err(|e| opfs_context_error_to_js("Machine.set_primary_hdd_opfs_cow", &paths, e))?;
 
         self.inner
             .set_disk_backend(Box::new(cow_disk))
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_context_error_to_js("Machine.set_primary_hdd_opfs_cow", &paths, e))?;
 
         // Record stable `{base_image, overlay_image}` strings into the DISKS snapshot overlay refs
         // so the JS coordinator can reopen these images after snapshot restore.
