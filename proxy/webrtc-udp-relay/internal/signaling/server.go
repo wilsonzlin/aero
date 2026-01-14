@@ -310,7 +310,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	authRes, err := s.authorizer().Authorize(r, nil)
 	if err != nil {
-		if IsUnauthorized(err) {
+		if isUnauthorized(err) {
 			s.incMetric(metrics.AuthFailure)
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return
@@ -409,7 +409,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
 	if err != nil {
-		if IsUnauthorized(err) {
+		if isUnauthorized(err) {
 			s.incMetric(metrics.AuthFailure)
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return
@@ -572,7 +572,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 
 	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
 	if err != nil {
-		if IsUnauthorized(err) {
+		if isUnauthorized(err) {
 			s.incMetric(metrics.AuthFailure)
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return
@@ -1000,9 +1000,9 @@ func (wss *wsSession) run() {
 
 	authorized := false
 	if authRes, err := wss.authorizer.Authorize(wss.req, nil); err != nil {
-		if IsAuthMissing(err) {
+		if isAuthMissing(err) {
 			_ = wss.conn.SetReadDeadline(time.Now().Add(wss.authTimeout))
-		} else if IsUnauthorized(err) {
+		} else if isUnauthorized(err) {
 			wss.srv.incMetric(metrics.AuthFailure)
 			_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
 			return
@@ -1068,7 +1068,7 @@ func (wss *wsSession) run() {
 			}
 			authRes, err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: MessageTypeAuth, Credential: cred})
 			if err != nil {
-				if IsUnauthorized(err) {
+				if isUnauthorized(err) {
 					wss.srv.incMetric(metrics.AuthFailure)
 					_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
 				} else {

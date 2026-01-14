@@ -75,7 +75,7 @@ func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
 // (`GET /webrtc/ice`) is never cached by browsers or intermediaries. Responses may
 // contain sensitive TURN credentials (e.g. TURN REST ephemeral creds), and stale
 // caching can also cause ICE failures.
-func noStoreICEHeadersMiddleware() Middleware {
+func noStoreICEHeadersMiddleware() middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only apply to the ICE discovery endpoint. Apply this as middleware (not
@@ -204,9 +204,9 @@ func (s *Server) registerRoutes() {
 	})
 }
 
-type Middleware func(http.Handler) http.Handler
+type middleware func(http.Handler) http.Handler
 
-func chain(handler http.Handler, middlewares ...Middleware) http.Handler {
+func chain(handler http.Handler, middlewares ...middleware) http.Handler {
 	h := handler
 	for i := len(middlewares) - 1; i >= 0; i-- {
 		h = middlewares[i](h)
@@ -214,7 +214,7 @@ func chain(handler http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-func recoverMiddleware(logger *slog.Logger) Middleware {
+func recoverMiddleware(logger *slog.Logger) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -228,7 +228,7 @@ func recoverMiddleware(logger *slog.Logger) Middleware {
 	}
 }
 
-func requestIDMiddleware() Middleware {
+func requestIDMiddleware() middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqID := r.Header.Get("X-Request-ID")
@@ -288,7 +288,7 @@ func (w *statusWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-func requestLoggerMiddleware(logger *slog.Logger) Middleware {
+func requestLoggerMiddleware(logger *slog.Logger) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}

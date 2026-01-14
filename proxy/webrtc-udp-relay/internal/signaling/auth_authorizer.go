@@ -10,29 +10,29 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 )
 
-// AuthAuthorizer enforces AUTH_MODE=none|api_key|jwt for signaling endpoints.
+// authAuthorizer enforces AUTH_MODE=none|api_key|jwt for signaling endpoints.
 //
 // Credential sources:
 //   - HTTP: headers (preferred) and query string (fallback).
 //   - WebSocket: first message `{type:"auth", apiKey:"..."}` / `{type:"auth", token:"..."}`
 //     (preferred) and query string (fallback).
-type AuthAuthorizer struct {
+type authAuthorizer struct {
 	mode     config.AuthMode
 	verifier auth.Verifier
 }
 
-func NewAuthAuthorizer(cfg config.Config) (AuthAuthorizer, error) {
+func NewAuthAuthorizer(cfg config.Config) (Authorizer, error) {
 	v, err := auth.NewVerifier(cfg)
 	if err != nil {
-		return AuthAuthorizer{}, err
+		return nil, err
 	}
-	return AuthAuthorizer{
+	return authAuthorizer{
 		mode:     cfg.AuthMode,
 		verifier: v,
 	}, nil
 }
 
-func (a AuthAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
+func (a authAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
 	if a.mode == config.AuthModeNone {
 		return AuthResult{}, nil
 	}
@@ -78,14 +78,14 @@ func credentialFromHelloAndRequest(mode config.AuthMode, hello *ClientHello, r *
 	return auth.CredentialFromRequest(mode, r)
 }
 
-// IsAuthMissing reports whether err represents missing credentials (as opposed to
+// isAuthMissing reports whether err represents missing credentials (as opposed to
 // invalid credentials).
-func IsAuthMissing(err error) bool {
+func isAuthMissing(err error) bool {
 	return errors.Is(err, auth.ErrMissingCredentials)
 }
 
-// IsUnauthorized reports whether err should be treated as an authentication failure.
-func IsUnauthorized(err error) bool {
+// isUnauthorized reports whether err should be treated as an authentication failure.
+func isUnauthorized(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -97,7 +97,7 @@ func unauthorizedMessage(err error) string {
 		return "unauthorized"
 	}
 	// Avoid leaking server configuration details (e.g. "invalid auth mode").
-	if IsUnauthorized(err) {
+	if isUnauthorized(err) {
 		return "unauthorized"
 	}
 	return fmt.Sprintf("authorization failed: %v", err)
