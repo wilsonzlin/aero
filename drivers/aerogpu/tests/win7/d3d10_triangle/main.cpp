@@ -414,6 +414,19 @@ static int RunD3D10Triangle(int argc, char** argv) {
   ID3D10Buffer* vbs[] = {vb.get(), dummy_vb.get()};
   device->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 
+  // Exercise non-zero StartSlot updates and null-buffer unbinds.
+  {
+    UINT slot1_stride = sizeof(uint32_t);
+    UINT slot1_offset = 0;
+    ID3D10Buffer* slot1_vbs[] = {dummy_vb.get()};
+    device->IASetVertexBuffers(1, 1, slot1_vbs, &slot1_stride, &slot1_offset);
+
+    ID3D10Buffer* null_vbs[] = {NULL};
+    UINT zero = 0;
+    device->IASetVertexBuffers(1, 1, null_vbs, &zero, &zero);
+    device->IASetVertexBuffers(1, 1, slot1_vbs, &slot1_stride, &slot1_offset);
+  }
+
   device->VSSetShader(vs.get());
   device->PSSetShader(ps.get());
 
