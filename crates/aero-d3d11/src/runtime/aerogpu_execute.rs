@@ -154,9 +154,6 @@ impl AerogpuCmdRuntime {
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
         let downlevel = adapter.get_downlevel_capabilities();
-        let supports_compute = downlevel
-            .flags
-            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         let supports_indirect_execution =
             super::supports_indirect_execution_from_downlevel_flags(downlevel.flags);
         let requested_features = super::negotiated_features(&adapter);
@@ -172,8 +169,7 @@ impl AerogpuCmdRuntime {
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
-        let mut caps = GpuCapabilities::from_device(&device);
-        caps.supports_compute = supports_compute;
+        let caps = GpuCapabilities::from_device(&device).with_downlevel_flags(downlevel.flags);
         let pipelines = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
         let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {

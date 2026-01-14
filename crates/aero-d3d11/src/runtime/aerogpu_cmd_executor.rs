@@ -1342,7 +1342,8 @@ impl AerogpuD3d11Executor {
 
         if !missing.is_empty() {
             bail!(
-                "GS/HS/DS emulation requires compute shaders and indirect execution; missing {}",
+                "GS/HS/DS emulation requires compute shaders and indirect execution; backend {:?} missing {}",
+                self.backend,
                 missing.join(", ")
             );
         }
@@ -11675,6 +11676,13 @@ fn group_index_to_stage(group: u32) -> Result<ShaderStage> {
     }
 }
 
+fn d3d_topology_requires_gs_hs_ds_emulation(topology: u32) -> bool {
+    // D3D11 topology values:
+    // - 10..13: *_ADJ adjacency topologies (geometry shader input)
+    // - 33..64: N_CONTROL_POINT_PATCHLIST (tessellation)
+    matches!(topology, 10 | 11 | 12 | 13) || (33..=64).contains(&topology)
+}
+
 fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::ShaderStage {
     match stage {
         ShaderStage::Vertex => aero_gpu::pipeline_key::ShaderStage::Vertex,
@@ -13247,6 +13255,8 @@ mod tests {
                     usage: wgpu::BufferUsages::VERTEX,
                     backing: None,
                     dirty: None,
+                    #[cfg(test)]
+                    usage: wgpu::BufferUsages::VERTEX,
                 },
             );
 
@@ -13722,7 +13732,13 @@ fn main() {
                 );
             let msg = err.to_string();
             assert!(
-                msg.contains("GS/HS/DS emulation requires compute shaders and indirect execution; missing"),
+                msg.contains(
+                    "GS/HS/DS emulation requires compute shaders and indirect execution; backend"
+                ),
+                "unexpected error: {err:#}"
+            );
+            assert!(
+                msg.contains(&format!("{:?}", exec.backend())),
                 "unexpected error: {err:#}"
             );
             assert!(msg.contains("COMPUTE_SHADERS"), "unexpected error: {err:#}");
