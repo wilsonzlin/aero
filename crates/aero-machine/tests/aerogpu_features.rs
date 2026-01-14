@@ -66,9 +66,9 @@ fn aerogpu_features_lo_hi_match_implemented_capabilities() {
     // - Cursor overlay
     // - Error reporting registers
     let expected = pci::AEROGPU_FEATURE_SCANOUT
+        | pci::AEROGPU_FEATURE_CURSOR
         | pci::AEROGPU_FEATURE_VBLANK
         | pci::AEROGPU_FEATURE_FENCE_PAGE
-        | pci::AEROGPU_FEATURE_CURSOR
         | pci::AEROGPU_FEATURE_ERROR_INFO;
 
     assert_eq!(

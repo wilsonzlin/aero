@@ -37,16 +37,21 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
         (bar0, bar1)
     };
 
-    // Enable PCI bus mastering (COMMAND.BME). The AeroGPU scanout path DMA-reads the framebuffer
-    // from BAR1 VRAM, and the machine intentionally gates these reads on BME.
+    // Enable PCI MMIO decode (COMMAND.MEM) + bus mastering (COMMAND.BME).
+    //
+    // The AeroGPU scanout path DMA-reads the framebuffer, and the machine intentionally gates
+    // these reads on BME. MMIO decode is required so BAR0/BAR1 accesses route to the device.
     {
         let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
-        let cfg = bus
-            .device_config_mut(aerogpu_bdf)
-            .expect("AeroGPU device present");
-        cfg.set_command(cfg.command() | (1 << 2));
+        let command = bus.read_config(aerogpu_bdf, 0x04, 2) as u16;
+        bus.write_config(
+            aerogpu_bdf,
+            0x04,
+            2,
+            u32::from(command | (1 << 1) | (1 << 2)),
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -65,8 +70,8 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
     // 2) Program scanout registers (BAR0) and populate a tiny framebuffer in VRAM.
     // ---------------------------------------------------------------------
     let fb_base = bar1_base + VBE_LFB_OFFSET as u64;
-    // Populate pixels in B8G8R8X8 (little-endian u32 = 0x00RRGGBB). The host-facing framebuffer
-    // is RGBA8888.
+    // Populate pixels in B8G8R8X8 (little-endian u32 = 0x00RRGGBB). The scanout readback converts
+    // them into RGBA8888 host pixels.
     vm.write_physical_u32(fb_base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(fb_base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(fb_base + 8, 0x0000_00FF); // (2,0) blue
