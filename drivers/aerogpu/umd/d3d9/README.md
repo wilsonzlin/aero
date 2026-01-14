@@ -19,6 +19,7 @@ The command stream does **not** reference resources by a per-submission “alloc
 - **Backing allocation IDs** (`alloc_id`): a stable 32-bit ID for a WDDM allocation (not a process-local handle and not a per-submit index). When a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero `alloc_id`.
   - `alloc_id` is a **driver-defined** ID carried via WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
   - The KMD uses it to build the per-submit `aerogpu_alloc_table` (`drivers/aerogpu/protocol/aerogpu_ring.h`) mapping `alloc_id → {gpa, size_bytes, flags}` for the emulator. `backing_alloc_id` in packets is the `alloc_id` lookup key (not an index into an allocation list).
+    - `flags` are per-submit and reflect read/write intent (via the WDDM allocation list `WriteOperation` bit). The host enforces `AEROGPU_ALLOC_FLAG_READONLY` by rejecting guest-memory writeback into read-only allocations.
   - For **shared** allocations, dxgkrnl preserves and replays the private-data blob on `OpenResource`/`OpenAllocation` so all guest processes observe consistent IDs.
   - `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
 
@@ -354,6 +355,7 @@ The current implementation targets:
     This requires allocation-backed systemmem surfaces (`backing_alloc_id != 0`).
     (The same transfer/writeback path is also used for full-surface `CopyRects` into allocation-backed systemmem surfaces.)
   - Otherwise, the UMD falls back to a submit+wait and a CPU-side copy.
+- `WaitForVBlank` and `GetRasterStatus` (scanline/vblank) are implemented for pacing/diagnostics (validated by `d3d9ex_dwm_ddi_sanity` and `d3d9_raster_status_sanity`).
 - **EVENT queries (DWM):** `CreateQuery`/`IssueQuery`/`GetQueryData` are implemented for `D3DQUERYTYPE_EVENT` only; other query
   types return `D3DERR_NOTAVAILABLE` (see `device_create_query()` / `device_issue_query()` / `device_get_query_data()` in
   `src/aerogpu_d3d9_driver.cpp`; validated by `d3d9ex_query_latency` and `d3d9ex_event_query`).
@@ -466,7 +468,7 @@ This subset is validated via:
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
   `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`,
-  `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+  `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
 ## Call tracing (bring-up / debugging)
 
