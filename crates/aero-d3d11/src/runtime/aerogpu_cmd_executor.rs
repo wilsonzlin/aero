@@ -13054,6 +13054,8 @@ mod tests {
                     buffer: vb,
                     size: 16,
                     gpu_size: 16,
+                    #[cfg(test)]
+                    usage: wgpu::BufferUsages::VERTEX,
                     backing: None,
                     dirty: None,
                     #[cfg(test)]
