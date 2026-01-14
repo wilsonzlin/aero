@@ -1578,6 +1578,252 @@ fn tier2_inline_tlb_dynamic_w32_store_cross_page_check_boundary() {
 }
 
 #[test]
+fn tier2_inline_tlb_dynamic_w16_load_cross_page_check_boundary() {
+    // Dynamic (non-constant) addresses emit a runtime cross-page check. Ensure the boundary
+    // condition is correct for W16 accesses: offset 0xFFE stays in-page, 0xFFF crosses.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: Gpr::Rax,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W16,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(ValueId(1)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let fast_addr: u64 = PAGE_SIZE - 2; // 0xFFE
+    let slow_addr: u64 = PAGE_SIZE + (PAGE_SIZE - 1); // 0x1FFF
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[fast_addr as usize..fast_addr as usize + 2].copy_from_slice(&0xBEEFu16.to_le_bytes());
+    ram[slow_addr as usize..slow_addr as usize + 2].copy_from_slice(&0x1234u16.to_le_bytes());
+
+    let cpu_ptr = ram.len() as u64;
+
+    // offset == 0xFFE: should take the inline-TLB fast path.
+    let (ret, _got_ram, gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram.clone(),
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, fast_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(gpr[Gpr::Rbx.as_u8() as usize] as u16, 0xBEEF);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+
+    // offset == 0xFFF: should take the slow helper path.
+    let (ret, _got_ram, gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, slow_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(gpr[Gpr::Rbx.as_u8() as usize] as u16, 0x1234);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 1);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_dynamic_w16_store_cross_page_check_boundary() {
+    // Like `tier2_inline_tlb_dynamic_w16_load_cross_page_check_boundary`, but for stores.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: Gpr::Rax,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(0)),
+                src: Operand::Const(0xBEEF),
+                width: Width::W16,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let fast_addr: u64 = PAGE_SIZE - 2; // 0xFFE
+    let slow_addr: u64 = PAGE_SIZE + (PAGE_SIZE - 1); // 0x1FFF
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+
+    // offset == 0xFFE: should take the inline-TLB fast path.
+    let (ret, got_ram, _gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram.clone(),
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, fast_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(&got_ram[fast_addr as usize..fast_addr as usize + 2], &0xBEEFu16.to_le_bytes());
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+
+    // offset == 0xFFF: should take the slow helper path.
+    let (ret, got_ram, _gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, slow_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(&got_ram[slow_addr as usize..slow_addr as usize + 2], &0xBEEFu16.to_le_bytes());
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier2_inline_tlb_dynamic_w64_load_cross_page_check_boundary() {
+    // Dynamic (non-constant) addresses emit a runtime cross-page check. Ensure the boundary
+    // condition is correct for W64 accesses: offset 0xFF8 stays in-page, 0xFF9 crosses.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: Gpr::Rax,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W64,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(ValueId(1)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let fast_addr: u64 = PAGE_SIZE - 8; // 0xFF8
+    let slow_addr: u64 = PAGE_SIZE + (PAGE_SIZE - 7); // 0x1FF9
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[fast_addr as usize..fast_addr as usize + 8]
+        .copy_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+    ram[slow_addr as usize..slow_addr as usize + 8]
+        .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    let cpu_ptr = ram.len() as u64;
+
+    // offset == 0xFF8: should take the inline-TLB fast path.
+    let (ret, _got_ram, gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram.clone(),
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, fast_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(
+        gpr[Gpr::Rbx.as_u8() as usize],
+        0x0102_0304_0506_0708
+    );
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+
+    // offset == 0xFF9: should take the slow helper path.
+    let (ret, _got_ram, gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, slow_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(
+        gpr[Gpr::Rbx.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 1);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_dynamic_w64_store_cross_page_check_boundary() {
+    // Like `tier2_inline_tlb_dynamic_w64_load_cross_page_check_boundary`, but for stores.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: Gpr::Rax,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(0)),
+                src: Operand::Const(0x1122_3344_5566_7788),
+                width: Width::W64,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let fast_addr: u64 = PAGE_SIZE - 8; // 0xFF8
+    let slow_addr: u64 = PAGE_SIZE + (PAGE_SIZE - 7); // 0x1FF9
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+
+    // offset == 0xFF8: should take the inline-TLB fast path.
+    let (ret, got_ram, _gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram.clone(),
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, fast_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(
+        read_u64_le(&got_ram, fast_addr as usize),
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+
+    // offset == 0xFF9: should take the slow helper path.
+    let (ret, got_ram, _gpr, host) = run_trace_with_init_gprs(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        &[(Gpr::Rax, slow_addr)],
+    );
+    assert_eq!(ret, 0x1000);
+    assert_eq!(
+        read_u64_le(&got_ram, slow_addr as usize),
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 1);
+}
+
+#[test]
 fn tier2_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
     // Q35 layout:
     // - low RAM:  [0x0000_0000 .. 0xB000_0000)
