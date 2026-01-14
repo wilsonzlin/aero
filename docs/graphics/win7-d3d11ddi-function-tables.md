@@ -460,7 +460,7 @@ Optional but common for real apps:
 | `pfnCreateGeometryShader` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` allowed for bring-up, but breaks FL10_0 apps using GS and the `d3d11_geometry_shader_smoke` test. |
 | `pfnDestroyGeometryShader` | REQUIRED-BUT-STUBBABLE | `void`. |
 | `pfnCalcPrivateGeometryShaderWithStreamOutputSize` | OPTIONAL | Return `sizeof(GS+SO)`; `Create*` may return `E_NOTIMPL` until SO is implemented. |
-| `pfnCreateGeometryShaderWithStreamOutput` | OPTIONAL | `HRESULT`: `E_NOTIMPL`. |
+| `pfnCreateGeometryShaderWithStreamOutput` | OPTIONAL | `HRESULT`: `E_NOTIMPL` is acceptable until SO is implemented. AeroGPU currently accepts this entrypoint but ignores the stream-output declaration (behaves like `pfnCreateGeometryShader`); binding real SO targets via `SoSetTargets` still reports `E_NOTIMPL`. |
 
 SM5/tessellation/compute (not required for FL10_0 bring-up):
 
