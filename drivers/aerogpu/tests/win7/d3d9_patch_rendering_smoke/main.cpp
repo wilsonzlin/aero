@@ -507,6 +507,22 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     }
   }
 
+  D3DCAPS9 caps;
+  ZeroMemory(&caps, sizeof(caps));
+  hr = d3d->GetDeviceCaps(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, &caps);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3D9Ex::GetDeviceCaps", hr);
+  }
+  aerogpu_test::PrintfStdout("INFO: %s: DevCaps=0x%08lX MaxNpatchTessellationLevel=%.2f",
+                             kTestName,
+                             (unsigned long)caps.DevCaps,
+                             (double)caps.MaxNpatchTessellationLevel);
+  if ((caps.DevCaps & D3DDEVCAPS_RTPATCHES) == 0 || caps.MaxNpatchTessellationLevel <= 0.0f) {
+    aerogpu_test::PrintfStdout("INFO: %s: patch caps not advertised; skipping", kTestName);
+    reporter.SetSkipped("patch_caps_missing");
+    return reporter.Pass();
+  }
+
   // Fixed-function state.
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
   dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
