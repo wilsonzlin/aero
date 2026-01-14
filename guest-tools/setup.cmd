@@ -444,9 +444,15 @@ setlocal EnableDelayedExpansion
 set "MANIFEST=%~1"
 set "ROOT=%~2"
 set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
-if not exist "%PWSH%" set "PWSH=powershell.exe"
 if not exist "%PWSH%" (
-  endlocal & exit /b 2
+  set "PWSH=powershell.exe"
+  rem `if exist powershell.exe` does not consult PATH. Use where.exe when available.
+  if exist "%SYS32%\where.exe" (
+    "%SYS32%\where.exe" powershell.exe >nul 2>&1
+    if errorlevel 1 (
+      endlocal & exit /b 2
+    )
+  )
 )
 
 set "AEROGT_MANIFEST=%MANIFEST%"
