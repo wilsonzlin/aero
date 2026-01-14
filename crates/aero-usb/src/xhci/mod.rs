@@ -1243,9 +1243,16 @@ impl XhciController {
             return;
         }
 
-        let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
-        let mut ep0_ctx =
-            EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+        let Some(slot_ctx_addr) = input_ctx_ptr.checked_add(CONTEXT_SIZE as u64) else {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        };
+        let mut slot_ctx = SlotContext::read_from(mem, slot_ctx_addr);
+        let Some(ep0_ctx_addr) = input_ctx_ptr.checked_add((2 * CONTEXT_SIZE) as u64) else {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        };
+        let mut ep0_ctx = EndpointContext::read_from(mem, ep0_ctx_addr);
 
         let port_id = slot_ctx.root_hub_port_number();
         if port_id == 0 || port_id > self.port_count {
@@ -1384,13 +1391,29 @@ impl XhciController {
 
         // Endpoint state is controller-owned. Preserve the existing state if the output context
         // already has one, otherwise set the endpoint to Running.
-        let prev_ep0 = EndpointContext::read_from(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+        let Some(prev_ep0_addr) = dev_ctx_ptr.checked_add(CONTEXT_SIZE as u64) else {
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::ContextStateError,
+                slot_id,
+            );
+            return;
+        };
+        let prev_ep0 = EndpointContext::read_from(mem, prev_ep0_addr);
         let prev_state = prev_ep0.endpoint_state();
         ep0_ctx.set_endpoint_state(if prev_state == 0 { 1 } else { prev_state });
 
         // Mirror contexts to the output Device Context.
         slot_ctx.write_to(mem, dev_ctx_ptr);
-        ep0_ctx.write_to(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+        let Some(out_ep0_addr) = dev_ctx_ptr.checked_add(CONTEXT_SIZE as u64) else {
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::ContextStateError,
+                slot_id,
+            );
+            return;
+        };
+        ep0_ctx.write_to(mem, out_ep0_addr);
 
         let slot_state = &mut self.slots[slot_idx];
         slot_state.port_id = Some(port_id);
@@ -1486,7 +1509,15 @@ impl XhciController {
         };
 
         if icc.add_context(0) {
-            let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+            let Some(slot_ctx_addr) = input_ctx_ptr.checked_add(CONTEXT_SIZE as u64) else {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
+                return;
+            };
+            let mut slot_ctx = SlotContext::read_from(mem, slot_ctx_addr);
             let mut out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
             if out_slot.root_hub_port_number() == 0 {
                 out_slot = self.slots[slot_idx].slot_context;
@@ -1512,12 +1543,24 @@ impl XhciController {
 
         // MVP: update the EP0 interval/max-packet-size and TR Dequeue Pointer fields. Preserve
         // endpoint state and other xHC-owned fields in the output context.
-        let in_ep0 = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
-        let mut ep0_ctx = EndpointContext::read_from(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+        let Some(in_ep0_addr) = input_ctx_ptr.checked_add((2 * CONTEXT_SIZE) as u64) else {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        };
+        let in_ep0 = EndpointContext::read_from(mem, in_ep0_addr);
+        let Some(ep0_ctx_addr) = dev_ctx_ptr.checked_add(CONTEXT_SIZE as u64) else {
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::ContextStateError,
+                slot_id,
+            );
+            return;
+        };
+        let mut ep0_ctx = EndpointContext::read_from(mem, ep0_ctx_addr);
         ep0_ctx.set_interval(in_ep0.interval());
         ep0_ctx.set_max_packet_size(in_ep0.max_packet_size());
         ep0_ctx.set_tr_dequeue_pointer_raw(in_ep0.tr_dequeue_pointer_raw());
-        ep0_ctx.write_to(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+        ep0_ctx.write_to(mem, ep0_ctx_addr);
 
         let slot_state = &mut self.slots[slot_idx];
         slot_state.endpoint_contexts[0] = ep0_ctx;
@@ -1620,7 +1663,15 @@ impl XhciController {
             // - Update Slot Context Context Entries to 1 (EP0 only).
             // - Drop any transfer-executor state so stale endpoints cannot poll.
             for endpoint_id in 2u8..=31 {
-                let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
+                let off = u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
+                let Some(out_addr) = dev_ctx_ptr.checked_add(off) else {
+                    self.queue_command_completion_event(
+                        cmd_paddr,
+                        CompletionCode::ContextStateError,
+                        slot_id,
+                    );
+                    return;
+                };
                 EndpointContext::default().write_to(mem, out_addr);
                 let idx = usize::from(endpoint_id - 1);
                 let slot_state = &mut self.slots[slot_idx];
@@ -1699,7 +1750,15 @@ impl XhciController {
         // Slot Context (bit0) is optional.
         if icc.add_context(0) {
             let preserved = self.slots[slot_idx].slot_context;
-            let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+            let Some(slot_ctx_addr) = input_ctx_ptr.checked_add(CONTEXT_SIZE as u64) else {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
+                return;
+            };
+            let mut slot_ctx = SlotContext::read_from(mem, slot_ctx_addr);
             let mut out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
             if out_slot.root_hub_port_number() == 0 {
                 out_slot = preserved;
@@ -1730,7 +1789,15 @@ impl XhciController {
                 if !icc.drop_context(endpoint_id) {
                     continue;
                 }
-                let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
+                let off = u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
+                let Some(out_addr) = dev_ctx_ptr.checked_add(off) else {
+                    self.queue_command_completion_event(
+                        cmd_paddr,
+                        CompletionCode::ContextStateError,
+                        slot_id,
+                    );
+                    return;
+                };
                 EndpointContext::default().write_to(mem, out_addr);
                 let idx = usize::from(endpoint_id - 1);
                 let slot_state = &mut self.slots[slot_idx];
@@ -1769,11 +1836,27 @@ impl XhciController {
 
             // Input context layout: [ICC][Slot][EP0][EP1 OUT][EP1 IN]...
             let input_off = (endpoint_id as u64 + 1) * CONTEXT_SIZE as u64;
-            let mut ep_ctx = EndpointContext::read_from(mem, input_ctx_ptr + input_off);
+            let Some(input_addr) = input_ctx_ptr.checked_add(input_off) else {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
+                return;
+            };
+            let mut ep_ctx = EndpointContext::read_from(mem, input_addr);
 
             // Endpoint state is controller-owned. Preserve an existing non-zero state (e.g.
             // Stopped/Halted) so Configure Endpoint does not implicitly clear error conditions.
-            let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
+            let out_off = u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
+            let Some(out_addr) = dev_ctx_ptr.checked_add(out_off) else {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ContextStateError,
+                    slot_id,
+                );
+                return;
+            };
             let prev = EndpointContext::read_from(mem, out_addr);
             let prev_state = prev.endpoint_state();
             ep_ctx.set_endpoint_state(if prev_state == 0 { 1 } else { prev_state });
