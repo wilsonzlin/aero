@@ -20,28 +20,37 @@ VSOut vs_main(VSIn input) {
   return o;
 }
 
-[maxvertexcount(4)]
+[maxvertexcount(8)]
 void gs_main(point VSOut input[1], inout TriangleStream<GSOut> tri_stream) {
-  float4 base = input[0].pos;
   float2 half = float2(0.3f, 0.3f);
+  float4 bases[2] = {
+      float4(-0.6f, 0.0f, 0.0f, 1.0f),
+      float4(0.6f, 0.0f, 0.0f, 1.0f)
+  };
+  float4 colors[2] = {
+      float4(0.0f, 1.0f, 0.0f, 1.0f), // green
+      float4(0.0f, 0.0f, 1.0f, 1.0f)  // blue
+  };
 
   GSOut o;
-  o.color = input[0].color;
+  for (int i = 0; i < 2; ++i) {
+    float4 base = bases[i];
+    o.color = colors[i];
 
-  // Triangle strip quad (4 vertices) + RestartStrip to terminate the strip.
-  o.pos = base + float4(-half.x, -half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
-  o.pos = base + float4(-half.x,  half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
-  o.pos = base + float4( half.x, -half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
-  o.pos = base + float4( half.x,  half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
+    // Triangle strip quad (4 vertices) + RestartStrip to terminate the strip.
+    o.pos = base + float4(-half.x, -half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+    o.pos = base + float4(-half.x,  half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+    o.pos = base + float4( half.x, -half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+    o.pos = base + float4( half.x,  half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
 
-  tri_stream.RestartStrip();
+    tri_stream.RestartStrip();
+  }
 }
 
 float4 ps_main(GSOut input) : SV_Target {
   return input.color;
 }
-

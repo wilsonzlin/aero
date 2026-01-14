@@ -12,10 +12,12 @@ struct Vertex {
   float color[4];
 };
 
-// A GS that expands point primitives into a quad (triangle strip), issuing RestartStrip between
-// emitted quads. This specifically validates that geometry-shader emulation correctly handles the
-// `cut`/RestartStrip marker when converting triangle strips to triangle lists (the second quad
-// must not connect to the first).
+// A GS that expands a point primitive into *two* quads (each a triangle strip), issuing
+// RestartStrip between quads.
+//
+// This validates that geometry-shader emulation correctly handles the `cut`/RestartStrip marker
+// when converting triangle strips to triangle lists: the second strip must not connect to the
+// first, otherwise "bridge" triangles will fill the gap between the quads.
 static const char kRestartStripHlsl[] = R"(struct VSIn {
   float2 pos : POSITION;
   float4 color : COLOR0;
@@ -38,29 +40,40 @@ VSOut vs_main(VSIn input) {
   return o;
 }
 
-[maxvertexcount(4)]
+[maxvertexcount(8)]
 void gs_main(point VSOut input[1], inout TriangleStream<GSOut> tri_stream) {
-  float4 base = input[0].pos;
   float2 half = float2(0.3f, 0.3f);
+  float4 bases[2] = {
+      float4(-0.6f, 0.0f, 0.0f, 1.0f),
+      float4(0.6f, 0.0f, 0.0f, 1.0f)
+  };
+  float4 colors[2] = {
+      float4(0.0f, 1.0f, 0.0f, 1.0f), // green
+      float4(0.0f, 0.0f, 1.0f, 1.0f)  // blue
+  };
 
   GSOut o;
-  o.color = input[0].color;
 
-  // Triangle strip quad:
-  //   (x0,y0) ---- (x1,y0)
-  //      |  \         |
-  //      |     \      |
-  //   (x0,y1) ---- (x1,y1)
-  o.pos = base + float4(-half.x, -half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
-  o.pos = base + float4(-half.x,  half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
-  o.pos = base + float4( half.x, -half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
-  o.pos = base + float4( half.x,  half.y, 0.0f, 0.0f);
-  tri_stream.Append(o);
+  for (int i = 0; i < 2; ++i) {
+    float4 base = bases[i];
+    o.color = colors[i];
 
-  tri_stream.RestartStrip();
+    // Triangle strip quad:
+    //   (x0,y0) ---- (x1,y0)
+    //      |  \         |
+    //      |     \      |
+    //   (x0,y1) ---- (x1,y1)
+    o.pos = base + float4(-half.x, -half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+    o.pos = base + float4(-half.x,  half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+    o.pos = base + float4( half.x, -half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+    o.pos = base + float4( half.x,  half.y, 0.0f, 0.0f);
+    tri_stream.Append(o);
+
+    tri_stream.RestartStrip();
+  }
 }
 
 float4 ps_main(GSOut input) : SV_Target {
@@ -398,23 +411,16 @@ static int RunD3D11GeometryShaderRestartStrip(int argc, char** argv) {
   context->IASetInputLayout(input_layout.get());
   context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
 
-  // Two points; each GS invocation expands to a quad and emits RestartStrip. If RestartStrip
-  // semantics are ignored during strip->list conversion, the two quads will be connected by
-  // bridging triangles, filling the center pixel.
-  Vertex verts[2];
-  verts[0].pos[0] = -0.6f;
+  // Single point. The GS emits *two* quads and calls RestartStrip between them.
+  // If RestartStrip semantics are ignored during strip->list conversion, the quads will be
+  // connected by bridging triangles, filling the gap pixels.
+  Vertex verts[1];
+  verts[0].pos[0] = 0.0f;
   verts[0].pos[1] = 0.0f;
   verts[0].color[0] = 0.0f;
-  verts[0].color[1] = 1.0f;
+  verts[0].color[1] = 0.0f;
   verts[0].color[2] = 0.0f;
   verts[0].color[3] = 1.0f;
-
-  verts[1].pos[0] = 0.6f;
-  verts[1].pos[1] = 0.0f;
-  verts[1].color[0] = 0.0f;
-  verts[1].color[1] = 0.0f;
-  verts[1].color[2] = 1.0f;
-  verts[1].color[3] = 1.0f;
 
   D3D11_BUFFER_DESC bd;
   ZeroMemory(&bd, sizeof(bd));
@@ -443,7 +449,7 @@ static int RunD3D11GeometryShaderRestartStrip(int argc, char** argv) {
 
   const FLOAT clear_rgba[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
-  context->Draw(2, 0);
+  context->Draw(1, 0);
   // Avoid any ambiguity around copying from a still-bound render target.
   context->OMSetRenderTargets(0, NULL, NULL);
 
