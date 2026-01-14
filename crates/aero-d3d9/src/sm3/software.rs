@@ -2002,6 +2002,19 @@ mod tests {
             1,
             "collect_used_pixel_inputs_op should list IrOp::Dp2Add exactly once"
         );
+
+        // Keep the 3-src ops as separate match arms. Grouping them into an or-pattern makes merge
+        // conflict resolutions more likely to accidentally duplicate a variant, and this file uses
+        // `#[deny(unreachable_patterns)]`, turning that into a hard build break.
+        assert!(
+            !fn_src.contains("| IrOp::Dp2Add")
+                && !fn_src.contains("|IrOp::Dp2Add")
+                && !fn_src.contains("| IrOp::Mad")
+                && !fn_src.contains("|IrOp::Mad")
+                && !fn_src.contains("| IrOp::Lrp")
+                && !fn_src.contains("|IrOp::Lrp"),
+            "collect_used_pixel_inputs_op should keep Dp2Add/Mad/Lrp as separate match arms (no or-pattern group)"
+        );
     }
 
     fn src_input(index: u32) -> Src {
