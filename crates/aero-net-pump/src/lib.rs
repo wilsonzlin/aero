@@ -426,10 +426,12 @@ impl VirtioNetTickPump {
 /// Pump a modern virtio-net PCI device once in a deterministic, bounded way.
 ///
 /// Ordering is deterministic and mirrors the canonical machine (`aero-machine`):
-/// 1) Reset the per-tick backend RX budget via [`VirtioNetBackendAdapter::set_rx_budget`].
+/// 1) Disable backend RX (`rx_budget = 0`) so backend polling does not occur while draining guest
+///    virtqueue descriptor chains. This ensures guest TX is processed before spending the RX budget.
 /// 2) Call [`VirtioPciDevice::process_notified_queues_bounded`] to consume notified/pending virtqueue
 ///    avail entries, clamped to `max_chains_per_queue_per_tick` per queue.
-/// 3) Call [`VirtioPciDevice::poll_bounded`] with a chain budget of `0` so device-driven work (e.g.
+/// 3) Reset the per-tick backend RX budget via [`VirtioNetBackendAdapter::set_rx_budget`], then call
+///    [`VirtioPciDevice::poll_bounded`] with a chain budget of `0` so device-driven work (e.g.
 ///    virtio-net RX flush) runs once per queue without consuming additional avail entries.
 ///
 /// Note: [`VirtioPciDevice`] itself gates guest-memory DMA on PCI COMMAND.BME (bus master enable).
@@ -442,12 +444,18 @@ pub fn tick_virtio_net(
     max_chains_per_queue_per_tick: usize,
     max_rx_frames_per_tick: usize,
 ) {
+    if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
+        // Disable backend RX while processing notified queues so we don't spend the tick's RX budget
+        // before guest TX has been drained to the backend.
+        net.backend_mut().set_rx_budget(0);
+    }
+
+    virtio.process_notified_queues_bounded(mem, max_chains_per_queue_per_tick);
+
     // Reset the per-tick backend RX budget so virtio-net cannot drain the backend indefinitely.
     if let Some(net) = virtio.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() {
         net.backend_mut().set_rx_budget(max_rx_frames_per_tick);
     }
-
-    virtio.process_notified_queues_bounded(mem, max_chains_per_queue_per_tick);
     // Poll device-driven work (e.g. virtio-net RX) without consuming additional avail entries beyond
     // the per-queue budget above.
     virtio.poll_bounded(mem, 0);
@@ -2050,6 +2058,44 @@ mod virtio_net_tick_tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct TxReactiveState {
+        tx_frames: Vec<Vec<u8>>,
+        rx_polls: usize,
+        transmitted: bool,
+        responded: bool,
+    }
+
+    #[derive(Clone)]
+    struct TxReactiveBackend {
+        state: Rc<RefCell<TxReactiveState>>,
+        rx_frame: Vec<u8>,
+    }
+
+    impl aero_net_backend::NetworkBackend for TxReactiveBackend {
+        fn transmit(&mut self, frame: Vec<u8>) {
+            let mut state = self.state.borrow_mut();
+            state.transmitted = true;
+            state.tx_frames.push(frame);
+        }
+
+        fn poll_receive(&mut self) -> Option<Vec<u8>> {
+            let mut state = self.state.borrow_mut();
+            state.rx_polls += 1;
+            if state.transmitted && !state.responded {
+                state.responded = true;
+                return Some(self.rx_frame.clone());
+            }
+            if !state.transmitted {
+                // Simulate a misbehaving backend that produces garbage until the guest transmits
+                // something. This frame is intentionally undersized for Ethernet (len < 14) and
+                // should be dropped by virtio-net.
+                return Some(vec![0u8; 13]);
+            }
+            None
+        }
+    }
+
     #[test]
     fn tick_virtio_net_binds_tx_chains_per_queue() {
         let state = Rc::new(RefCell::new(BackendState::default()));
@@ -2166,6 +2212,126 @@ mod virtio_net_tick_tests {
 
         assert_eq!(state.borrow().tx_frames, vec![payload0.to_vec()]);
         assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
+    }
+
+    #[test]
+    fn tick_virtio_net_processes_tx_before_consuming_rx_budget() {
+        let state = Rc::new(RefCell::new(TxReactiveState::default()));
+        let rx_frame = vec![0x5a; 14];
+        let backend = TxReactiveBackend {
+            state: state.clone(),
+            rx_frame: rx_frame.clone(),
+        };
+
+        let net = VirtioNet::new(
+            VirtioNetBackendAdapter::new(Some(Box::new(backend))),
+            [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
+        );
+        let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+        // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA).
+        dev.set_pci_command(0x0006);
+
+        let mut mem = GuestRam::new(0x20000);
+
+        // Configure RX queue 0.
+        let rx_desc: u64 = 0x1000;
+        let rx_avail: u64 = 0x2000;
+        let rx_used: u64 = 0x3000;
+        dev.bar0_write(0x16, &0u16.to_le_bytes()); // queue_select
+        dev.bar0_write(0x20, &rx_desc.to_le_bytes());
+        dev.bar0_write(0x28, &rx_avail.to_le_bytes());
+        dev.bar0_write(0x30, &rx_used.to_le_bytes());
+        dev.bar0_write(0x1c, &1u16.to_le_bytes()); // queue_enable
+
+        // Configure TX queue 1.
+        let tx_desc: u64 = 0x4000;
+        let tx_avail: u64 = 0x5000;
+        let tx_used: u64 = 0x6000;
+        dev.bar0_write(0x16, &1u16.to_le_bytes()); // queue_select
+        dev.bar0_write(0x20, &tx_desc.to_le_bytes());
+        dev.bar0_write(0x28, &tx_avail.to_le_bytes());
+        dev.bar0_write(0x30, &tx_used.to_le_bytes());
+        dev.bar0_write(0x1c, &1u16.to_le_bytes()); // queue_enable
+
+        // Post one RX buffer chain: [virtio_net_hdr(write)][payload(write)].
+        let rx_hdr_addr = 0x8000;
+        let rx_payload_addr = 0x8100;
+        mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN]).unwrap();
+        mem.write(rx_payload_addr, &[0xbb; 64]).unwrap();
+
+        write_desc(
+            &mut mem,
+            rx_desc,
+            0,
+            rx_hdr_addr,
+            VirtioNetHdr::BASE_LEN as u32,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            rx_desc,
+            1,
+            rx_payload_addr,
+            64,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+        write_u16_le(&mut mem, rx_avail, 0).unwrap(); // flags
+        write_u16_le(&mut mem, rx_avail + 2, 1).unwrap(); // idx
+        write_u16_le(&mut mem, rx_avail + 4, 0).unwrap(); // ring[0]
+        write_u16_le(&mut mem, rx_used, 0).unwrap(); // flags
+        write_u16_le(&mut mem, rx_used + 2, 0).unwrap(); // idx
+
+        // Post one TX chain: [virtio_net_hdr][ethernet frame].
+        let tx_hdr_addr = 0x8200;
+        let tx_payload_addr = 0x8300;
+        let hdr = [0u8; VirtioNetHdr::BASE_LEN];
+        let tx_payload = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
+        mem.write(tx_hdr_addr, &hdr).unwrap();
+        mem.write(tx_payload_addr, tx_payload).unwrap();
+
+        write_desc(
+            &mut mem,
+            tx_desc,
+            0,
+            tx_hdr_addr,
+            hdr.len() as u32,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            tx_desc,
+            1,
+            tx_payload_addr,
+            tx_payload.len() as u32,
+            0,
+            0,
+        );
+        write_u16_le(&mut mem, tx_avail, 0).unwrap(); // flags
+        write_u16_le(&mut mem, tx_avail + 2, 1).unwrap(); // idx
+        write_u16_le(&mut mem, tx_avail + 4, 0).unwrap(); // ring[0]
+        write_u16_le(&mut mem, tx_used, 0).unwrap(); // flags
+        write_u16_le(&mut mem, tx_used + 2, 0).unwrap(); // idx
+
+        // Only allow one backend RX frame this tick. If the pump polls the backend before TX, it
+        // will consume the budget on the undersized "garbage" frame and fail to deliver the TX
+        // response. The pump should instead process TX first, then spend the RX budget during the
+        // final bounded poll.
+        tick_virtio_net(&mut dev, &mut mem, 4, 1);
+
+        assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
+        assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 1);
+        let got = mem.get_slice(rx_payload_addr, rx_frame.len()).unwrap();
+        assert_eq!(got, rx_frame);
+
+        let st = state.borrow();
+        assert_eq!(st.tx_frames, vec![tx_payload.to_vec()]);
+        assert!(
+            st.responded,
+            "expected backend response frame to be consumed after TX"
+        );
     }
 
     #[test]
