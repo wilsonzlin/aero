@@ -114,8 +114,9 @@ Implemented today:
   without clobbering compute-stage bindings (see “Resource binding model” below). GS can be
   addressed either via `shader_stage = GEOMETRY` (preferred) or via the `stage_ex` compatibility
   encoding; HS/DS require `stage_ex`.
-- **Extended `BIND_SHADERS`**: the `BIND_SHADERS` packet can carry `gs/hs/ds` handles, and draws route
-  through a dedicated “compute prepass” path when any of these stages are bound.
+- **Extended `BIND_SHADERS`**: the `BIND_SHADERS` packet can carry `gs/hs/ds` handles via an
+  append-only tail (when present, the appended handles are authoritative), and draws route through a
+  dedicated “compute prepass” path when any of these stages are bound.
 - **Compute→indirect→render pipeline plumbing**: the executor runs a compute prepass to write an
   expanded vertex/index buffer + indirect args, then renders via `draw_indirect` /
   `draw_indexed_indirect` (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
