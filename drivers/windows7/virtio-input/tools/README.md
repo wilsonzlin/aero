@@ -12,6 +12,10 @@ Currently:
   - In diagnostics (DBG) driver builds, can get/set the driver's DiagnosticsMask at runtime via:
     - `DeviceIoControl(IOCTL_VIOINPUT_GET_LOG_MASK)` / `DeviceIoControl(IOCTL_VIOINPUT_SET_LOG_MASK)`
     - `hidtest.exe --get-log-mask` / `hidtest.exe --set-log-mask 0x...`
+  - Can reset in-driver diagnostics counters during a session:
+    - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
+    - `hidtest.exe --reset-counters`
+    - Tip: `hidtest.exe --reset-counters --counters` / `--counters-json` to reset and immediately verify a clean snapshot.
   - Includes optional probes for `IOCTL_VIOINPUT_QUERY_COUNTERS` / `IOCTL_VIOINPUT_QUERY_STATE` using short output
     buffers (verifies that the driver returns `STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` for
     version negotiation).
