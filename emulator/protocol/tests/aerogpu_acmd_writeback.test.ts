@@ -21,6 +21,7 @@ import {
   decodeAerogpuAllocTable,
   executeAerogpuCmdStream,
 } from "../../../web/src/workers/aerogpu-acmd-executor.ts";
+import { PCI_MMIO_BASE } from "../../../web/src/arch/guest_phys.ts";
 import { HIGH_RAM_START, LOW_RAM_END } from "../../../web/src/arch/guest_ram_translate.ts";
 
 function buildAllocTable(
@@ -116,6 +117,29 @@ test("ACMD COPY_BUFFER writeback supports guest paddr in high-RAM remap window (
   // HIGH_RAM_START should translate to backing RAM offset LOW_RAM_END.
   assert.deepEqual(fakeGuest.lastSubarray, { start: LOW_RAM_END, end: LOW_RAM_END + 4 });
   assert.deepEqual(fakeGuest.lastWrite, { start: LOW_RAM_END, data: [1, 2, 3, 4] });
+});
+
+test("ACMD COPY_BUFFER writeback supports BAR1 VRAM aperture (PCI/MMIO hole)", () => {
+  const guest = new Uint8Array(0x100);
+  guest.fill(0x11);
+  const vram = new Uint8Array(0x100);
+  vram.fill(0x22);
+
+  const allocTableBuf = buildAllocTable([{ allocId: 42, flags: 0, gpa: PCI_MMIO_BASE, sizeBytes: vram.byteLength }]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  const w = new AerogpuCmdWriter();
+  w.createBuffer(1, 0, 8n, 0, 0); // src
+  w.createBuffer(2, 0, 8n, 42, 0); // dst backed by VRAM aperture
+  w.uploadResource(1, 0n, Uint8Array.of(1, 2, 3, 4));
+  w.copyBuffer(2, 1, 0n, 0n, 4n, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest, vramU8: vram });
+
+  assert.deepEqual(Array.from(vram.subarray(0, 4)), [1, 2, 3, 4]);
+  // Prove we wrote into VRAM, not RAM.
+  assert.deepEqual(Array.from(guest.subarray(0, 4)), [0x11, 0x11, 0x11, 0x11]);
 });
 
 test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
