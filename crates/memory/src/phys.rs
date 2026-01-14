@@ -119,6 +119,189 @@ fn check_range(size: u64, paddr: u64, len: usize) -> GuestMemoryResult<()> {
     Ok(())
 }
 
+// -------------------------------------------------------------------------------------------------
+// wasm32 shared-linear-memory guest RAM backend
+// -------------------------------------------------------------------------------------------------
+
+/// A [`GuestMemory`] backend backed by a fixed region inside a wasm32 linear memory.
+///
+/// # Why `get_slice`/`get_slice_mut` always return `None`
+/// In the browser runtime, guest RAM is backed by a *shared* [`WebAssembly.Memory`] (shared linear
+/// memory) so that multiple wasm threads (and the JS host) can access the same RAM.
+///
+/// Returning `&[u8]` / `&mut [u8]` that points into this shared region is **unsound** under Rust's
+/// aliasing model:
+/// - `&mut [u8]` requires *unique* access for its lifetime. In shared wasm memory, other threads
+///   (or JS) may concurrently read/write the same bytes, violating that uniqueness and causing UB.
+/// - Even `&[u8]` is problematic: the compiler may assume the referenced bytes are not mutated for
+///   the lifetime of the borrow, but shared wasm memory permits concurrent mutation, which again can
+///   violate Rust's assumptions.
+///
+/// Therefore this backend deliberately disables the optional slice fast paths and forces all
+/// callers to use the copy-based APIs (`read_into`/`write_from`), which do not create Rust
+/// references into the shared backing store.
+///
+/// # Threading / data races
+/// When compiled with `target_feature=atomics` (shared-memory wasm builds), this backend uses
+/// byte-granular atomic loads/stores to avoid Rust UB from unsynchronized concurrent accesses.
+///
+/// In non-atomic wasm32 builds, guest RAM is not shared across threads, so plain memcpy-style access
+/// is used.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug, Clone, Copy)]
+pub struct WasmSharedGuestMemory {
+    /// Base address (byte offset) in the process address space of guest physical address 0.
+    ///
+    /// On wasm32 this is the linear-memory offset (because wasm linear memory is mapped starting at
+    /// 0). In unit tests we construct this from a raw pointer.
+    base: usize,
+    size: u64,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl WasmSharedGuestMemory {
+    /// Create a new guest RAM view backed by wasm linear memory 0.
+    ///
+    /// `guest_base` is the byte offset in wasm linear memory corresponding to guest physical
+    /// address 0. The guest RAM region spans `[guest_base, guest_base + size)`.
+    ///
+    /// This constructor validates that the region fits in the current linear memory.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new(guest_base: u32, size: u64) -> GuestMemoryResult<Self> {
+        let _size_usize =
+            usize::try_from(size).map_err(|_| GuestMemoryError::SizeTooLarge { size })?;
+
+        let mem_bytes = (core::arch::wasm32::memory_size(0) as u64).saturating_mul(64 * 1024);
+        let base_u64 = u64::from(guest_base);
+        let available = mem_bytes.saturating_sub(base_u64);
+        if size > available {
+            return Err(GuestMemoryError::OutOfRange {
+                paddr: 0,
+                len: size.min(usize::MAX as u64) as usize,
+                size: available,
+            });
+        }
+
+        Ok(Self {
+            base: guest_base as usize,
+            size,
+        })
+    }
+
+    /// Create a guest RAM view from a raw pointer.
+    ///
+    /// This is intended for unit tests and other non-wasm environments.
+    ///
+    /// # Safety
+    /// The caller must ensure:
+    /// - `base` points to a valid allocation of at least `size` bytes for the lifetime of the
+    ///   returned [`WasmSharedGuestMemory`].
+    /// - All concurrent accesses to the region are properly synchronized *or* are performed via
+    ///   atomic operations (e.g. in a `target_feature=atomics` wasm build).
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub unsafe fn from_raw_ptr(base: *mut u8, size: u64) -> GuestMemoryResult<Self> {
+        let _size_usize =
+            usize::try_from(size).map_err(|_| GuestMemoryError::SizeTooLarge { size })?;
+        let base_usize = base as usize;
+        base_usize
+            .checked_add(size as usize)
+            .ok_or(GuestMemoryError::SizeTooLarge { size })?;
+        Ok(Self { base: base_usize, size })
+    }
+
+    #[inline]
+    fn range_to_ptr(&self, paddr: u64, len: usize) -> GuestMemoryResult<usize> {
+        check_range(self.size, paddr, len)?;
+        let start = usize::try_from(paddr).map_err(|_| GuestMemoryError::OutOfRange {
+            paddr,
+            len,
+            size: self.size,
+        })?;
+        let ptr = self.base.checked_add(start).ok_or(GuestMemoryError::OutOfRange {
+            paddr,
+            len,
+            size: self.size,
+        })?;
+        ptr.checked_add(len).ok_or(GuestMemoryError::OutOfRange {
+            paddr,
+            len,
+            size: self.size,
+        })?;
+        Ok(ptr)
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl GuestMemory for WasmSharedGuestMemory {
+    fn size(&self) -> u64 {
+        self.size
+    }
+
+    fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
+        if dst.is_empty() {
+            return Ok(());
+        }
+        let src = self.range_to_ptr(paddr, dst.len())?;
+
+        // Shared-memory (atomics) builds: use atomic byte reads to avoid Rust data-race UB.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+
+            let src = src as *const AtomicU8;
+            for (i, slot) in dst.iter_mut().enumerate() {
+                // Safety: `range_to_ptr` bounds-checks and `AtomicU8` has alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len());
+        }
+
+        Ok(())
+    }
+
+    fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
+        if src.is_empty() {
+            return Ok(());
+        }
+        let dst = self.range_to_ptr(paddr, src.len())?;
+
+        // Shared-memory (atomics) builds: use atomic byte writes to avoid Rust data-race UB.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+
+            let dst = dst as *const AtomicU8;
+            for (i, byte) in src.iter().copied().enumerate() {
+                // Safety: `range_to_ptr` bounds-checks and `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len());
+        }
+
+        Ok(())
+    }
+
+    fn get_slice(&self, _paddr: u64, _len: usize) -> Option<&[u8]> {
+        // See the type-level documentation for the safety rationale.
+        None
+    }
+
+    fn get_slice_mut(&mut self, _paddr: u64, _len: usize) -> Option<&mut [u8]> {
+        // See the type-level documentation for the safety rationale.
+        None
+    }
+}
+
 /// Dense (contiguous) guest memory.
 #[derive(Debug, Clone)]
 pub struct DenseMemory {
@@ -415,6 +598,42 @@ mod tests {
         ));
         assert!(matches!(
             sparse.write_from(16, &[1u8]),
+            Err(GuestMemoryError::OutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn wasm_shared_guest_memory_bounds_and_slices() {
+        let mut backing = vec![0u8; 16];
+        let mut mem = unsafe { WasmSharedGuestMemory::from_raw_ptr(backing.as_mut_ptr(), 16) }
+            .expect("construct WasmSharedGuestMemory");
+
+        // Optional slice fast paths must be disabled for shared wasm memory.
+        assert!(mem.get_slice(0, 1).is_none());
+        assert!(mem.get_slice_mut(0, 1).is_none());
+
+        // Boundary writes/reads should succeed.
+        mem.write_from(12, &[1, 2, 3, 4]).unwrap();
+        let mut buf = [0u8; 4];
+        mem.read_into(12, &mut buf).unwrap();
+        assert_eq!(buf, [1, 2, 3, 4]);
+
+        // Reads via helpers must work even without slice fast paths.
+        assert_eq!(mem.read_u32_le(12).unwrap(), 0x0403_0201);
+
+        // Out-of-range accesses must return errors (not panic).
+        assert!(matches!(
+            mem.read_into(15, &mut [0u8; 2]),
+            Err(GuestMemoryError::OutOfRange { .. })
+        ));
+        assert!(matches!(
+            mem.write_from(16, &[1u8]),
+            Err(GuestMemoryError::OutOfRange { .. })
+        ));
+
+        // Overflowing address arithmetic must be handled without panicking.
+        assert!(matches!(
+            mem.read_into(u64::MAX - 1, &mut [0u8; 2]),
             Err(GuestMemoryError::OutOfRange { .. })
         ));
     }

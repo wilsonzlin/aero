@@ -15,7 +15,11 @@ pub use bus::{Bus, MapError, MemoryBus, MmioHandler, MmioRegion, PhysicalMemoryB
 pub use dirty::{DirtyGuestMemory, DirtyTracker};
 pub use mapped::{GuestMemoryMapping, MappedGuestMemory, MappedGuestMemoryError};
 pub use mmu::{AccessType, Mmu, TranslateError};
-pub use phys::{DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory};
+pub use phys::{
+    DenseMemory, GuestMemory, GuestMemoryError, GuestMemoryResult, SparseMemory,
+};
+#[cfg(any(target_arch = "wasm32", test))]
+pub use phys::WasmSharedGuestMemory;
 pub use tlb::{PageSize, Tlb, TlbEntry};
 
 /// Alias preserved for older callers; the MMU returns a [`TranslateError`] which
