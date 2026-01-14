@@ -14,9 +14,10 @@ This script extracts all accepted `--...` flags from the tool source and fails
 CI if the README references any `--...` flag that isn't actually parsed today.
 
 Additionally, it checks dbgctl invocations in the Win7 AeroGPU validation
-playbook (and other docs that mention `aerogpu_dbgctl`) plus a small allowlist
-of Guest Tools scripts (notably `guest-tools/verify.ps1`) so bring-up docs and
-shipped scripts can't accidentally reference non-existent flags.
+playbook (and other docs that mention `aerogpu_dbgctl`) plus small allowlists
+of shipped Guest Tools scripts (notably `guest-tools/verify.ps1`) and other
+repo-local helper scripts (e.g. trace parsers) so bring-up docs and shipped
+tooling can't accidentally reference non-existent flags.
 
 Rationale: several docs/playbooks historically referenced future/aspirational
 debug knobs (perf capture, hang injection, etc.). This guardrail ensures the
@@ -75,6 +76,15 @@ SCAN_MD_DIRS = [
 SCAN_DBGCTL_SCRIPT_FILES = [
     ROOT / "guest-tools" / "verify.ps1",
     ROOT / "guest-tools" / "verify.cmd",
+]
+
+# Additional repo-local helper scripts (non-markdown) that mention dbgctl flags in user-facing
+# help text / docstrings.
+#
+# Keep this list small and focused: these files may contain many unrelated `--...` flags, so we
+# rely on the conservative `iter_dbgctl_*` heuristics to avoid false positives.
+SCAN_DBGCTL_TEXT_FILES = [
+    ROOT / "scripts" / "parse_win7_dxgi_swapchain_trace.py",
 ]
 
 
@@ -180,10 +190,24 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     for line_no, line in enumerate(text.splitlines(), start=1):
         if "--dbgctl" in line:
             continue
-        if "aerogpu_dbgctl" not in line and not dbgctl_context_re.search(line):
+        lower = line.lower()
+        tool_idx = lower.find("aerogpu_dbgctl")
+        if tool_idx >= 0:
+            # Only extract `--...` flags from the dbgctl invocation itself, not from any other
+            # tool/script flags that may appear earlier on the same line.
+            scan = line[tool_idx:]
+            for flag in MD_FLAG_RE.findall(scan):
+                out.append((line_no, flag))
+            continue
+
+        # For lines that don't mention dbgctl explicitly, only scan those that contain dbgctl's
+        # distinctive command selector prefixes, and only treat those matching flags as dbgctl
+        # flags. This avoids false positives on unrelated `--...` flags for other tools.
+        if not dbgctl_context_re.search(line):
             continue
         for flag in MD_FLAG_RE.findall(line):
-            out.append((line_no, flag))
+            if dbgctl_context_re.match(flag):
+                out.append((line_no, flag))
     return out
 
 
@@ -238,10 +262,19 @@ def iter_dbgctl_wildcard_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     for line_no, line in enumerate(text.splitlines(), start=1):
         if "--dbgctl" in line:
             continue
-        if "aerogpu_dbgctl" not in line and not dbgctl_context_re.search(line):
+        lower = line.lower()
+        tool_idx = lower.find("aerogpu_dbgctl")
+        if tool_idx >= 0:
+            scan = line[tool_idx:]
+            for flag in MD_FLAG_WILDCARD_RE.findall(scan):
+                out.append((line_no, flag))
+            continue
+
+        if not dbgctl_context_re.search(line):
             continue
         for flag in MD_FLAG_WILDCARD_RE.findall(line):
-            out.append((line_no, flag))
+            if dbgctl_context_re.match(flag):
+                out.append((line_no, flag))
     return out
 
 
@@ -404,6 +437,23 @@ def main() -> int:
                 for line_no, f in refs:
                     if f == unknown_flag:
                         doc_errors.append(f"{rel}:{line_no}: {unknown_flag}")
+
+    for path in SCAN_DBGCTL_TEXT_FILES:
+        if not path.exists():
+            continue
+        for line_no, flag in iter_dbgctl_wildcard_flag_refs(path):
+            wildcard_errors.append(f"{path.relative_to(ROOT)}:{line_no}: {flag}")
+        refs = iter_dbgctl_flag_refs(path)
+        if not refs:
+            continue
+        unknown_flags = sorted({f for _, f in refs} - allowed_flags)
+        if not unknown_flags:
+            continue
+        rel = path.relative_to(ROOT)
+        for unknown_flag in unknown_flags:
+            for line_no, f in refs:
+                if f == unknown_flag:
+                    doc_errors.append(f"{rel}:{line_no}: {unknown_flag}")
 
     for path in SCAN_DBGCTL_SCRIPT_FILES:
         if not path.exists():
