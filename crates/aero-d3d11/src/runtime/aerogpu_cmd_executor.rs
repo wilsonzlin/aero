@@ -23,7 +23,9 @@ use aero_gpu::{
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_bind_shaders_payload_le, decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
-    decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
+    decode_cmd_set_shader_resource_buffers_bindings_le,
+    decode_cmd_set_unordered_access_buffers_bindings_le, decode_cmd_set_vertex_buffers_bindings_le,
+    decode_cmd_upload_resource_payload_le,
     AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
     AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
@@ -3097,9 +3099,7 @@ impl AerogpuD3d11Executor {
             OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes),
             OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes),
             OPCODE_SET_SHADER_RESOURCE_BUFFERS => self.exec_set_shader_resource_buffers(cmd_bytes),
-            OPCODE_SET_UNORDERED_ACCESS_BUFFERS => {
-                self.exec_set_unordered_access_buffers(cmd_bytes)
-            }
+            OPCODE_SET_UNORDERED_ACCESS_BUFFERS => self.exec_set_unordered_access_buffers(cmd_bytes),
             OPCODE_CLEAR => self.exec_clear(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_DISPATCH => self.exec_dispatch(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_PRESENT => self.exec_present(encoder, cmd_bytes, report),
@@ -10996,17 +10996,10 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_shader_resource_buffers(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_shader_resource_buffers (24 bytes) + bindings.
-        if cmd_bytes.len() < 24 {
-            bail!(
-                "SET_SHADER_RESOURCE_BUFFERS: expected at least 24 bytes, got {}",
-                cmd_bytes.len()
-            );
-        }
-        let stage_raw = read_u32_le(cmd_bytes, 8)?;
-        let start_slot_u32 = read_u32_le(cmd_bytes, 12)?;
-        let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
-        let stage_ex = read_u32_le(cmd_bytes, 20)?;
+        let (cmd, bindings) = decode_cmd_set_shader_resource_buffers_bindings_le(cmd_bytes)
+            .map_err(|e| anyhow!("SET_SHADER_RESOURCE_BUFFERS: invalid payload: {e:?}"))?;
+        let stage_raw = cmd.shader_stage;
+        let stage_ex = cmd.reserved0;
 
         let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
             || {
@@ -11015,36 +11008,26 @@ impl AerogpuD3d11Executor {
                 )
             },
         )?;
-        let start_slot: u32 = start_slot_u32;
-        let buffer_count: usize = buffer_count_u32
+        let start_slot = cmd.start_slot;
+        let buffer_count_u32 = cmd.buffer_count;
+        let _buffer_count: usize = buffer_count_u32
             .try_into()
             .map_err(|_| anyhow!("SET_SHADER_RESOURCE_BUFFERS: buffer_count out of range"))?;
 
         let end_slot = start_slot
             .checked_add(buffer_count_u32)
             .ok_or_else(|| anyhow!("SET_SHADER_RESOURCE_BUFFERS: slot range overflow"))?;
-        if end_slot as usize > DEFAULT_MAX_TEXTURE_SLOTS {
+        if end_slot > MAX_TEXTURE_SLOTS || end_slot as usize > DEFAULT_MAX_TEXTURE_SLOTS {
             bail!(
                 "SET_SHADER_RESOURCE_BUFFERS: slot range out of supported range (range={start_slot}..{end_slot} max_slot={})",
                 DEFAULT_MAX_TEXTURE_SLOTS - 1
             );
         }
 
-        let expected = 24 + buffer_count * 16;
-        // Forward-compat: allow this packet to grow by appending new fields after `bindings[]`.
-        if cmd_bytes.len() < expected {
-            bail!(
-                "SET_SHADER_RESOURCE_BUFFERS: expected at least {expected} bytes, got {}",
-                cmd_bytes.len(),
-            );
-        }
-
-        for i in 0..buffer_count {
-            let base = 24 + i * 16;
-            let buffer_raw = read_u32_le(cmd_bytes, base)?;
-            let offset_bytes = read_u32_le(cmd_bytes, base + 4)?;
-            let size_bytes = read_u32_le(cmd_bytes, base + 8)?;
-            // reserved0 @ +12 ignored.
+        for (i, binding) in bindings.iter().copied().enumerate() {
+            let buffer_raw = u32::from_le(binding.buffer);
+            let offset_bytes = u64::from(u32::from_le(binding.offset_bytes));
+            let size_bytes = u32::from_le(binding.size_bytes);
 
             let bound = if buffer_raw == 0 {
                 None
@@ -11054,10 +11037,11 @@ impl AerogpuD3d11Executor {
                     .resolve_cmd_handle(buffer_raw, "SET_SHADER_RESOURCE_BUFFERS")?;
                 Some(BoundBuffer {
                     buffer,
-                    offset: offset_bytes as u64,
+                    offset: offset_bytes,
                     size: (size_bytes != 0).then_some(size_bytes as u64),
                 })
             };
+
             let slot = start_slot
                 .checked_add(i as u32)
                 .ok_or_else(|| anyhow!("SET_SHADER_RESOURCE_BUFFERS: slot overflow"))?;
@@ -11068,17 +11052,10 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_unordered_access_buffers(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_unordered_access_buffers (24 bytes) + bindings.
-        if cmd_bytes.len() < 24 {
-            bail!(
-                "SET_UNORDERED_ACCESS_BUFFERS: expected at least 24 bytes, got {}",
-                cmd_bytes.len()
-            );
-        }
-        let stage_raw = read_u32_le(cmd_bytes, 8)?;
-        let start_slot_u32 = read_u32_le(cmd_bytes, 12)?;
-        let uav_count_u32 = read_u32_le(cmd_bytes, 16)?;
-        let stage_ex = read_u32_le(cmd_bytes, 20)?;
+        let (cmd, bindings) = decode_cmd_set_unordered_access_buffers_bindings_le(cmd_bytes)
+            .map_err(|e| anyhow!("SET_UNORDERED_ACCESS_BUFFERS: invalid payload: {e:?}"))?;
+        let stage_raw = cmd.shader_stage;
+        let stage_ex = cmd.reserved0;
 
         let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
             || {
@@ -11102,36 +11079,29 @@ impl AerogpuD3d11Executor {
                 "SET_UNORDERED_ACCESS_BUFFERS: unsupported stage {stage:?} (only CS/GS/HS/DS are supported)"
             );
         }
-        let start_slot: u32 = start_slot_u32;
-        let uav_count: usize = uav_count_u32
+
+        let start_slot = cmd.start_slot;
+        let uav_count_u32 = cmd.uav_count;
+        let _uav_count: usize = uav_count_u32
             .try_into()
             .map_err(|_| anyhow!("SET_UNORDERED_ACCESS_BUFFERS: uav_count out of range"))?;
 
         let end_slot = start_slot
             .checked_add(uav_count_u32)
             .ok_or_else(|| anyhow!("SET_UNORDERED_ACCESS_BUFFERS: slot range overflow"))?;
-        if end_slot as usize > DEFAULT_MAX_UAV_SLOTS {
+        if end_slot > MAX_UAV_SLOTS {
             bail!(
                 "SET_UNORDERED_ACCESS_BUFFERS: slot range out of supported range (range={start_slot}..{end_slot} max_slot={})",
-                DEFAULT_MAX_UAV_SLOTS - 1
+                MAX_UAV_SLOTS - 1
             );
         }
 
-        let expected = 24 + uav_count * 16;
-        // Forward-compat: allow this packet to grow by appending new fields after `bindings[]`.
-        if cmd_bytes.len() < expected {
-            bail!(
-                "SET_UNORDERED_ACCESS_BUFFERS: expected at least {expected} bytes, got {}",
-                cmd_bytes.len(),
-            );
-        }
-
-        for i in 0..uav_count {
-            let base = 24 + i * 16;
-            let buffer_raw = read_u32_le(cmd_bytes, base)?;
-            let offset_bytes = read_u32_le(cmd_bytes, base + 4)?;
-            let size_bytes = read_u32_le(cmd_bytes, base + 8)?;
-            // initial_count @ +12 currently ignored.
+        for (i, binding) in bindings.iter().copied().enumerate() {
+            let buffer_raw = u32::from_le(binding.buffer);
+            let offset_bytes = u64::from(u32::from_le(binding.offset_bytes));
+            let size_bytes = u32::from_le(binding.size_bytes);
+            // Note: `initial_count` (UAV counter initialization) is currently ignored.
+            let _initial_count = u32::from_le(binding.initial_count);
 
             let bound = if buffer_raw == 0 {
                 None
@@ -11141,10 +11111,11 @@ impl AerogpuD3d11Executor {
                     .resolve_cmd_handle(buffer_raw, "SET_UNORDERED_ACCESS_BUFFERS")?;
                 Some(BoundBuffer {
                     buffer,
-                    offset: offset_bytes as u64,
+                    offset: offset_bytes,
                     size: (size_bytes != 0).then_some(size_bytes as u64),
                 })
             };
+
             let slot = start_slot
                 .checked_add(i as u32)
                 .ok_or_else(|| anyhow!("SET_UNORDERED_ACCESS_BUFFERS: slot overflow"))?;
