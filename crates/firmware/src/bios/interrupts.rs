@@ -3859,6 +3859,139 @@ mod tests {
         assert_eq!(mem.read_u16(0x7BFE), 0x0202); // FLAGS
     }
 
+    fn write_iso_block(img: &mut [u8], iso_lba: usize, block: &[u8; 2048]) {
+        let off = iso_lba * 2048;
+        img[off..off + 2048].copy_from_slice(block);
+    }
+
+    fn build_minimal_iso_no_emulation(
+        boot_catalog_lba: u32,
+        boot_image_lba: u32,
+        boot_image_bytes: &[u8; 2048],
+        load_segment: u16,
+        sector_count: u16,
+    ) -> Vec<u8> {
+        // Allocate enough blocks for the volume descriptors + boot catalog + boot image.
+        let total_blocks = (boot_image_lba as usize).saturating_add(1).max(32);
+        let mut img = vec![0u8; total_blocks * 2048];
+
+        // Primary Volume Descriptor at LBA16 (type 1).
+        let mut pvd = [0u8; 2048];
+        pvd[0] = 0x01;
+        pvd[1..6].copy_from_slice(b"CD001");
+        pvd[6] = 0x01;
+        write_iso_block(&mut img, 16, &pvd);
+
+        // Boot Record Volume Descriptor at LBA17 (type 0).
+        let mut brvd = [0u8; 2048];
+        brvd[0] = 0x00;
+        brvd[1..6].copy_from_slice(b"CD001");
+        brvd[6] = 0x01;
+        // Space-padded El Torito boot system id.
+        brvd[7..39].fill(b' ');
+        let id = b"EL TORITO SPECIFICATION";
+        brvd[7..7 + id.len()].copy_from_slice(id);
+        brvd[0x47..0x4B].copy_from_slice(&boot_catalog_lba.to_le_bytes());
+        write_iso_block(&mut img, 17, &brvd);
+
+        // Volume Descriptor Set Terminator at LBA18 (type 255).
+        let mut term = [0u8; 2048];
+        term[0] = 0xFF;
+        term[1..6].copy_from_slice(b"CD001");
+        term[6] = 0x01;
+        write_iso_block(&mut img, 18, &term);
+
+        // Boot Catalog at `boot_catalog_lba`.
+        let mut catalog = [0u8; 2048];
+        let mut validation = [0u8; 32];
+        validation[0] = 0x01; // header id
+        validation[1] = 0x00; // platform id (x86)
+        validation[30] = 0x55;
+        validation[31] = 0xAA;
+        let mut sum: u16 = 0;
+        for chunk in validation.chunks_exact(2) {
+            sum = sum.wrapping_add(u16::from_le_bytes([chunk[0], chunk[1]]));
+        }
+        let checksum = (0u16).wrapping_sub(sum);
+        validation[28..30].copy_from_slice(&checksum.to_le_bytes());
+        catalog[0..32].copy_from_slice(&validation);
+
+        let mut initial = [0u8; 32];
+        initial[0] = 0x88; // bootable
+        initial[1] = 0x00; // no emulation
+        initial[2..4].copy_from_slice(&load_segment.to_le_bytes());
+        initial[6..8].copy_from_slice(&sector_count.to_le_bytes());
+        initial[8..12].copy_from_slice(&boot_image_lba.to_le_bytes());
+        catalog[32..64].copy_from_slice(&initial);
+
+        write_iso_block(&mut img, boot_catalog_lba as usize, &catalog);
+        write_iso_block(&mut img, boot_image_lba as usize, boot_image_bytes);
+
+        img
+    }
+
+    #[test]
+    fn int19_loads_eltorito_boot_image_and_installs_iret_frame_to_jump_to_boot_segment() {
+        const BOOT_CATALOG_LBA: u32 = 20;
+        const BOOT_IMAGE_LBA: u32 = 21;
+        const LOAD_SEGMENT: u16 = 0x2000;
+
+        let mut boot_image = [0u8; 2048];
+        boot_image[..8].copy_from_slice(b"INT19CD!");
+        boot_image[510] = 0x55;
+        boot_image[511] = 0xAA;
+
+        let iso = build_minimal_iso_no_emulation(
+            BOOT_CATALOG_LBA,
+            BOOT_IMAGE_LBA,
+            &boot_image,
+            LOAD_SEGMENT,
+            4,
+        );
+        let mut disk = InMemoryDisk::new(iso);
+
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+
+        handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert!(!cpu.halted);
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RDX] as u8, 0xE0);
+        assert_eq!(cpu.segments.ds.selector, 0x0000);
+        assert_eq!(cpu.segments.es.selector, 0x0000);
+        assert_eq!(cpu.segments.ss.selector, 0x0000);
+        assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7BFA);
+
+        // Verify the synthetic IRET frame at 0000:7BFA.
+        assert_eq!(mem.read_u16(0x7BFA), 0x0000); // IP
+        assert_eq!(mem.read_u16(0x7BFC), LOAD_SEGMENT); // CS
+        assert_eq!(mem.read_u16(0x7BFE), 0x0202); // FLAGS
+
+        // Verify the boot image was loaded to the catalog-specified segment.
+        let load_addr = (u64::from(LOAD_SEGMENT)) << 4;
+        let loaded = mem.read_bytes(load_addr, 2048);
+        assert_eq!(&loaded[..8], b"INT19CD!");
+
+        // Ensure El Torito boot metadata is available for INT 13h AH=4Bh queries.
+        assert_eq!(
+            bios.el_torito_boot_info,
+            Some(ElToritoBootInfo {
+                media_type: ElToritoBootMediaType::NoEmulation,
+                boot_drive: 0xE0,
+                controller_index: 0,
+                boot_catalog_lba: Some(BOOT_CATALOG_LBA),
+                boot_image_lba: Some(BOOT_IMAGE_LBA),
+                load_segment: Some(LOAD_SEGMENT),
+                sector_count: Some(4),
+            })
+        );
+    }
+
     #[test]
     fn int18_chains_to_int19_bootstrap_loader() {
         let mut bios = Bios::new(BiosConfig {
