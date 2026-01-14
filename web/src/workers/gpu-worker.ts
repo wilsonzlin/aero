@@ -616,6 +616,7 @@ let snapshotResumePromise: Promise<void> | null = null;
 let snapshotResumeResolve: (() => void) | null = null;
 
 let snapshotPausePromise: Promise<void> | null = null;
+let snapshotPauseEpoch = 0;
 
 let tickInFlightCount = 0;
 let tickInFlightPromise: Promise<void> | null = null;
@@ -725,6 +726,12 @@ const waitUntilSnapshotResumed = async (): Promise<void> => {
 };
 
 const handleSnapshotResume = (): void => {
+  // If a snapshot pause attempt is in flight (waiting for an async present/submission), a
+  // resume can arrive before the worker has ACKed `vm.snapshot.paused` (e.g. coordinator timeout
+  // + best-effort resume). Bump the epoch + clear the pause promise so any in-progress pause
+  // handler can observe cancellation and avoid disabling guest memory after we've resumed.
+  snapshotPauseEpoch += 1;
+  snapshotPausePromise = null;
   restoreGuestMemoryAccessAfterSnapshot();
   snapshotPaused = false;
   snapshotResumeResolve?.();
@@ -740,23 +747,51 @@ const ensureSnapshotPaused = async (): Promise<void> => {
   if (snapshotPausePromise) return snapshotPausePromise;
 
   snapshotPaused = true;
+  const pauseEpoch = snapshotPauseEpoch;
   const inFlightSubmit = aerogpuSubmitInFlight;
-  snapshotPausePromise = (async () => {
+  const promise = (async () => {
     if (inFlightSubmit) {
       // Best-effort: wait for any in-progress ACMD submission to complete so we don't race
       // snapshot save/restore with guest-memory reads/writes.
-      await inFlightSubmit.catch(() => {});
+      await Promise.race([inFlightSubmit.catch(() => {}), waitUntilSnapshotResumed()]);
     }
+
+    if (!snapshotPaused || snapshotPauseEpoch !== pauseEpoch) {
+      throw new Error("Snapshot pause canceled by resume.");
+    }
+
     // Also wait for any in-flight tick/present work to finish; ticks are spawned as "fire and
     // forget" tasks, so we must explicitly track/drain them before acknowledging snapshot pause.
-    await waitForNoTickInFlight();
+    while (tickInFlightCount > 0) {
+      if (!snapshotPaused || snapshotPauseEpoch !== pauseEpoch) {
+        throw new Error("Snapshot pause canceled by resume.");
+      }
+      if (!tickInFlightPromise) {
+        tickInFlightPromise = new Promise<void>((resolve) => {
+          tickInFlightResolve = resolve;
+        });
+      }
+      // Allow snapshot resume to cancel the pause attempt even if a tick/present is hung.
+      await Promise.race([tickInFlightPromise, waitUntilSnapshotResumed()]);
+    }
+
+    if (!snapshotPaused || snapshotPauseEpoch !== pauseEpoch) {
+      throw new Error("Snapshot pause canceled by resume.");
+    }
     // Once paused, prevent *any* guest RAM/VRAM access (including scanout/cursor readback)
     // until the coordinator resumes the worker.
     disableGuestMemoryAccessForSnapshot();
-  })().finally(() => {
-    snapshotPausePromise = null;
-  });
-  return snapshotPausePromise;
+  })();
+  snapshotPausePromise = promise;
+  promise.then(
+    () => {
+      if (snapshotPausePromise === promise) snapshotPausePromise = null;
+    },
+    () => {
+      if (snapshotPausePromise === promise) snapshotPausePromise = null;
+    },
+  );
+  return promise;
 };
 
 const syncCursorToPresenter = (): void => {
