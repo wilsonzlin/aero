@@ -46,6 +46,11 @@ Sampler texture types come from `dcl_* s#` when present; when absent, samplers d
 Supported texture types in the SM3 WGSL backend: 1D/2D/3D/cube, with coordinate dimensionality
 `x`/`xy`/`xyz` (including for `texldp`/`texldb`/`texldd`/`texldl`).
 
+Note: The AeroGPU D3D9 runtime currently only supports binding 2D + cube textures from the command
+stream. The translation entrypoint will accept `dcl_1d` / `dcl_volume` declarations when the sampler
+is unused, but rejects shaders that actually sample from 1D/3D textures (see
+`validate_sampler_texture_types` in `crates/aero-d3d9/src/shader_translate.rs`).
+
 Note: WGSL does not support `textureSampleBias` for `texture_1d`, so SM3 `texldb` with a 1D sampler is
 lowered via `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
 
@@ -137,5 +142,7 @@ position by `(-1/viewport_width, +1/viewport_height) * w` in translated vertex s
 
 - Sampler state mapping (filtering, address modes, LOD bias, etc.) is handled in the runtime pipeline setup,
   not in the SM2/SM3 WGSL generator. Comparison samplers / depth-compare sampling are not modeled here yet.
+- The runtime command stream currently supports binding only 2D + cube textures. Shaders that sample from 1D/3D
+  textures are rejected at translation time; unused `dcl_1d` / `dcl_volume` declarations are accepted.
 - The SM3 **software reference interpreter** (`crates/aero-d3d9/src/sm3/software.rs`) currently models
   `Texture2D` + `TextureCube` sampling; it does not emulate 1D/3D sampling yet.
