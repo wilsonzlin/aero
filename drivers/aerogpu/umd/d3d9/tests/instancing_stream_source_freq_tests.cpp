@@ -461,8 +461,31 @@ void TestNonIndexedTriangleStripDrawsPerInstance() {
   assert(draws.size() == 2);
   assert(draws[0]->first_vertex == 0);
   assert(draws[0]->vertex_count == 4);
-  assert(draws[1]->first_vertex == 4);
+  assert(draws[1]->first_vertex == 0);
   assert(draws[1]->vertex_count == 4);
+
+  // Per-instance stream1 data is uploaded once per instance.
+  assert(dev.instancing_vertex_buffers[1] != nullptr);
+  const auto uploads = FindAllCmds<aerogpu_cmd_upload_resource>(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  std::vector<const aerogpu_cmd_upload_resource*> vb1_uploads;
+  for (const auto* u : uploads) {
+    if (u->resource_handle == dev.instancing_vertex_buffers[1]->handle) {
+      vb1_uploads.push_back(u);
+    }
+  }
+  assert(vb1_uploads.size() == 2);
+  const size_t expected_vb1_bytes = sizeof(InstanceData) * 4;
+  for (size_t i = 0; i < 2; ++i) {
+    const auto* upload = vb1_uploads[i];
+    assert(upload->offset_bytes == 0);
+    assert(upload->size_bytes == expected_vb1_bytes);
+    std::vector<uint8_t> expected(expected_vb1_bytes, 0);
+    for (int v = 0; v < 4; ++v) {
+      std::memcpy(expected.data() + (size_t)v * sizeof(InstanceData), &instances[i], sizeof(InstanceData));
+    }
+    const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+    assert(std::memcmp(payload, expected.data(), expected.size()) == 0);
+  }
 }
 
 void TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion() {
@@ -530,8 +553,8 @@ void TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion() {
       /*primitive_count=*/2);
   assert(hr == S_OK);
 
-  // Strip instancing is executed as one draw per instance and reuses the app's
-  // index buffer by adjusting base_vertex; no expanded index upload is required.
+  // Strip instancing is executed as one draw per instance. The app's index
+  // buffer is reused (no expanded index upload is required).
   assert(dev.up_index_buffer == nullptr);
 
   dev.cmd.finalize();
@@ -547,7 +570,30 @@ void TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion() {
 
   assert(draws[1]->index_count == 4);
   assert(draws[1]->first_index == 0);
-  assert(draws[1]->base_vertex == 4);
+  assert(draws[1]->base_vertex == 0);
+
+  // Per-instance stream1 data is uploaded once per instance.
+  assert(dev.instancing_vertex_buffers[1] != nullptr);
+  const auto uploads = FindAllCmds<aerogpu_cmd_upload_resource>(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  std::vector<const aerogpu_cmd_upload_resource*> vb1_uploads;
+  for (const auto* u : uploads) {
+    if (u->resource_handle == dev.instancing_vertex_buffers[1]->handle) {
+      vb1_uploads.push_back(u);
+    }
+  }
+  assert(vb1_uploads.size() == 2);
+  const size_t expected_vb1_bytes = sizeof(InstanceData) * 4;
+  for (size_t i = 0; i < 2; ++i) {
+    const auto* upload = vb1_uploads[i];
+    assert(upload->offset_bytes == 0);
+    assert(upload->size_bytes == expected_vb1_bytes);
+    std::vector<uint8_t> expected(expected_vb1_bytes, 0);
+    for (int v = 0; v < 4; ++v) {
+      std::memcpy(expected.data() + (size_t)v * sizeof(InstanceData), &instances[i], sizeof(InstanceData));
+    }
+    const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+    assert(std::memcmp(payload, expected.data(), expected.size()) == 0);
+  }
 }
 
 } // namespace

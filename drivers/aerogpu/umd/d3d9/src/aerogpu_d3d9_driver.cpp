@@ -21511,9 +21511,171 @@ HRESULT try_draw_instanced_primitive_locked(
   }
   const uint32_t expanded_vertex_count = static_cast<uint32_t>(expanded_vertex_count_u64);
 
-  // CPU-expand all participating streams *before* emitting any vertex-buffer
-  // bindings, so invalid-call failures do not mutate device state.
-  std::array<std::vector<uint8_t>, 16> expanded_streams{};
+  if (single_draw_safe) {
+    // CPU-expand all participating streams *before* emitting any vertex-buffer
+    // bindings, so invalid-call failures do not mutate device state.
+    std::array<std::vector<uint8_t>, 16> expanded_streams{};
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s)) {
+        continue;
+      }
+      const DeviceStateStream& ss = dev->streams[s];
+      if (!ss.vb || ss.stride_bytes == 0) {
+        return kD3DErrInvalidCall;
+      }
+
+      const uint64_t stride = ss.stride_bytes;
+      const uint64_t expanded_size_u64 =
+          static_cast<uint64_t>(vertices_per_instance) * static_cast<uint64_t>(cfg.instance_count) * stride;
+      if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
+        return E_INVALIDARG;
+      }
+
+      const uint32_t expanded_size = static_cast<uint32_t>(expanded_size_u64);
+      try {
+        expanded_streams[s].resize(expanded_size);
+      } catch (...) {
+        return E_OUTOFMEMORY;
+      }
+
+      uint8_t* dst_all = expanded_streams[s].data();
+
+      if (cfg.instanced_divisor[s] != 0u) {
+        const uint32_t divisor = cfg.instanced_divisor[s];
+        const uint64_t element_count_u64 =
+            (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) /
+            static_cast<uint64_t>(divisor);
+        const uint64_t src_offset = ss.offset_bytes;
+        const uint64_t src_size = element_count_u64 * stride;
+        ScopedResourceRead src;
+        hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
+        if (FAILED(hr) || !src.data) {
+          return FAILED(hr) ? hr : E_INVALIDARG;
+        }
+
+        for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+          const uint32_t elem = inst / divisor;
+          const uint8_t* inst_data = src.data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
+          uint8_t* dst_base =
+              dst_all + (static_cast<size_t>(inst) * vertices_per_instance) * static_cast<size_t>(stride);
+          for (uint32_t v = 0; v < vertices_per_instance; ++v) {
+            std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
+                        inst_data,
+                        static_cast<size_t>(stride));
+          }
+        }
+      } else {
+        const uint64_t src_offset =
+            static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * stride;
+        const uint64_t src_size = static_cast<uint64_t>(vertices_per_instance) * stride;
+        ScopedResourceRead src;
+        hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
+        if (FAILED(hr) || !src.data) {
+          return FAILED(hr) ? hr : E_INVALIDARG;
+        }
+
+        for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+          uint8_t* dst = dst_all + static_cast<size_t>(inst) * static_cast<size_t>(src_size);
+          std::memcpy(dst, src.data, static_cast<size_t>(src_size));
+        }
+      }
+    }
+
+    hr = ensure_draw_pipeline_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    // Save stream bindings (for state restoration after draw + in error paths).
+    std::array<DeviceStateStream, 16> saved_streams{};
+    for (uint32_t s = 0; s < 16; ++s) {
+      saved_streams[s] = dev->streams[s];
+    }
+
+    auto restore_streams = [&]() {
+      bool ok = true;
+      for (uint32_t s = 0; s < 16; ++s) {
+        if (!used_streams.test(s)) {
+          continue;
+        }
+        const DeviceStateStream& saved = saved_streams[s];
+        ok &= emit_set_stream_source_locked(dev, s, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      }
+      return ok;
+    };
+
+    // Upload + bind expanded buffers.
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s)) {
+        continue;
+      }
+
+      const DeviceStateStream& saved = saved_streams[s];
+      const uint32_t expanded_size = static_cast<uint32_t>(expanded_streams[s].size());
+
+      hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+      Resource* dst_vb = dev->instancing_vertex_buffers[s];
+      hr = emit_upload_buffer_locked(dev, dst_vb, expanded_streams[s].data(), expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+      if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
+    }
+
+    const uint32_t topology = d3d9_prim_to_topology(type);
+    const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw), 4);
+    const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
+    if (!ensure_cmd_space(dev, min_bytes)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    if (!emit_set_topology_locked(dev, topology)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+
+    if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    hr = track_draw_state_locked(dev);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+    if (!cmd) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    cmd->vertex_count = expanded_vertex_count;
+    cmd->instance_count = 1;
+    cmd->first_vertex = 0;
+    cmd->first_instance = 0;
+
+    if (!restore_streams()) {
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+
+    return S_OK;
+  }
+
+  // Strip/fan topologies must be issued as one draw per instance to avoid
+  // connecting primitives across instance boundaries. When drawing each instance
+  // separately, avoid CPU-expanding per-vertex streams across instances. Instead,
+  // adjust per-vertex stream offsets so each draw uses `first_vertex=0` and only
+  // expand/upload instanced streams for the current instance.
+  std::array<ScopedResourceRead, 16> instanced_src{};
+  std::array<std::vector<uint8_t>, 16> instanced_expanded{};
   for (uint32_t s = 0; s < 16; ++s) {
     if (!used_streams.test(s)) {
       continue;
@@ -21522,59 +21684,37 @@ HRESULT try_draw_instanced_primitive_locked(
     if (!ss.vb || ss.stride_bytes == 0) {
       return kD3DErrInvalidCall;
     }
-
     const uint64_t stride = ss.stride_bytes;
-    const uint64_t expanded_size_u64 =
-        static_cast<uint64_t>(vertices_per_instance) * static_cast<uint64_t>(cfg.instance_count) * stride;
-    if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
-      return E_INVALIDARG;
-    }
-
-    const uint32_t expanded_size = static_cast<uint32_t>(expanded_size_u64);
-    try {
-      expanded_streams[s].resize(expanded_size);
-    } catch (...) {
-      return E_OUTOFMEMORY;
-    }
-
-    uint8_t* dst_all = expanded_streams[s].data();
 
     if (cfg.instanced_divisor[s] != 0u) {
+      const uint64_t expanded_size_u64 = static_cast<uint64_t>(vertices_per_instance) * stride;
+      if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
+        return E_INVALIDARG;
+      }
+      try {
+        instanced_expanded[s].resize(static_cast<size_t>(expanded_size_u64));
+      } catch (...) {
+        return E_OUTOFMEMORY;
+      }
+
       const uint32_t divisor = cfg.instanced_divisor[s];
       const uint64_t element_count_u64 =
-          (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) / static_cast<uint64_t>(divisor);
+          (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) /
+          static_cast<uint64_t>(divisor);
       const uint64_t src_offset = ss.offset_bytes;
       const uint64_t src_size = element_count_u64 * stride;
-      ScopedResourceRead src;
-      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
-      if (FAILED(hr) || !src.data) {
+      hr = instanced_src[s].lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
+      if (FAILED(hr) || !instanced_src[s].data) {
         return FAILED(hr) ? hr : E_INVALIDARG;
-      }
-
-      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-        const uint32_t elem = inst / divisor;
-        const uint8_t* inst_data = src.data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
-        uint8_t* dst_base =
-            dst_all + (static_cast<size_t>(inst) * vertices_per_instance) * static_cast<size_t>(stride);
-        for (uint32_t v = 0; v < vertices_per_instance; ++v) {
-          std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
-                      inst_data,
-                      static_cast<size_t>(stride));
-        }
       }
     } else {
-      const uint64_t src_offset =
-          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * stride;
+      // Validate the per-vertex range. We'll rebind the stream offset to
+      // `offset + start_vertex * stride` and draw with first_vertex=0.
+      const uint64_t vertex_base_u64 = static_cast<uint64_t>(ss.offset_bytes) +
+                                       static_cast<uint64_t>(start_vertex) * stride;
       const uint64_t src_size = static_cast<uint64_t>(vertices_per_instance) * stride;
-      ScopedResourceRead src;
-      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
-      if (FAILED(hr) || !src.data) {
-        return FAILED(hr) ? hr : E_INVALIDARG;
-      }
-
-      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-        uint8_t* dst = dst_all + static_cast<size_t>(inst) * static_cast<size_t>(src_size);
-        std::memcpy(dst, src.data, static_cast<size_t>(src_size));
+      if (vertex_base_u64 > ss.vb->size_bytes || src_size > ss.vb->size_bytes - vertex_base_u64) {
+        return E_INVALIDARG;
       }
     }
   }
@@ -21602,29 +21742,38 @@ HRESULT try_draw_instanced_primitive_locked(
     return ok;
   };
 
-  // Upload + bind expanded buffers.
+  // Bind scratch buffers for instanced streams and adjust per-vertex stream
+  // offsets so we can draw each instance with `first_vertex=0`.
   for (uint32_t s = 0; s < 16; ++s) {
     if (!used_streams.test(s)) {
       continue;
     }
-
     const DeviceStateStream& saved = saved_streams[s];
-    const uint32_t expanded_size = static_cast<uint32_t>(expanded_streams[s].size());
+    const uint64_t stride = saved.stride_bytes;
 
-    hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
-    if (FAILED(hr)) {
-      (void)restore_streams();
-      return hr;
-    }
-    Resource* dst_vb = dev->instancing_vertex_buffers[s];
-    hr = emit_upload_buffer_locked(dev, dst_vb, expanded_streams[s].data(), expanded_size);
-    if (FAILED(hr)) {
-      (void)restore_streams();
-      return hr;
-    }
-    if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
-      (void)restore_streams();
-      return device_lost_override(dev, E_OUTOFMEMORY);
+    if (cfg.instanced_divisor[s] != 0u) {
+      const uint32_t expanded_size = static_cast<uint32_t>(instanced_expanded[s].size());
+      hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+      Resource* dst_vb = dev->instancing_vertex_buffers[s];
+      if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
+    } else {
+      const uint64_t delta_bytes = static_cast<uint64_t>(start_vertex) * stride;
+      const uint64_t new_offset_u64 = static_cast<uint64_t>(saved.offset_bytes) + delta_bytes;
+      if (new_offset_u64 > std::numeric_limits<uint32_t>::max()) {
+        (void)restore_streams();
+        return E_INVALIDARG;
+      }
+      if (!emit_set_stream_source_locked(dev, s, saved.vb, static_cast<uint32_t>(new_offset_u64), saved.stride_bytes)) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
     }
   }
 
@@ -21640,7 +21789,41 @@ HRESULT try_draw_instanced_primitive_locked(
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
-  if (single_draw_safe) {
+  std::array<uint32_t, 16> last_elem{};
+  last_elem.fill(std::numeric_limits<uint32_t>::max());
+
+  for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s) || cfg.instanced_divisor[s] == 0u) {
+        continue;
+      }
+      const DeviceStateStream& saved = saved_streams[s];
+      const uint64_t stride = saved.stride_bytes;
+      const uint32_t divisor = cfg.instanced_divisor[s];
+      const uint32_t elem = inst / divisor;
+      if (elem == last_elem[s]) {
+        continue;
+      }
+      last_elem[s] = elem;
+
+      const uint8_t* inst_data =
+          instanced_src[s].data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
+      uint8_t* dst_all = instanced_expanded[s].data();
+      for (uint32_t v = 0; v < vertices_per_instance; ++v) {
+        std::memcpy(dst_all + static_cast<size_t>(v) * static_cast<size_t>(stride),
+                    inst_data,
+                    static_cast<size_t>(stride));
+      }
+
+      Resource* dst_vb = dev->instancing_vertex_buffers[s];
+      const uint32_t expanded_size = static_cast<uint32_t>(instanced_expanded[s].size());
+      hr = emit_upload_buffer_locked(dev, dst_vb, instanced_expanded[s].data(), expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+    }
+
     if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
       (void)restore_streams();
       return device_lost_override(dev, E_OUTOFMEMORY);
@@ -21656,32 +21839,10 @@ HRESULT try_draw_instanced_primitive_locked(
       (void)restore_streams();
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
-    cmd->vertex_count = expanded_vertex_count;
+    cmd->vertex_count = vertices_per_instance;
     cmd->instance_count = 1;
     cmd->first_vertex = 0;
     cmd->first_instance = 0;
-  } else {
-    for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-      if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
-        (void)restore_streams();
-        return device_lost_override(dev, E_OUTOFMEMORY);
-      }
-      hr = track_draw_state_locked(dev);
-      if (FAILED(hr)) {
-        (void)restore_streams();
-        return hr;
-      }
-
-      auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
-      if (!cmd) {
-        (void)restore_streams();
-        return device_lost_override(dev, E_OUTOFMEMORY);
-      }
-      cmd->vertex_count = vertices_per_instance;
-      cmd->instance_count = 1;
-      cmd->first_vertex = inst * vertices_per_instance;
-      cmd->first_instance = 0;
-    }
   }
 
   if (!restore_streams()) {
@@ -21838,141 +21999,144 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
   if (vertex_start_signed < 0) {
     return E_INVALIDARG;
   }
+  if (vertex_start_signed > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+    return E_INVALIDARG;
+  }
   const uint32_t vertex_start = static_cast<uint32_t>(vertex_start_signed);
 
-  // CPU-expand all participating streams *before* mutating stream bindings.
-  std::array<std::vector<uint8_t>, 16> expanded_streams{};
-  for (uint32_t s = 0; s < 16; ++s) {
-    if (!used_streams.test(s)) {
-      continue;
-    }
-    const DeviceStateStream& ss = dev->streams[s];
-    if (!ss.vb || ss.stride_bytes == 0) {
-      return kD3DErrInvalidCall;
-    }
-
-    const uint64_t stride = ss.stride_bytes;
-    const uint64_t expanded_size_u64 =
-        static_cast<uint64_t>(num_vertices) * static_cast<uint64_t>(cfg.instance_count) * stride;
-    if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
-      return E_INVALIDARG;
-    }
-    const uint32_t expanded_size = static_cast<uint32_t>(expanded_size_u64);
-    try {
-      expanded_streams[s].resize(expanded_size);
-    } catch (...) {
-      return E_OUTOFMEMORY;
-    }
-
-    uint8_t* dst_all = expanded_streams[s].data();
-
-    if (cfg.instanced_divisor[s] != 0u) {
-      const uint32_t divisor = cfg.instanced_divisor[s];
-      const uint64_t element_count_u64 =
-          (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) / static_cast<uint64_t>(divisor);
-      const uint64_t src_offset = ss.offset_bytes;
-      const uint64_t src_size = element_count_u64 * stride;
-      ScopedResourceRead src;
-      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
-      if (FAILED(hr) || !src.data) {
-        return FAILED(hr) ? hr : E_INVALIDARG;
+  if (single_draw_safe) {
+    // CPU-expand all participating streams *before* mutating stream bindings.
+    std::array<std::vector<uint8_t>, 16> expanded_streams{};
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s)) {
+        continue;
+      }
+      const DeviceStateStream& ss = dev->streams[s];
+      if (!ss.vb || ss.stride_bytes == 0) {
+        return kD3DErrInvalidCall;
       }
 
-      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-        const uint32_t elem = inst / divisor;
-        const uint8_t* inst_data = src.data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
-        uint8_t* dst_base = dst_all + (static_cast<size_t>(inst) * num_vertices) * static_cast<size_t>(stride);
-        for (uint32_t v = 0; v < num_vertices; ++v) {
-          std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
-                      inst_data,
-                      static_cast<size_t>(stride));
+      const uint64_t stride = ss.stride_bytes;
+      const uint64_t expanded_size_u64 =
+          static_cast<uint64_t>(num_vertices) * static_cast<uint64_t>(cfg.instance_count) * stride;
+      if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
+        return E_INVALIDARG;
+      }
+      const uint32_t expanded_size = static_cast<uint32_t>(expanded_size_u64);
+      try {
+        expanded_streams[s].resize(expanded_size);
+      } catch (...) {
+        return E_OUTOFMEMORY;
+      }
+
+      uint8_t* dst_all = expanded_streams[s].data();
+
+      if (cfg.instanced_divisor[s] != 0u) {
+        const uint32_t divisor = cfg.instanced_divisor[s];
+        const uint64_t element_count_u64 =
+            (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) /
+            static_cast<uint64_t>(divisor);
+        const uint64_t src_offset = ss.offset_bytes;
+        const uint64_t src_size = element_count_u64 * stride;
+        ScopedResourceRead src;
+        hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
+        if (FAILED(hr) || !src.data) {
+          return FAILED(hr) ? hr : E_INVALIDARG;
+        }
+
+        for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+          const uint32_t elem = inst / divisor;
+          const uint8_t* inst_data = src.data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
+          uint8_t* dst_base = dst_all + (static_cast<size_t>(inst) * num_vertices) * static_cast<size_t>(stride);
+          for (uint32_t v = 0; v < num_vertices; ++v) {
+            std::memcpy(dst_base + static_cast<size_t>(v) * static_cast<size_t>(stride),
+                        inst_data,
+                        static_cast<size_t>(stride));
+          }
+        }
+      } else {
+        const uint64_t src_offset =
+            static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(vertex_start) * stride;
+        const uint64_t src_size = static_cast<uint64_t>(num_vertices) * stride;
+        ScopedResourceRead src;
+        hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
+        if (FAILED(hr) || !src.data) {
+          return FAILED(hr) ? hr : E_INVALIDARG;
+        }
+
+        for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+          uint8_t* dst = dst_all + static_cast<size_t>(inst) * static_cast<size_t>(src_size);
+          std::memcpy(dst, src.data, static_cast<size_t>(src_size));
         }
       }
-    } else {
-      const uint64_t src_offset =
-          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(vertex_start) * stride;
-      const uint64_t src_size = static_cast<uint64_t>(num_vertices) * stride;
-      ScopedResourceRead src;
-      hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
-      if (FAILED(hr) || !src.data) {
-        return FAILED(hr) ? hr : E_INVALIDARG;
-      }
-
-      for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-        uint8_t* dst = dst_all + static_cast<size_t>(inst) * static_cast<size_t>(src_size);
-        std::memcpy(dst, src.data, static_cast<size_t>(src_size));
-      }
     }
-  }
 
-  hr = ensure_draw_pipeline_locked(dev);
-  if (FAILED(hr)) {
-    return hr;
-  }
+    hr = ensure_draw_pipeline_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
 
-  // Save state for restoration.
-  std::array<DeviceStateStream, 16> saved_streams{};
-  for (uint32_t s = 0; s < 16; ++s) {
-    saved_streams[s] = dev->streams[s];
-  }
-  const bool index_modified = use_expanded_indices;
-  Resource* saved_ib = dev->index_buffer;
-  const D3DDDIFORMAT saved_fmt = dev->index_format;
-  const uint32_t saved_offset = dev->index_offset_bytes;
+    // Save state for restoration.
+    std::array<DeviceStateStream, 16> saved_streams{};
+    for (uint32_t s = 0; s < 16; ++s) {
+      saved_streams[s] = dev->streams[s];
+    }
+    Resource* saved_ib = dev->index_buffer;
+    const D3DDDIFORMAT saved_fmt = dev->index_format;
+    const uint32_t saved_offset = dev->index_offset_bytes;
 
-  auto restore_streams = [&]() {
-    bool ok = true;
+    auto restore_streams = [&]() {
+      bool ok = true;
+      for (uint32_t s = 0; s < 16; ++s) {
+        if (!used_streams.test(s)) {
+          continue;
+        }
+        const DeviceStateStream& saved = saved_streams[s];
+        ok &= emit_set_stream_source_locked(dev, s, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      }
+      return ok;
+    };
+
+    auto restore_index = [&]() {
+      dev->index_buffer = saved_ib;
+      dev->index_format = saved_fmt;
+      dev->index_offset_bytes = saved_offset;
+      auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+      if (!cmd) {
+        return false;
+      }
+      cmd->buffer = saved_ib ? saved_ib->handle : 0;
+      cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
+      cmd->offset_bytes = saved_offset;
+      cmd->reserved0 = 0;
+      return true;
+    };
+
+    // Upload + bind expanded vertex buffers.
     for (uint32_t s = 0; s < 16; ++s) {
       if (!used_streams.test(s)) {
         continue;
       }
       const DeviceStateStream& saved = saved_streams[s];
-      ok &= emit_set_stream_source_locked(dev, s, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    }
-    return ok;
-  };
+      const uint32_t expanded_size = static_cast<uint32_t>(expanded_streams[s].size());
 
-  auto restore_index = [&]() {
-    dev->index_buffer = saved_ib;
-    dev->index_format = saved_fmt;
-    dev->index_offset_bytes = saved_offset;
-    auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-    if (!cmd) {
-      return false;
+      hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+      Resource* dst_vb = dev->instancing_vertex_buffers[s];
+      hr = emit_upload_buffer_locked(dev, dst_vb, expanded_streams[s].data(), expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+      if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
     }
-    cmd->buffer = saved_ib ? saved_ib->handle : 0;
-    cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
-    cmd->offset_bytes = saved_offset;
-    cmd->reserved0 = 0;
-    return true;
-  };
 
-  // Upload + bind expanded vertex buffers.
-  for (uint32_t s = 0; s < 16; ++s) {
-    if (!used_streams.test(s)) {
-      continue;
-    }
-    const DeviceStateStream& saved = saved_streams[s];
-    const uint32_t expanded_size = static_cast<uint32_t>(expanded_streams[s].size());
-
-    hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
-    if (FAILED(hr)) {
-      (void)restore_streams();
-      return hr;
-    }
-    Resource* dst_vb = dev->instancing_vertex_buffers[s];
-    hr = emit_upload_buffer_locked(dev, dst_vb, expanded_streams[s].data(), expanded_size);
-    if (FAILED(hr)) {
-      (void)restore_streams();
-      return hr;
-    }
-    if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
-      (void)restore_streams();
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-  }
-
-  if (index_modified) {
     // Upload expanded index buffer and bind it.
     hr = ensure_up_index_buffer_locked(dev, expanded_index_bytes);
     if (FAILED(hr)) {
@@ -22000,49 +22164,37 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
     ib_cmd->format = d3d9_index_format_to_aerogpu(kD3dFmtIndex32);
     ib_cmd->offset_bytes = 0;
     ib_cmd->reserved0 = 0;
-  }
 
-  const uint32_t topology = d3d9_prim_to_topology(type);
-  const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
-  const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
-  if (!ensure_cmd_space(dev, min_bytes)) {
-    (void)restore_streams();
-    if (index_modified) {
+    const uint32_t topology = d3d9_prim_to_topology(type);
+    const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
+    const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
+    if (!ensure_cmd_space(dev, min_bytes)) {
+      (void)restore_streams();
       (void)restore_index();
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
-    return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-  if (!emit_set_topology_locked(dev, topology)) {
-    (void)restore_streams();
-    if (index_modified) {
+    if (!emit_set_topology_locked(dev, topology)) {
+      (void)restore_streams();
       (void)restore_index();
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
-    return device_lost_override(dev, E_OUTOFMEMORY);
-  }
 
-  if (single_draw_safe) {
     if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
       (void)restore_streams();
-      if (index_modified) {
-        (void)restore_index();
-      }
+      (void)restore_index();
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
     hr = track_draw_state_locked(dev);
     if (FAILED(hr)) {
       (void)restore_streams();
-      if (index_modified) {
-        (void)restore_index();
-      }
+      (void)restore_index();
       return hr;
     }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
     if (!cmd) {
       (void)restore_streams();
-      if (index_modified) {
-        (void)restore_index();
-      }
+      (void)restore_index();
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
     cmd->index_count = expanded_index_count;
@@ -22050,53 +22202,199 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
     cmd->first_index = 0;
     cmd->base_vertex = 0;
     cmd->first_instance = 0;
-  } else {
-    for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-      if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
-        (void)restore_streams();
-        if (index_modified) {
-          (void)restore_index();
-        }
-        return device_lost_override(dev, E_OUTOFMEMORY);
+
+    if (!restore_streams()) {
+      (void)restore_index();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    if (!restore_index()) {
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+
+    return S_OK;
+  }
+
+  // Strip/fan topologies: issue one draw per instance. Avoid expanding per-vertex
+  // streams across instances by rebinding them with an adjusted stream offset
+  // and uploading instanced stream data per draw.
+  const int64_t base_vertex_i64 = -static_cast<int64_t>(min_index);
+  if (base_vertex_i64 < std::numeric_limits<int32_t>::min() || base_vertex_i64 > std::numeric_limits<int32_t>::max()) {
+    return E_INVALIDARG;
+  }
+  const int32_t draw_base_vertex = static_cast<int32_t>(base_vertex_i64);
+
+  std::array<ScopedResourceRead, 16> instanced_src{};
+  std::array<std::vector<uint8_t>, 16> instanced_expanded{};
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+    const DeviceStateStream& ss = dev->streams[s];
+    if (!ss.vb || ss.stride_bytes == 0) {
+      return kD3DErrInvalidCall;
+    }
+    const uint64_t stride = ss.stride_bytes;
+
+    if (cfg.instanced_divisor[s] != 0u) {
+      const uint64_t expanded_size_u64 = static_cast<uint64_t>(num_vertices) * stride;
+      if (expanded_size_u64 == 0 || expanded_size_u64 > 0x7FFFFFFFu) {
+        return E_INVALIDARG;
       }
-      hr = track_draw_state_locked(dev);
-      if (FAILED(hr)) {
-        (void)restore_streams();
-        if (index_modified) {
-          (void)restore_index();
-        }
-        return hr;
+      try {
+        instanced_expanded[s].resize(static_cast<size_t>(expanded_size_u64));
+      } catch (...) {
+        return E_OUTOFMEMORY;
       }
 
-      auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
-      if (!cmd) {
+      const uint32_t divisor = cfg.instanced_divisor[s];
+      const uint64_t element_count_u64 =
+          (static_cast<uint64_t>(cfg.instance_count) + static_cast<uint64_t>(divisor) - 1u) /
+          static_cast<uint64_t>(divisor);
+      const uint64_t src_offset = ss.offset_bytes;
+      const uint64_t src_size = element_count_u64 * stride;
+      hr = instanced_src[s].lock(dev, ss.vb, src_offset, src_size, "instancing VB(inst)");
+      if (FAILED(hr) || !instanced_src[s].data) {
+        return FAILED(hr) ? hr : E_INVALIDARG;
+      }
+    } else {
+      const uint64_t vertex_base_u64 = static_cast<uint64_t>(ss.offset_bytes) +
+                                       static_cast<uint64_t>(vertex_start) * stride;
+      const uint64_t src_size = static_cast<uint64_t>(num_vertices) * stride;
+      if (vertex_base_u64 > ss.vb->size_bytes || src_size > ss.vb->size_bytes - vertex_base_u64) {
+        return E_INVALIDARG;
+      }
+    }
+  }
+
+  hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  // Save stream bindings (for state restoration after draw + in error paths).
+  std::array<DeviceStateStream, 16> saved_streams{};
+  for (uint32_t s = 0; s < 16; ++s) {
+    saved_streams[s] = dev->streams[s];
+  }
+
+  auto restore_streams = [&]() {
+    bool ok = true;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s)) {
+        continue;
+      }
+      const DeviceStateStream& saved = saved_streams[s];
+      ok &= emit_set_stream_source_locked(dev, s, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    }
+    return ok;
+  };
+
+  // Bind scratch buffers for instanced streams and adjust per-vertex stream
+  // offsets so each draw uses indices starting at `min_index`.
+  for (uint32_t s = 0; s < 16; ++s) {
+    if (!used_streams.test(s)) {
+      continue;
+    }
+    const DeviceStateStream& saved = saved_streams[s];
+    const uint64_t stride = saved.stride_bytes;
+
+    if (cfg.instanced_divisor[s] != 0u) {
+      const uint32_t expanded_size = static_cast<uint32_t>(instanced_expanded[s].size());
+      hr = ensure_instancing_vertex_buffer_locked(dev, s, expanded_size);
+      if (FAILED(hr)) {
         (void)restore_streams();
-        if (index_modified) {
-          (void)restore_index();
-        }
+        return hr;
+      }
+      Resource* dst_vb = dev->instancing_vertex_buffers[s];
+      if (!emit_set_stream_source_locked(dev, s, dst_vb, 0, saved.stride_bytes)) {
+        (void)restore_streams();
         return device_lost_override(dev, E_OUTOFMEMORY);
       }
-      cmd->index_count = index_count;
-      cmd->instance_count = 1;
-      cmd->first_index = start_index;
-      const int64_t base_vertex_i64 =
-          static_cast<int64_t>(inst) * static_cast<int64_t>(num_vertices) - static_cast<int64_t>(min_index);
-      if (base_vertex_i64 < std::numeric_limits<int32_t>::min() || base_vertex_i64 > std::numeric_limits<int32_t>::max()) {
+    } else {
+      const uint64_t delta_bytes = static_cast<uint64_t>(vertex_start) * stride;
+      const uint64_t new_offset_u64 = static_cast<uint64_t>(saved.offset_bytes) + delta_bytes;
+      if (new_offset_u64 > std::numeric_limits<uint32_t>::max()) {
         (void)restore_streams();
         return E_INVALIDARG;
       }
-      cmd->base_vertex = static_cast<int32_t>(base_vertex_i64);
-      cmd->first_instance = 0;
+      if (!emit_set_stream_source_locked(dev, s, saved.vb, static_cast<uint32_t>(new_offset_u64), saved.stride_bytes)) {
+        (void)restore_streams();
+        return device_lost_override(dev, E_OUTOFMEMORY);
+      }
     }
+  }
+
+  const uint32_t topology = d3d9_prim_to_topology(type);
+  const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
+  const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
+  if (!ensure_cmd_space(dev, min_bytes)) {
+    (void)restore_streams();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+  if (!emit_set_topology_locked(dev, topology)) {
+    (void)restore_streams();
+    return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+
+  std::array<uint32_t, 16> last_elem{};
+  last_elem.fill(std::numeric_limits<uint32_t>::max());
+
+  for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (!used_streams.test(s) || cfg.instanced_divisor[s] == 0u) {
+        continue;
+      }
+      const DeviceStateStream& saved = saved_streams[s];
+      const uint64_t stride = saved.stride_bytes;
+      const uint32_t divisor = cfg.instanced_divisor[s];
+      const uint32_t elem = inst / divisor;
+      if (elem == last_elem[s]) {
+        continue;
+      }
+      last_elem[s] = elem;
+
+      const uint8_t* inst_data =
+          instanced_src[s].data + static_cast<size_t>(elem) * static_cast<size_t>(stride);
+      uint8_t* dst_all = instanced_expanded[s].data();
+      for (uint32_t v = 0; v < num_vertices; ++v) {
+        std::memcpy(dst_all + static_cast<size_t>(v) * static_cast<size_t>(stride),
+                    inst_data,
+                    static_cast<size_t>(stride));
+      }
+
+      Resource* dst_vb = dev->instancing_vertex_buffers[s];
+      const uint32_t expanded_size = static_cast<uint32_t>(instanced_expanded[s].size());
+      hr = emit_upload_buffer_locked(dev, dst_vb, instanced_expanded[s].data(), expanded_size);
+      if (FAILED(hr)) {
+        (void)restore_streams();
+        return hr;
+      }
+    }
+
+    if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    hr = track_draw_state_locked(dev);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+    if (!cmd) {
+      (void)restore_streams();
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    cmd->index_count = index_count;
+    cmd->instance_count = 1;
+    cmd->first_index = start_index;
+    cmd->base_vertex = draw_base_vertex;
+    cmd->first_instance = 0;
   }
 
   if (!restore_streams()) {
     return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-  if (index_modified) {
-    if (!restore_index()) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
   }
 
   return S_OK;
