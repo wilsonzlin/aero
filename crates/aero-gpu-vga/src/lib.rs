@@ -2685,6 +2685,101 @@ mod tests {
     }
 
     #[test]
+    fn planar_write_mode1_writes_previous_latches() {
+        let mut dev = VgaDevice::new();
+
+        // Configure a basic planar graphics window at A0000.
+        dev.sequencer[4] = 0x00; // chain4 disabled, odd/even disabled
+        dev.sequencer[2] = 0x0F; // enable all planes (map mask)
+        dev.graphics[6] = 0x04; // memory map 0b01 => A0000 64KiB
+
+        // Seed the source byte at offset 0 with distinct plane values.
+        dev.vram[0] = 0x11;
+        dev.vram[VGA_PLANE_SIZE] = 0x22;
+        dev.vram[2 * VGA_PLANE_SIZE] = 0x33;
+        dev.vram[3 * VGA_PLANE_SIZE] = 0x44;
+
+        // Seed the destination byte at offset 1 with different values so we can observe the copy.
+        dev.vram[1] = 0xAA;
+        dev.vram[VGA_PLANE_SIZE + 1] = 0xBB;
+        dev.vram[2 * VGA_PLANE_SIZE + 1] = 0xCC;
+        dev.vram[3 * VGA_PLANE_SIZE + 1] = 0xDD;
+
+        // Load latches from the source address via a planar read.
+        dev.graphics[5] = 0x00; // read mode 0, write mode 0
+        dev.graphics[4] = 0x00; // Read Map Select: plane 0 (doesn't matter for latch load)
+        let _ = dev.mem_read_u8(0xA0000);
+
+        // Write mode 1 should write the latched values, not the CPU value.
+        dev.graphics[5] = 0x01; // write mode 1
+        dev.mem_write_u8(0xA0001, 0x00);
+
+        assert_eq!(dev.vram[1], 0x11);
+        assert_eq!(dev.vram[VGA_PLANE_SIZE + 1], 0x22);
+        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE + 1], 0x33);
+        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE + 1], 0x44);
+    }
+
+    #[test]
+    fn planar_write_mode2_expands_cpu_data_bits_to_planes() {
+        let mut dev = VgaDevice::new();
+
+        // Configure a basic planar graphics window at A0000.
+        dev.sequencer[4] = 0x00; // chain4 disabled, odd/even disabled
+        dev.sequencer[2] = 0x0F; // enable all planes (map mask)
+        dev.graphics[6] = 0x04; // memory map 0b01 => A0000 64KiB
+
+        // Write mode 2: each CPU data bit 0..3 expands to a full-byte mask for plane 0..3.
+        dev.graphics[5] = 0x02; // write mode 2
+        dev.graphics[3] = 0x00; // rotate=0, func=replace
+        dev.graphics[8] = 0x0F; // only lower nibble affected (uses latches for upper nibble)
+
+        // Seed destination bytes (per plane) to observe latch+mask behavior.
+        dev.vram[0] = 0xA0;
+        dev.vram[VGA_PLANE_SIZE] = 0xB0;
+        dev.vram[2 * VGA_PLANE_SIZE] = 0xC0;
+        dev.vram[3 * VGA_PLANE_SIZE] = 0xD0;
+
+        // Set planes 0 and 2.
+        dev.mem_write_u8(0xA0000, 0b0101);
+
+        assert_eq!(dev.vram[0], 0xAF);
+        assert_eq!(dev.vram[VGA_PLANE_SIZE], 0xB0);
+        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE], 0xCF);
+        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE], 0xD0);
+    }
+
+    #[test]
+    fn planar_write_mode3_uses_set_reset_and_cpu_data_as_mask() {
+        let mut dev = VgaDevice::new();
+
+        // Configure a basic planar graphics window at A0000.
+        dev.sequencer[4] = 0x00; // chain4 disabled, odd/even disabled
+        dev.sequencer[2] = 0x0F; // enable all planes (map mask)
+        dev.graphics[6] = 0x04; // memory map 0b01 => A0000 64KiB
+
+        // Write mode 3: CPU data (after rotate) ANDed with bit mask selects which bits are affected;
+        // set/reset provides the data (expanded per plane).
+        dev.graphics[5] = 0x03; // write mode 3
+        dev.graphics[3] = 0x00; // rotate=0, func=replace
+        dev.graphics[8] = 0x0F; // only lower nibble eligible for update
+        dev.graphics[0] = 0b0101; // set/reset: planes 0 and 2 set, others cleared
+
+        // Seed destination bytes so latch merging is observable.
+        for plane in 0..4 {
+            dev.vram[plane * VGA_PLANE_SIZE] = 0xAF;
+        }
+
+        // Rotated CPU data is 0xAA, so mask = 0x0F & 0xAA = 0x0A.
+        dev.mem_write_u8(0xA0000, 0xAA);
+
+        assert_eq!(dev.vram[0], 0xAF);
+        assert_eq!(dev.vram[VGA_PLANE_SIZE], 0xA5);
+        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE], 0xAF);
+        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE], 0xA5);
+    }
+
+    #[test]
     fn planar_read_mode0_and_mode1_color_compare() {
         let mut dev = VgaDevice::new();
 
