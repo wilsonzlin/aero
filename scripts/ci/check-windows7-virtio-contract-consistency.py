@@ -244,6 +244,97 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
     )
 
 
+# virtio-input has a legacy filename alias INF (`virtio-input.inf(.disabled)`) that may
+# differ in its models sections to provide an opt-in generic fallback HWID. Outside the
+# models sections, the alias should stay in sync with the canonical INF.
+_VIRTIO_INPUT_MODELS_SECTIONS = {"Aero.NTx86", "Aero.NTamd64"}
+
+
+def _strip_inf_comments_for_diff(line: str) -> str:
+    """Remove INF comments (starting with ';') outside of quoted strings."""
+
+    out: list[str] = []
+    in_quotes = False
+    for ch in line:
+        if ch == '"':
+            in_quotes = not in_quotes
+        if (not in_quotes) and ch == ";":
+            break
+        out.append(ch)
+    return "".join(out)
+
+
+def inf_functional_lines_for_alias_diff(*, path: Path, ignore_models: bool) -> list[str]:
+    """
+    Return normalized INF lines for alias comparison.
+
+    - Starts at the first section header (or the first non-comment line if one appears before
+      any section header; this avoids masking functional drift).
+    - Drops models sections entirely when `ignore_models=True`.
+    - Drops comments and empty lines.
+    """
+
+    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    start: int | None = None
+    for i, line in enumerate(raw_lines):
+        stripped = line.lstrip(" \t")
+        if stripped.startswith("["):
+            start = i
+            break
+        if stripped.startswith(";") or stripped.strip() == "":
+            continue
+        # Unexpected functional content before the first section header: keep it.
+        start = i
+        break
+    if start is None:
+        raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
+
+    out: list[str] = []
+    skip_section = False
+    for raw in raw_lines[start:]:
+        # Support trailing header comments (`[Foo] ; comment`).
+        header = _strip_inf_inline_comment(raw).strip()
+        if header.startswith("[") and "]" in header:
+            sect_name = header[1 : header.index("]")].strip()
+            skip_section = ignore_models and sect_name in _VIRTIO_INPUT_MODELS_SECTIONS
+            if skip_section:
+                continue
+            out.append(f"[{sect_name}]")
+            continue
+
+        if skip_section:
+            continue
+
+        active = _strip_inf_comments_for_diff(raw).strip()
+        if active == "":
+            continue
+        out.append(active)
+
+    return out
+
+
+def check_virtio_input_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, label: str) -> str | None:
+    canonical_lines = inf_functional_lines_for_alias_diff(path=canonical, ignore_models=True)
+    alias_lines = inf_functional_lines_for_alias_diff(path=alias, ignore_models=True)
+
+    if canonical_lines == alias_lines:
+        return None
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+    diff = difflib.unified_diff(
+        [line + "\n" for line in canonical_lines],
+        [line + "\n" for line in alias_lines],
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="\n",
+    )
+    return (
+        f"{label}: INF alias drift detected.\n"
+        "The virtio-input alias INF must match the canonical INF in all functional content outside the models sections.\n\n"
+        + "".join(diff)
+    )
+
 def parse_contract_major_version(md: str) -> int:
     m = re.search(r"^\*\*Contract version:\*\*\s*`(?P<major>\d+)\.", md, flags=re.M)
     if not m:
@@ -4003,7 +4094,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=True,
+                require_fallback=False,
                 errors=errors,
             )
 
@@ -4027,8 +4118,8 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
-        # legacy `virtio-input.inf` name. From [Version] onward it must be byte-for-byte
-        # identical to the canonical INF so behavior cannot drift.
+        # legacy `virtio-input.inf` name, and is allowed to differ only in the models
+        # sections to provide an opt-in generic fallback HWID.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -4037,7 +4128,7 @@ def main() -> None:
             errors=errors,
         )
 
-        drift = check_inf_alias_drift(
+        drift = check_virtio_input_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
