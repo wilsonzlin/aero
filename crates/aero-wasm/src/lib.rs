@@ -3644,10 +3644,18 @@ impl Machine {
         })?;
         let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        let scanout_state = Self::scanout_state_ref();
         Ok(Self {
             inner,
             mouse_buttons: 0,
             mouse_buttons_known: true,
+
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            scanout_state,
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            last_published_scanout: None,
         })
     }
 
