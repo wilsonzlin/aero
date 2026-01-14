@@ -127,7 +127,15 @@ fn compute_translate_and_run_copy_raw_srv_to_uav() {
         const TEST_NAME: &str =
             concat!(module_path!(), "::compute_translate_and_run_copy_raw_srv_to_uav");
 
-        let src_words: [u32; 4] = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
+        // Include values whose raw bits correspond to non-negative integer floats (e.g. 1.0). The
+        // translator must preserve raw bits across `ld_raw`/`store_raw` copies, not reinterpret
+        // them as numeric integers.
+        let src_words: [u32; 4] = [
+            0x3f80_0000, // 1.0f32
+            0x4000_0000, // 2.0f32
+            0x4040_0000, // 3.0f32
+            0x0000_0001, // u32=1 (tiny subnormal if interpreted as f32)
+        ];
 
         let module = Sm4Module {
             stage: ShaderStage::Compute,
@@ -270,14 +278,17 @@ fn compute_translate_and_run_copy_structured_srv_to_uav() {
             concat!(module_path!(), "::compute_translate_and_run_copy_structured_srv_to_uav");
 
         // Two 16-byte elements (8 u32s). We'll read element 1 and write it into element 0.
+        //
+        // Use float bit patterns for element 1 so the test covers the "preserve raw bits" behavior
+        // when values look like non-negative integer floats (e.g. 1.0).
         let src_words: [u32; 8] = [
             0, 1, 2, 3, // element 0
-            0xaaaa_aaaa,
-            0xbbbb_bbbb,
-            0xcccc_cccc,
-            0xdddd_dddd, // element 1
+            0x3f80_0000, // 1.0f32
+            0x4000_0000, // 2.0f32
+            0x4040_0000, // 3.0f32
+            0x4080_0000, // 4.0f32
         ];
-        let expected: [u32; 4] = [0xaaaa_aaaa, 0xbbbb_bbbb, 0xcccc_cccc, 0xdddd_dddd];
+        let expected: [u32; 4] = [0x3f80_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000];
 
         let module = Sm4Module {
             stage: ShaderStage::Compute,
