@@ -1139,8 +1139,10 @@ function renderAudioPanel(): HTMLElement {
       stopHdaPciDevice();
 
       const workerConfig: AeroConfig = {
-        guestMemoryMiB: 64,
-        vramMiB: 16,
+        // Audio-only worker demos do not require large guest RAM or a VRAM aperture; keep allocations
+        // small so CI/Playwright runs don't reserve hundreds of MiB of shared memory.
+        guestMemoryMiB: 16,
+        vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1548,8 +1550,10 @@ function renderAudioPanel(): HTMLElement {
       }
 
       const workerConfig: AeroConfig = {
-        guestMemoryMiB: 64,
-        vramMiB: 16,
+        // HDA PCI playback uses fixed guest RAM buffers around ~0x0111_0000 (see `cpu.worker.ts`),
+        // so we still need >16MiB of guest RAM. Keep it modest to reduce shared-memory pressure.
+        guestMemoryMiB: 32,
+        vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1721,8 +1725,9 @@ function renderAudioPanel(): HTMLElement {
       }
 
       const workerConfig: AeroConfig = {
-        guestMemoryMiB: 64,
-        vramMiB: 16,
+        // Audio loopback only needs the worker runtime + ring buffers; avoid allocating VRAM.
+        guestMemoryMiB: 16,
+        vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
@@ -1854,8 +1859,10 @@ function renderAudioPanel(): HTMLElement {
         const startMicDropped = Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
 
         const workerConfig: AeroConfig = {
-          guestMemoryMiB: 64,
-          vramMiB: 16,
+          // Synthetic HDA capture allocates scratch buffers at the end of guest RAM; keep the
+          // allocation small and disable VRAM to reduce shared-memory pressure in tests.
+          guestMemoryMiB: 16,
+          vramMiB: 0,
           enableWorkers: true,
           enableWebGPU: false,
           proxyUrl: null,
