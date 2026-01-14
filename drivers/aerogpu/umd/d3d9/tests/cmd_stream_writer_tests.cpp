@@ -86,6 +86,21 @@ bool Check(bool cond, const char* msg) {
   return true;
 }
 
+bool CheckHrImpl(HRESULT hr, HRESULT expected, const char* msg, int line) {
+  if (hr != expected) {
+    std::fprintf(stderr,
+                 "FAIL: %s (hr=0x%08x expected=0x%08x @%d)\n",
+                 msg,
+                 static_cast<unsigned>(hr),
+                 static_cast<unsigned>(expected),
+                 line);
+    return false;
+  }
+  return true;
+}
+
+#define CheckHr(hr, expected, msg) CheckHrImpl((hr), (expected), (msg), __LINE__)
+
 // Tests often bind `Device::cmd` to a span-backed buffer owned by the test (e.g. a
 // local `std::vector<uint8_t>`). Driver cleanup paths may emit additional packets
 // (e.g. DESTROY_RESOURCE) from RAII destructors after the local buffer has been
@@ -12670,7 +12685,7 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource returned texture handle")) {
@@ -13398,7 +13413,7 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -14763,7 +14778,7 @@ bool TestFixedFuncPsSelectionTextureBoundColorOpDisableIgnoresAlphaTextureUsesCo
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -14966,7 +14981,7 @@ bool TestFixedFuncPsSelectionSetTextureUpdatesBoundPsToModulateWithoutDraw() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -15100,7 +15115,7 @@ bool TestFixedFuncPsSelectionUnsetTextureUpdatesBoundPsToColorOnlyWithoutDraw() 
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -15317,7 +15332,7 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSetTextureUpdatesBoundPsToModulateWithou
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -15451,7 +15466,7 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSelectArg1TextureUsesTextureOnly() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -15620,7 +15635,7 @@ bool TestFixedFuncPsSelectionTextureBoundDefaultModulateUsesModulate() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -15790,7 +15805,7 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg1TextureUsesTextureOnly() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -15957,7 +15972,7 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2TextureUsesTextureOnly() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -16124,7 +16139,7 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2DiffuseColorSelectArg2Texture
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -16299,7 +16314,7 @@ bool TestFixedFuncPsSelectionTextureBoundModulateDiffuseDiffuseUsesColorOnly() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -16478,7 +16493,7 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpDiffuseArgsUsesColorOnly(
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
@@ -16657,7 +16672,7 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpFallsBackToModulate() {
   create_tex.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
-  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+  if (!CheckHr(hr, S_OK, "CreateResource(texture)")) {
     return false;
   }
   if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
