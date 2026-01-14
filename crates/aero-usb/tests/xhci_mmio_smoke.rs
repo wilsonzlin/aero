@@ -1,5 +1,4 @@
-use aero_usb::xhci::regs;
-use aero_usb::xhci::XhciController;
+use aero_usb::xhci::{regs, XhciController};
 
 fn op_base(ctrl: &mut XhciController) -> u64 {
     let cap0 = ctrl.mmio_read(regs::cap::CAPLENGTH as u64, 4);

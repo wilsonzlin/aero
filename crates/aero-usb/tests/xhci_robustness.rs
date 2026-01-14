@@ -6,10 +6,9 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use aero_usb::xhci::regs;
 use aero_usb::xhci::ring::{RingCursor, RingError, RingPoll};
 use aero_usb::xhci::trb::{Trb, TrbType};
-use aero_usb::xhci::XhciController;
+use aero_usb::xhci::{regs, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 mod util;

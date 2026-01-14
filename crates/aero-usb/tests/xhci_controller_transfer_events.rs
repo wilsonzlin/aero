@@ -4,9 +4,8 @@ use aero_usb::passthrough::{
 };
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::interrupter::IMAN_IE;
-use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::{
     ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult,
     UsbWebUsbPassthroughDevice,
