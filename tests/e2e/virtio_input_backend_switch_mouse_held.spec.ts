@@ -42,7 +42,19 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
 
     const status = views.status;
 
-    const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", location.href), { type: "module" });
+    // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
+    // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
+    // blob-based module worker and import the real worker from there for cross-browser stability.
+    const ioWorkerEntrypoint = new URL("/web/src/workers/io.worker.ts", location.href).toString();
+    const ioWorkerWrapperUrl = URL.createObjectURL(
+      new Blob(
+        [
+          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+        ],
+        { type: "text/javascript" },
+      ),
+    );
+    const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
     let ioWorkerError: string | null = null;
     ioWorker.addEventListener("error", (ev) => {
       if (ioWorkerError) return;
@@ -521,8 +533,16 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       };
     `;
 
-    const cpuUrl = URL.createObjectURL(new Blob([cpuWorkerCode], { type: "text/javascript" }));
-    const cpuWorker = new Worker(cpuUrl, { type: "module" });
+    const cpuModuleUrl = URL.createObjectURL(new Blob([cpuWorkerCode], { type: "text/javascript" }));
+    const cpuWrapperUrl = URL.createObjectURL(
+      new Blob(
+        [
+          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(cpuModuleUrl)});\n                setTimeout(() => self.postMessage({ type: \"__aero_cpu_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_cpu_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+        ],
+        { type: "text/javascript" },
+      ),
+    );
+    const cpuWorker = new Worker(cpuWrapperUrl, { type: "module" });
 
     let nextCpuId = 1;
     const cpuPending = new Map<number, { resolve: (v: any) => void; reject: (err: unknown) => void }>();
@@ -568,6 +588,54 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     };
 
     try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timed out waiting for CPU worker import marker")), 5000);
+        const handler = (ev: MessageEvent): void => {
+          const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+          if (!data) return;
+          if (data.type === "__aero_cpu_worker_imported") {
+            clearTimeout(timer);
+            cpuWorker.removeEventListener("message", handler);
+            resolve();
+            return;
+          }
+          if (data.type === "__aero_cpu_worker_import_failed") {
+            clearTimeout(timer);
+            cpuWorker.removeEventListener("message", handler);
+            reject(
+              new Error(
+                `CPU worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`,
+              ),
+            );
+          }
+        };
+        cpuWorker.addEventListener("message", handler);
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 5000);
+        const handler = (ev: MessageEvent): void => {
+          const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+          if (!data) return;
+          if (data.type === "__aero_io_worker_imported") {
+            clearTimeout(timer);
+            ioWorker.removeEventListener("message", handler);
+            resolve();
+            return;
+          }
+          if (data.type === "__aero_io_worker_import_failed") {
+            clearTimeout(timer);
+            ioWorker.removeEventListener("message", handler);
+            reject(
+              new Error(
+                `io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`,
+              ),
+            );
+          }
+        };
+        ioWorker.addEventListener("message", handler);
+      });
+
       ioWorker.postMessage({
         kind: "init",
         role: "io",
@@ -586,11 +654,17 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       const dx = 5;
       const dyPs2 = 7; // positive = up (PS/2 convention); IO worker flips for virtio REL_Y.
 
-      const initRes = await cpuCall("init", {
+      // WebKit can take significantly longer to spin up the CPU-side helper worker (module graph
+      // parse/compile). Use a larger timeout so cross-browser E2E isn't flaky.
+      const initRes = await cpuCall(
+        "init",
+        {
         ioIpcSab: segments.ioIpc,
         guestMemory: segments.guestMemory,
         guestBase: views.guestLayout.guest_base,
-      });
+        },
+        30_000,
+      );
 
       if (!initRes.virtioOk) {
         const id = (initRes?.idDword ?? 0) >>> 0;
@@ -684,7 +758,9 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     } finally {
       cpuWorker.terminate();
       ioWorker.terminate();
-      URL.revokeObjectURL(cpuUrl);
+      URL.revokeObjectURL(cpuModuleUrl);
+      URL.revokeObjectURL(cpuWrapperUrl);
+      URL.revokeObjectURL(ioWorkerWrapperUrl);
     }
   });
 
