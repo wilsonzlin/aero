@@ -158,6 +158,7 @@ call :log "Installed media provenance (from setup.cmd): %STATE_INSTALLED_MEDIA%"
 if exist "%STATE_INSTALLED_MEDIA%" (
   set "IM_VERSION="
   set "IM_BUILD_ID="
+  set "IM_SIGNING_POLICY="
   set "IM_MANIFEST_SHA256="
   set "CUR_MANIFEST_SHA256="
   for /f "usebackq delims=" %%L in ("%STATE_INSTALLED_MEDIA%") do (
@@ -165,6 +166,7 @@ if exist "%STATE_INSTALLED_MEDIA%" (
     for /f "tokens=1,* delims==" %%A in ("%%L") do (
       if /i "%%A"=="GT_VERSION" set "IM_VERSION=%%B"
       if /i "%%A"=="GT_BUILD_ID" set "IM_BUILD_ID=%%B"
+      if /i "%%A"=="GT_SIGNING_POLICY" set "IM_SIGNING_POLICY=%%B"
       if /i "%%A"=="manifest_sha256" set "IM_MANIFEST_SHA256=%%B"
     )
   )
@@ -183,6 +185,13 @@ if exist "%STATE_INSTALLED_MEDIA%" (
       call :log "WARNING: Installed media differs from current media (build_id mismatch)."
       call :log "         installed-media GT_BUILD_ID=!IM_BUILD_ID!"
       call :log "         current media  GT_BUILD_ID=!GT_BUILD_ID!"
+    )
+  )
+  if defined GT_SIGNING_POLICY if defined IM_SIGNING_POLICY (
+    if /i not "!GT_SIGNING_POLICY!"=="!IM_SIGNING_POLICY!" (
+      call :log "WARNING: Installed media differs from current media (signing_policy mismatch)."
+      call :log "         installed-media GT_SIGNING_POLICY=!IM_SIGNING_POLICY!"
+      call :log "         current media  GT_SIGNING_POLICY=!GT_SIGNING_POLICY!"
     )
   )
 

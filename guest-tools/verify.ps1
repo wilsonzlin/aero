@@ -1987,6 +1987,7 @@ try {
     }
     $installedMediaGtVersion = $null
     $installedMediaGtBuildId = $null
+    $installedMediaSigningPolicy = $null
     $installedMediaManifestSha256 = $null
     if ($installedMediaVars.ContainsKey("GT_VERSION")) {
         $installedMediaGtVersion = ("" + $installedMediaVars["GT_VERSION"]).Trim()
@@ -1995,6 +1996,10 @@ try {
     if ($installedMediaVars.ContainsKey("GT_BUILD_ID")) {
         $installedMediaGtBuildId = ("" + $installedMediaVars["GT_BUILD_ID"]).Trim()
         if ($installedMediaGtBuildId.Length -eq 0) { $installedMediaGtBuildId = $null }
+    }
+    if ($installedMediaVars.ContainsKey("GT_SIGNING_POLICY")) {
+        $installedMediaSigningPolicy = ("" + $installedMediaVars["GT_SIGNING_POLICY"]).Trim()
+        if ($installedMediaSigningPolicy.Length -eq 0) { $installedMediaSigningPolicy = $null }
     }
     if ($installedMediaVars.ContainsKey("manifest_sha256")) {
         $installedMediaManifestSha256 = ("" + $installedMediaVars["manifest_sha256"]).Trim()
@@ -2023,6 +2028,7 @@ try {
 
             $currentVersion = $null
             $currentBuildId = $null
+            $currentSigningPolicy = $null
             $currentManifestSha256 = $null
             if ($report.media_integrity -and ($report.media_integrity -is [hashtable])) {
                 $pkg = $report.media_integrity.package
@@ -2030,12 +2036,16 @@ try {
                     if ($pkg.ContainsKey("version")) { $currentVersion = $pkg["version"] }
                     if ($pkg.ContainsKey("build_id")) { $currentBuildId = $pkg["build_id"] }
                 }
+                if ($report.media_integrity.ContainsKey("signing_policy") -and $report.media_integrity.signing_policy) {
+                    $currentSigningPolicy = "" + $report.media_integrity.signing_policy
+                }
                 if ($report.media_integrity.ContainsKey("manifest_sha256") -and $report.media_integrity.manifest_sha256) {
                     $currentManifestSha256 = "" + $report.media_integrity.manifest_sha256
                 }
             }
             if ($currentVersion) { $currentVersion = ("" + $currentVersion).Trim() }
             if ($currentBuildId) { $currentBuildId = ("" + $currentBuildId).Trim() }
+            if ($currentSigningPolicy) { $currentSigningPolicy = ("" + $currentSigningPolicy).Trim() }
             if ($currentManifestSha256) { $currentManifestSha256 = ("" + $currentManifestSha256).Trim() }
 
             $mismatch = $false
@@ -2048,11 +2058,14 @@ try {
             if ($installedMediaManifestSha256 -and $currentManifestSha256) {
                 if ($installedMediaManifestSha256.ToLower() -ne $currentManifestSha256.ToLower()) { $mismatch = $true }
             }
+            if ($installedMediaSigningPolicy -and $currentSigningPolicy) {
+                if ($installedMediaSigningPolicy.ToLower() -ne $currentSigningPolicy.ToLower()) { $mismatch = $true }
+            }
 
             if ($mismatch) {
                 $st = Merge-Status $st "WARN"
                 $sum += "; WARN: installed media differs from current media"
-                $det += ("WARN: setup.cmd was run from Guest Tools media version=" + $installedMediaGtVersion + ", build_id=" + $installedMediaGtBuildId + ", but the current media manifest.json is version=" + $currentVersion + ", build_id=" + $currentBuildId + ".")
+                $det += ("WARN: setup.cmd was run from Guest Tools media version=" + $installedMediaGtVersion + ", build_id=" + $installedMediaGtBuildId + ", signing_policy=" + $installedMediaSigningPolicy + ", but the current media manifest.json is version=" + $currentVersion + ", build_id=" + $currentBuildId + ", signing_policy=" + $currentSigningPolicy + ".")
                 if ($installedMediaManifestSha256 -and $currentManifestSha256) {
                     $det += ("WARN: installed-media manifest_sha256=" + $installedMediaManifestSha256 + " but current manifest_sha256=" + $currentManifestSha256 + ".")
                 }
