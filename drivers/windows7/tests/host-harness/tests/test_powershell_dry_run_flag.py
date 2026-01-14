@@ -16,7 +16,8 @@ class PowerShellDryRunFlagTests(unittest.TestCase):
         # Parameter exists.
         self.assertRegex(text, re.compile(r"\[switch\]\s*\$DryRun\b", re.IGNORECASE))
         # Alias exists (parity with `-DryRun` / `-PrintQemuArgs` requirements).
-        self.assertRegex(text, re.compile(r"\[Alias\(\s*\"PrintQemuArgs\"\s*\)\]", re.IGNORECASE))
+        # Be permissive: the script may include additional aliases in the same attribute.
+        self.assertRegex(text, re.compile(r"\[Alias\([^\)]*PrintQemuArgs[^\)]*\)\]", re.IGNORECASE))
 
         # The dry-run block exists and exits 0 (so QEMU/servers are not started).
         m = re.search(r"if\s*\(\s*\$DryRun\s*\)\s*\{", text, flags=re.IGNORECASE)
