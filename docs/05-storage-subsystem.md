@@ -319,7 +319,8 @@ toggling `PxSCTL.DET`:
 Aero models this flow in a minimal, synchronous way:
 
 - While COMRESET is asserted (`DET=1`), the port reports a link-down/resetting view, clears
-  in-flight state (`PxCI`/`PxSACT`/`PxIS`/`PxSERR`), and sets `PxTFD.BSY` when a drive is present.
+  in-flight state (`PxCI`/`PxSACT`/`PxIS`), resets `PxSERR` to a basic diagnostic bit, and sets
+  `PxTFD.BSY` when a drive is present.
 - When COMRESET is deasserted (`DET` transitions `1 → 0`), link-up completion happens immediately
   and the port restores `PxSSTS`/`PxSIG` and asserts `PxIS.DHRS` for an attached drive.
 - `DET=4` (and the commonly-seen `DET=2`) are treated as “port disable / PHY offline” until the
@@ -392,6 +393,8 @@ Robustness notes (current behavior):
 
 - Dirty blocks are written back on `flush()` **and** when evicted due to LRU pressure (to avoid
   dropping modified data under memory pressure).
+- If write-back fails during eviction, the entry is reinserted into the cache and the eviction is
+  aborted (to avoid losing dirty data on transient backend errors).
 - Write-back clamps the final partial block to disk capacity and uses checked offset arithmetic to
   avoid panics on edge cases (e.g. near-`u64::MAX` offsets).
 
