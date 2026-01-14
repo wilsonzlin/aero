@@ -655,15 +655,50 @@ impl IoSnapshot for XhciController {
         self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & regs::runtime::MFINDEX_MASK;
         self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
         // `time_ms`/`last_tick_dma_dword` were added in snapshot v0.7. An early implementation
-        // mistakenly reused tag 26 (EP0 control TD full) for `time_ms`, so accept that legacy
-        // encoding by detecting field "shapes" (tag 26 is a vec-bytes blob in valid snapshots and
-        // is never exactly 8 bytes).
-        let ep0_td_full_overwritten = match (r.bytes(TAG_TIME_MS), r.bytes(TAG_LAST_TICK_DMA_DWORD))
-        {
-            // Current mapping: tag 27 = time_ms (u64) and tag 28 = last_tick_dma_dword (u32).
-            (_, Some(_)) => {
-                self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
-                self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+        // mistakenly reused tag 26 (EP0 control TD full) for `time_ms`. Depending on write order,
+        // that bug either:
+        // - dropped `time_ms` entirely (tag 26 remained the EP0 TD snapshot), or
+        // - overwrote the EP0 TD snapshot (tag 26 became an 8-byte `time_ms` image).
+        //
+        // Keep those legacy snapshots loadable by detecting field "shapes" (tag 26 is a vec-bytes
+        // blob in valid snapshots and is never exactly 8 bytes).
+        let ep0_td_full_overwritten = match (
+            r.bytes(TAG_TIME_MS),
+            r.bytes(TAG_LAST_TICK_DMA_DWORD),
+        ) {
+            (Some(time_bytes), Some(tick_bytes)) => match (time_bytes.len(), tick_bytes.len()) {
+                // Current mapping: tag 27 = time_ms (u64) and tag 28 = last_tick_dma_dword (u32).
+                (8, 4) => {
+                    self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
+                    self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+                    false
+                }
+                // Swapped mapping used by some early builds/tests: tag 27 = last_tick_dma_dword and
+                // tag 28 = time_ms.
+                (4, 8) => {
+                    self.time_ms = r.u64(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+                    self.last_tick_dma_dword = r.u32(TAG_TIME_MS)?.unwrap_or(0);
+                    false
+                }
+                _ => {
+                    return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms/last_tick"));
+                }
+            },
+            // Only the tick field present.
+            (None, Some(tick_bytes)) => {
+                match tick_bytes.len() {
+                    4 => {
+                        self.time_ms = 0;
+                        self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+                    }
+                    8 => {
+                        self.time_ms = r.u64(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+                        self.last_tick_dma_dword = 0;
+                    }
+                    _ => {
+                        return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms/last_tick"));
+                    }
+                }
                 false
             }
             // Older snapshots (before v0.7) have neither field.
@@ -790,5 +825,54 @@ impl IoSnapshot for XhciController {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter, SnapshotVersion};
+
+    use super::XhciController;
+
+    #[test]
+    fn snapshot_loads_legacy_tick_tag_without_time_ms() {
+        // Regression test: early 0.7 snapshots encoded `last_tick_dma_dword` under tag 27 and did
+        // not persist `time_ms` due to a tag collision. Ensure we can still load those snapshots.
+        let mut ctrl = XhciController::new();
+        ctrl.time_ms = 123;
+        ctrl.last_tick_dma_dword = 0xdead_beef;
+
+        let bytes = ctrl.save_state();
+        let r =
+            SnapshotReader::parse(&bytes, XhciController::DEVICE_ID).expect("parse xHCI snapshot");
+
+        // Rewrite the snapshot to mimic the legacy 0.7 tag mapping:
+        // - tag 27: last_tick_dma_dword (u32)
+        // - no time_ms field
+        let mut w = SnapshotWriter::new(
+            XhciController::DEVICE_ID,
+            SnapshotVersion::new(0, 7),
+        );
+        for (tag, field) in r.iter_fields() {
+            if tag == super::TAG_TIME_MS {
+                // Drop time_ms.
+                continue;
+            }
+            let out_tag = if tag == super::TAG_LAST_TICK_DMA_DWORD {
+                super::TAG_TIME_MS
+            } else {
+                tag
+            };
+            w.field_bytes(out_tag, field.to_vec());
+        }
+        let legacy_bytes = w.finish();
+
+        let mut restored = XhciController::new();
+        restored
+            .load_state(&legacy_bytes)
+            .expect("load legacy xHCI snapshot");
+
+        assert_eq!(restored.last_tick_dma_dword, ctrl.last_tick_dma_dword);
+        assert_eq!(restored.time_ms, 0);
     }
 }
