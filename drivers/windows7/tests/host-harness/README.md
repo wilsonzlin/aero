@@ -193,8 +193,8 @@ Per-device overrides (take precedence over the global value):
 
 Notes:
 
-- This is **best-effort** and only works on QEMU builds where the virtio device exposes the `vectors` property.
-  When unsupported, the harness warns and runs without the override (upgrade QEMU to exercise multi-vector paths).
+- This requires a QEMU build where the virtio device exposes the `vectors` property. The harness probes
+  `-device <name>,help` and fails fast with a clear error if unsupported (disable the flag or upgrade QEMU).
 - Typical values to try are `2`, `4`, or `8`.
 - Windows may still allocate **fewer** MSI-X messages than requested (for example due to platform/OS limits). The Aero
   drivers are expected to fall back to the number of vectors actually granted (including single-vector MSI-X or INTx), so

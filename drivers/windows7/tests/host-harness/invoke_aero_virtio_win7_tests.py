@@ -2746,7 +2746,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "If set, request a specific MSI-X vector table size from QEMU by appending ',vectors=N' to "
             "virtio-pci devices created by the harness (virtio-net/blk/input/snd). "
-            "Best-effort: requires a QEMU build that supports the 'vectors' property. "
+            "Requires a QEMU build that supports the 'vectors' property (the harness fails fast if unsupported). "
             "Typical values: 2, 4, 8. Windows may still allocate fewer messages; drivers fall back. "
             "Disabled by default."
         ),
@@ -2766,7 +2766,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="Override virtio-net MSI-X vectors via `-device virtio-net-pci,...,vectors=N` when supported.",
+        help=(
+            "Override virtio-net MSI-X vectors via `-device virtio-net-pci,...,vectors=N` "
+            "(requires QEMU virtio `vectors` property)."
+        ),
     )
     parser.add_argument(
         "--virtio-blk-vectors",
@@ -2774,7 +2777,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="Override virtio-blk MSI-X vectors via `-device virtio-blk-pci,...,vectors=N` when supported.",
+        help=(
+            "Override virtio-blk MSI-X vectors via `-device virtio-blk-pci,...,vectors=N` "
+            "(requires QEMU virtio `vectors` property)."
+        ),
     )
     parser.add_argument(
         "--virtio-snd-vectors",
@@ -2782,7 +2788,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="Override virtio-snd MSI-X vectors via `-device virtio-snd-pci,...,vectors=N` when supported (requires --with-virtio-snd).",
+        help=(
+            "Override virtio-snd MSI-X vectors via `-device virtio-snd-pci,...,vectors=N` "
+            "(requires QEMU virtio `vectors` property and --with-virtio-snd)."
+        ),
     )
     parser.add_argument(
         "--virtio-input-vectors",
@@ -2790,7 +2799,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="Override virtio-input MSI-X vectors via `-device virtio-*-pci,...,vectors=N` when supported.",
+        help=(
+            "Override virtio-input MSI-X vectors via `-device virtio-*-pci,...,vectors=N` "
+            "(requires QEMU virtio `vectors` property)."
+        ),
     )
     parser.add_argument(
         "--require-intx",
@@ -3020,9 +3032,10 @@ def main() -> int:
             return 2
 
     vectors_requested = any(
-        v is not None for v in (virtio_net_vectors, virtio_blk_vectors, virtio_input_vectors, virtio_snd_vectors)
+        v is not None
+        for v in (virtio_net_vectors, virtio_blk_vectors, virtio_input_vectors, virtio_snd_vectors)
     )
-    if vectors_requested:
+    if vectors_requested and not args.dry_run:
         requested_by_parts: list[str] = []
         if args.virtio_disable_msix:
             requested_by_parts.append("--virtio-disable-msix")
