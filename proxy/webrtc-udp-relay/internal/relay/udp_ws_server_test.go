@@ -67,6 +67,48 @@ func startUDPEchoServer(t *testing.T, network string, ip net.IP) (*net.UDPConn, 
 	return conn, uint16(conn.LocalAddr().(*net.UDPAddr).Port)
 }
 
+func startUDPEchoServerDifferentSourcePort(t *testing.T, network string, ip net.IP) (listenPort, replyPort uint16, shutdown func()) {
+	t.Helper()
+
+	listener, err := net.ListenUDP(network, &net.UDPAddr{IP: ip, Port: 0})
+	if err != nil {
+		if network == "udp6" {
+			t.Skipf("ipv6 not supported: %v", err)
+		}
+		t.Fatalf("ListenUDP(listener): %v", err)
+	}
+
+	responder, err := net.ListenUDP(network, &net.UDPAddr{IP: ip, Port: 0})
+	if err != nil {
+		_ = listener.Close()
+		if network == "udp6" {
+			t.Skipf("ipv6 not supported: %v", err)
+		}
+		t.Fatalf("ListenUDP(responder): %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 64*1024)
+		for {
+			n, peer, err := listener.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			_, _ = responder.WriteToUDP(buf[:n], peer)
+		}
+	}()
+
+	closeFn := func() {
+		_ = listener.Close()
+		_ = responder.Close()
+		<-done
+	}
+
+	return uint16(listener.LocalAddr().(*net.UDPAddr).Port), uint16(responder.LocalAddr().(*net.UDPAddr).Port), closeFn
+}
+
 func dialWS(t *testing.T, baseURL, path string) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + path
@@ -569,6 +611,145 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 	}
 	if string(outFrame.Payload) != "hello ipv6" {
 		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello ipv6")
+	}
+}
+
+func TestUDPWebSocketServer_InboundFilterAddressAndPort_DropsUnexpectedSourcePort(t *testing.T) {
+	remotePort, replyPort, closeEcho := startUDPEchoServerDifferentSourcePort(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer closeEcho()
+	if remotePort == replyPort {
+		t.Fatalf("expected different listen/reply ports, got %d", remotePort)
+	}
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
+	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: remotePort,
+		Payload:    []byte("hello"),
+	}
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	// No binary response expected because the server replies from replyPort, which
+	// should not be allowlisted in address+port mode.
+	_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	for {
+		msgType, _, err := c.ReadMessage()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				break
+			}
+			t.Fatalf("ReadMessage: %v", err)
+		}
+		if msgType == websocket.BinaryMessage {
+			t.Fatalf("unexpected binary message from dropped inbound UDP packet")
+		}
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s metric increment", metrics.UDPRemoteAllowlistOverflowDropsTotal)
+}
+
+func TestUDPWebSocketServer_InboundFilterAny_AllowsUnexpectedSourcePort(t *testing.T) {
+	remotePort, replyPort, closeEcho := startUDPEchoServerDifferentSourcePort(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer closeEcho()
+	if remotePort == replyPort {
+		t.Fatalf("expected different listen/reply ports, got %d", remotePort)
+	}
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+	relayCfg.InboundFilterMode = InboundFilterAny
+	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: remotePort,
+		Payload:    []byte("hello"),
+	}
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	outPkt := readWSBinary(t, c, 2*time.Second)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if outFrame.GuestPort != in.GuestPort {
+		t.Fatalf("guest port mismatch: got %d, want %d", outFrame.GuestPort, in.GuestPort)
+	}
+	if outFrame.RemotePort != replyPort {
+		t.Fatalf("expected remote port %d, got %d", replyPort, outFrame.RemotePort)
+	}
+	if string(outFrame.Payload) != "hello" {
+		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello")
+	}
+
+	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 0 {
+		t.Fatalf("%s=%d, want 0", metrics.UDPRemoteAllowlistOverflowDropsTotal, got)
+	}
+	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
+		t.Fatalf("%s=%d, want 0", metrics.UDPRemoteAllowlistEvictionsTotal, got)
 	}
 }
 
