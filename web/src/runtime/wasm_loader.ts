@@ -1380,14 +1380,24 @@ export interface WasmApi {
 
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
-        consumer_event(usage: number, pressed: boolean): void;
+        /**
+         * Inject a Consumer Control (HID Usage Page 0x0C) usage transition.
+         *
+         * Optional for older WASM builds.
+         */
+        consumer_event?(usage: number, pressed: boolean): void;
         mouse_move(dx: number, dy: number): void;
         mouse_buttons(buttons: number): void;
         mouse_wheel(delta: number): void;
         mouse_hwheel?(delta: number): void;
         gamepad_report(packedLo: number, packedHi: number): void;
         drain_next_keyboard_report(): Uint8Array | null;
-        drain_next_consumer_report(): Uint8Array | null;
+        /**
+         * Drain the next Consumer Control report (2 bytes, little-endian usage ID) or return `null`.
+         *
+         * Optional for older WASM builds.
+         */
+        drain_next_consumer_report?(): Uint8Array | null;
         drain_next_mouse_report(): Uint8Array | null;
         drain_next_gamepad_report(): Uint8Array | null;
         free(): void;

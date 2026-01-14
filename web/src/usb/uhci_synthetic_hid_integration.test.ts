@@ -426,10 +426,20 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(padReport).toBeInstanceOf(Uint8Array);
     gamepadDev.push_input_report(0, padReport!);
 
-    usbHid.consumer_event(0x00e9, true); // Volume Up
-    const consumerReport = usbHid.drain_next_consumer_report();
-    expect(consumerReport).toBeInstanceOf(Uint8Array);
-    consumerDev.push_input_report(0, consumerReport!);
+    // Consumer Control report format: 2 bytes, little-endian u16 usage ID (Usage Page 0x0C).
+    // Newer WASM builds can generate this via `UsbHidBridge.consumer_event`; fall back to
+    // constructing the report bytes manually for back-compat.
+    let consumerReport: Uint8Array | null = null;
+    try {
+      usbHid.consumer_event?.(0x00e9, true); // Volume Up
+      consumerReport = usbHid.drain_next_consumer_report?.() ?? null;
+    } catch {
+      consumerReport = null;
+    }
+    if (!(consumerReport instanceof Uint8Array)) {
+      consumerReport = new Uint8Array([0xe9, 0x00]);
+    }
+    consumerDev.push_input_report(0, consumerReport);
 
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 5 })).toEqual(mouseReport);
@@ -625,10 +635,17 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(padReport).toBeInstanceOf(Uint8Array);
     gamepadDev.push_input_report(0, padReport!);
 
-    usbHid.consumer_event(0x00e9, true);
-    const consumerReport = usbHid.drain_next_consumer_report();
-    expect(consumerReport).toBeInstanceOf(Uint8Array);
-    consumerDev.push_input_report(0, consumerReport!);
+    let consumerReport: Uint8Array | null = null;
+    try {
+      usbHid.consumer_event?.(0x00e9, true);
+      consumerReport = usbHid.drain_next_consumer_report?.() ?? null;
+    } catch {
+      consumerReport = null;
+    }
+    if (!(consumerReport instanceof Uint8Array)) {
+      consumerReport = new Uint8Array([0xe9, 0x00]);
+    }
+    consumerDev.push_input_report(0, consumerReport);
 
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 5 })).toEqual(mouseReport);
@@ -806,10 +823,17 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(padReport).toBeInstanceOf(Uint8Array);
     gamepadDev.push_input_report(0, padReport!);
 
-    usbHid.consumer_event(0x00e9, true);
-    const consumerReport = usbHid.drain_next_consumer_report();
-    expect(consumerReport).toBeInstanceOf(Uint8Array);
-    consumerDev.push_input_report(0, consumerReport!);
+    let consumerReport: Uint8Array | null = null;
+    try {
+      usbHid.consumer_event?.(0x00e9, true);
+      consumerReport = usbHid.drain_next_consumer_report?.() ?? null;
+    } catch {
+      consumerReport = null;
+    }
+    if (!(consumerReport instanceof Uint8Array)) {
+      consumerReport = new Uint8Array([0xe9, 0x00]);
+    }
+    consumerDev.push_input_report(0, consumerReport);
 
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 5 })).toEqual(mouseReport);

@@ -6360,22 +6360,25 @@ function drainSyntheticUsbHidReports(): void {
     }
     syntheticUsbConsumerControlPendingReport = null;
   }
-  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
-    let report: Uint8Array | null = null;
-    try {
-      report = source.drain_next_consumer_report();
-    } catch {
-      break;
-    }
-    if (!(report instanceof Uint8Array)) break;
-    if (consumerConfigured && consumer) {
+  const drainConsumer = source.drain_next_consumer_report;
+  if (drainConsumer) {
+    for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+      let report: Uint8Array | null = null;
       try {
-        consumer.push_input_report(0, report);
+        report = drainConsumer.call(source);
       } catch {
-        // ignore
+        break;
       }
-    } else {
-      syntheticUsbConsumerControlPendingReport = report;
+      if (!(report instanceof Uint8Array)) break;
+      if (consumerConfigured && consumer) {
+        try {
+          consumer.push_input_report(0, report);
+        } catch {
+          // ignore
+        }
+      } else {
+        syntheticUsbConsumerControlPendingReport = report;
+      }
     }
   }
 }
@@ -6584,16 +6587,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Consumer Control (0x0C) uses a dedicated synthetic USB HID device; PS/2 and virtio-input
         // paths do not currently model consumer-page usages.
         if (usagePage === 0x0c) {
-          const hid = usbHid;
-          // Keep this tolerant so newer JS can run against older WASM builds that don't yet expose
-          // Consumer Control exports.
-          const fn = (hid as unknown as { consumer_event?: unknown } | null)?.consumer_event;
-          if (typeof fn === "function") {
-            try {
-              (fn as (usage: number, pressed: boolean) => void).call(hid, usageId, pressed);
-            } catch {
-              // ignore
-            }
+          try {
+            usbHid?.consumer_event?.(usageId, pressed);
+          } catch {
+            // ignore
           }
         }
         break;

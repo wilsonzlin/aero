@@ -476,29 +476,56 @@ describe("io/devices/virtio-input (pci bridge integration)", () => {
       expect(ev4).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
 
       // Vertical + horizontal scroll in one frame.
+      const hasWheel2 = typeof bridge.inject_wheel2 === "function";
+      const hasHWheel = typeof bridge.inject_hwheel === "function";
       dev.injectWheel2(2, 3);
-      expect(guestReadU16(used + 2)).toBe(8);
-
-      const ev5 = decodeEvent(guestReadBytes(eventBufBase + 5 * 8, 8));
-      const ev6 = decodeEvent(guestReadBytes(eventBufBase + 6 * 8, 8));
-      const ev7 = decodeEvent(guestReadBytes(eventBufBase + 7 * 8, 8));
-      expect(ev5).toEqual({ type_: EV_REL, code: REL_WHEEL, value: 2 });
-      expect(ev6).toEqual({ type_: EV_REL, code: REL_HWHEEL, value: 3 });
-      expect(ev7).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+      let nextEventIndex = 5;
+      if (hasWheel2) {
+        // Newer WASM builds support a combined (wheel, hwheel) injection that produces one SYN.
+        expect(guestReadU16(used + 2)).toBe(nextEventIndex + 3);
+        const ev5 = decodeEvent(guestReadBytes(eventBufBase + 5 * 8, 8));
+        const ev6 = decodeEvent(guestReadBytes(eventBufBase + 6 * 8, 8));
+        const ev7 = decodeEvent(guestReadBytes(eventBufBase + 7 * 8, 8));
+        expect(ev5).toEqual({ type_: EV_REL, code: REL_WHEEL, value: 2 });
+        expect(ev6).toEqual({ type_: EV_REL, code: REL_HWHEEL, value: 3 });
+        expect(ev7).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+        nextEventIndex += 3;
+      } else if (hasHWheel) {
+        // Back-compat: inject each axis separately (each produces its own SYN frame).
+        expect(guestReadU16(used + 2)).toBe(nextEventIndex + 4);
+        const ev5 = decodeEvent(guestReadBytes(eventBufBase + 5 * 8, 8));
+        const ev6 = decodeEvent(guestReadBytes(eventBufBase + 6 * 8, 8));
+        const ev7 = decodeEvent(guestReadBytes(eventBufBase + 7 * 8, 8));
+        const ev8 = decodeEvent(guestReadBytes(eventBufBase + 8 * 8, 8));
+        expect(ev5).toEqual({ type_: EV_REL, code: REL_WHEEL, value: 2 });
+        expect(ev6).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+        expect(ev7).toEqual({ type_: EV_REL, code: REL_HWHEEL, value: 3 });
+        expect(ev8).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+        nextEventIndex += 4;
+      } else {
+        // Oldest builds do not support horizontal wheel events; still emit vertical wheel + SYN.
+        expect(guestReadU16(used + 2)).toBe(nextEventIndex + 2);
+        const ev5 = decodeEvent(guestReadBytes(eventBufBase + 5 * 8, 8));
+        const ev6 = decodeEvent(guestReadBytes(eventBufBase + 6 * 8, 8));
+        expect(ev5).toEqual({ type_: EV_REL, code: REL_WHEEL, value: 2 });
+        expect(ev6).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+        nextEventIndex += 2;
+      }
 
       dev.injectMouseButtons(0x01);
-      expect(guestReadU16(used + 2)).toBe(10);
-      const ev8 = decodeEvent(guestReadBytes(eventBufBase + 8 * 8, 8));
-      const ev9 = decodeEvent(guestReadBytes(eventBufBase + 9 * 8, 8));
-      expect(ev8).toEqual({ type_: EV_KEY, code: BTN_LEFT, value: 1 });
-      expect(ev9).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+      expect(guestReadU16(used + 2)).toBe(nextEventIndex + 2);
+      const evDown = decodeEvent(guestReadBytes(eventBufBase + nextEventIndex * 8, 8));
+      const evDownSyn = decodeEvent(guestReadBytes(eventBufBase + (nextEventIndex + 1) * 8, 8));
+      expect(evDown).toEqual({ type_: EV_KEY, code: BTN_LEFT, value: 1 });
+      expect(evDownSyn).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+      nextEventIndex += 2;
 
       dev.injectMouseButtons(0x00);
-      expect(guestReadU16(used + 2)).toBe(12);
-      const ev10 = decodeEvent(guestReadBytes(eventBufBase + 10 * 8, 8));
-      const ev11 = decodeEvent(guestReadBytes(eventBufBase + 11 * 8, 8));
-      expect(ev10).toEqual({ type_: EV_KEY, code: BTN_LEFT, value: 0 });
-      expect(ev11).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
+      expect(guestReadU16(used + 2)).toBe(nextEventIndex + 2);
+      const evUp = decodeEvent(guestReadBytes(eventBufBase + nextEventIndex * 8, 8));
+      const evUpSyn = decodeEvent(guestReadBytes(eventBufBase + (nextEventIndex + 1) * 8, 8));
+      expect(evUp).toEqual({ type_: EV_KEY, code: BTN_LEFT, value: 0 });
+      expect(evUpSyn).toEqual({ type_: EV_SYN, code: SYN_REPORT, value: 0 });
 
       // Queue interrupt should assert INTx.
       expect(irqState.raised).toBeGreaterThan(0);
