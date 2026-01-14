@@ -48,6 +48,7 @@ impl Default for LegacyWasmOptions {
 }
 
 impl LegacyWasmOptions {
+    #[track_caller]
     fn validate_memory_import(self) {
         let effective_max_pages = if self.memory_shared {
             Some(self.memory_max_pages.unwrap_or(WASM32_MAX_PAGES))
@@ -105,10 +106,12 @@ impl WasmCodegen {
     /// - export `block(cpu_ptr: i32) -> i64`
     /// - import `env.memory`
     /// - import helpers described by the `IMPORT_*` constants
+    #[track_caller]
     pub fn compile_block(&self, block: &IrBlock) -> Vec<u8> {
         self.compile_block_with_options(block, LegacyWasmOptions::default())
     }
 
+    #[track_caller]
     pub fn compile_block_with_options(
         &self,
         block: &IrBlock,

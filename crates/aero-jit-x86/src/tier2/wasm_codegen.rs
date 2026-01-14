@@ -68,6 +68,7 @@ impl Default for Tier2WasmOptions {
 }
 
 impl Tier2WasmOptions {
+    #[track_caller]
     fn validate_memory_import(self) {
         let effective_max_pages = if self.memory_shared {
             Some(self.memory_max_pages.unwrap_or(WASM32_MAX_PAGES))
@@ -135,10 +136,12 @@ impl Tier2WasmCodegen {
     ///
     /// The trace spills cached registers (and `CpuState.rflags` when the trace uses flags) on
     /// every side exit.
+    #[track_caller]
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
         self.compile_trace_with_options(trace, plan, Tier2WasmOptions::default())
     }
 
+    #[track_caller]
     pub fn compile_trace_with_options(
         &self,
         trace: &TraceIr,

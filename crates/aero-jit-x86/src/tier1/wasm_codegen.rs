@@ -95,6 +95,7 @@ impl Default for Tier1WasmOptions {
 }
 
 impl Tier1WasmOptions {
+    #[track_caller]
     fn validate_memory_import(self) {
         let effective_max_pages = if self.memory_shared {
             Some(self.memory_max_pages.unwrap_or(WASM32_MAX_PAGES))
@@ -300,11 +301,13 @@ impl Tier1WasmCodegen {
     }
 
     #[must_use]
+    #[track_caller]
     pub fn compile_block(&self, block: &IrBlock) -> Vec<u8> {
         self.compile_block_with_options(block, Tier1WasmOptions::default())
     }
 
     #[must_use]
+    #[track_caller]
     pub fn compile_block_with_options(
         &self,
         block: &IrBlock,
