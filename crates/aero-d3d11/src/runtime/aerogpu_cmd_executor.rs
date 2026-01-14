@@ -21469,6 +21469,32 @@ fn extend_pipeline_bindings_for_passthrough_vs(
         pipeline_bindings.group_bindings.push(Vec::new());
     }
 
+    // The expanded draw pipeline layout includes an internal-emulation bind group layout entry for
+    // the expanded vertex buffer (see above). `build_stage_bind_groups` treats an empty
+    // `group_bindings[group]` list as "create an empty bind group", which would violate wgpu's
+    // validation because the layout expects a binding.
+    //
+    // Add a placeholder binding descriptor so bind group construction produces a compatible bind
+    // group (it will bind the dummy storage buffer until the caller overrides it with the actual
+    // expanded vertex buffer allocation).
+    let internal_index: usize = BIND_GROUP_INTERNAL_EMULATION
+        .try_into()
+        .map_err(|_| anyhow!("internal emulation bind group index overflows usize"))?;
+    if internal_index < pipeline_bindings.group_bindings.len()
+        && !pipeline_bindings.group_bindings[internal_index]
+            .iter()
+            .any(|b| b.binding == BINDING_INTERNAL_EXPANDED_VERTICES)
+    {
+        pipeline_bindings.group_bindings[internal_index].push(crate::Binding {
+            group: BIND_GROUP_INTERNAL_EMULATION,
+            binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+            visibility: wgpu::ShaderStages::VERTEX,
+            // Use a sentinel slot outside the valid D3D `t#` range so this placeholder never
+            // aliases a real SRV binding.
+            kind: crate::BindingKind::SrvBuffer { slot: u32::MAX },
+        });
+    }
+
     pipeline_bindings.layout_key = PipelineLayoutKey {
         bind_group_layout_hashes: pipeline_bindings
             .group_layouts
