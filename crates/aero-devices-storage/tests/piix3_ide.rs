@@ -2149,6 +2149,190 @@ fn ata_dma_direction_mismatch_sets_error_status() {
 }
 
 #[test]
+fn ata_write_dma_missing_prd_eot_sets_error_status_and_does_not_write_disk() {
+    let shared = Arc::new(Mutex::new(RecordingDisk::new(1)));
+    let disk = SharedRecordingDisk(shared.clone());
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // Fill one sector worth of DMA source data.
+    mem.write_physical(dma_buf, &vec![0xA5u8; SECTOR_SIZE]);
+
+    // Malformed PRD entry without EOT flag, but long enough for the whole transfer.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x0000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // WRITE DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA); // WRITE DMA
+
+    // Start bus master (direction = from memory).
+    ioports.write(bm_base, 1, 0x01);
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(
+        st & 0x07,
+        0x06,
+        "BMIDE status should have IRQ+ERR set and ACTIVE clear"
+    );
+
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear");
+    assert_ne!(st & 0x40, 0, "DRDY should be set");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    assert!(ide.borrow().controller.primary_irq_pending());
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let inner = shared.lock().unwrap();
+    assert_eq!(
+        inner.last_write_lba, None,
+        "DMA PRD error should prevent committing the write to disk"
+    );
+    assert_eq!(inner.last_write_len, 0);
+}
+
+#[test]
+fn ata_write_dma_prd_too_short_sets_error_status_and_does_not_write_disk() {
+    let shared = Arc::new(Mutex::new(RecordingDisk::new(1)));
+    let disk = SharedRecordingDisk(shared.clone());
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // Fill one sector worth of DMA source data.
+    mem.write_physical(dma_buf, &vec![0xA5u8; SECTOR_SIZE]);
+
+    // PRD entry that is too short for a 512-byte request (256 bytes, EOT).
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 256);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // WRITE DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA);
+
+    ioports.write(bm_base, 1, 0x01);
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x06);
+
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0);
+    assert_eq!(st & 0x08, 0);
+    assert_ne!(st & 0x40, 0);
+    assert_ne!(st & 0x01, 0);
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    assert!(ide.borrow().controller.primary_irq_pending());
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let inner = shared.lock().unwrap();
+    assert_eq!(inner.last_write_lba, None);
+}
+
+#[test]
+fn ata_write_dma_direction_mismatch_sets_error_status_and_does_not_write_disk() {
+    let shared = Arc::new(Mutex::new(RecordingDisk::new(1)));
+    let disk = SharedRecordingDisk(shared.clone());
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // Fill one sector worth of DMA source data.
+    mem.write_physical(dma_buf, &vec![0xA5u8; SECTOR_SIZE]);
+
+    // Valid PRD entry (512 bytes, EOT).
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // WRITE DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xCA);
+
+    // Start bus master with direction=read (device -> memory), mismatching the write request.
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x06);
+
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0);
+    assert_eq!(st & 0x08, 0);
+    assert_ne!(st & 0x40, 0);
+    assert_ne!(st & 0x01, 0);
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    assert!(ide.borrow().controller.primary_irq_pending());
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let inner = shared.lock().unwrap();
+    assert_eq!(inner.last_write_lba, None);
+}
+
+#[test]
 fn bios_post_preserves_piix3_legacy_bar_bases() {
     let mut bus = PciPlatform::build_bus();
     let bdf = IDE_PIIX3.bdf;
