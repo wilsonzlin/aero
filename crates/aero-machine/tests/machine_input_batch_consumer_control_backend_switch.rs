@@ -202,3 +202,67 @@ fn inject_input_batch_consumer_release_after_snapshot_restore_clears_usb_even_if
         UsbInResult::Data(vec![0x00, 0x00])
     );
 }
+
+#[test]
+fn inject_input_batch_consumer_browser_back_routes_via_usb_even_when_virtio_is_ready() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        enable_debugcon: false,
+        ..Default::default()
+    };
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Mark virtio-input keyboard as DRIVER_OK (so media keys *can* route via virtio when mapped).
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let bar0 = bar0_base(&mut m, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+    let mut cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd));
+    m.write_physical_u8(bar0 + 0x14, VIRTIO_STATUS_DRIVER_OK);
+    assert!(m.virtio_input_keyboard_driver_ok(), "expected DRIVER_OK");
+
+    let mut consumer = m
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic USB consumer-control device should be present");
+
+    // Configure the consumer-control device directly.
+    let set_cfg = SetupPacket {
+        bm_request_type: 0x00,
+        b_request: 0x09, // SET_CONFIGURATION
+        w_value: 0x0001,
+        w_index: 0,
+        w_length: 0,
+    };
+    assert_eq!(
+        consumer.handle_control_request(set_cfg, None),
+        ControlResponse::Ack
+    );
+    assert_eq!(consumer.handle_interrupt_in(0x81), UsbInResult::Nak);
+
+    // Press BrowserBack (Consumer Page 0x0C, AC Back usage 0x0224). This is intentionally *not*
+    // representable as a virtio-input KEY_* code, so it should always route via the dedicated USB
+    // consumer-control device even when virtio-input is ready.
+    let words_press: [u32; 6] = [1, 0, 7, 0, 0x0001_000c, 0x0224];
+    m.inject_input_batch(&words_press);
+    assert_eq!(
+        consumer.handle_interrupt_in(0x81),
+        UsbInResult::Data(vec![0x24, 0x02])
+    );
+
+    let words_release: [u32; 6] = [1, 0, 7, 0, 0x0000_000c, 0x0224];
+    m.inject_input_batch(&words_release);
+    assert_eq!(
+        consumer.handle_interrupt_in(0x81),
+        UsbInResult::Data(vec![0x00, 0x00])
+    );
+}
