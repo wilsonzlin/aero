@@ -44,6 +44,7 @@ import {
   type SetMicrophoneRingBufferMessage,
   type CursorSetImageMessage,
   type CursorSetStateMessage,
+  type AerogpuSubmitMessage,
   type WorkerInitMessage,
   type WasmReadyMessage,
 } from "./protocol";
@@ -65,6 +66,7 @@ import {
   GPU_PROTOCOL_VERSION,
   type GpuRuntimeCursorSetImageMessage,
   type GpuRuntimeCursorSetStateMessage,
+  type GpuRuntimeSubmitAerogpuMessage,
 } from "../ipc/gpu-protocol";
 import {
   SCANOUT_FORMAT_B8G8R8X8,
@@ -296,6 +298,7 @@ export class WorkerCoordinator {
   private platformFeatures: PlatformFeatureReport | null = null;
   private nextCmdSeq = 1;
   private nextSnapshotRequestId = 1;
+  private nextAerogpuRequestId = 1;
   private snapshotInFlight = false;
 
   private lastHeartbeatFromRing = 0;
@@ -2288,6 +2291,21 @@ export class WorkerCoordinator {
       return;
     }
 
+    const maybeAerogpuSubmit = data as Partial<AerogpuSubmitMessage>;
+    if (
+      maybeAerogpuSubmit?.kind === "aerogpu.submit" &&
+      typeof maybeAerogpuSubmit.contextId === "number" &&
+      typeof maybeAerogpuSubmit.signalFence === "bigint" &&
+      maybeAerogpuSubmit.cmdStream instanceof ArrayBuffer
+    ) {
+      // Defensive: ignore malformed optional allocTable payloads.
+      if (maybeAerogpuSubmit.allocTable !== undefined && !(maybeAerogpuSubmit.allocTable instanceof ArrayBuffer)) {
+        return;
+      }
+      this.forwardAerogpuSubmit(maybeAerogpuSubmit as AerogpuSubmitMessage);
+      return;
+    }
+
     if (role === "cpu") {
       const bootDeviceMsg = data as Partial<{ type: unknown; bootDevice: unknown }>;
       if (bootDeviceMsg?.type === "machineCpu.bootDeviceSelected") {
@@ -2643,6 +2661,33 @@ export class WorkerCoordinator {
       };
       gpu.postMessage(msg);
     }
+  }
+
+  private forwardAerogpuSubmit(sub: AerogpuSubmitMessage): void {
+    const gpuInfo = this.workers.gpu;
+    if (!gpuInfo || gpuInfo.status.state !== "ready") {
+      // GPU worker is not ready (yet). Drop the submission; the machine/device model still
+      // maintains forward progress via fence completion semantics.
+      return;
+    }
+
+    const cmdStream = sub.cmdStream;
+    const allocTable = sub.allocTable;
+
+    const requestId = this.nextAerogpuRequestId++;
+    const msg: GpuRuntimeSubmitAerogpuMessage = {
+      ...GPU_MESSAGE_BASE,
+      type: "submit_aerogpu",
+      requestId,
+      contextId: sub.contextId >>> 0,
+      signalFence: sub.signalFence,
+      cmdStream,
+      ...(allocTable ? { allocTable } : {}),
+    };
+
+    const transfer: Transferable[] = [cmdStream];
+    if (allocTable) transfer.push(allocTable);
+    gpuInfo.worker.postMessage(msg, transfer);
   }
 }
 

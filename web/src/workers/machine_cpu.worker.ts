@@ -14,6 +14,7 @@ import { planMachineBootDiskAttachment } from "../runtime/machine_disk_attach";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
+  type AerogpuSubmitMessage,
   ErrorCode,
   MessageType,
   type ProtocolMessage,
@@ -1322,6 +1323,74 @@ function drainSerialOutput(): void {
   pushEvent({ kind: "serialOutput", port: UART_COM1.basePort, data: bytes });
 }
 
+function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buf = bytes.buffer;
+  if (buf instanceof ArrayBuffer) {
+    if (bytes.byteOffset === 0 && bytes.byteLength === buf.byteLength) return buf;
+    try {
+      return buf.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    } catch {
+      // fall through to copy
+    }
+  }
+
+  // Either the view is backed by a non-transferable buffer (e.g. SharedArrayBuffer) or slice
+  // failed for some reason. Copy into a new ArrayBuffer-backed typed array.
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+function drainAerogpuSubmissions(): void {
+  if (vmSnapshotPaused || machineBusy) return;
+  const m = machine;
+  if (!m || typeof m.aerogpu_drain_submissions !== "function") return;
+
+  let drained: unknown;
+  try {
+    drained = m.aerogpu_drain_submissions();
+  } catch {
+    return;
+  }
+
+  if (!Array.isArray(drained) || drained.length === 0) return;
+
+  for (const entry of drained) {
+    const sub = entry as Partial<{
+      cmdStream: unknown;
+      signalFence: unknown;
+      contextId: unknown;
+      allocTable: unknown;
+    }>;
+    if (!(sub.cmdStream instanceof Uint8Array)) continue;
+    if (typeof sub.signalFence !== "bigint") continue;
+    if (typeof sub.contextId !== "number" || !Number.isFinite(sub.contextId)) continue;
+
+    const cmdStream = toTransferableArrayBuffer(sub.cmdStream);
+    const transfer: Transferable[] = [cmdStream];
+
+    const allocTableBytes = sub.allocTable;
+    let allocTable: ArrayBuffer | undefined;
+    if (allocTableBytes instanceof Uint8Array && allocTableBytes.byteLength > 0) {
+      allocTable = toTransferableArrayBuffer(allocTableBytes);
+      transfer.push(allocTable);
+    }
+
+    const msg: AerogpuSubmitMessage = {
+      kind: "aerogpu.submit",
+      contextId: sub.contextId >>> 0,
+      signalFence: sub.signalFence,
+      cmdStream,
+      ...(allocTable ? { allocTable } : {}),
+    };
+    try {
+      ctx.postMessage(msg, transfer);
+    } catch {
+      // ignore (best-effort)
+    }
+  }
+}
+
 function handleRunExit(exit: unknown): void {
   const kind = (exit as unknown as { kind?: unknown }).kind;
   const detail = (exit as unknown as { detail?: unknown }).detail;
@@ -1647,6 +1716,7 @@ async function runLoop(): Promise<void> {
       const exitKindNum = typeof exitKind === "number" ? (exitKind | 0) : -1;
       handleRunExit(exit);
       drainSerialOutput();
+      drainAerogpuSubmissions();
       try {
         (exit as unknown as { free?: () => void }).free?.();
       } catch {

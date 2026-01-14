@@ -293,6 +293,23 @@ export type CursorSetStateMessage = {
   hotY: number;
 };
 
+/**
+ * AeroGPU submission forwarded from the CPU/machine worker to the coordinator.
+ *
+ * The coordinator is responsible for forwarding this to the GPU worker via the versioned
+ * `GpuRuntimeSubmitAerogpuMessage` protocol (`web/src/ipc/gpu-protocol.ts`).
+ *
+ * This intentionally uses `postMessage` (not the ring-buffer IPC) because command streams and
+ * alloc tables can be large and are best transferred as `ArrayBuffer`s.
+ */
+export type AerogpuSubmitMessage = {
+  kind: "aerogpu.submit";
+  contextId: number;
+  signalFence: bigint;
+  cmdStream: ArrayBuffer;
+  allocTable?: ArrayBuffer;
+};
+
 export type WorkerToCoordinatorPostMessage =
   | ReadyMessage
   | ErrorMessage
@@ -302,5 +319,6 @@ export type WorkerToCoordinatorPostMessage =
   | ResetRequestMessage
   | CursorSetImageMessage
   | CursorSetStateMessage
+  | AerogpuSubmitMessage
   | NetTracePcapngMessage
   | NetTraceStatusResponseMessage;

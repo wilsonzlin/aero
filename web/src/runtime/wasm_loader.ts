@@ -43,6 +43,24 @@ export type MachineHandle = {
      */
     set_smbios_uuid_seed?(seed: bigint): void;
     reset(): void;
+
+    // -------------------------------------------------------------------------
+    // AeroGPU submission bridge (out-of-process GPU worker integration)
+    // -------------------------------------------------------------------------
+    /**
+     * Drain newly-decoded AeroGPU submissions (if supported by the current WASM build).
+     *
+     * Returns an array of objects:
+     * `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, flags: number, allocTable: Uint8Array | null }`.
+     */
+    aerogpu_drain_submissions?(): unknown;
+    /**
+     * Mark an AeroGPU fence as complete.
+     *
+     * Optional: current machine builds may still auto-complete fences; this hook is present so
+     * browser runtimes can evolve toward true deferred-fence semantics without a WASM ABI break.
+     */
+    aerogpu_complete_fence?(fence: bigint): void;
     /**
      * Set the BIOS boot drive number (`DL`) used when transferring control to the boot sector.
      *
