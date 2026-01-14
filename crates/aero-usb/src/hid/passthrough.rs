@@ -35,6 +35,14 @@ const DEFAULT_MAX_PACKET_SIZE: u16 = 64;
 const DEFAULT_MAX_PENDING_INPUT_REPORTS: usize = 256;
 const DEFAULT_MAX_PENDING_OUTPUT_REPORTS: usize = 256;
 
+/// Upper bound for host-provided input reports when the report ID is not present in the parsed
+/// descriptor.
+///
+/// Input reports arrive from external injection paths (e.g. WebHID). When the report ID cannot be
+/// matched to a descriptor-defined report size, cap the stored report bytes to avoid unbounded
+/// allocations.
+const MAX_UNKNOWN_INPUT_REPORT_BYTES: usize = DEFAULT_MAX_PACKET_SIZE as usize;
+
 /// Upper bound for guest-provided `SET_REPORT` / interrupt OUT payloads when the report ID is not
 /// present in the parsed descriptor.
 ///
@@ -493,13 +501,18 @@ impl UsbHidPassthrough {
                 }
             }
             None => {
-                // Unknown report ID: preserve legacy behaviour (accept arbitrary lengths).
-                let mut out =
-                    Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
+                // Unknown report ID: cap allocations.
+                let mut out = Vec::with_capacity(
+                    data.len()
+                        .saturating_add(usize::from(report_id != 0))
+                        .min(MAX_UNKNOWN_INPUT_REPORT_BYTES),
+                );
                 if report_id != 0 {
                     out.push(report_id);
                 }
-                out.extend_from_slice(data);
+                let remaining = MAX_UNKNOWN_INPUT_REPORT_BYTES.saturating_sub(out.len());
+                let copy_len = data.len().min(remaining);
+                out.extend_from_slice(&data[..copy_len]);
                 out
             }
         };
@@ -2358,6 +2371,36 @@ mod tests {
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
             UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc, 0xdd])
         );
+    }
+
+    #[test]
+    fn push_input_report_unknown_report_id_is_capped() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        configure_device(&mut dev);
+
+        let report_id = 0x99;
+        let big_payload = vec![0xaa; u16::MAX as usize];
+        dev.push_input_report(report_id, &big_payload);
+
+        let UsbInResult::Data(data) = dev.handle_in_transfer(INTERRUPT_IN_EP, 1024) else {
+            panic!("expected data");
+        };
+        assert_eq!(data.len(), super::MAX_UNKNOWN_INPUT_REPORT_BYTES);
+        assert_eq!(data[0], report_id);
+        assert_eq!(&data[1..], &[0xaa; super::MAX_UNKNOWN_INPUT_REPORT_BYTES - 1]);
     }
 
     #[test]
