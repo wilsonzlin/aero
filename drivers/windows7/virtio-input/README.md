@@ -498,8 +498,10 @@ transport checks (PCI IDs/revision, fixed BAR0 layout, queue sizing, etc).
 
 Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). It is supported by this driver, but binds via
 the separate tablet INF (`inf/aero_virtio_tablet.inf`) and requires the device to advertise `ABS_X`/`ABS_Y`.
-In strict contract mode it also requires `ABS_INFO` so coordinates can be scaled into the HID range; in compat mode,
-`ABS_INFO` is best-effort.
+For Aero contract tablet devices (`ID_NAME="Aero Virtio Tablet"` / `SUBSYS_00121AF4`), strict mode also requires
+`ABS_INFO` so coordinates can be scaled into the HID range. For non-contract tablets inferred via `EV_BITS`
+(`EV_ABS` + `ABS_X`/`ABS_Y`), `ABS_INFO` is best-effort and the driver falls back to a default scaling range
+(`0..32767`) if it is unavailable.
 
 ## Testing
 
@@ -533,15 +535,15 @@ extensions that are implemented in-tree (consumer/media keys).
 | Mouse horizontal wheel (`EV_REL`: `REL_HWHEEL`) | **Supported** | Mapped to HID **Consumer / AC Pan** (signed 8-bit). |
 | Mouse buttons (`EV_KEY`: `BTN_*`) | **Supported** | 8-button HID bitmask (ReportID `2`, buttons 1–8). See mapping table below. |
 | Keyboard LED output (Windows → driver → device) | **Supported** | HID output report (ReportID `1`) is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
-| Tablet / absolute pointer (`EV_ABS` → HID absolute pointer, ReportID `4`) | **Supported** | Absolute X/Y are emitted as 16-bit values. In strict contract mode, coordinates are scaled using `ABS_INFO` min/max into the HID logical range (`0..32767`); in compat mode, `ABS_INFO` is best-effort and the driver falls back to a default scaling range if it is unavailable. Installed via `inf/aero_virtio_tablet.inf` (Aero contract tablet HWID `SUBSYS_00121AF4`). Buttons/touch are supported when the device advertises `EV_KEY` button codes. |
+| Tablet / absolute pointer (`EV_ABS` → HID absolute pointer, ReportID `4`) | **Supported** | Absolute X/Y are emitted as 16-bit values. For Aero contract tablets, coordinates are scaled using `ABS_INFO` min/max into the HID logical range (`0..32767`). For EV_BITS-inferred tablets and in compat mode, `ABS_INFO` is best-effort and the driver falls back to a default scaling range if it is unavailable. Installed via `inf/aero_virtio_tablet.inf` (Aero contract tablet HWID `SUBSYS_00121AF4`). Buttons/touch are supported when the device advertises `EV_KEY` button codes. |
 | Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
 | System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
 
-INF note: tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`).
+INF note: contract tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`).
 The keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes both subsystem-qualified IDs (`SUBSYS_0010`/`SUBSYS_0011`)
-for distinct Device Manager names **and** a revision-gated fallback `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that
-do not expose Aero subsystem IDs.
+for distinct Device Manager names and a revision-gated fallback `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that do not
+expose Aero subsystem IDs.
 
 Device kind / report descriptor selection:
 
@@ -549,9 +551,10 @@ Device kind / report descriptor selection:
 - `DeviceKind==Mouse` exposes ReportID `2` (mouse).
 - `DeviceKind==Tablet` exposes ReportID `4` (tablet / absolute pointer).
 
-`DeviceKind` is derived from virtio `ID_NAME` / `ID_DEVIDS` and cross-checked against the PCI subsystem device ID when present.
+`DeviceKind` is primarily derived from virtio `ID_NAME` and cross-checked against the PCI subsystem device ID when present.
 In compat mode (`CompatIdName=1`), the driver also accepts common QEMU `ID_NAME` strings and may infer the kind from `EV_BITS`
-when `ID_NAME` is unrecognized. See `docs/virtio-input-notes.md` for details.
+when `ID_NAME` is unrecognized. For tablet/absolute-pointer devices, the driver can also fall back to `EV_BITS` inference
+(`EV_ABS` + `ABS_X`/`ABS_Y`) even when compat mode is disabled. See `docs/virtio-input-notes.md` for details.
 
 #### Mouse button mapping (`EV_KEY` → HID buttons 1–8)
 
@@ -584,7 +587,7 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 | Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` (expects BAR0 `len >= 0x4000`, caps at offsets `0x0000/0x1000/0x2000/0x3000`, `notify_off_multiplier = 4`) |
 | Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64 and `queue_notify_off` of `0/1`) |
 | Virtqueue/ring feature negotiation | **Split ring only** | `src/device.c` requires `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` and refuses to negotiate `VIRTIO_F_RING_EVENT_IDX` (no EVENT_IDX / packed rings in contract v1). |
-| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces a minimum `EV_BITS` subset per device kind to fail fast on misconfigured devices. The **normative** Aero device-model requirements are defined in `docs/windows7-virtio-driver-contract.md` (§3.3.5). In strict contract mode, tablet (`EV_ABS`) devices require `ABS_X/ABS_Y` and `ABS_INFO` ranges; in compat mode, `ABS_INFO` is best-effort. |
+| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces a minimum `EV_BITS` subset per device kind to fail fast on misconfigured devices. The **normative** Aero device-model requirements are defined in `docs/windows7-virtio-driver-contract.md` (§3.3.5). In strict contract mode, Aero tablet (`EV_ABS`) devices require `ABS_X/ABS_Y` and `ABS_INFO` ranges; for EV_BITS-inferred tablets and in compat mode, `ABS_INFO` is best-effort. |
 | Device identification strings | **Required (strict by default)** | `src/device.c` enforces Aero `ID_NAME` strings + contract `ID_DEVIDS` and cross-checks them against the PCI subsystem device ID when present. Opt-in compat mode (`CompatIdName=1`) accepts common QEMU `ID_NAME` strings, relaxes `ID_DEVIDS`, and can infer kind from `EV_BITS`. |
 
 ### QEMU compatibility expectations
@@ -609,7 +612,8 @@ the Aero contract major version via `REV_01`).
 Also note that stock QEMU virtio-input devices typically expose different (non-Aero) PCI subsystem IDs. The canonical
 `inf/aero_virtio_input.inf` includes a revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`), so Windows
 can still bind the driver (with a generic Device Manager name) when the Aero subsystem IDs are unavailable or do not
-match. Unknown subsystem IDs are allowed by the driver.
+match. Unknown subsystem IDs are allowed by the driver; device-kind classification still follows the `ID_NAME`/`EV_BITS`
+rules described above.
 
 For authoritative PCI-ID and contract rules, see:
 
