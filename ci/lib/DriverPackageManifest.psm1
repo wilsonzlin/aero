@@ -47,6 +47,15 @@ function Assert-PathIsRelativeAndUnderRoot {
     throw "Invalid manifest '$ManifestPath': $Context must be a relative path (got rooted path '$ChildPath')."
   }
 
+  # Best-effort hardening: reject `..` segments even if they would normalize back under the
+  # root directory. This keeps the manifest schema and runtime validation aligned and avoids
+  # bypassing duplicate detection via mixed normalized/non-normalized spellings.
+  foreach ($seg in ($ChildPath -split '[\\/]+')) {
+    if ($seg -eq '..') {
+      throw "Invalid manifest '$ManifestPath': $Context path '$ChildPath' must not contain '..' segments."
+    }
+  }
+
   $sep = [System.IO.Path]::DirectorySeparatorChar
   $alt = [System.IO.Path]::AltDirectorySeparatorChar
 
