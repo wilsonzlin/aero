@@ -443,13 +443,10 @@ fn wgsl_vs_texldd_is_rejected() {
     let decoded = decode_u32_tokens(&tokens).unwrap();
     assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdd));
     let ir = build_ir(&decoded).unwrap();
-    verify_ir(&ir).unwrap();
-
-    let err = generate_wgsl(&ir).unwrap_err();
-    assert!(
-        err.message.contains("only supported in pixel shaders"),
-        "{err}"
-    );
+    let err = verify_ir(&ir).unwrap_err();
+    assert!(err
+        .message
+        .contains("only valid in pixel shaders"), "{err}");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use crate::sm3::decode::{ResultShift, SrcModifier};
-use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt};
+use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt, TexSampleKind};
 use crate::sm3::types::ShaderStage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +49,14 @@ fn verify_block(block: &Block, stage: ShaderStage) -> Result<(), VerifyError> {
             }
             Stmt::Break => {}
             Stmt::BreakIf { cond } => verify_cond(cond)?,
-            Stmt::Discard { src } => verify_src(src)?,
+            Stmt::Discard { src } => {
+                if stage != ShaderStage::Pixel {
+                    return Err(VerifyError {
+                        message: "discard/texkill is only valid in pixel shaders".to_owned(),
+                    });
+                }
+                verify_src(src)?;
+            }
         }
     }
     Ok(())
@@ -214,7 +221,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             verify_modifiers(modifiers)?;
         }
         IrOp::TexSample {
-            kind: _,
+            kind,
             dst: _,
             coord,
             ddx,
@@ -222,12 +229,32 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             sampler: _,
             modifiers,
         } => {
-            verify_src(coord)?;
-            if let Some(ddx) = ddx {
-                verify_src(ddx)?;
+            if *kind == TexSampleKind::Grad && stage != ShaderStage::Pixel {
+                return Err(VerifyError {
+                    message: "texldd/Grad texture sampling is only valid in pixel shaders"
+                        .to_owned(),
+                });
             }
-            if let Some(ddy) = ddy {
-                verify_src(ddy)?;
+            verify_src(coord)?;
+            match kind {
+                TexSampleKind::Grad => {
+                    let ddx = ddx.as_ref().ok_or_else(|| VerifyError {
+                        message: "texldd/Grad texture sampling is missing ddx operand".to_owned(),
+                    })?;
+                    let ddy = ddy.as_ref().ok_or_else(|| VerifyError {
+                        message: "texldd/Grad texture sampling is missing ddy operand".to_owned(),
+                    })?;
+                    verify_src(ddx)?;
+                    verify_src(ddy)?;
+                }
+                TexSampleKind::ImplicitLod { .. } | TexSampleKind::ExplicitLod => {
+                    if ddx.is_some() || ddy.is_some() {
+                        return Err(VerifyError {
+                            message: "non-gradient texture sampling includes gradient operands"
+                                .to_owned(),
+                        });
+                    }
+                }
             }
             verify_modifiers(modifiers)?;
         }
