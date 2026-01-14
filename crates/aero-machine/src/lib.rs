@@ -3651,8 +3651,22 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     // snapshots must not misinterpret tagged trailing payloads (e.g. `DACP`) as pending state.
     //
     // To detect presence, peek at the `pending_flag_u32` and only accept it when it is 0 or 1.
+    //
+    // Additionally, reject any payload that begins with one of the known trailing section tags
+    // (`DACP`, etc.). This avoids incorrectly parsing a tagged section as pending state even if
+    // the tag payload happens to begin with 0/1 (e.g. `DACP` with `pel_mask=0`).
+    fn looks_like_tag(bytes: &[u8], off: usize) -> bool {
+        bytes
+            .get(off..off.saturating_add(4))
+            .is_some_and(|tag| {
+                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
+                    || tag == b"VREG"
+                    || tag == b"EXEC"
+            })
+    }
     let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
         && bytes.len() >= off.saturating_add(8)
+        && !looks_like_tag(bytes, off)
         && bytes
             .get(off.saturating_add(4)..off.saturating_add(8))
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -3666,6 +3680,7 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     };
     let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) = if has_error_payload
         && bytes.len() >= off.saturating_add(8)
+        && !looks_like_tag(bytes, off)
         && bytes
             .get(off.saturating_add(4)..off.saturating_add(8))
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -3873,8 +3888,18 @@ fn apply_aerogpu_snapshot_v2(
     // Optional scanout0/cursor FB_GPA pending payloads (added after the error fields).
     //
     // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe.
+    fn looks_like_tag(bytes: &[u8], off: usize) -> bool {
+        bytes
+            .get(off..off.saturating_add(4))
+            .is_some_and(|tag| {
+                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
+                    || tag == b"VREG"
+                    || tag == b"EXEC"
+            })
+    }
     let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
         && bytes.len() >= off.saturating_add(8)
+        && !looks_like_tag(bytes, off)
         && bytes
             .get(off.saturating_add(4)..off.saturating_add(8))
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -3888,6 +3913,7 @@ fn apply_aerogpu_snapshot_v2(
     };
     let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) = if has_error_payload
         && bytes.len() >= off.saturating_add(8)
+        && !looks_like_tag(bytes, off)
         && bytes
             .get(off.saturating_add(4)..off.saturating_add(8))
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -18026,9 +18052,9 @@ mod tests {
         // Regression test for older v1 snapshots: the optional pending FB_GPA pairs were added
         // after the error payload, but pre-existing snapshots may have `DACP` immediately after the
         // error fields. Restoring them must not treat the `DACP` payload as `(pending_lo, flag)`.
-        let pel_mask = 0xEE;
+        let pel_mask = 0;
         let mut palette = [[0u8; 3]; 256];
-        palette[0] = [1, 2, 3];
+        palette[1] = [1, 2, 3];
         palette[255] = [4, 5, 6];
 
         let mut bytes = Vec::new();
@@ -18045,7 +18071,8 @@ mod tests {
 
         let dac = snap.vga_dac.expect("DACP tag should be parsed");
         assert_eq!(dac.pel_mask, pel_mask);
-        assert_eq!(dac.palette[0], [1, 2, 3]);
+        assert_eq!(dac.palette[0], [0, 0, 0]);
+        assert_eq!(dac.palette[1], [1, 2, 3]);
         assert_eq!(dac.palette[255], [4, 5, 6]);
     }
 
@@ -18053,9 +18080,9 @@ mod tests {
     fn apply_aerogpu_snapshot_v2_does_not_parse_dacp_as_pending_fb_gpa() {
         // Same regression as `decode_aerogpu_snapshot_v1_*`, but through the v2 sparse page
         // snapshot restore path.
-        let pel_mask = 0xEE;
+        let pel_mask = 0;
         let mut palette = [[0u8; 3]; 256];
-        palette[0] = [1, 2, 3];
+        palette[1] = [1, 2, 3];
         palette[255] = [4, 5, 6];
 
         let mut bytes = Vec::new();
@@ -18079,7 +18106,8 @@ mod tests {
         assert!(!regs.cursor_fb_gpa_lo_pending);
 
         assert_eq!(vram.pel_mask, pel_mask);
-        assert_eq!(vram.dac_palette[0], [1, 2, 3]);
+        assert_eq!(vram.dac_palette[0], [0, 0, 0]);
+        assert_eq!(vram.dac_palette[1], [1, 2, 3]);
         assert_eq!(vram.dac_palette[255], [4, 5, 6]);
     }
 
