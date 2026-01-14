@@ -417,6 +417,9 @@ Known gaps / limitations (enforced by code/tests):
 - Tessellation (Hull/Domain) execution is not implemented. Patchlist topologies are accepted in `SET_PRIMITIVE_TOPOLOGY`, but HS/DS shader execution is not wired yet (binding HS/DS causes draws to return a clear error), and the current compute-prepass path is still bring-up scaffolding (no real tessellation).
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs)
+- SM5 compute/UAV bring-up is partially supported, but still has important limitations:
+  - `sync` barriers are translated for compute shaders, but fence-only variants (no thread-group sync) do not have a perfect WGSL/WebGPU mapping; the current translation uses `storageBarrier()` as an approximation (see `crates/aero-d3d11/src/shader_translate.rs`).
+  - Typed UAV stores and UAV buffer atomics are supported for a small subset of formats/operations, but broader `RWTexture*` and `Interlocked*` coverage is still missing.
 
 Roadmap/plan docs:
 
