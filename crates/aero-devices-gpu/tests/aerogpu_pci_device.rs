@@ -105,8 +105,8 @@ fn pci_wrapper_ignores_doorbell_writes_while_mmio_decode_is_disabled() {
     );
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
 
