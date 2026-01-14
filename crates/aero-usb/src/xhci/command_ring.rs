@@ -360,13 +360,22 @@ impl CommandRingProcessor {
     }
 
     fn handle_disable_slot(&mut self, mem: &mut dyn MemoryBus, slot_id: u8) -> CompletionCode {
+        // Treat malformed/out-of-range Slot IDs as "not enabled" so we never index out of bounds
+        // and callers get a stable completion code.
         if slot_id == 0 || slot_id > self.max_slots {
-            return CompletionCode::ParameterError;
+            return CompletionCode::SlotNotEnabledError;
         }
         let idx = usize::from(slot_id);
         let enabled = self.slots_enabled.get(idx).copied().unwrap_or(false);
         if !enabled {
             return CompletionCode::SlotNotEnabledError;
+        }
+
+        if self.dcbaa_ptr == 0 {
+            return CompletionCode::ContextStateError;
+        }
+        if (self.dcbaa_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return CompletionCode::ParameterError;
         }
 
         let dcbaa_entry_addr = match self
@@ -595,6 +604,10 @@ impl CommandRingProcessor {
         if slot_id == 0 || slot_id > self.max_slots {
             return Err(CompletionCode::SlotNotEnabledError);
         }
+        let idx = usize::from(slot_id);
+        if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
+            return Err(CompletionCode::SlotNotEnabledError);
+        }
 
         if (self.dcbaa_ptr & (CONTEXT_ALIGN - 1)) != 0 {
             return Err(CompletionCode::ParameterError);
@@ -612,7 +625,7 @@ impl CommandRingProcessor {
             .read_u64(mem, dcbaa_entry_addr)
             .map_err(|_| CompletionCode::ParameterError)?;
         if dev_ctx_ptr == 0 {
-            return Err(CompletionCode::SlotNotEnabledError);
+            return Err(CompletionCode::ContextStateError);
         }
         if (dev_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
             return Err(CompletionCode::ParameterError);
@@ -704,6 +717,10 @@ impl CommandRingProcessor {
         if slot_id == 0 || slot_id > self.max_slots {
             return CompletionCode::SlotNotEnabledError;
         }
+        let idx = usize::from(slot_id);
+        if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
+            return CompletionCode::SlotNotEnabledError;
+        }
 
         if (self.dcbaa_ptr & (CONTEXT_ALIGN - 1)) != 0 {
             return CompletionCode::ParameterError;
@@ -725,7 +742,7 @@ impl CommandRingProcessor {
             Err(_) => return CompletionCode::ParameterError,
         };
         if dev_ctx_ptr == 0 {
-            return CompletionCode::SlotNotEnabledError;
+            return CompletionCode::ContextStateError;
         }
         if (dev_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
             return CompletionCode::ParameterError;

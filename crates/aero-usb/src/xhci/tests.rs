@@ -144,8 +144,7 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
 
     let max_slots = 8;
 
-    // DCBAA[1] -> dev_ctx.
-    mem.write_u64(dcbaa + 8, dev_ctx);
+    // DCBAA[1] will be populated after Enable Slot completes (simulating Address Device).
 
     // Device context EP0 starts with MPS=8.
     // Endpoint Context dword 1 bits 16..31 = Max Packet Size.
@@ -163,29 +162,36 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     mem.write_u32(input_ctx + 0x40 + 12, 0x0000_0000);
 
     // Command ring:
-    //  - TRB0: No-Op Command
-    //  - TRB1: Evaluate Context (slot 1, input_ctx)
-    //  - TRB2: Link back to cmd_ring base, toggle cycle state
+    //  - TRB0: Enable Slot
+    //  - TRB1: No-Op Command
+    //  - TRB2: Evaluate Context (slot 1, input_ctx)
+    //  - TRB3: Link back to cmd_ring base, toggle cycle state
     {
         let mut trb0 = Trb::new(0, 0, 0);
-        trb0.set_trb_type(TrbType::NoOpCommand);
-        trb0.set_slot_id(0);
+        trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
         mem.write_trb(cmd_ring + 0 * 16, trb0);
     }
     {
-        let mut trb1 = Trb::new(input_ctx, 0, 0);
-        trb1.set_trb_type(TrbType::EvaluateContextCommand);
-        trb1.set_slot_id(1);
+        let mut trb1 = Trb::new(0, 0, 0);
+        trb1.set_trb_type(TrbType::NoOpCommand);
+        trb1.set_slot_id(0);
         trb1.set_cycle(true);
         mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+    {
+        let mut trb2 = Trb::new(input_ctx, 0, 0);
+        trb2.set_trb_type(TrbType::EvaluateContextCommand);
+        trb2.set_slot_id(1);
+        trb2.set_cycle(true);
+        mem.write_trb(cmd_ring + 2 * 16, trb2);
     }
     {
         let mut link = Trb::new(cmd_ring & !0x0f, 0, 0);
         link.set_trb_type(TrbType::Link);
         link.set_link_toggle_cycle(true);
         link.set_cycle(true);
-        mem.write_trb(cmd_ring + 2 * 16, link);
+        mem.write_trb(cmd_ring + 3 * 16, link);
     }
 
     let processor = CommandRingProcessor::new(
@@ -200,6 +206,20 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     );
     let mut processor = processor;
 
+    // Process Enable Slot first so we can populate the DCBAA entry before Evaluate Context.
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+
+    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.slot_id(), 1);
+
+    // Enable Slot should have cleared DCBAA[1] to 0. Simulate Address Device by installing a
+    // Device Context pointer.
+    assert_eq!(mem.read_u64(dcbaa + 8), 0);
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
     processor.process(&mut mem, 16);
     assert!(
         !processor.host_controller_error,
@@ -207,16 +227,16 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     );
 
     // Link TRBs are consumed but do not generate events; we should have exactly two command
-    // completion events.
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    // completion events (No-Op + Evaluate Context) after the initial Enable Slot.
     let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev2 = mem.read_trb(event_ring + 2 * 16);
 
-    assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
-    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
-    assert_eq!(ev0.pointer(), cmd_ring + 0 * 16);
+    assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
     assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+    assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
 
     // EP0 max packet size should have been updated to 64.
     let mut buf = [0u8; 4];
@@ -244,10 +264,10 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
         "processor should not enter HCE after wrap"
     );
 
-    let ev2 = mem.read_trb(event_ring + 2 * 16);
-    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
-    assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
-    assert_eq!(ev2.pointer(), cmd_ring + 0 * 16);
+    let ev3 = mem.read_trb(event_ring + 3 * 16);
+    assert_eq!(ev3.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev3), CompletionCode::Success.as_u8());
+    assert_eq!(ev3.pointer(), cmd_ring + 0 * 16);
 }
 
 #[test]
@@ -261,7 +281,6 @@ fn evaluate_context_rejects_unsupported_context_flags() {
     let cmd_ring = 0x4000u64;
     let event_ring = 0x5000u64;
 
-    mem.write_u64(dcbaa + 8, dev_ctx);
     mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
 
     // Add EP0 + EP1 (unsupported).
@@ -269,12 +288,21 @@ fn evaluate_context_rejects_unsupported_context_flags() {
     mem.write_u32(input_ctx + 0x04, (1 << 1) | (1 << 2));
     mem.write_u32(input_ctx + 0x40 + 4, 64u32 << 16);
 
+    // Command ring:
+    //  - TRB0: Enable Slot
+    //  - TRB1: Evaluate Context (slot 1, input_ctx)
+    {
+        let mut cmd = Trb::new(0, 0, 0);
+        cmd.set_trb_type(TrbType::EnableSlotCommand);
+        cmd.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, cmd);
+    }
     {
         let mut cmd = Trb::new(input_ctx, 0, 0);
         cmd.set_trb_type(TrbType::EvaluateContextCommand);
         cmd.set_slot_id(1);
         cmd.set_cycle(true);
-        mem.write_trb(cmd_ring, cmd);
+        mem.write_trb(cmd_ring + 1 * 16, cmd);
     }
 
     let mut processor = CommandRingProcessor::new(
@@ -288,12 +316,21 @@ fn evaluate_context_rejects_unsupported_context_flags() {
         EventRing::new(event_ring, 16),
     );
 
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+
+    // Simulate Address Device by installing a Device Context pointer.
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
     processor.process(&mut mem, 16);
     assert!(!processor.host_controller_error);
 
-    let ev0 = mem.read_trb(event_ring);
+    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
-    assert_eq!(event_completion_code(ev0), CompletionCode::ParameterError.as_u8());
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(event_completion_code(ev1), CompletionCode::ParameterError.as_u8());
 
     // Ensure we didn't update EP0 despite the input asking for MPS=64.
     let mut buf = [0u8; 4];
@@ -317,8 +354,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     let endpoint_id = 2u8; // EP1 OUT context (Device Context index 2).
     let ep_ctx = dev_ctx + u64::from(endpoint_id) * 32;
 
-    // DCBAA[1] -> dev_ctx.
-    mem.write_u64(dcbaa + 8, dev_ctx);
+    // DCBAA[1] will be populated after Enable Slot completes (simulating Address Device).
 
     // Seed endpoint context state + dequeue pointer.
     mem.write_u32(ep_ctx + 0, 1); // Running
@@ -326,25 +362,32 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     mem.write_u32(ep_ctx + 12, 0);
 
     // Command ring TRBs:
+    //  - Enable Slot
     //  - Stop Endpoint (slot 1, ep_id 2)
     //  - Set TR Dequeue Pointer (slot 1, ep_id 2, ptr=0x6000, dcs=0)
     //  - Reset Endpoint (slot 1, ep_id 2)
+    {
+        let mut en = Trb::new(0, 0, 0);
+        en.set_trb_type(TrbType::EnableSlotCommand);
+        en.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, en);
+    }
+    let new_trdp = 0x6000u64;
     {
         let mut stop = Trb::new(0, 0, 0);
         stop.set_trb_type(TrbType::StopEndpointCommand);
         stop.set_slot_id(slot_id);
         stop.set_endpoint_id(endpoint_id);
         stop.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, stop);
+        mem.write_trb(cmd_ring + 1 * 16, stop);
     }
-    let new_trdp = 0x6000u64;
     {
         let mut set = Trb::new(new_trdp, 0, 0);
         set.set_trb_type(TrbType::SetTrDequeuePointerCommand);
         set.set_slot_id(slot_id);
         set.set_endpoint_id(endpoint_id);
         set.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, set);
+        mem.write_trb(cmd_ring + 2 * 16, set);
     }
     {
         let mut reset = Trb::new(0, 0, 0);
@@ -352,7 +395,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
         reset.set_slot_id(slot_id);
         reset.set_endpoint_id(endpoint_id);
         reset.set_cycle(true);
-        mem.write_trb(cmd_ring + 2 * 16, reset);
+        mem.write_trb(cmd_ring + 3 * 16, reset);
     }
 
     let mut processor = CommandRingProcessor::new(
@@ -366,19 +409,30 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
         EventRing::new(event_ring, 16),
     );
 
-    // Process Stop Endpoint + Set TR Dequeue Pointer first.
-    processor.process(&mut mem, 2);
+    // Process Enable Slot first, then populate DCBAA[1] (simulating Address Device).
+    processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
 
     let ev0 = mem.read_trb(event_ring + 0 * 16);
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
-
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
-    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.slot_id(), 1);
+
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    // Process Stop Endpoint + Set TR Dequeue Pointer.
+    processor.process(&mut mem, 2);
+    assert!(!processor.host_controller_error);
+
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev2 = mem.read_trb(event_ring + 2 * 16);
+
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
-    assert_eq!(ev0.pointer(), cmd_ring + 0 * 16);
+    assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
     assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+    assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
 
     // Stop Endpoint should transition the endpoint state to Stopped (3).
     assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
@@ -397,13 +451,96 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
 
-    let ev2 = mem.read_trb(event_ring + 2 * 16);
-    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
-    assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
-    assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
+    let ev3 = mem.read_trb(event_ring + 3 * 16);
+    assert_eq!(ev3.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev3), CompletionCode::Success.as_u8());
+    assert_eq!(ev3.pointer(), cmd_ring + 3 * 16);
 
     // Reset Endpoint should clear the halted condition (Running = 1).
     assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+}
+
+#[test]
+fn disable_slot_clears_state_and_rejects_double_disable() {
+    let mut mem = TestMem::new(0x20_000);
+    let mem_size = mem.len() as u64;
+
+    let dcbaa = 0x1000u64;
+    let cmd_ring = 0x4000u64;
+    let event_ring = 0x5000u64;
+
+    let max_slots = 8;
+
+    // Seed DCBAA[1] with a nonzero pointer; Enable Slot should clear it.
+    mem.write_u64(dcbaa + 8, 0xdead_beef_cafe_f00d);
+
+    // Command ring:
+    //  - TRB0: Enable Slot
+    //  - TRB1: Disable Slot (slot 1)
+    //  - TRB2: Disable Slot again (slot 1) -> SlotNotEnabledError
+    {
+        let mut trb0 = Trb::new(0, 0, 0);
+        trb0.set_trb_type(TrbType::EnableSlotCommand);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+    {
+        let mut trb1 = Trb::new(0, 0, 0);
+        trb1.set_trb_type(TrbType::DisableSlotCommand);
+        trb1.set_slot_id(1);
+        trb1.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+    {
+        let mut trb2 = Trb::new(0, 0, 0);
+        trb2.set_trb_type(TrbType::DisableSlotCommand);
+        trb2.set_slot_id(1);
+        trb2.set_cycle(true);
+        mem.write_trb(cmd_ring + 2 * 16, trb2);
+    }
+
+    let mut processor = CommandRingProcessor::new(
+        mem_size,
+        max_slots,
+        dcbaa,
+        CommandRing {
+            dequeue_ptr: cmd_ring,
+            cycle_state: true,
+        },
+        EventRing::new(event_ring, 16),
+    );
+
+    // Enable Slot.
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.slot_id(), 1);
+    assert_eq!(mem.read_u64(dcbaa + 8), 0);
+
+    // Simulate Address Device setting a nonzero Device Context pointer, and ensure Disable Slot
+    // clears it back to 0.
+    mem.write_u64(dcbaa + 8, 0x2222_0000);
+
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
+    assert_eq!(ev1.slot_id(), 1);
+    assert_eq!(mem.read_u64(dcbaa + 8), 0);
+
+    // Disable Slot again should fail with SlotNotEnabledError.
+    processor.process(&mut mem, 1);
+    assert!(!processor.host_controller_error);
+    let ev2 = mem.read_trb(event_ring + 2 * 16);
+    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(
+        event_completion_code(ev2),
+        CompletionCode::SlotNotEnabledError.as_u8()
+    );
+    assert_eq!(ev2.slot_id(), 1);
 }
 
 #[test]
