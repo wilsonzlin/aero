@@ -50,6 +50,20 @@ fn push_set_texture(stream: &mut Vec<u8>, stage: u32, slot: u32, texture: u32, s
     end_cmd(stream, start);
 }
 
+fn push_set_shader_resource_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, buffer: u32) {
+    let start = begin_cmd(stream, AerogpuCmdOpcode::SetShaderResourceBuffers as u32);
+    stream.extend_from_slice(&stage.to_le_bytes());
+    stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
+    stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+    stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0 / stage_ex
+    // struct aerogpu_shader_resource_buffer_binding
+    stream.extend_from_slice(&buffer.to_le_bytes()); // buffer handle (0 = unbind)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+    stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = full buffer)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // binding reserved0
+    end_cmd(stream, start);
+}
+
 fn push_set_unordered_access_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, buffer: u32) {
     let start = begin_cmd(stream, AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32);
     stream.extend_from_slice(&stage.to_le_bytes());
@@ -127,5 +141,33 @@ fn aerogpu_cmd_uav_buffers_do_not_clobber_compute_textures() {
             );
             assert_eq!(bindings.stage(ShaderStage::Compute).uav_buffer(0), None);
         }
+    });
+}
+
+#[test]
+fn aerogpu_cmd_srv_buffer_unbind_clears_binding() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut guest_mem = VecGuestMemory::new(0);
+
+        const SRV_BUF: u32 = 1234;
+
+        let mut stream = new_stream();
+        push_set_shader_resource_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, SRV_BUF);
+        push_set_shader_resource_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, 0);
+        let stream = finish_stream(stream);
+
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("command stream should execute");
+
+        let bindings = exec.binding_state();
+        assert_eq!(bindings.stage(ShaderStage::Compute).srv_buffer(0), None);
     });
 }
