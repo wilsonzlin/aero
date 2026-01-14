@@ -27,6 +27,11 @@ def _synthetic_setup_text(
     *,
     include_cdd_base_path: bool = True,
     include_check_mode: bool = True,
+    include_admin_gate: bool = True,
+    admin_gate_before_check_dispatch: bool = False,
+    include_check_mode_temp_root: bool = True,
+    include_check_mode_validate_cert_payload: bool = True,
+    check_mode_extra_line: str | None = None,
     include_skipstorage_flag: bool = True,
     include_storage_skip_marker: bool = True,
     include_cert_policy_gating: bool = True,
@@ -52,17 +57,29 @@ def _synthetic_setup_text(
         ]
     )
 
+    if include_admin_gate and admin_gate_before_check_dispatch:
+        lines.append("call :require_admin_stdout")
+
     if include_check_mode:
         lines.extend(
             [
                 r'if /i "%%~A"=="/check" set "ARG_CHECK=1"',
                 r'if /i "%%~A"=="/validate" set "ARG_CHECK=1"',
                 r'if "%ARG_CHECK%"=="1" goto :check_mode',
-                r":check_mode",
-                r'set "INSTALL_ROOT=%TEMP%\AeroGuestToolsCheck"',
-                r"call :validate_cert_payload",
             ]
         )
+
+    if include_admin_gate and not admin_gate_before_check_dispatch:
+        lines.append("call :require_admin_stdout")
+
+    if include_check_mode:
+        lines.append(r":check_mode")
+        if include_check_mode_temp_root:
+            lines.append(r'set "INSTALL_ROOT=%TEMP%\AeroGuestToolsCheck"')
+        if include_check_mode_validate_cert_payload:
+            lines.append(r"call :validate_cert_payload")
+        if check_mode_extra_line:
+            lines.append(check_mode_extra_line)
 
     if include_skipstorage_flag:
         lines.append("/skipstorage")
@@ -214,6 +231,98 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected missing /check mode error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_fails_when_check_mode_dispatch_after_admin_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(
+                _synthetic_setup_text(include_admin_gate=True, admin_gate_before_check_dispatch=True),
+                encoding="utf-8",
+            )
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("bypasses admin requirement" in e for e in errs),
+                msg="expected missing /check pre-admin dispatch error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_check_mode_missing_temp_log_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(
+                _synthetic_setup_text(include_check_mode_temp_root=False),
+                encoding="utf-8",
+            )
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("logs to %TEMP%" in e for e in errs),
+                msg="expected missing /check temp log root error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_check_mode_missing_validate_cert_payload(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(
+                _synthetic_setup_text(include_check_mode_validate_cert_payload=False),
+                encoding="utf-8",
+            )
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("validates certificate payload" in e for e in errs),
+                msg="expected missing validate_cert_payload call error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_check_mode_contains_destructive_command(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(
+                _synthetic_setup_text(check_mode_extra_line="bcdedit /set testsigning on"),
+                encoding="utf-8",
+            )
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("avoids system-changing actions" in e for e in errs),
+                msg="expected /check destructive command error. Errors:\n" + "\n".join(errs),
+            )
+
     def test_linter_fails_when_setup_missing_storage_skip_marker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
             tmp_path = Path(tmp)
@@ -272,6 +381,59 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("Certificate installation is skipped by policy" in e for e in errs),
                 msg="expected missing cert-install skip-policy error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_verify_missing_storage_skip_marker_awareness(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(
+                "\n".join(
+                    [
+                        "CriticalDeviceDatabase",
+                        "virtio_blk_boot_critical",
+                        "manifest.json",
+                        "signing_policy",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("storage pre-seeding was skipped" in e for e in errs),
+                msg="expected missing verify skipstorage marker awareness error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_uninstall_missing_storage_skip_marker_reference(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(
+                "\n".join(["testsigning.enabled-by-aero.txt", "nointegritychecks.enabled-by-aero.txt"]),
+                encoding="utf-8",
+            )
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("storage preseed skipped" in e for e in errs),
+                msg="expected missing uninstall skipstorage marker reference error. Errors:\n" + "\n".join(errs),
             )
 
 
