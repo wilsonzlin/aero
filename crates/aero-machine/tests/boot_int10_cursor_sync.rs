@@ -699,6 +699,44 @@ fn boot_int10_aerogpu_cursor_updates_sync_to_vga_crtc() {
 }
 
 #[test]
+fn boot_int10_aerogpu_set_cursor_pos_non_active_page_does_not_move_vga_cursor() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        enable_vga: false,
+        // Keep the machine minimal/deterministic for this port-mirroring test.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let row = 5u8;
+    let col = 10u8;
+    let boot = build_int10_set_cursor_pos_on_page_boot_sector(1, row, col);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Guest updated the cursor position for page 1, but did not change the active page (default is
+    // page 0). The VGA cursor overlay should remain at the active page's cursor position.
+    assert_eq!(m.read_physical_u8(BDA_ACTIVE_PAGE_ADDR), 0);
+    let page1_word = m.read_physical_u16(BDA_CURSOR_POS_PAGE0_ADDR + 2);
+    assert_eq!(page1_word, (u16::from(row) << 8) | u16::from(col));
+
+    let expected_pos = read_crtc_start_addr(&mut m) & 0x3FFF;
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos & 0x3FFF, expected_pos);
+}
+
+#[test]
 fn boot_int10_aerogpu_cursor_shape_updates_sync_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
