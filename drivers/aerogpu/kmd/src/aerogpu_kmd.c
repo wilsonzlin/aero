@@ -2682,6 +2682,69 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
     Adapter->FencePagePa.QuadPart = 0;
 }
 
+static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || !Adapter->Bar0 || !Adapter->RingVa || !Adapter->RingHeader || Adapter->RingEntryCount == 0) {
+        return FALSE;
+    }
+
+    if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG))) {
+        return FALSE;
+    }
+
+    /* Ring header lives at the start of the ring mapping. */
+    if ((PVOID)Adapter->RingHeader != Adapter->RingVa) {
+        return FALSE;
+    }
+
+    const ULONG ringEntryCount = Adapter->RingEntryCount;
+    if ((ringEntryCount & (ringEntryCount - 1)) != 0) {
+        /* v1 ring requires a power-of-two entry count (see aerogpu_ring.h). */
+        return FALSE;
+    }
+
+    const ULONGLONG minRingBytes =
+        (ULONGLONG)sizeof(struct aerogpu_ring_header) +
+        (ULONGLONG)ringEntryCount * (ULONGLONG)sizeof(struct aerogpu_submit_desc);
+    if (minRingBytes > (ULONGLONG)Adapter->RingSizeBytes) {
+        return FALSE;
+    }
+
+    if (Adapter->RingHeader->magic != AEROGPU_RING_MAGIC) {
+        return FALSE;
+    }
+    if ((Adapter->RingHeader->abi_version >> 16) != AEROGPU_ABI_MAJOR) {
+        return FALSE;
+    }
+    if (Adapter->RingHeader->entry_count != ringEntryCount) {
+        return FALSE;
+    }
+    if (Adapter->RingHeader->entry_stride_bytes < sizeof(struct aerogpu_submit_desc)) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static __forceinline BOOLEAN AeroGpuLegacySubmitPathUsable(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || !Adapter->Bar0 || !Adapter->RingVa || Adapter->RingEntryCount == 0) {
+        return FALSE;
+    }
+
+    if (Adapter->Bar0Length < (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
+        return FALSE;
+    }
+
+    const ULONGLONG minRingBytes =
+        (ULONGLONG)Adapter->RingEntryCount * (ULONGLONG)sizeof(aerogpu_legacy_ring_entry);
+    if (minRingBytes > (ULONGLONG)Adapter->RingSizeBytes) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                             _In_ ULONG Fence,
                                             _In_ ULONG DescSize,
@@ -2697,15 +2760,8 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return STATUS_DEVICE_NOT_READY;
     }
-    if (!Adapter->RingVa || !Adapter->Bar0) {
+    if (!AeroGpuLegacySubmitPathUsable(Adapter)) {
         InterlockedIncrement64(&Adapter->PerfRingPushFailures);
-        return STATUS_DEVICE_NOT_READY;
-    }
-    /*
-     * Be defensive against partial BAR0 mappings. Legacy submission requires the
-     * ring head/tail/doorbell registers.
-     */
-    if (Adapter->Bar0Length < (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
         return STATUS_DEVICE_NOT_READY;
     }
 
@@ -2714,7 +2770,21 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     ULONG head = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
     AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, head);
-    ULONG nextTail = (Adapter->RingTail + 1) % Adapter->RingEntryCount;
+
+    ULONG tail = Adapter->RingTail;
+    if (tail >= Adapter->RingEntryCount) {
+        /*
+         * Defensive: RingTail is a masked index for the legacy ABI. If the cached value is
+         * corrupted, resync it from the MMIO register to avoid out-of-bounds ring access.
+         */
+        tail = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+        if (tail >= Adapter->RingEntryCount) {
+            tail = 0;
+        }
+        Adapter->RingTail = tail;
+    }
+
+    ULONG nextTail = (tail + 1) % Adapter->RingEntryCount;
     if (nextTail == head) {
         KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
         InterlockedIncrement64(&Adapter->PerfRingPushFailures);
@@ -2722,11 +2792,11 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     }
 
     aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)Adapter->RingVa;
-    ring[Adapter->RingTail].submit.type = AEROGPU_LEGACY_RING_ENTRY_SUBMIT;
-    ring[Adapter->RingTail].submit.flags = 0;
-    ring[Adapter->RingTail].submit.fence = Fence;
-    ring[Adapter->RingTail].submit.desc_size = DescSize;
-    ring[Adapter->RingTail].submit.desc_gpa = (uint64_t)DescPa.QuadPart;
+    ring[tail].submit.type = AEROGPU_LEGACY_RING_ENTRY_SUBMIT;
+    ring[tail].submit.flags = 0;
+    ring[tail].submit.fence = Fence;
+    ring[tail].submit.desc_size = DescSize;
+    ring[tail].submit.desc_gpa = (uint64_t)DescPa.QuadPart;
 
     KeMemoryBarrier();
     /*
@@ -2764,12 +2834,8 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return STATUS_DEVICE_NOT_READY;
     }
-    if (!Adapter->RingVa || !Adapter->RingHeader || !Adapter->Bar0 || Adapter->RingEntryCount == 0) {
+    if (!AeroGpuV1SubmitPathUsable(Adapter)) {
         InterlockedIncrement64(&Adapter->PerfRingPushFailures);
-        return STATUS_DEVICE_NOT_READY;
-    }
-    /* Defensive: ring submission requires a usable doorbell register in BAR0. */
-    if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG))) {
         return STATUS_DEVICE_NOT_READY;
     }
 
@@ -4303,16 +4369,9 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
      */
     BOOLEAN canSubmit = FALSE;
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-        canSubmit = (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0 &&
-                     adapter->Bar0Length >= (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG)))
-                        ? TRUE
-                        : FALSE;
+        canSubmit = AeroGpuV1SubmitPathUsable(adapter);
     } else {
-        canSubmit =
-            (adapter->RingVa && adapter->RingEntryCount != 0 &&
-             adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG)))
-                ? TRUE
-                : FALSE;
+        canSubmit = AeroGpuLegacySubmitPathUsable(adapter);
     }
     InterlockedExchange(&adapter->AcceptingSubmissions, canSubmit ? 1 : 0);
     return STATUS_SUCCESS;
@@ -4535,17 +4594,20 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                         const BOOLEAN haveFenceRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FENCE_GPA_HI + sizeof(ULONG));
 
                         BOOLEAN haveRing = FALSE;
-                        if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                        const ULONG ringEntryCount = adapter->RingEntryCount;
+                        const BOOLEAN ringEntryCountPow2 =
+                            (ringEntryCount != 0 && (ringEntryCount & (ringEntryCount - 1)) == 0) ? TRUE : FALSE;
+
+                        if (adapter->RingVa && ringEntryCountPow2) {
                             const ULONGLONG minRingBytes =
                                 (ULONGLONG)sizeof(struct aerogpu_ring_header) +
-                                (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(struct aerogpu_submit_desc);
+                                (ULONGLONG)ringEntryCount * (ULONGLONG)sizeof(struct aerogpu_submit_desc);
                             haveRing = (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes) ? TRUE : FALSE;
                         }
 
                         if (haveRing && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) {
-                            if (!adapter->RingHeader) {
-                                adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
-                            }
+                            /* Ring header lives at the start of the ring mapping. */
+                            adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
 
                             /*
                              * Reinitialise the ring header static fields in case
@@ -4841,15 +4903,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
 
         BOOLEAN canSubmit = FALSE;
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            canSubmit = (adapter->Bar0 && adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0 &&
-                         adapter->Bar0Length >= (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG)))
-                            ? TRUE
-                            : FALSE;
+            canSubmit = AeroGpuV1SubmitPathUsable(adapter);
         } else {
-            canSubmit = (adapter->Bar0 && adapter->RingVa && adapter->RingEntryCount != 0 &&
-                         adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG)))
-                            ? TRUE
-                            : FALSE;
+            canSubmit = AeroGpuLegacySubmitPathUsable(adapter);
         }
         if (canSubmit) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
@@ -10134,9 +10190,8 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             }
 
             if (haveRing && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) {
-                if (!adapter->RingHeader) {
-                    adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
-                }
+                /* Ring header lives at the start of the ring mapping. */
+                adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
 
                 /*
                  * Re-initialise the ring header "static" fields in case the device/guest clobbered
@@ -10377,19 +10432,9 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
 
     BOOLEAN ringReady = FALSE;
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-        ringReady = (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0 &&
-                     adapter->Bar0Length >= (AEROGPU_MMIO_REG_DOORBELL + sizeof(ULONG)))
-                        ? TRUE
-                        : FALSE;
+        ringReady = AeroGpuV1SubmitPathUsable(adapter);
     } else {
-        if (adapter->RingVa && adapter->RingEntryCount != 0 &&
-            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
-            const ULONGLONG minRingBytes =
-                (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(aerogpu_legacy_ring_entry);
-            if (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes && adapter->RingTail < adapter->RingEntryCount) {
-                ringReady = TRUE;
-            }
-        }
+        ringReady = AeroGpuLegacySubmitPathUsable(adapter);
     }
     if (ringReady) {
         /* Ensure the submission paths are unblocked once the restart has restored ring/MMIO state. */
