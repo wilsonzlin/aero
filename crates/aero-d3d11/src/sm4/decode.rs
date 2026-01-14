@@ -2076,24 +2076,6 @@ fn decode_texture_ref(r: &mut InstrReader<'_>) -> Result<TextureRef, Sm4DecodeEr
     Ok(TextureRef { slot })
 }
 
-fn decode_buffer_ref(r: &mut InstrReader<'_>) -> Result<BufferRef, Sm4DecodeError> {
-    let op = decode_raw_operand(r)?;
-    if op.imm32.is_some() {
-        return Err(Sm4DecodeError {
-            at_dword: r.base_at + r.pos.saturating_sub(1),
-            kind: Sm4DecodeErrorKind::UnsupportedOperand("buffer operand cannot be immediate"),
-        });
-    }
-    if op.ty != OPERAND_TYPE_RESOURCE {
-        return Err(Sm4DecodeError {
-            at_dword: r.base_at + r.pos.saturating_sub(1),
-            kind: Sm4DecodeErrorKind::UnsupportedOperand("expected resource operand"),
-        });
-    }
-    let slot = one_index(op.ty, &op.indices, r.base_at)?;
-    Ok(BufferRef { slot })
-}
-
 fn decode_sampler_ref(r: &mut InstrReader<'_>) -> Result<SamplerRef, Sm4DecodeError> {
     let op = decode_raw_operand(r)?;
     if op.imm32.is_some() {
