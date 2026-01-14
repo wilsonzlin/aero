@@ -433,6 +433,9 @@ To support additional programmable stages used by D3D11 (HS/DS) without breaking
 packets reuse their trailing `reserved0` field as an **extended stage selector** when
 `shader_stage == COMPUTE` (the same encoding may also be used for GS for compatibility).
 
+Special case: `DISPATCH` is implicitly compute (it has no `shader_stage` field), so its trailing
+`reserved0` u32 is also treated as `stage_ex` under the same ABI-minor gating rules.
+
 This extension is only valid for command streams with ABI minor **>= 3** (ABI 1.3+). When decoding a
 command stream whose header reports an ABI minor < 3, hosts must ignore `reserved0` (treat it as
 `0`) even when `shader_stage == COMPUTE`, to avoid misinterpreting legacy reserved data.
