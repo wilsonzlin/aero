@@ -826,25 +826,26 @@ To enable end-to-end testing:
           HID interface.
         - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
           `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-        - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
-          more specific match than the generic fallback in `aero_virtio_input.inf`).
+        - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches.
         - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
-          - `aero_virtio_tablet.inf` will not match (it is tablet-SUBSYS-only). In that case you must either:
+          - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only), and the canonical `aero_virtio_input.inf` is also
+            SUBSYS-only.
+          - In that case you must either:
             - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
               `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-            - Install `aero_virtio_input.inf`: it includes the strict revision-gated generic fallback match
-              (`PCI\VEN_1AF4&DEV_1052&REV_01`) (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
-              - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
-                name.
-              - Caveat: do not ship/install overlapping virtio-input INFs.
-          - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
-            compatibility). Enabling it is **not** required for fallback binding.
+            - Opt into the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) via the optional
+              legacy alias INF under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled`
+              suffix to enable) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+              - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+              - When binding via the generic fallback entry, Device Manager will show the generic
+                **Aero VirtIO Input Device** name.
+              - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
         - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
     - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
       an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
       to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
-      - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
-        compatibility). Enabling it is not required for fallback binding.
+      - If you need the strict revision-gated generic fallback binding (no contract subsystem IDs), you must also opt into
+        the legacy alias INF (the `*.inf.disabled` file; drop the `.disabled` suffix to enable) and include it in the allow list.
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
       `-WithTabletEvents`, `-EnableTabletEvents`) /
       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
@@ -1377,12 +1378,11 @@ To attach a virtio-tablet device without enabling the tablet events selftest/inj
 in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed:
 
 - Preferred/contract binding: `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01` (wins when it matches).
-- If the device does not expose the Aero contract subsystem IDs, `aero_virtio_input.inf` can still bind via its strict
-  revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01`.
-- To specifically exercise the contract tablet binding path, emulate the subsystem IDs to the contract values so it binds
-  to `aero_virtio_tablet.inf`.
-- The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional compatibility);
-  enabling it is not required for fallback binding.
+- If the device does not expose the Aero contract subsystem IDs, `aero_virtio_tablet.inf` will not match and the canonical
+  `aero_virtio_input.inf` is also SUBSYS-only. In that case, either:
+  - Emulate the subsystem IDs to the contract values so it binds to `aero_virtio_tablet.inf`, **or**
+  - Opt into the strict revision-gated generic fallback HWID match (`PCI\VEN_1AF4&DEV_1052&REV_01`) via the legacy alias INF
+    under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled` suffix to enable).
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
@@ -1810,7 +1810,9 @@ Canonical in-tree driver packages:
 - virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
 - virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
 - virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&SUBSYS_00101AF4&REV_01`
-  (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse); includes strict generic fallback `PCI\VEN_1AF4&DEV_1052&REV_01`)
+  (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse); SUBSYS-only)
+  - Optional: strict revision-gated generic fallback (no SUBSYS) via the legacy alias INF under `drivers/windows7/virtio-input/inf/`
+    (the `*.inf.disabled` file; drop the `.disabled` suffix to enable): `PCI\VEN_1AF4&DEV_1052&REV_01`
 - virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`; preferred
   binding for contract tablets and wins when it matches)
 - virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
