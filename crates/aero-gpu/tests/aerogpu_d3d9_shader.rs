@@ -1,6 +1,7 @@
 mod common;
 
 use aero_d3d9::sm3::ShaderStage;
+use aero_d3d9::{shader, shader_translate};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, D3d9ShaderCacheError, ShaderPayloadFormat};
 use aero_gpu::{readback_rgba8, TextureRegion};
@@ -108,6 +109,16 @@ fn assemble_vs_fullscreen_pos_tex_color() -> Vec<u8> {
     out.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)]));
     // mov oD0, v2
     out.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 2, 0xE4)]));
+    // end
+    out.push(0x0000FFFF);
+    to_bytes(&out)
+}
+
+fn assemble_vs_fullscreen_pos_only() -> Vec<u8> {
+    // vs_2_0
+    let mut out = vec![0xFFFE0200];
+    // mov oPos, v0
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     // end
     out.push(0x0000FFFF);
     to_bytes(&out)
@@ -506,6 +517,234 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     assert_eq!(
         &rgba[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4],
         &[255, 0, 0, 255]
+    );
+}
+
+#[test]
+fn d3d9_token_stream_legacy_fallback_shader_uses_executor_constants_layout() {
+    let Some((device, queue)) = create_test_device() else {
+        common::skip_or_panic(module_path!(), "no wgpu adapter available");
+        return;
+    };
+
+    let mut cache = D3d9ShaderCache::new();
+    let vs_bytes = assemble_vs_fullscreen_pos_only();
+    let ps_bytes = assemble_ps_unknown_opcode_fallback();
+
+    // Sanity-check that this shader actually exercises the SM3->legacy fallback path. This keeps
+    // the test meaningful if the strict SM3 pipeline gains support for this opcode in the future.
+    let translated = shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+        .expect("shader translation succeeds");
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::LegacyFallback
+    );
+
+    cache
+        .create_shader(&device, 1, ShaderStage::Vertex, &vs_bytes)
+        .unwrap();
+    cache
+        .create_shader(&device, 2, ShaderStage::Pixel, &ps_bytes)
+        .unwrap();
+
+    let vs = cache.get(1).unwrap();
+    let ps = cache.get(2).unwrap();
+
+    // Constants buffer: float + int + bool constant banks for VS+PS.
+    //
+    // This must match the `Constants` WGSL layout used by the shader translators, and the upload
+    // layout used by the D3D9 executor.
+    const CONSTANTS_FLOAT_BANK_SIZE_BYTES: u64 = 512 * 16;
+    const CONSTANTS_INT_BANK_SIZE_BYTES: u64 = 512 * 16;
+    const CONSTANTS_BOOL_BANK_SIZE_BYTES: u64 = 512 * 4;
+    const CONSTANTS_BUFFER_SIZE_BYTES: u64 = CONSTANTS_FLOAT_BANK_SIZE_BYTES
+        + CONSTANTS_INT_BANK_SIZE_BYTES
+        + CONSTANTS_BOOL_BANK_SIZE_BYTES;
+    let constants = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("d3d9 constants"),
+        size: CONSTANTS_BUFFER_SIZE_BYTES,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Pixel shader c0 lives at index 256 in the packed register file.
+    let ps_c0_offset_bytes = 256u64 * 16;
+    let green = [0.0f32, 1.0, 0.0, 1.0];
+    queue.write_buffer(
+        &constants,
+        ps_c0_offset_bytes,
+        bytemuck::cast_slice(&green),
+    );
+
+    let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("d3d9 constants bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES),
+            },
+            count: None,
+        }],
+    });
+    let vs_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("d3d9 vs samplers bgl (empty)"),
+        entries: &[],
+    });
+    let ps_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("d3d9 ps samplers bgl (empty)"),
+        entries: &[],
+    });
+
+    let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("d3d9 constants bg"),
+        layout: &constants_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: constants.as_entire_binding(),
+        }],
+    });
+    let vs_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("d3d9 vs samplers bg (empty)"),
+        layout: &vs_samplers_bgl,
+        entries: &[],
+    });
+    let ps_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("d3d9 ps samplers bg (empty)"),
+        layout: &ps_samplers_bgl,
+        entries: &[],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("d3d9 pipeline layout"),
+        bind_group_layouts: &[&constants_bgl, &vs_samplers_bgl, &ps_samplers_bgl],
+        push_constant_ranges: &[],
+    });
+
+    #[repr(C)]
+    #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+    struct Vertex {
+        pos: [f32; 4],
+    }
+
+    let verts = [
+        Vertex {
+            pos: [-1.0, -1.0, 0.0, 1.0],
+        },
+        Vertex {
+            pos: [3.0, -1.0, 0.0, 1.0],
+        },
+        Vertex {
+            pos: [-1.0, 3.0, 0.0, 1.0],
+        },
+    ];
+
+    let vb = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("vb"),
+        size: (std::mem::size_of_val(&verts)) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&vb, 0, bytemuck::cast_slice(&verts));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("d3d9 legacy fallback pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs.module,
+            entry_point: vs.entry_point,
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 0,
+                    shader_location: 0,
+                }],
+            }],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &ps.module,
+            entry_point: ps.entry_point,
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let rt = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("rt"),
+        size: wgpu::Extent3d {
+            width: 16,
+            height: 16,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let rt_view = rt.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("encode"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &rt_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &constants_bg, &[]);
+        pass.set_bind_group(1, &vs_samplers_bg, &[]);
+        pass.set_bind_group(2, &ps_samplers_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let rgba = pollster::block_on(readback_rgba8(
+        &device,
+        &queue,
+        &rt,
+        TextureRegion {
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            size: wgpu::Extent3d {
+                width: 16,
+                height: 16,
+                depth_or_array_layers: 1,
+            },
+        },
+    ));
+    // Sample the center pixel.
+    assert_eq!(
+        &rgba[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4],
+        &[0, 255, 0, 255]
     );
 }
 
