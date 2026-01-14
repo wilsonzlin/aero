@@ -39,11 +39,7 @@ and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]`
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-
-It also expects the canonical keyboard/mouse INF to be **SUBSYS-gated** (no generic
-`PCI\VEN_1AF4&DEV_1052&REV_01` fallback match). If you need the generic fallback
-for environments that do not expose Aero subsystem IDs, use the legacy alias
-`virtio-input.inf.disabled` (rename it to `virtio-input.inf` to enable it).
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed)
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
 devices bind via `aero_virtio_tablet.inf` when that INF is installed.

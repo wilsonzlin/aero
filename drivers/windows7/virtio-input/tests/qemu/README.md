@@ -236,14 +236,18 @@ The list will also include more specific forms, e.g.:
 The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
 - Keyboard/mouse: `aero_virtio_input.inf`
-  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names.
-- Optional legacy alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names, and
   - includes a generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that do not expose Aero subsystem IDs.
-- Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
+- Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet). It is more specific, so it wins over
+  the generic fallback when both INFs are present.
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can still bind via the legacy alias INF's
-fallback entry (it will appear with the generic **Aero VirtIO Input Device** name). Tablet devices without the Aero tablet
-subsystem ID may also bind via the fallback entry if `aero_virtio_tablet.inf` does not match.
+Legacy filename alias note: `inf/virtio-input.inf.disabled` is a legacy filename alias of `aero_virtio_input.inf` for
+workflows that still expect `virtio-input.inf`; it is disabled by default to avoid accidentally shipping/installing two
+overlapping INFs.
+
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can still bind via the fallback entry (it
+will appear with the generic **Aero VirtIO Input Device** name). Tablet devices without the Aero tablet subsystem ID may
+also bind via the fallback entry if `aero_virtio_tablet.inf` does not match.
 
 ## Cross-checking with QEMU monitor (no guest required)
 
