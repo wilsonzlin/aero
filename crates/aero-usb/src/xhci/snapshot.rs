@@ -42,6 +42,7 @@ const TAG_ACTIVE_ENDPOINTS: u16 = 22;
 const TAG_EP0_CONTROL_TD: u16 = 23;
 const TAG_CMD_KICK: u16 = 24;
 const TAG_DNCTRL: u16 = 25;
+const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
 const SLOT_CONTEXT_DWORDS: usize = 8;
 const ENDPOINT_CONTEXT_DWORDS: usize = 8;
@@ -368,6 +369,99 @@ fn decode_ep0_control_td(dst: &mut [ControlTdState], buf: &[u8]) -> SnapshotResu
     Ok(())
 }
 
+fn encode_ep0_control_td_full(td: &[ControlTdState]) -> Vec<u8> {
+    let mut enc = Encoder::new().u32(td.len() as u32);
+    for state in td {
+        enc = enc.bool(state.td_start.is_some());
+        if let Some(cursor) = state.td_start {
+            enc = enc.u64(cursor.dequeue_ptr()).bool(cursor.cycle_state());
+        }
+
+        enc = enc.bool(state.td_cursor.is_some());
+        if let Some(cursor) = state.td_cursor {
+            enc = enc.u64(cursor.dequeue_ptr()).bool(cursor.cycle_state());
+        }
+
+        enc = enc
+            .u32(state.data_expected as u32)
+            .u32(state.data_transferred as u32)
+            .u8(state.completion_code.raw());
+    }
+    enc.finish()
+}
+
+fn completion_code_from_raw(raw: u8) -> CompletionCode {
+    match raw {
+        0 => CompletionCode::Invalid,
+        1 => CompletionCode::Success,
+        4 => CompletionCode::UsbTransactionError,
+        5 => CompletionCode::TrbError,
+        6 => CompletionCode::StallError,
+        9 => CompletionCode::NoSlotsAvailableError,
+        11 => CompletionCode::SlotNotEnabledError,
+        12 => CompletionCode::EndpointNotEnabledError,
+        13 => CompletionCode::ShortPacket,
+        17 => CompletionCode::ParameterError,
+        19 => CompletionCode::ContextStateError,
+        _ => CompletionCode::Invalid,
+    }
+}
+
+fn decode_ep0_control_td_full(dst: &mut [ControlTdState], buf: &[u8]) -> SnapshotResult<()> {
+    let mut d = Decoder::new(buf);
+    let count = d.u32()? as usize;
+    if count > dst.len() {
+        return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td count"));
+    }
+
+    for st in dst.iter_mut().take(count) {
+        let start_present = d.bool()?;
+        st.td_start = if start_present {
+            let ptr = d.u64()?;
+            let cycle = d.bool()?;
+            if ptr == 0 {
+                None
+            } else {
+                Some(RingCursor::new(ptr, cycle))
+            }
+        } else {
+            None
+        };
+
+        let cursor_present = d.bool()?;
+        st.td_cursor = if cursor_present {
+            let ptr = d.u64()?;
+            let cycle = d.bool()?;
+            if ptr == 0 {
+                None
+            } else {
+                Some(RingCursor::new(ptr, cycle))
+            }
+        } else {
+            None
+        };
+
+        let expected = d.u32()? as usize;
+        let transferred = d.u32()? as usize;
+        let completion_code_raw = d.u8()?;
+
+        let expected = expected.min(MAX_CONTROL_DATA_LEN);
+        let transferred = transferred.min(expected);
+        st.data_expected = expected;
+        st.data_transferred = transferred;
+        st.completion_code = completion_code_from_raw(completion_code_raw);
+
+        // Defensive invariant: if the TD has no start cursor, treat it as not in flight and clear
+        // the internal cursor as well.
+        if st.td_start.is_none() {
+            st.td_cursor = None;
+        }
+    }
+
+    d.finish()?;
+    Ok(())
+}
+
 fn encode_pending_events(events: &VecDeque<Trb>) -> Vec<u8> {
     let mut enc = Encoder::new().u32(events.len() as u32);
     for trb in events {
@@ -397,7 +491,7 @@ fn decode_pending_events(buf: &[u8]) -> SnapshotResult<VecDeque<Trb>> {
 
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 6);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 7);
 
     fn save_state(&self) -> Vec<u8> {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -436,6 +530,10 @@ impl IoSnapshot for XhciController {
             encode_active_endpoints(&self.active_endpoints),
         );
         w.field_bytes(TAG_EP0_CONTROL_TD, encode_ep0_control_td(&self.ep0_control_td));
+        w.field_bytes(
+            TAG_EP0_CONTROL_TD_FULL,
+            encode_ep0_control_td_full(&self.ep0_control_td),
+        );
         w.field_bytes(TAG_PENDING_EVENTS, encode_pending_events(&self.pending_events));
         w.field_u64(TAG_DROPPED_EVENT_TRBS, self.dropped_event_trbs);
 
@@ -610,7 +708,12 @@ impl IoSnapshot for XhciController {
             self.active_endpoints = decode_active_endpoints(self.slots.len(), buf)?;
         }
 
-        if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD) {
+        if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD_FULL) {
+            if buf.len() > MAX_EP_RECORD_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td"));
+            }
+            decode_ep0_control_td_full(&mut self.ep0_control_td, buf)?;
+        } else if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD) {
             if buf.len() > MAX_EP_RECORD_BYTES {
                 return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td"));
             }

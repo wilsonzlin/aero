@@ -893,7 +893,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     use super::context::SlotContext;
     use super::interrupter::IMAN_IE;
     use super::ring::RingCursor;
-    use super::trb::{Trb, TrbType};
+    use super::trb::{CompletionCode, Trb, TrbType};
     use super::{regs, CommandCompletionCode, XhciController, PORTSC_PR};
 
     use crate::hid::UsbHidKeyboardHandle;
@@ -963,8 +963,11 @@ fn controller_snapshot_roundtrip_is_deterministic() {
         slot_id: 1,
         endpoint_id: 1,
     });
+    xhci.ep0_control_td[1].td_start = Some(RingCursor::new(0xa000, true));
+    xhci.ep0_control_td[1].td_cursor = Some(RingCursor::new(0xa010, false));
     xhci.ep0_control_td[1].data_expected = 8;
     xhci.ep0_control_td[1].data_transferred = 4;
+    xhci.ep0_control_td[1].completion_code = CompletionCode::TrbError;
 
     // Add some endpoint + transfer ring cursor state.
     {
