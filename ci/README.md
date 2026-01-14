@@ -265,7 +265,7 @@ Artifacts (typical):
 - `AeroVirtIO-Win7-<version>-x86.zip`
 - `AeroVirtIO-Win7-<version>-x64.zip`
 - `AeroVirtIO-Win7-<version>-bundle.zip`
-- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; requires `cargo` for deterministic builds; legacy Windows IMAPI2 via `-LegacyIso`)
+- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; requires `cargo` by default; legacy Windows IMAPI2 via `-LegacyIso` (**not deterministic**))
 - `AeroVirtIO-Win7-<version>-fat.vhd` (when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + admin; skipped unless `-FatImageStrict`)
 
 Integrity manifests (default):
