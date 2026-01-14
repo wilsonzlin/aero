@@ -4,7 +4,7 @@ use aero_usb::xhci::context::{
     SLOT_STATE_CONFIGURED,
 };
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::XhciController;
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
 mod util;
@@ -167,4 +167,101 @@ fn configure_endpoint_preserves_xhc_owned_slot_context_fields() {
     assert_eq!(slot_after_cfg.context_entries(), 3);
     assert_eq!(slot_after_cfg.root_hub_port_number(), 1);
     assert_eq!(slot_after_cfg.route_string(), 0);
+}
+
+#[test]
+fn configure_endpoint_preserves_topology_when_output_slot_context_is_uninitialized() {
+    let mut mem = TestMemory::new(0x40_000);
+    let mut alloc = Alloc::new(0x1000);
+
+    let cmd_ring = alloc.alloc(0x100, 0x40) as u64;
+    let input_ctx = alloc.alloc(0x200, 0x40) as u64;
+    let dcbaa = alloc.alloc(0x200, 0x40) as u64;
+    let dev_ctx = alloc.alloc(0x400, 0x40) as u64;
+
+    let mut xhci = XhciController::with_port_count(1);
+    xhci.attach_device(0, Box::new(UsbHidKeyboardHandle::new()));
+    while xhci.pop_pending_event().is_some() {}
+    xhci.set_dcbaap(dcbaa);
+
+    // Use the host-side helpers to bind the slot. Unlike the command-ring Address Device path,
+    // this does not populate the output Slot Context in guest memory.
+    let enable = xhci.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    let slot_id = enable.slot_id;
+    assert_ne!(slot_id, 0);
+    mem.write_u64(dcbaa + u64::from(slot_id) * 8, dev_ctx);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = xhci.address_device(slot_id, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+    assert_eq!(
+        xhci.slot_state(slot_id)
+            .expect("slot state should exist after address_device")
+            .slot_context()
+            .root_hub_port_number(),
+        1,
+        "host-side address_device() should update controller-local Slot Context topology binding"
+    );
+    assert_eq!(
+        SlotContext::read_from(&mut mem, dev_ctx).root_hub_port_number(),
+        0,
+        "host-side address_device() should leave the output Slot Context uninitialized in memory"
+    );
+
+    // Configure Endpoint with Slot Context included (Add flags bit0). The input Slot Context has
+    // invalid topology fields that must be preserved from controller-local state even though the
+    // output Device Context Slot Context is still zeroed.
+    {
+        let mut icc = InputControlContext::default();
+        icc.set_add_flags(1 << 0);
+        icc.write_to(&mut mem, input_ctx);
+
+        let mut in_slot_ctx = SlotContext::default();
+        in_slot_ctx.set_route_string(0x1234);
+        in_slot_ctx.set_root_hub_port_number(0);
+        in_slot_ctx.set_context_entries(1);
+        in_slot_ctx.write_to(&mut mem, input_ctx + CONTEXT_SIZE as u64);
+    }
+
+    xhci.set_command_ring(cmd_ring, true);
+    {
+        let mut cfg = Trb::new(input_ctx, 0, 0);
+        cfg.set_cycle(true);
+        cfg.set_trb_type(TrbType::ConfigureEndpointCommand);
+        cfg.set_slot_id(slot_id);
+        cfg.write_to(&mut mem, cmd_ring);
+    }
+    {
+        let mut stop = Trb::default();
+        stop.set_cycle(false);
+        stop.set_trb_type(TrbType::NoOpCommand);
+        stop.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
+    }
+
+    xhci.process_command_ring(&mut mem, 8);
+    let evt = xhci
+        .pop_pending_event()
+        .expect("configure-endpoint completion");
+    assert_eq!(evt.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(evt.completion_code_raw(), CompletionCode::Success.as_u8());
+    assert_eq!(evt.slot_id(), slot_id);
+
+    let slot_after_cfg = SlotContext::read_from(&mut mem, dev_ctx);
+    assert_eq!(slot_after_cfg.slot_state(), SLOT_STATE_CONFIGURED);
+    assert_eq!(
+        slot_after_cfg.root_hub_port_number(),
+        1,
+        "Configure Endpoint must preserve the topology root port when the output Slot Context is zeroed"
+    );
+    assert_eq!(
+        slot_after_cfg.route_string(),
+        0,
+        "Configure Endpoint must preserve the topology route string when the output Slot Context is zeroed"
+    );
+    assert!(
+        xhci.slot_device_mut(slot_id).is_some(),
+        "slot should remain routable after Configure Endpoint"
+    );
 }

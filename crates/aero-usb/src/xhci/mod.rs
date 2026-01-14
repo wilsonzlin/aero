@@ -1475,7 +1475,10 @@ impl XhciController {
 
         if icc.add_context(0) {
             let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
-            let out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
+            let mut out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
+            if out_slot.root_hub_port_number() == 0 {
+                out_slot = self.slots[slot_idx].slot_context;
+            }
 
             let merged_dw0 = (slot_ctx.dword(0)
                 & !(SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0))
@@ -1686,7 +1689,10 @@ impl XhciController {
             const SLOT_STATE_ADDR_MASK_DWORD3: u32 = 0xf800_00ff;
 
             let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
-            let out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
+            let mut out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
+            if out_slot.root_hub_port_number() == 0 {
+                out_slot = self.slots[slot_idx].slot_context;
+            }
 
             let merged_dw0 = (slot_ctx.dword(0)
                 & !(SLOT_ROUTE_STRING_MASK_DWORD0 | SLOT_SPEED_MASK_DWORD0))
