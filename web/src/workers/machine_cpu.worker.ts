@@ -3,6 +3,16 @@
 import type { AeroConfig } from "../config/aero_config";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { InputEventType } from "../input/event_queue";
+import { RingBuffer } from "../ipc/ring_buffer";
+import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { planMachineBootDiskAttachment } from "../runtime/machine_disk_attach";
+import {
+  type ConfigAckMessage,
+  type ConfigUpdateMessage,
+  MessageType,
+  type ProtocolMessage,
+  type WorkerInitMessage,
+} from "../runtime/protocol";
 import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
@@ -14,20 +24,11 @@ import {
   type WorkerRole,
 } from "../runtime/shared_layout";
 import {
-  type ConfigAckMessage,
-  type ConfigUpdateMessage,
-  MessageType,
-  type ProtocolMessage,
-  type WorkerInitMessage,
-} from "../runtime/protocol";
-import { RingBuffer } from "../ipc/ring_buffer";
-import type { WasmApi } from "../runtime/wasm_loader";
-import {
   restoreMachineSnapshotAndReattachDisks,
   restoreMachineSnapshotFromOpfsAndReattachDisks,
 } from "../runtime/machine_snapshot_disks";
-import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
+import type { WasmApi } from "../runtime/wasm_loader";
 
 /**
  * Minimal "machine CPU" worker entrypoint.
@@ -53,8 +54,9 @@ let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
 // Boot disk selection (shared protocol with the legacy IO worker).
-// The machine CPU worker does not yet use this to attach disks, but it accepts the
-// message so coordinators/harnesses can share a single schema.
+// The machine CPU worker does not yet use this to attach disks, but it validates compatibility
+// with the canonical `api.Machine` runtime so unsupported selections (IDB backend, remote
+// streaming, unsupported formats) fail fast.
 let pendingBootDisks: SetBootDisksMessage | null = null;
 
 type InputBatchMessage = {
@@ -545,6 +547,20 @@ ctx.onmessage = (ev) => {
 
   const bootDisks = normalizeSetBootDisksMessage(msg);
   if (bootDisks) {
+    try {
+      const warnings: string[] = [];
+      if (bootDisks.hdd) warnings.push(...planMachineBootDiskAttachment(bootDisks.hdd, "hdd").warnings);
+      if (bootDisks.cd) warnings.push(...planMachineBootDiskAttachment(bootDisks.cd, "cd").warnings);
+      for (const w of warnings) {
+        // eslint-disable-next-line no-console
+        console.warn(`[machine_cpu.worker] ${w}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+      return;
+    }
+
     pendingBootDisks = bootDisks;
     return;
   }

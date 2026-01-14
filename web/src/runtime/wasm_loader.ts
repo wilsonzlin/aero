@@ -79,6 +79,27 @@ export type MachineHandle = {
         overlayBlockSizeBytes: number,
     ): Promise<void>;
     /**
+     * Open an existing OPFS-backed disk image and attach it as the machine's canonical disk,
+     * recording snapshot overlay refs (DISKS entry) for `disk_id=0`.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_opfs_existing_and_set_overlay_ref?(path: string): Promise<void>;
+    /**
+     * Open an existing OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
+     * canonical disk.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_aerospar_opfs_open?(path: string): Promise<void>;
+    /**
+     * Open an existing OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
+     * canonical disk, recording snapshot overlay refs (DISKS entry) for `disk_id=0`.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_aerospar_opfs_open_and_set_overlay_ref?(path: string): Promise<void>;
+    /**
      * Open (or create) an OPFS-backed disk image and attach it as the canonical Windows 7 IDE
      * primary channel master ATA disk (`disk_id=2`).
      *
@@ -96,6 +117,33 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     attach_ide_primary_master_disk_opfs_existing?(path: string): Promise<void>;
+    /**
+     * Open an existing OPFS-backed ISO image (using the file's current size) and attach it as the
+     * canonical Windows 7 IDE secondary channel master ATAPI CD-ROM (`disk_id=1`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_secondary_master_iso_opfs_existing?(path: string): Promise<void>;
+    /**
+     * Open an existing OPFS-backed ISO image, attach it as the canonical install media CD-ROM, and
+     * record snapshot overlay refs (DISKS entry) for `disk_id=1`.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref?(path: string): Promise<void>;
+    /**
+     * Alias for attaching an existing OPFS-backed ISO image as canonical install media (`disk_id=1`).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs?(path: string): Promise<void>;
+    /**
+     * Alias for attaching an existing OPFS-backed ISO image as canonical install media (`disk_id=1`)
+     * and recording snapshot overlay refs (DISKS entry).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs_and_set_overlay_ref?(path: string): Promise<void>;
     run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
     serial_output(): Uint8Array;
     /**
