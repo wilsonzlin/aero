@@ -509,6 +509,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_copy_texture2d) == 64);
 struct aerogpu_cmd_create_shader_dxbc {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_CREATE_SHADER_DXBC */
   aerogpu_handle_t shader_handle;
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is treated
+   *   as `enum aerogpu_shader_stage_ex` (DXBC program type numbering), allowing the guest to create
+   *   a GS/HS/DS shader without adding new fields.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t dxbc_size_bytes;
   /*
@@ -550,12 +559,18 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_shader) == 16);
  * Base packet layout is a packed 24-byte prefix (this struct). This prefix is stable and
  * MUST NOT change.
  *
+ * Legacy behavior (24-byte packet):
+ * - When `hdr.size_bytes == 24` and `reserved0 != 0`, `reserved0` is interpreted as the
+ *   geometry shader (`gs`) handle.
+ *
  * ABI extension (append-only):
  * - If `hdr.size_bytes >= 36`, the packet appends 3 additional `aerogpu_handle_t` shader
  *   handles in this order:
  *     - `gs` (geometry shader) 0 = unbound
  *     - `hs` (hull shader / tessellation control) 0 = unbound
  *     - `ds` (domain shader / tessellation eval) 0 = unbound
+ * - When appended handles are present, they are authoritative; `reserved0` is reserved/ignored
+ *   (and emitters SHOULD set it to 0).
  *
  * Forward-compat notes for `reserved0`:
  * - `reserved0` remains reserved and emitters SHOULD set it to 0 for the extended packet (unless
@@ -576,8 +591,9 @@ struct aerogpu_cmd_bind_shaders {
   /*
    * Reserved for ABI forward-compat.
    *
-   * Legacy/compat encoding:
-   * - Some older streams/hosts repurposed this field as the geometry shader (GS) handle.
+   * Legacy behavior (24-byte packet):
+   * - When `hdr.size_bytes == 24` and `reserved0 != 0`, `reserved0` is interpreted as the
+   *   geometry shader (`gs`) handle.
    *
    * ABI extension (append-only):
    * - Decoders MUST treat `hdr.size_bytes` as a minimum size and ignore any trailing bytes they do
@@ -585,7 +601,8 @@ struct aerogpu_cmd_bind_shaders {
    * - If `hdr.size_bytes >= sizeof(struct aerogpu_cmd_bind_shaders) + 12` (36 bytes), three
    *   additional u32 shader handles are appended immediately after this struct: `{gs, hs, ds}`.
    * - In the extended form, hosts should prefer the appended handles. Writers may also mirror `gs`
-   *   into `reserved0` for best-effort support on hosts that only understand the 24-byte packet.
+   *   into `reserved0` for best-effort support on hosts that only understand the 24-byte packet,
+   *   but the appended handles are authoritative.
    */
   uint32_t reserved0;
 };
@@ -605,6 +622,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_bind_shaders) == 24);
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_shader_constants_f {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_CONSTANTS_F */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is treated
+   *   as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4 correspond to
+   *   GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t start_register;
   uint32_t vec4_count;
@@ -923,6 +949,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_primitive_topology) == 16);
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_texture {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_TEXTURE */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is
+   *   treated as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4
+   *   correspond to GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t slot;
   aerogpu_handle_t texture; /* 0 = unbind */
@@ -977,6 +1012,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_sampler) == 16);
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_samplers {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SAMPLERS */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is
+   *   treated as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4
+   *   correspond to GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t sampler_count;
@@ -1010,6 +1054,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_constant_buffer_binding) == 16);
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_constant_buffers {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_CONSTANT_BUFFERS */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is
+   *   treated as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4
+   *   correspond to GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t buffer_count;
@@ -1048,6 +1101,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_shader_resource_buffer_binding) == 1
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_shader_resource_buffers {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is
+   *   treated as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4
+   *   correspond to GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t buffer_count;
@@ -1086,6 +1148,15 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_unordered_access_buffer_binding) == 
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_unordered_access_buffers {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is
+   *   treated as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4
+   *   correspond to GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t uav_count;

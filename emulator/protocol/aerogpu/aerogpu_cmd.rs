@@ -535,6 +535,13 @@ impl AerogpuCmdCopyTexture2d {
 pub struct AerogpuCmdCreateShaderDxbc {
     pub hdr: AerogpuCmdHdr,
     pub shader_handle: AerogpuHandle,
+    /// Shader stage selector (legacy enum).
+    ///
+    /// stage_ex extension:
+    /// - If `stage == AerogpuShaderStage::Compute` and `reserved0 != 0`, then `reserved0` is treated
+    ///   as `AerogpuShaderStageEx` (DXBC program type numbering), allowing the guest to describe a
+    ///   GS/HS/DS shader without changing the base struct layout.
+    /// - `reserved0 == 0` means legacy compute (no override).
     pub stage: u32,
     pub dxbc_size_bytes: u32,
     /// `stage_ex` ABI extension tag.
@@ -578,14 +585,18 @@ pub struct AerogpuCmdBindShaders {
     pub vs: AerogpuHandle,
     pub ps: AerogpuHandle,
     pub cs: AerogpuHandle,
-    /// Reserved for ABI-forward-compat.
+    /// Base packet size is 24 bytes (hdr + vs/ps/cs/reserved0).
     ///
-    /// For the extended packet form (`hdr.size_bytes >= 36`), this field should be 0 unless the
-    /// emitter chooses to mirror `gs` here for best-effort compatibility; the appended
-    /// `{gs, hs, ds}` handles are authoritative.
+    /// Legacy GS extension (24-byte packet):
+    /// - If `hdr.size_bytes == 24` and `reserved0 != 0`, `reserved0` is interpreted as the geometry
+    ///   shader handle (`gs`).
     ///
-    /// Legacy implementations may interpret a non-zero value as the geometry shader handle (`gs`);
-    /// for best-effort compatibility an emitter may choose to duplicate `gs` into this field.
+    /// Append-only extension (>= 36-byte packet):
+    /// - If trailing handles are present, they are decoded into [`BindShadersEx`] (`{gs, hs, ds}`)
+    ///   and must take precedence.
+    /// - In the extended form, this field should be 0 unless the emitter chooses to mirror `gs` here
+    ///   for best-effort compatibility; the appended `{gs, hs, ds}` handles are authoritative.
+    /// - Any additional trailing bytes beyond the known fields must be ignored for forward-compat.
     pub reserved0: u32,
 }
 
@@ -615,8 +626,11 @@ impl AerogpuCmdBindShaders {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BindShadersEx {
+    /// Geometry shader handle.
     pub gs: AerogpuHandle,
+    /// Hull shader handle.
     pub hs: AerogpuHandle,
+    /// Domain shader handle.
     pub ds: AerogpuHandle,
 }
 
@@ -624,6 +638,12 @@ pub struct BindShadersEx {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetShaderConstantsF {
     pub hdr: AerogpuCmdHdr,
+    /// Shader stage selector (legacy enum).
+    ///
+    /// stage_ex extension:
+    /// - If `stage == AerogpuShaderStage::Compute` and `reserved0 != 0`, `reserved0` is treated as
+    ///   `AerogpuShaderStageEx` (DXBC program type numbering). Values 2/3/4 correspond to GS/HS/DS.
+    /// - `reserved0 == 0` means legacy compute (no override).
     pub stage: u32,
     pub start_register: u32,
     pub vec4_count: u32,
@@ -954,6 +974,7 @@ impl AerogpuCmdSetPrimitiveTopology {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetTexture {
     pub hdr: AerogpuCmdHdr,
+    /// Legacy shader stage (`AerogpuShaderStage`).
     pub shader_stage: u32,
     pub slot: u32,
     pub texture: AerogpuHandle,
@@ -1024,6 +1045,7 @@ impl AerogpuCmdDestroySampler {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetSamplers {
     pub hdr: AerogpuCmdHdr,
+    /// Legacy shader stage (`AerogpuShaderStage`).
     pub shader_stage: u32,
     pub start_slot: u32,
     pub sampler_count: u32,
@@ -1054,6 +1076,7 @@ impl AerogpuConstantBufferBinding {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetConstantBuffers {
     pub hdr: AerogpuCmdHdr,
+    /// Legacy shader stage (`AerogpuShaderStage`).
     pub shader_stage: u32,
     pub start_slot: u32,
     pub buffer_count: u32,
@@ -1084,6 +1107,7 @@ impl AerogpuShaderResourceBufferBinding {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetShaderResourceBuffers {
     pub hdr: AerogpuCmdHdr,
+    /// Legacy shader stage (`AerogpuShaderStage`).
     pub shader_stage: u32,
     pub start_slot: u32,
     pub buffer_count: u32,
@@ -1114,6 +1138,7 @@ impl AerogpuUnorderedAccessBufferBinding {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetUnorderedAccessBuffers {
     pub hdr: AerogpuCmdHdr,
+    /// Legacy shader stage (`AerogpuShaderStage`).
     pub shader_stage: u32,
     pub start_slot: u32,
     pub uav_count: u32,

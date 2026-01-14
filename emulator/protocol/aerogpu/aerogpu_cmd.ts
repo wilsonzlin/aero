@@ -377,13 +377,7 @@ export function resolveShaderStageWithEx(shaderStage: number, reserved0: number)
 }
 
 /**
- * Resolve a legacy `AerogpuShaderStage` plus optional `stage_ex` encoding (`reserved0`) into an extended stage.
- *
- * Encoding rules (mirrors `drivers/aerogpu/protocol/aerogpu_cmd.h`):
- * - If `shaderStage` is Vertex, Pixel, or Geometry, `reserved0` MUST be 0.
- * - If `shaderStage` is Compute:
- *   - `reserved0 == 0` means legacy compute stage (no stage_ex specified).
- *   - `reserved0 != 0` is interpreted as `AerogpuShaderStageEx` (DXBC program type ID).
+ * Decode a legacy `(shaderStage, reserved0)` pair into a single extended stage enum.
  *
  * Returns `null` if the pair violates the encoding rules.
  *
@@ -876,16 +870,22 @@ export interface AerogpuCmdBindShadersPayload {
   ps: AerogpuHandle;
   cs: AerogpuHandle;
   /**
-   * Reserved for ABI-forward-compat.
+   * Reserved for ABI forward-compat.
    *
-   * For the extended packet form (`sizeBytes >= 36` / when {@link ex} is present), this should be
-   * 0 unless the emitter chooses to mirror `gs` here for best-effort compatibility; the appended
-   * `{gs, hs, ds}` handles are authoritative.
+   * Legacy behavior (24-byte packet):
+   * - If `sizeBytes == 24` and `reserved0 != 0`, `reserved0` is interpreted as the geometry shader
+   *   handle (`gs`).
    *
-   * Legacy implementations may interpret a non-zero value as the geometry shader handle (`gs`);
-   * for best-effort compatibility an emitter may choose to duplicate `gs` into this field.
+   * Append-only extension (>= 36-byte packet):
+   * - When {@link ex} is present, the trailing `{gs, hs, ds}` handles are authoritative and
+   *   `reserved0` is reserved/ignored (emitters should set it to 0, but may also mirror `gs` here
+   *   for best-effort support on hosts that only understand the 24-byte packet).
    */
   reserved0: number;
+  /**
+   * Append-only BIND_SHADERS extension: when present, these trailing handles take precedence over
+   * `reserved0`. Any additional trailing bytes are ignored for forward-compat.
+   */
   ex?: BindShadersEx;
 }
 
@@ -1729,9 +1729,14 @@ export class AerogpuCmdWriter {
   /**
    * Legacy BIND_SHADERS variant that can encode an optional geometry shader via `reserved0`.
    *
-   * Newer hosts support an append-only extension: if `sizeBytes >= 36`, the packet appends
-   * `{gs, hs, ds}` handles. For the extended form, `reserved0` should be 0 unless mirroring `gs`
-   * for best-effort compatibility; appended fields are authoritative.
+   * ABI note:
+   * - Base packet size is 24 bytes (hdr + vs/ps/cs/reserved0).
+   * - Legacy behavior: when `sizeBytes == 24` and `reserved0 != 0`, `reserved0` is interpreted as
+   *   the geometry shader (`gs`) handle.
+   * - Newer hosts support an append-only extension (see {@link bindShadersEx}): if `sizeBytes >= 36`,
+   *   the packet appends trailing `{gs, hs, ds}` handles. In the extended form, the trailing handles
+   *   are authoritative and `reserved0` should be 0 unless mirroring `gs` for best-effort
+   *   compatibility.
    */
   bindShadersWithGs(vs: AerogpuHandle, gs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE);
