@@ -15,6 +15,7 @@
 
 pub mod buffers;
 pub mod pipeline;
+pub mod tessellator;
 
 use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchError};
 
