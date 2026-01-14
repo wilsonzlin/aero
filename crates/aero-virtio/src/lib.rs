@@ -10,7 +10,8 @@
 //! for device ergonomics, but most platform wiring should pass a boxed `VirtualDisk` at the boundary
 //! and use:
 //!
-//! - [`devices::blk::VirtioBlkDisk`] (a `VirtioBlk<Box<dyn VirtualDisk>>` type alias)
+//! - [`devices::blk::VirtioBlkDisk`] (a `VirtioBlk<Box<dyn VirtualDisk>>` type alias on wasm32, and
+//!   `VirtioBlk<Box<dyn VirtualDisk + Send>>` on native)
 //! - `impl<T: VirtualDisk> BlockBackend for Box<T>` (plus impls for `Box<dyn VirtualDisk>` /
 //!   `Box<dyn VirtualDisk + Send>`, so `Box<dyn VirtualDisk>` is a valid backend)
 //!
