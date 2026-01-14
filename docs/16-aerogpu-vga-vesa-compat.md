@@ -520,7 +520,7 @@ Workers should treat these as immutable for the lifetime of a VM instance.
 
 ### Current limitations
 
-- WDDM scanout readback currently supports only `B8G8R8X8` / `B8G8R8A8` (plus their sRGB variants).
+- WDDM scanout readback currently supports `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus their sRGB variants).
 - WDDM hardware cursor surfaces support `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8`
   (plus their sRGB variants).
 - Readback paths require `base_paddr` and derived byte ranges to fit within JS safe integer range

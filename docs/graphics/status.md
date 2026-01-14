@@ -418,12 +418,12 @@ Impact:
   - Code: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (`take_scanout0_state_update`)
   - Tests: [`crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs`](../../crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs)
 - The GPU worker can present WDDM scanout from either guest RAM **or** the shared VRAM aperture (BAR1 backing) when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`:
-  - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadWddmScanoutFrame` / `tryReadWddmScanoutRgba8`)
+  - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadScanoutFrame` / `tryReadScanoutRgba8`)
   - E2E test (guest RAM base_paddr): [`tests/e2e/wddm_scanout_smoke.spec.ts`](../../tests/e2e/wddm_scanout_smoke.spec.ts) (harness: [`web/wddm-scanout-smoke.ts`](../../web/wddm-scanout-smoke.ts))
   - E2E test (VRAM aperture base_paddr): [`tests/e2e/wddm_scanout_vram_smoke.spec.ts`](../../tests/e2e/wddm_scanout_vram_smoke.spec.ts) (harness: [`web/wddm-scanout-vram-smoke.ts`](../../web/wddm-scanout-vram-smoke.ts))
   - VRAM/base-paddr contract notes: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer)
 - Manual harness: [`web/wddm-scanout-debug.html`](../../web/wddm-scanout-debug.html) (interactive toggles for scanoutState source/base_paddr/pitch and BGRX X-byte alpha forcing)
-- Current limitation: scanout presentation is currently limited to `B8G8R8X8`-compatible 32bpp layouts (`B8G8R8X8` / `B8G8R8A8` + sRGB variants; X8 treated as fully opaque); unsupported formats publish a deterministic disabled descriptor.
+- Current limitation: scanout presentation is currently limited to 32bpp layouts (`B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` + sRGB variants; X8 treated as fully opaque); unsupported formats publish a deterministic disabled descriptor.
 
 Impact:
 
