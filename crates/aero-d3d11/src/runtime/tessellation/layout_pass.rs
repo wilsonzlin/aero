@@ -274,16 +274,8 @@ mod tests {
             let factors = hs_tess_factors.get(patch_id).copied().unwrap_or([0.0; 4]);
             let initial_level = derive_tess_level_cpu(factors);
 
-            let rem_vertices = if total_vertices >= params.max_vertices {
-                0
-            } else {
-                params.max_vertices - total_vertices
-            };
-            let rem_indices = if total_indices >= params.max_indices {
-                0
-            } else {
-                params.max_indices - total_indices
-            };
+            let rem_vertices = params.max_vertices.saturating_sub(total_vertices);
+            let rem_indices = params.max_indices.saturating_sub(total_indices);
 
             let mut level = initial_level;
             let mut v_count: u32 = 0;
