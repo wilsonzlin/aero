@@ -71,7 +71,7 @@ fn aerogpu_cursor_readback_is_capped_to_avoid_unbounded_allocations() {
     let scanout_fb_gpa = 0x0020_0000u64;
     let scanout_pitch = scanout_w * 4;
     // Fill the framebuffer with solid blue pixels (B,G,R,X = 255,0,0,0).
-    let scanout_bytes = vec![255u8, 0, 0, 0].repeat((scanout_w * scanout_h) as usize);
+    let scanout_bytes = [255u8, 0, 0, 0].repeat((scanout_w * scanout_h) as usize);
     m.write_physical(scanout_fb_gpa, &scanout_bytes);
 
     m.write_physical_u32(
