@@ -12452,7 +12452,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
 
   // If the fixed-function fallback path is active, stage0 COLOROP/ALPHAOP changes
   // must affect rendering. Select an internal PS variant that approximates the
-  // fixed-function texture combiner for the supported subset.
+  // fixed-function texture combiner for the supported fixed-function FVFs.
   if (stage == 0 &&
       (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
        state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&

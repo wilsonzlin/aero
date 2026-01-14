@@ -1824,6 +1824,100 @@ bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
   if (!Check(saw_wvp, "PS-only interop uploaded WVP constants")) {
     return false;
   }
+  return true;
+}
+
+bool TestGetTextureStageStateRoundTrips() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnGetTextureStageState != nullptr, "pfnGetTextureStageState is available")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value) -> HRESULT {
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      return cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    }
+    return aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+  };
+
+  uint32_t value = 0;
+  HRESULT hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, &value);
+  if (!Check(hr == S_OK, "GetTextureStageState(stage0 COLOROP)")) {
+    return false;
+  }
+  if (!Check(value == kD3dTopModulate, "Default stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+
+  value = 0;
+  hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, &value);
+  if (!Check(hr == S_OK, "GetTextureStageState(stage0 ALPHAOP)")) {
+    return false;
+  }
+  if (!Check(value == kD3dTopSelectArg1, "Default stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+
+  value = 0;
+  hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, &value);
+  if (!Check(hr == S_OK, "GetTextureStageState(stage1 COLOROP)")) {
+    return false;
+  }
+  if (!Check(value == kD3dTopDisable, "Default stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  // Set + get should round-trip.
+  hr = SetTextureStageState(/*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0 ALPHAOP=DISABLE)")) {
+    return false;
+  }
+  value = 0;
+  hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, &value);
+  if (!Check(hr == S_OK, "GetTextureStageState(stage0 ALPHAOP) after set")) {
+    return false;
+  }
+  if (!Check(value == kD3dTopDisable, "stage0 ALPHAOP round-trips")) {
+    return false;
+  }
+
+  // Validate invalid parameters: stage out of range.
+  hr = SetTextureStageState(/*stage=*/16, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == D3DERR_INVALIDCALL, "SetTextureStageState(stage=16) returns INVALIDCALL")) {
+    return false;
+  }
+  value = 0xDEADBEEFu;
+  hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/16, kD3dTssColorOp, &value);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetTextureStageState(stage=16) returns INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(value == 0u, "GetTextureStageState(stage=16) zeroes output")) {
+    return false;
+  }
+
+  // Validate invalid parameters: state out of range.
+  hr = SetTextureStageState(/*stage=*/0, /*state=*/256, kD3dTopDisable);
+  if (!Check(hr == D3DERR_INVALIDCALL, "SetTextureStageState(state=256) returns INVALIDCALL")) {
+    return false;
+  }
+  value = 0xDEADBEEFu;
+  hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/0, /*state=*/256, &value);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetTextureStageState(state=256) returns INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(value == 0u, "GetTextureStageState(state=256) zeroes output")) {
+    return false;
+  }
+
+  // Validate invalid parameters: null output pointer.
+  hr = cleanup.device_funcs.pfnGetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, nullptr);
+  if (!Check(hr == E_INVALIDARG, "GetTextureStageState(pValue=null) returns E_INVALIDARG")) {
+    return false;
+  }
 
   return true;
 }
@@ -2294,6 +2388,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestGetTextureStageStateRoundTrips()) {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {
