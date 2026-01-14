@@ -291,43 +291,64 @@ fn virtio_input_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
     let virtio_kb = m
         .virtio_input_keyboard()
         .expect("virtio-input keyboard enabled");
-    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let virtio_mouse = m.virtio_input_mouse().expect("virtio-input mouse enabled");
+    let kb_bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let mouse_bdf = profile::VIRTIO_INPUT_MOUSE.bdf;
     let pci_intx = m.pci_intx_router().expect("pc platform enabled");
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
 
     // Ensure legacy INTx is enabled in the guest-visible PCI command register (bit 10 clear).
-    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !(1 << 10)));
+    for bdf in [kb_bdf, mouse_bdf] {
+        let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+        cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !(1 << 10)));
+    }
 
     // Synthesize a pending legacy INTx interrupt inside the runtime virtio transport.
     virtio_kb.borrow_mut().signal_config_interrupt();
+    virtio_mouse.borrow_mut().signal_config_interrupt();
     m.poll_pci_intx_lines();
 
-    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
-    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+    let kb_gsi = pci_intx.borrow().gsi_for_intx(kb_bdf, PciInterruptPin::IntA);
+    let mouse_gsi = pci_intx
+        .borrow()
+        .gsi_for_intx(mouse_bdf, PciInterruptPin::IntA);
+    assert_eq!(interrupts.borrow().gsi_level(kb_gsi), true);
+    assert_eq!(interrupts.borrow().gsi_level(mouse_gsi), true);
 
     // Enable MSI-X in the canonical PCI config space. Polling INTx lines should mirror MSI-X state
     // into the runtime virtio transport so legacy INTx becomes suppressed even without any virtio
     // queue processing.
-    let msix_cap = find_capability(&mut m, bdf, aero_devices::pci::msix::PCI_CAP_ID_MSIX)
-        .expect("virtio-input should expose MSI-X capability");
-    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        msix_cap + 0x02,
-        2,
-        u32::from((ctrl & !(1 << 14)) | (1 << 15)),
-    );
+    for bdf in [kb_bdf, mouse_bdf] {
+        let msix_cap = find_capability(&mut m, bdf, aero_devices::pci::msix::PCI_CAP_ID_MSIX)
+            .expect("virtio-input should expose MSI-X capability");
+        let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+        cfg_write(
+            &mut m,
+            bdf,
+            msix_cap + 0x02,
+            2,
+            u32::from((ctrl & !(1 << 14)) | (1 << 15)),
+        );
+    }
 
     m.poll_pci_intx_lines();
     assert_eq!(
-        interrupts.borrow().gsi_level(gsi),
+        interrupts.borrow().gsi_level(kb_gsi),
         false,
         "expected legacy INTx to be suppressed once MSI-X is enabled"
     );
     assert!(
         !virtio_kb.borrow().irq_level(),
+        "expected virtio transport legacy INTx line to be deasserted once MSI-X is enabled"
+    );
+
+    assert_eq!(
+        interrupts.borrow().gsi_level(mouse_gsi),
+        false,
+        "expected legacy INTx to be suppressed once MSI-X is enabled"
+    );
+    assert!(
+        !virtio_mouse.borrow().irq_level(),
         "expected virtio transport legacy INTx line to be deasserted once MSI-X is enabled"
     );
 }
