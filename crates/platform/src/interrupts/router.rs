@@ -521,6 +521,14 @@ impl PlatformInterrupts {
             .unwrap_or_else(|| panic!("invalid CPU index {cpu_index}"))
     }
 
+    /// Iterate over all LAPICs in the platform.
+    ///
+    /// This avoids exposing the internal `lapics: Vec<Arc<LocalApic>>` field directly and is
+    /// primarily used by MSI delivery helpers (e.g. broadcast and logical destination modes).
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     pub fn set_mode(&mut self, mode: PlatformInterruptMode) {
         let prev = self.mode;
         self.mode = mode;
