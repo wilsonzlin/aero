@@ -279,6 +279,10 @@ The current implementation targets:
   ABI minor `>= 2` via `KMTQAITYPE_UMDRIVERPRIVATE` (`aerogpu_umd_private_v1.device_abi_version_u32`).
   - When unsupported, `GetCaps(GETFORMAT*)` omits them and `CreateResource` rejects them to avoid emitting
     packets older hosts can't decode.
+- **Mipmapped textures**: default-pool textures with `MipLevels > 1` (or `Depth > 1`) are supported, but
+  on the Win7/WDDM path they currently fall back to **host-backed storage** (no guest allocation / `alloc_id`),
+  because guest-backed allocations are single-subresource today.
+  - Shared resources still require `MipLevels == 1` (single-allocation MVP shared-surface policy).
 
 ### Draw calls
 
@@ -307,7 +311,8 @@ Supported FVF combinations (bring-up subset):
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
-- `fixedfunc_supported_fvf()` + `kSupportedFvfXyz{,rhw}Diffuse{,Tex1}`
+- `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
+  `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
@@ -350,12 +355,17 @@ Limitations (bring-up):
   (built from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD). Fixed-function
   lighting/material is still not implemented.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
-- Only a minimal subset of **stage0** texture stage state is interpreted to select a built-in pixel shader variant (Diffuse / Texture0 / Texture0*Diffuse modulate, with independent color vs alpha selection; validated by `d3d9ex_fixedfunc_texture_stage_state`). Stages `> 0` and other `D3DTSS_*` state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
+- Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
+  `d3d9ex_fixedfunc_texture_stage_state`):
+  - `D3DTSS_COLOROP`/`ALPHAOP`: `DISABLE`, `SELECTARG1`, `SELECTARG2`, `MODULATE`
+  - `D3DTSS_COLORARG1/2` + `ALPHAARG1/2`: `DIFFUSE` and `TEXTURE` sources (with `TEXTURE*DIFFUSE` modulate)
+  - Other ops/sources fall back to a best-effort textured modulate when stage0 has a bound texture, otherwise diffuse;
+    stages `> 0` are cached only for `Get*`/state blocks.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
 
 ### Known limitations / next steps
 
-- **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs and a handful of stage0 pixel shader variants, rather than implementing full fixed-function shader generation from `D3DTSS_*` / other fixed-function state (stages `> 0` ignored).
+- **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs and a narrow stage0 `D3DTSS_*` subset, rather than generating full fixed-function shaders from texture stage state / lighting / fog / etc (stages `> 0` ignored).
 - **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
 - **Bring-up no-ops:** `pfnSetConvolutionMonoKernel`, `pfnGenerateMipSubLevels`, and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
 

@@ -254,10 +254,13 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
 
-  // Keep mipmap-related caps disabled for now. The Win7/WDDM path has additional
-  // restrictions around multi-subresource resources (see CreateResource logic in
-  // aerogpu_d3d9_driver.cpp) and mipmapped filtering is not exercised by the
-  // DWM/compositor workload.
+  // Keep mipmap-related filter caps disabled for now.
+  //
+  // On Win7/WDDM, guest-backed allocations currently support a single
+  // subresource, so mipmapped textures fall back to host-backed storage (see
+  // `force_host_backing` in `device_create_resource`). Mip filtering is also not
+  // exercised by the DWM/compositor workload. Keep filtering caps conservative
+  // (min/mag only) so apps prefer the validated paths.
   out->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                            D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
 

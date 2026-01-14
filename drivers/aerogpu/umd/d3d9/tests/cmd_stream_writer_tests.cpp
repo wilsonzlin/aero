@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <thread>
@@ -1208,7 +1209,7 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
   constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
   // Expected enumeration order (matches `aerogpu_d3d9_caps.cpp`).
-  constexpr uint32_t kExpectedBaseFormats[] = {
+  constexpr uint32_t kBaseExpectedFormats[] = {
       22u, // D3DFMT_X8R8G8B8
       21u, // D3DFMT_A8R8G8B8
       23u, // D3DFMT_R5G6B5
@@ -1217,7 +1218,7 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       32u, // D3DFMT_A8B8G8R8
       75u, // D3DFMT_D24S8
   };
-  constexpr uint32_t kExpectedBcFormats[] = {
+  constexpr uint32_t kBcExpectedFormats[] = {
       static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
       static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
       static_cast<uint32_t>(kD3dFmtDxt3), // D3DFMT_DXT3
@@ -1225,30 +1226,28 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       static_cast<uint32_t>(kD3dFmtDxt5), // D3DFMT_DXT5
   };
 
-  const uint32_t base_count = static_cast<uint32_t>(sizeof(kExpectedBaseFormats) / sizeof(kExpectedBaseFormats[0]));
-  const uint32_t bc_count = static_cast<uint32_t>(sizeof(kExpectedBcFormats) / sizeof(kExpectedBcFormats[0]));
-
-  std::vector<uint32_t> expected_formats;
-  expected_formats.reserve(static_cast<size_t>(base_count) + static_cast<size_t>(bc_count));
-  for (uint32_t f : kExpectedBaseFormats) {
-    expected_formats.push_back(f);
-  }
-  if (format_count == base_count) {
-    // No BC formats (e.g. Windows build where ABI/feature discovery says BC is unsupported).
-  } else if (format_count == base_count + bc_count) {
-    for (uint32_t f : kExpectedBcFormats) {
-      expected_formats.push_back(f);
-    }
-  } else {
-    return Check(false, "format_count matches base or base+bc list");
-  }
-  if (!Check(format_count == static_cast<uint32_t>(expected_formats.size()), "format_count matches expected list")) {
+  const uint32_t base_count = static_cast<uint32_t>(sizeof(kBaseExpectedFormats) / sizeof(kBaseExpectedFormats[0]));
+  const uint32_t bc_count = static_cast<uint32_t>(sizeof(kBcExpectedFormats) / sizeof(kBcExpectedFormats[0]));
+  if (!Check((format_count == base_count) || (format_count == base_count + bc_count),
+             "format_count matches expected base(+optional BC) formats")) {
+    std::fprintf(stderr, "FAIL: unexpected format_count=%u (base=%u bc=%u)\n",
+                 static_cast<unsigned>(format_count),
+                 static_cast<unsigned>(base_count),
+                 static_cast<unsigned>(bc_count));
     return false;
   }
 
+  std::vector<uint32_t> expected_formats;
+  expected_formats.reserve(format_count);
+  expected_formats.insert(expected_formats.end(), std::begin(kBaseExpectedFormats), std::end(kBaseExpectedFormats));
+  if (format_count == base_count + bc_count) {
+    expected_formats.insert(expected_formats.end(), std::begin(kBcExpectedFormats), std::end(kBcExpectedFormats));
+  }
+  if (!Check(format_count == static_cast<uint32_t>(expected_formats.size()), "expected_formats size matches format_count")) {
+    return false;
+  }
   std::vector<uint32_t> formats;
   formats.reserve(format_count);
-
   for (uint32_t i = 0; i < format_count; ++i) {
     GetFormatPayload payload{};
     payload.index = i;
@@ -1263,7 +1262,14 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
     if (!Check(hr == S_OK, "GetCaps(GETFORMAT)")) {
       return false;
     }
+    if (!Check(i < expected_formats.size(), "expected_formats bounds")) {
+      return false;
+    }
     if (!Check(payload.format == expected_formats[i], "format enumeration matches expected list")) {
+      std::fprintf(stderr, "FAIL: GETFORMAT index=%u expected=0x%08X got=0x%08X\n",
+                   static_cast<unsigned>(i),
+                   static_cast<unsigned>(expected_formats[i]),
+                   static_cast<unsigned>(payload.format));
       return false;
     }
     formats.push_back(payload.format);
@@ -1277,6 +1283,120 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       expected_ops = 0;
     }
     if (!Check(payload.ops == expected_ops, "format ops mask matches expected usage")) {
+      std::fprintf(stderr, "FAIL: GETFORMAT ops mismatch index=%u format=0x%08X expected_ops=0x%08X got_ops=0x%08X\n",
+                   static_cast<unsigned>(i),
+                   static_cast<unsigned>(payload.format),
+                   static_cast<unsigned>(expected_ops),
+                   static_cast<unsigned>(payload.ops));
+      return false;
+    }
+
+    // Host-facing invariants: any format we advertise via GETFORMAT must have a
+    // non-INVALID protocol mapping and a coherent packed texture layout.
+    const uint32_t agpu_format = d3d9_format_to_aerogpu(payload.format);
+    if (!Check(agpu_format != AEROGPU_FORMAT_INVALID, "d3d9_format_to_aerogpu(format) != INVALID")) {
+      std::fprintf(stderr, "FAIL: d3d9_format_to_aerogpu returned INVALID for D3D9 format=0x%08X\n",
+                   static_cast<unsigned>(payload.format));
+      return false;
+    }
+
+    const D3DDDIFORMAT fmt = static_cast<D3DDDIFORMAT>(payload.format);
+    uint32_t expected_bpp = 0;
+    switch (payload.format) {
+      case 21u: // D3DFMT_A8R8G8B8
+      case 22u: // D3DFMT_X8R8G8B8
+      case 32u: // D3DFMT_A8B8G8R8
+      case 75u: // D3DFMT_D24S8
+        expected_bpp = 4;
+        break;
+      case 23u: // D3DFMT_R5G6B5
+      case 24u: // D3DFMT_X1R5G5B5
+      case 25u: // D3DFMT_A1R5G5B5
+        expected_bpp = 2;
+        break;
+      default:
+        break;
+    }
+    if (expected_bpp) {
+      const uint32_t bpp = bytes_per_pixel(fmt);
+      if (!Check(bpp == expected_bpp, "bytes_per_pixel(format) matches expected bpp")) {
+        std::fprintf(stderr, "FAIL: bytes_per_pixel mismatch format=0x%08X expected=%u got=%u\n",
+                     static_cast<unsigned>(payload.format),
+                     static_cast<unsigned>(expected_bpp),
+                     static_cast<unsigned>(bpp));
+        return false;
+      }
+    }
+
+    constexpr uint32_t kTestW = 7;
+    constexpr uint32_t kTestH = 5;
+    constexpr uint32_t kTestMips = 3;
+    constexpr uint32_t kTestDepth = 1;
+    Texture2dLayout layout{};
+    if (!Check(calc_texture2d_layout(fmt, kTestW, kTestH, kTestMips, kTestDepth, &layout),
+               "calc_texture2d_layout(format) succeeds")) {
+      std::fprintf(stderr, "FAIL: calc_texture2d_layout failed format=0x%08X\n",
+                   static_cast<unsigned>(payload.format));
+      return false;
+    }
+
+    const bool is_bc = is_block_compressed_format(fmt);
+    const uint32_t bpp = bytes_per_pixel(fmt);
+    const uint32_t block_bytes = is_bc ? block_bytes_per_4x4(fmt) : 0u;
+
+    uint64_t expected_total = 0;
+    uint32_t w = kTestW;
+    uint32_t h = kTestH;
+    for (uint32_t level = 0; level < kTestMips; ++level) {
+      uint64_t row_pitch = 0;
+      uint64_t slice_pitch = 0;
+      if (is_bc) {
+        if (!Check(block_bytes != 0u, "block_bytes_per_4x4 non-zero for BC format")) {
+          std::fprintf(stderr, "FAIL: block_bytes_per_4x4 returned 0 for format=0x%08X\n",
+                       static_cast<unsigned>(payload.format));
+          return false;
+        }
+        const uint32_t blocks_w = std::max(1u, (w + 3u) / 4u);
+        const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
+        row_pitch = static_cast<uint64_t>(blocks_w) * block_bytes;
+        slice_pitch = row_pitch * blocks_h;
+      } else {
+        if (!Check(bpp != 0u, "bytes_per_pixel non-zero for uncompressed format")) {
+          std::fprintf(stderr, "FAIL: bytes_per_pixel returned 0 for format=0x%08X\n",
+                       static_cast<unsigned>(payload.format));
+          return false;
+        }
+        row_pitch = static_cast<uint64_t>(w) * bpp;
+        slice_pitch = row_pitch * h;
+      }
+
+      if (level == 0) {
+        if (!Check(layout.row_pitch_bytes == row_pitch, "layout.row_pitch_bytes matches expected")) {
+          std::fprintf(stderr, "FAIL: row_pitch mismatch format=0x%08X expected=%llu got=%u\n",
+                       static_cast<unsigned>(payload.format),
+                       static_cast<unsigned long long>(row_pitch),
+                       static_cast<unsigned>(layout.row_pitch_bytes));
+          return false;
+        }
+        if (!Check(layout.slice_pitch_bytes == slice_pitch, "layout.slice_pitch_bytes matches expected")) {
+          std::fprintf(stderr, "FAIL: slice_pitch mismatch format=0x%08X expected=%llu got=%u\n",
+                       static_cast<unsigned>(payload.format),
+                       static_cast<unsigned long long>(slice_pitch),
+                       static_cast<unsigned>(layout.slice_pitch_bytes));
+          return false;
+        }
+      }
+
+      expected_total += slice_pitch;
+      w = std::max(1u, w / 2u);
+      h = std::max(1u, h / 2u);
+    }
+    expected_total *= kTestDepth;
+    if (!Check(layout.total_size_bytes == expected_total, "layout.total_size_bytes matches expected")) {
+      std::fprintf(stderr, "FAIL: total_size mismatch format=0x%08X expected=%llu got=%llu\n",
+                   static_cast<unsigned>(payload.format),
+                   static_cast<unsigned long long>(expected_total),
+                   static_cast<unsigned long long>(layout.total_size_bytes));
       return false;
     }
   }
