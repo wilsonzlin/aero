@@ -328,6 +328,16 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             predicate=_any_regex([r"/verify-media\b", r"/verifymedia\b"]),
         ),
         Invariant(
+            description="Parses /verify-media flag into ARG_VERIFY_MEDIA",
+            expected_hint='if /i "%%~A"=="/verify-media" set "ARG_VERIFY_MEDIA=1"',
+            predicate=_any_regex(
+                [
+                    r'(?i)/verify-media"\s+set\s+"?ARG_VERIFY_MEDIA=1"?',
+                    r'(?i)/verifymedia"\s+set\s+"?ARG_VERIFY_MEDIA=1"?',
+                ]
+            ),
+        ),
+        Invariant(
             description="Media integrity preflight exists (verify_media_preflight)",
             expected_hint=":verify_media_preflight label + manifest.json",
             predicate=_all_regex([r"(?im)^:verify_media_preflight\b", r"manifest\.json"]),
@@ -408,6 +418,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Supports /skipstorage flag (allows intentionally skipping boot-critical storage preseed)",
             expected_hint="/skipstorage",
             predicate=_regex(r"/skipstorage\b"),
+        ),
+        Invariant(
+            description="Parses /skipstorage flag into ARG_SKIP_STORAGE",
+            expected_hint='if /i "%%~A"=="/skipstorage" set "ARG_SKIP_STORAGE=1"',
+            predicate=_regex(r'(?i)/skipstorage"\s+set\s+"?ARG_SKIP_STORAGE=1"?'),
         ),
         Invariant(
             description="/skipstorage gates virtio-blk storage INF validation (setup does not require packaged storage driver)",

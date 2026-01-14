@@ -33,6 +33,7 @@ def _synthetic_setup_text(
     include_check_mode_validate_cert_payload: bool = True,
     check_mode_extra_line: str | None = None,
     include_skipstorage_flag: bool = True,
+    include_skipstorage_parse: bool = True,
     include_skipstorage_validation_gate: bool = True,
     include_skipstorage_preseed_gate: bool = True,
     include_storage_skip_marker: bool = True,
@@ -41,6 +42,7 @@ def _synthetic_setup_text(
     include_signature_marker_files: bool = True,
     include_testsigning_policy_gate: bool = True,
     include_verify_media_flag: bool = True,
+    include_verify_media_parse: bool = True,
     include_installed_media_state: bool = True,
 ) -> str:
     lines: list[str] = []
@@ -68,6 +70,8 @@ def _synthetic_setup_text(
         lines.extend(
             [
                 "/verify-media",
+                r'if /i "%%~A"=="/verify-media" set "ARG_VERIFY_MEDIA=1"',
+                r'if /i "%%~A"=="/verifymedia" set "ARG_VERIFY_MEDIA=1"',
                 'if "%ARG_VERIFY_MEDIA%"=="1" (',
                 "  call :verify_media_preflight",
                 ")",
@@ -75,6 +79,8 @@ def _synthetic_setup_text(
                 "manifest.json",
             ]
         )
+    if include_verify_media_flag and not include_verify_media_parse:
+        lines = [l for l in lines if "ARG_VERIFY_MEDIA=1" not in l]
 
     if include_admin_gate and admin_gate_before_check_dispatch:
         lines.append("call :require_admin_stdout")
@@ -102,6 +108,8 @@ def _synthetic_setup_text(
 
     if include_skipstorage_flag:
         lines.append("/skipstorage")
+        if include_skipstorage_parse:
+            lines.append(r'if /i "%%~A"=="/skipstorage" set "ARG_SKIP_STORAGE=1"')
 
     if include_skipstorage_validation_gate:
         lines.extend(
@@ -289,6 +297,26 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("/skipstorage" in e for e in errs),
                 msg="expected missing /skipstorage error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_skipstorage_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_skipstorage_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Parses /skipstorage" in e for e in errs),
+                msg="expected missing /skipstorage parse error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_skipstorage_does_not_gate_storage_validation(self) -> None:
@@ -521,6 +549,26 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("verify-media" in e for e in errs),
                 msg="expected missing /verify-media error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_verify_media_parse(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_verify_media_parse=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Parses /verify-media" in e for e in errs),
+                msg="expected missing /verify-media parse error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_setup_missing_installed_media_state(self) -> None:
