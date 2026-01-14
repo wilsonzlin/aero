@@ -335,7 +335,8 @@ export class WorkerCoordinator {
   // as real devices move between workers (e.g. HDA in the IO worker).
   //
   // When unset (null), these resolve to a mode-specific default:
-  // - Machine runtime (`vmRuntime == "machine"`): io owns both rings (real devices live in IO worker).
+  // - Machine runtime (`vmRuntime == "machine"`): cpu owns both rings (canonical `api.Machine` + devices live in CPU worker;
+  //   `io.worker` may be host-only).
   // - Legacy runtime:
   //   - Demo mode (no boot disks): cpu owns both rings (tone/loopback demos).
   //   - VM mode (boot disk mounted): io owns both rings (real devices live in IO worker).
@@ -881,7 +882,7 @@ export class WorkerCoordinator {
    * Override which worker receives the AudioWorklet playback ring buffer attachment.
    *
    * Pass `null` to clear any prior override and return to the default policy:
-   * - machine runtime: IO worker
+   * - machine runtime: CPU worker
    * - legacy demo mode (no boot disk): CPU worker
    * - legacy VM mode (boot disk mounted): IO worker
    */
@@ -914,7 +915,7 @@ export class WorkerCoordinator {
    * Override which worker receives the microphone ring buffer attachment (SPSC consumer).
    *
    * Pass `null` to clear any prior override and return to the default policy:
-   * - machine runtime: IO worker
+   * - machine runtime: CPU worker
    * - legacy demo mode (no boot disk): CPU worker
    * - legacy VM mode (boot disk mounted): IO worker
    */
@@ -1174,8 +1175,8 @@ export class WorkerCoordinator {
   }
 
   private defaultAudioRingBufferOwner(): RingBufferOwner {
-    // Machine runtime: audio devices live in the IO worker, regardless of disk state.
-    if (this.activeConfig?.vmRuntime === "machine") return "io";
+    // Machine runtime: audio devices live in the canonical `api.Machine`, owned by the CPU worker.
+    if (this.activeConfig?.vmRuntime === "machine") return "cpu";
     // Legacy demo mode: the CPU worker runs the tone/loopback demos.
     //
     // Legacy VM mode: audio devices live in the IO worker.
@@ -1194,8 +1195,8 @@ export class WorkerCoordinator {
   }
 
   private defaultMicrophoneRingBufferOwner(): RingBufferOwner {
-    // Machine runtime: microphone is consumed by the IO worker device model, regardless of disk state.
-    if (this.activeConfig?.vmRuntime === "machine") return "io";
+    // Machine runtime: microphone is consumed by the canonical `api.Machine`, owned by the CPU worker.
+    if (this.activeConfig?.vmRuntime === "machine") return "cpu";
     // Legacy demo mode: loopback demo consumes mic samples in CPU worker.
     // Legacy VM mode: microphone is consumed by the IO worker device model.
     const hasBootDisk =

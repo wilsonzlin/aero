@@ -525,7 +525,7 @@ describe("runtime/coordinator", () => {
   });
 
   it.each([null, "disk.img"] as const)(
-    "forwards audio/mic rings to IO only in machine runtime by default (SPSC, activeDiskImage=%s)",
+    "forwards audio/mic rings to CPU only in machine runtime by default (SPSC, activeDiskImage=%s)",
     (activeDiskImage) => {
       const coordinator = new WorkerCoordinator();
       const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
@@ -552,9 +552,9 @@ describe("runtime/coordinator", () => {
       const cpuAudio = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
       const ioAudio = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
       expect(cpuAudio?.type).toBe("setAudioRingBuffer");
-      expect(cpuAudio?.ringBuffer).toBe(null);
+      expect(cpuAudio?.ringBuffer).toBe(audioSab);
       expect(ioAudio?.type).toBe("setAudioRingBuffer");
-      expect(ioAudio?.ringBuffer).toBe(audioSab);
+      expect(ioAudio?.ringBuffer).toBe(null);
 
       const micSab = new SharedArrayBuffer(256);
       coordinator.setMicrophoneRingBuffer(micSab, 48_000);
@@ -562,9 +562,9 @@ describe("runtime/coordinator", () => {
       const cpuMic = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
       const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
       expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
-      expect(cpuMic?.ringBuffer).toBe(null);
+      expect(cpuMic?.ringBuffer).toBe(micSab);
       expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
-      expect(ioMic?.ringBuffer).toBe(micSab);
+      expect(ioMic?.ringBuffer).toBe(null);
     },
   );
 
