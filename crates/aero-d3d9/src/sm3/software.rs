@@ -2021,12 +2021,155 @@ mod tests {
             "collect_used_pixel_inputs_op must retain #[deny(unreachable_patterns)]"
         );
 
-        let fn_end = SRC[fn_start..]
-            .find("fn collect_used_pixel_inputs_cond")
+        // Find the end of the function body without relying on what helper comes next. This keeps
+        // the test robust against harmless refactors that reorder helpers.
+        let body_start = SRC[fn_start..]
+            .find('{')
             .map(|off| fn_start + off)
-            .expect(
-                "collect_used_pixel_inputs_cond should exist after collect_used_pixel_inputs_op",
-            );
+            .expect("collect_used_pixel_inputs_op should have a body");
+
+        // Count braces, skipping over comments/strings so this doesn't break if someone adds `{` in
+        // a comment like ``IrOp::Foo { .. }``.
+        let bytes = SRC.as_bytes();
+        let mut i = body_start;
+        let mut depth = 0u32;
+        let mut fn_end = None;
+        let mut in_line_comment = false;
+        let mut block_comment_depth = 0u32;
+        let mut in_string = false;
+        let mut in_char = false;
+        let mut raw_string_hashes: Option<usize> = None;
+
+        while i < bytes.len() {
+            let b = bytes[i];
+            let next = bytes.get(i + 1).copied();
+
+            if in_line_comment {
+                if b == b'\n' {
+                    in_line_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if block_comment_depth > 0 {
+                if b == b'/' && next == Some(b'*') {
+                    // Rust supports nested block comments.
+                    block_comment_depth += 1;
+                    i += 2;
+                    continue;
+                }
+                if b == b'*' && next == Some(b'/') {
+                    block_comment_depth -= 1;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+
+            if let Some(hashes) = raw_string_hashes {
+                if b == b'"' {
+                    let mut ok = true;
+                    for j in 0..hashes {
+                        if bytes.get(i + 1 + j) != Some(&b'#') {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        raw_string_hashes = None;
+                        i += 1 + hashes;
+                        continue;
+                    }
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_string {
+                if b == b'\\' {
+                    // Skip escape + escaped char.
+                    i += 2;
+                    continue;
+                }
+                if b == b'"' {
+                    in_string = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_char {
+                if b == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if b == b'\'' {
+                    in_char = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            // Not in comment/string: detect comment starts.
+            if b == b'/' && next == Some(b'/') {
+                in_line_comment = true;
+                i += 2;
+                continue;
+            }
+            if b == b'/' && next == Some(b'*') {
+                block_comment_depth = 1;
+                i += 2;
+                continue;
+            }
+
+            // Detect raw string starts: r"..." / r#"..."# / br"..." / br#"..."#.
+            let raw_start = match (b, next) {
+                (b'r', _) => Some(i),
+                (b'b', Some(b'r')) => Some(i + 1),
+                _ => None,
+            };
+            if let Some(r_pos) = raw_start {
+                let mut j = r_pos + 1;
+                let mut hashes = 0usize;
+                while bytes.get(j) == Some(&b'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'"') {
+                    raw_string_hashes = Some(hashes);
+                    i = j + 1;
+                    continue;
+                }
+            }
+
+            // Detect normal string / char literals.
+            if b == b'"' {
+                in_string = true;
+                i += 1;
+                continue;
+            }
+            if b == b'\'' {
+                in_char = true;
+                i += 1;
+                continue;
+            }
+
+            // Brace matching.
+            if b == b'{' {
+                depth += 1;
+            } else if b == b'}' {
+                depth = depth.checked_sub(1).expect("brace depth underflow");
+                if depth == 0 {
+                    fn_end = Some(i + 1);
+                    break;
+                }
+            }
+            i += 1;
+        }
+
+        let fn_end = fn_end.expect("failed to find end of collect_used_pixel_inputs_op");
 
         let fn_src = &SRC[fn_start..fn_end];
         assert_eq!(
