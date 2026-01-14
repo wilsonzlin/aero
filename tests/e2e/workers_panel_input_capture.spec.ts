@@ -4,7 +4,14 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   test.setTimeout(90_000);
   page.setDefaultTimeout(90_000);
 
-  await page.goto("/web/index.html", { waitUntil: "load" });
+  // The repo-root Vite harness serves the legacy web UI at `/web/` (and the
+  // canonical harness UI at `/`). In other deployments the legacy UI may be
+  // mounted at the origin root. Start at `/` as the smoke-test entrypoint, then
+  // fall back to `/web/index.html` when the Workers panel isn't present.
+  await page.goto("/", { waitUntil: "load" });
+  if ((await page.locator("#workers-start").count()) === 0) {
+    await page.goto("/web/index.html", { waitUntil: "load" });
+  }
 
   const support = await page.evaluate(() => {
     const crossOriginIsolated = globalThis.crossOriginIsolated === true;
