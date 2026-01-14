@@ -5,7 +5,7 @@ use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 use pretty_assertions::assert_eq;
 
 #[test]
-fn aerogpu_deferred_fence_completion_requires_host_complete() {
+fn aerogpu_enable_submission_bridge_unwedges_pending_backend_fence() {
     let cfg = MachineConfig {
         ram_size_bytes: 16 * 1024 * 1024,
         enable_pc_platform: true,
@@ -21,8 +21,8 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
 
     let mut m = Machine::new(cfg).unwrap();
 
-    // Enable the submission bridge so the host must call `aerogpu_complete_fence`.
-    m.aerogpu_enable_submission_bridge();
+    // Install the null backend so fences do not complete.
+    m.aerogpu_set_backend_null();
 
     // Enable PCI memory decoding + bus mastering so the device is allowed to DMA and raise INTx.
     let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
@@ -116,11 +116,6 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
-    // The submission should be drained for out-of-process execution.
-    let subs = m.aerogpu_drain_submissions();
-    assert_eq!(subs.len(), 1);
-    assert_eq!(subs[0].signal_fence, signal_fence);
-
     // Ring head should advance, but fence must not complete until the host reports completion.
     assert_eq!(m.read_physical_u32(ring_gpa + 24), 1);
     let completed_fence = (u64::from(
@@ -144,9 +139,56 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
         "expected AeroGPU INTx to remain deasserted until fence completion"
     );
 
-    // Now report completion from the host.
-    m.aerogpu_complete_fence(signal_fence);
+    // Enable the submission bridge after a fence has been queued under the null backend.
+    //
+    // This should not leave the earlier fence stuck forever, since the host does not have the
+    // submission bytes to execute (the submission was routed to the in-process backend).
+    m.aerogpu_enable_submission_bridge();
+    // Tick the device so it can publish any now-unblocked fence page updates.
+    m.process_aerogpu();
     m.poll_pci_intx_lines();
+
+    let completed_fence = (u64::from(
+        m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
+    ) << 32)
+        | u64::from(
+        m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+        );
+    assert_eq!(completed_fence, signal_fence);
+
+    let irq_status = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, pci::AEROGPU_IRQ_FENCE);
+    assert!(
+        interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to assert after fence completion"
+    );
+
+    // ACK clears IRQ_STATUS and deasserts the line.
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_ACK),
+        pci::AEROGPU_IRQ_FENCE,
+    );
+    m.poll_pci_intx_lines();
+    assert!(
+        !interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to deassert after IRQ_ACK"
+    );
+
+    // Now that the submission bridge is enabled (and the in-process backend has been cleared),
+    // newly submitted work should be drained and fences must remain in-flight until the host
+    // reports completion.
+    let signal_fence2 = signal_fence.wrapping_add(1);
+    m.write_physical_u32(ring_gpa + 24, 0);
+    m.write_physical_u32(ring_gpa + 28, 1);
+    m.write_physical_u64(desc_gpa + 48, signal_fence2);
+
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    let subs = m.aerogpu_drain_submissions();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].signal_fence, signal_fence2);
 
     let completed_fence = (u64::from(
         m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
@@ -157,9 +199,28 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
     assert_eq!(completed_fence, signal_fence);
 
     let irq_status = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
-    assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, pci::AEROGPU_IRQ_FENCE);
+    assert_eq!(
+        irq_status & pci::AEROGPU_IRQ_FENCE,
+        0,
+        "fence IRQ must not assert until the host reports completion"
+    );
+    assert!(
+        !interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to remain deasserted while fence is in-flight"
+    );
+
+    m.aerogpu_complete_fence(signal_fence2);
+    m.poll_pci_intx_lines();
+
+    let completed_fence = (u64::from(
+        m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
+    ) << 32)
+        | u64::from(
+            m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+        );
+    assert_eq!(completed_fence, signal_fence2);
     assert!(
         interrupts.borrow().gsi_level(gsi),
-        "expected AeroGPU INTx to assert after fence completion"
+        "expected AeroGPU INTx to assert after host fence completion"
     );
 }
