@@ -301,6 +301,18 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED:"))
 
+    def test_virtio_net_udp_fail_tokens_include_reason_and_wsa(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_net_udp_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|bytes=0|small_bytes=0|mtu_bytes=0|reason=timeout|wsa=10060\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_UDP_FAILED:"))
+        self.assertIn("reason=timeout", msg)
+        self.assertIn("wsa=10060", msg)
+        self.assertIn("bytes=0", msg)
+
     def test_virtio_input_tablet_events_skip_tokens(self) -> None:
         h = self.harness
 

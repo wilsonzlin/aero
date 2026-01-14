@@ -2560,6 +2560,33 @@ def _virtio_net_link_flap_required_failure_message(
         "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
     )
 
+
+def _virtio_net_udp_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS|bytes=...|small_bytes=...|mtu_bytes=...|reason=-|wsa=0
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=<err>
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        parts: list[str] = []
+        # Keep ordering stable for log scraping / CI diffs.
+        for k in ("reason", "wsa", "bytes", "small_bytes", "mtu_bytes"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return f"FAIL: VIRTIO_NET_UDP_FAILED: virtio-net-udp test reported FAIL{details}"
+    return "FAIL: VIRTIO_NET_UDP_FAILED: virtio-net-udp test reported FAIL"
+
+
 def _virtio_input_led_skip_failure_message(tail: bytes) -> str:
     # Guest marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS/FAIL/SKIP|...
@@ -6687,7 +6714,10 @@ def main() -> int:
                             if not args.disable_udp:
                                 if saw_virtio_net_udp_fail:
                                     print(
-                                        "FAIL: VIRTIO_NET_UDP_FAILED: selftest RESULT=PASS but virtio-net-udp test reported FAIL",
+                                        _virtio_net_udp_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_net_udp_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -8747,7 +8777,10 @@ def main() -> int:
                                 if not args.disable_udp:
                                     if saw_virtio_net_udp_fail:
                                         print(
-                                            "FAIL: VIRTIO_NET_UDP_FAILED: selftest RESULT=PASS but virtio-net-udp test reported FAIL",
+                                            _virtio_net_udp_fail_failure_message(
+                                                tail,
+                                                marker_line=virtio_net_udp_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)

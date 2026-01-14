@@ -8501,7 +8501,31 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_UDP_FAILED" {
-      Write-Host "FAIL: VIRTIO_NET_UDP_FAILED: selftest RESULT=PASS but virtio-net-udp test reported FAIL"
+      $reason = ""
+      $wsa = ""
+      $bytes = ""
+      $smallBytes = ""
+      $mtuBytes = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)wsa=([^|\r\n]+)") { $wsa = $Matches[1] }
+        if ($line -match "(?:^|\|)bytes=([^|\r\n]+)") { $bytes = $Matches[1] }
+        if ($line -match "(?:^|\|)small_bytes=([^|\r\n]+)") { $smallBytes = $Matches[1] }
+        if ($line -match "(?:^|\|)mtu_bytes=([^|\r\n]+)") { $mtuBytes = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($wsa)) { $detailsParts += "wsa=$wsa" }
+      if (-not [string]::IsNullOrEmpty($bytes)) { $detailsParts += "bytes=$bytes" }
+      if (-not [string]::IsNullOrEmpty($smallBytes)) { $detailsParts += "small_bytes=$smallBytes" }
+      if (-not [string]::IsNullOrEmpty($mtuBytes)) { $detailsParts += "mtu_bytes=$mtuBytes" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_UDP_FAILED: virtio-net-udp test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
