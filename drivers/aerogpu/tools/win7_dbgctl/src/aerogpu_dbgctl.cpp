@@ -4257,52 +4257,6 @@ static bool WriteCreateAllocationCsv(const wchar_t *path, const aerogpu_escape_d
   return true;
 }
 
-static bool WriteCreateAllocationJson(const wchar_t *path, const aerogpu_escape_dump_createallocation_inout &q) {
-  if (!path) {
-    return false;
-  }
-
-  FILE *fp = NULL;
-  errno_t ferr = _wfopen_s(&fp, path, L"w");
-  if (ferr != 0 || !fp) {
-    fwprintf(stderr, L"Failed to open JSON file for writing: %s (errno=%d)\n", path, (int)ferr);
-    return false;
-  }
-
-  const uint32_t n = (q.entry_count < q.entry_capacity) ? q.entry_count : q.entry_capacity;
-  const uint32_t count = (n < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS) ? n : AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS;
-
-  // Stable, machine-parseable JSON document.
-  fprintf(fp, "{\n");
-  fprintf(fp, "  \"schema_version\": 1,\n");
-  fprintf(fp, "  \"write_index\": %lu,\n", (unsigned long)q.write_index);
-  fprintf(fp, "  \"entry_capacity\": %lu,\n", (unsigned long)q.entry_capacity);
-  fprintf(fp, "  \"entries\": [\n");
-  for (uint32_t i = 0; i < count; ++i) {
-    const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
-    const char *comma = (i + 1 < count) ? "," : "";
-    fprintf(fp, "    {\n");
-    fprintf(fp, "      \"seq\": %lu,\n", (unsigned long)e.seq);
-    fprintf(fp, "      \"call_seq\": %lu,\n", (unsigned long)e.call_seq);
-    fprintf(fp, "      \"alloc_index\": %lu,\n", (unsigned long)e.alloc_index);
-    fprintf(fp, "      \"num_allocations\": %lu,\n", (unsigned long)e.num_allocations);
-    fprintf(fp, "      \"create_flags\": \"0x%08lx\",\n", (unsigned long)e.create_flags);
-    fprintf(fp, "      \"alloc_id\": %lu,\n", (unsigned long)e.alloc_id);
-    fprintf(fp, "      \"priv_flags\": \"0x%08lx\",\n", (unsigned long)e.priv_flags);
-    fprintf(fp, "      \"pitch_bytes\": %lu,\n", (unsigned long)e.pitch_bytes);
-    fprintf(fp, "      \"share_token\": \"0x%016I64x\",\n", (unsigned long long)e.share_token);
-    fprintf(fp, "      \"size_bytes\": \"%I64u\",\n", (unsigned long long)e.size_bytes);
-    fprintf(fp, "      \"flags_in\": \"0x%08lx\",\n", (unsigned long)e.flags_in);
-    fprintf(fp, "      \"flags_out\": \"0x%08lx\"\n", (unsigned long)e.flags_out);
-    fprintf(fp, "    }%s\n", comma);
-  }
-  fprintf(fp, "  ]\n");
-  fprintf(fp, "}\n");
-
-  fclose(fp);
-  return true;
-}
-
 static NTSTATUS ReadGpa(const D3DKMT_FUNCS *f,
                         D3DKMT_HANDLE hAdapter,
                         uint64_t gpa,
@@ -5526,8 +5480,7 @@ static int DoDumpCursorPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const 
 
 static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f,
                                   D3DKMT_HANDLE hAdapter,
-                                  const wchar_t *csvPath,
-                                  const wchar_t *jsonPath) {
+                                  const wchar_t *csvPath) {
   aerogpu_escape_dump_createallocation_inout q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -5549,11 +5502,8 @@ static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f,
     return 2;
   }
 
-  if (csvPath || jsonPath) {
+  if (csvPath) {
     if (csvPath && !WriteCreateAllocationCsv(csvPath, q)) {
-      return 2;
-    }
-    if (jsonPath && !WriteCreateAllocationJson(jsonPath, q)) {
       return 2;
     }
 
@@ -5563,9 +5513,6 @@ static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f,
             (unsigned long)q.entry_capacity);
     if (csvPath) {
       wprintf(L"Wrote CSV: %s\n", csvPath);
-    }
-    if (jsonPath) {
-      wprintf(L"Wrote JSON: %s\n", jsonPath);
     }
     return 0;
   }
@@ -12712,7 +12659,7 @@ int wmain(int argc, wchar_t **argv) {
                          dumpLastCmdAllocOutPath, dumpLastCmdForce);
       break;
     case CMD_DUMP_CREATEALLOCATION:
-      rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, NULL);
+      rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath);
       break;
     case CMD_DUMP_VBLANK:
       rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
