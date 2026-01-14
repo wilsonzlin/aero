@@ -1139,6 +1139,42 @@ fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<St
     Ok(out)
 }
 
+fn is_uniformity_sensitive_op(op: &IrOp, stage: ShaderStage) -> bool {
+    if stage != ShaderStage::Pixel {
+        return false;
+    }
+    matches!(
+        op,
+        IrOp::Ddx { .. }
+            | IrOp::Ddy { .. }
+            | IrOp::TexSample {
+                kind: crate::sm3::ir::TexSampleKind::ImplicitLod { .. }
+                    | crate::sm3::ir::TexSampleKind::Bias,
+                ..
+            }
+    )
+}
+
+fn block_contains_uniformity_sensitive_ops(block: &Block, stage: ShaderStage) -> bool {
+    block.stmts.iter().any(|stmt| match stmt {
+        Stmt::Op(op) => is_uniformity_sensitive_op(op, stage),
+        Stmt::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            block_contains_uniformity_sensitive_ops(then_block, stage)
+                || else_block
+                    .as_ref()
+                    .is_some_and(|b| block_contains_uniformity_sensitive_ops(b, stage))
+        }
+        Stmt::Loop { body, .. } | Stmt::Rep { body, .. } => {
+            block_contains_uniformity_sensitive_ops(body, stage)
+        }
+        _ => false,
+    })
+}
+
 fn emit_branchless_predicated_op_line(
     op: &IrOp,
     cond: &str,
@@ -1282,6 +1318,189 @@ fn emit_branchless_predicated_op_line(
         }
         _ => None,
     })
+}
+
+fn combine_guard_conditions(a: &str, b: &str) -> String {
+    if a == "true" {
+        b.to_owned()
+    } else if b == "true" {
+        a.to_owned()
+    } else {
+        format!("({a} && {b})")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_block_predicated(
+    wgsl: &mut String,
+    block: &Block,
+    guard: &str,
+    indent: usize,
+    depth: usize,
+    stage: ShaderStage,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
+    state: &mut EmitState,
+) -> Result<(), WgslError> {
+    if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        return Err(err(format!(
+            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
+        )));
+    }
+    for stmt in &block.stmts {
+        emit_stmt_predicated(
+            wgsl,
+            stmt,
+            guard,
+            indent,
+            depth,
+            stage,
+            f32_defs,
+            sampler_types,
+            subroutine_infos,
+            state,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_stmt_predicated(
+    wgsl: &mut String,
+    stmt: &Stmt,
+    guard: &str,
+    indent: usize,
+    depth: usize,
+    stage: ShaderStage,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
+    state: &mut EmitState,
+) -> Result<(), WgslError> {
+    let pad = "  ".repeat(indent);
+    match stmt {
+        Stmt::Op(op) => {
+            let mut cond = guard.to_owned();
+            if let Some(pred) = &op_modifiers(op).predicate {
+                let pred_cond = predicate_expr(pred)?;
+                cond = combine_guard_conditions(&cond, &pred_cond);
+            }
+
+            if let Some(line) =
+                emit_branchless_predicated_op_line(op, &cond, stage, f32_defs, sampler_types)?
+            {
+                let _ = writeln!(wgsl, "{pad}{line}");
+                return Ok(());
+            }
+
+            if let Some(line) = emit_branchless_predicated_mov_line(op, &cond, f32_defs)? {
+                let _ = writeln!(wgsl, "{pad}{line}");
+                return Ok(());
+            }
+
+            let line = emit_op_line(op, stage, f32_defs, sampler_types)?;
+            if cond == "true" {
+                let _ = writeln!(wgsl, "{pad}{line}");
+            } else {
+                let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
+                let inner_pad = "  ".repeat(indent + 1);
+                let _ = writeln!(wgsl, "{inner_pad}{line}");
+                let _ = writeln!(wgsl, "{pad}}}");
+            }
+        }
+        Stmt::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            let cond_e = cond_expr(cond, f32_defs)?;
+            let then_guard = combine_guard_conditions(guard, &cond_e);
+            emit_block_predicated(
+                wgsl,
+                then_block,
+                &then_guard,
+                indent,
+                depth + 1,
+                stage,
+                f32_defs,
+                sampler_types,
+                subroutine_infos,
+                state,
+            )?;
+            if let Some(else_block) = else_block.as_ref() {
+                let else_guard = combine_guard_conditions(guard, &format!("!({cond_e})"));
+                emit_block_predicated(
+                    wgsl,
+                    else_block,
+                    &else_guard,
+                    indent,
+                    depth + 1,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                )?;
+            }
+        }
+        Stmt::Call { label } => {
+            let info = subroutine_infos
+                .get(label)
+                .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+            if guard == "true" {
+                let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
+            } else if info.uses_derivatives && !info.may_discard {
+                emit_speculative_call_with_rollback(
+                    wgsl,
+                    indent,
+                    guard,
+                    *label,
+                    subroutine_infos,
+                    state,
+                )?;
+            } else {
+                let _ = writeln!(wgsl, "{pad}if ({guard}) {{");
+                let inner_pad = "  ".repeat(indent + 1);
+                let _ = writeln!(wgsl, "{inner_pad}aero_sub_l{label}();");
+                let _ = writeln!(wgsl, "{pad}}}");
+            }
+        }
+        other => {
+            if guard == "true" {
+                emit_stmt(
+                    wgsl,
+                    other,
+                    indent,
+                    depth,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                )?;
+                return Ok(());
+            }
+
+            // Conservatively preserve semantics for non-op statements by guarding them with an `if`.
+            // This is only used as a fallback for complex `if` trees containing uniformity-sensitive
+            // ops, where emitting those ops behind a non-uniform branch would be rejected by naga.
+            let _ = writeln!(wgsl, "{pad}if ({guard}) {{");
+            emit_stmt(
+                wgsl,
+                other,
+                indent + 1,
+                depth + 1,
+                stage,
+                f32_defs,
+                sampler_types,
+                subroutine_infos,
+                state,
+            )?;
+            let _ = writeln!(wgsl, "{pad}}}");
+        }
+    }
+    Ok(())
 }
 
 fn emit_branchless_predicated_mov_line(
@@ -2302,6 +2521,11 @@ fn emit_stmt(
             let cond_e = cond_expr(cond, f32_defs)?;
             let not_cond_e = format!("!({cond_e})");
 
+            let contains_sensitive = block_contains_uniformity_sensitive_ops(then_block, stage)
+                || else_block
+                    .as_ref()
+                    .is_some_and(|b| block_contains_uniformity_sensitive_ops(b, stage));
+
             let cond_with_pred = |op: &IrOp, base_cond: &str| -> Result<String, WgslError> {
                 if let Some(pred) = &op_modifiers(op).predicate {
                     let pred_cond = predicate_expr(pred)?;
@@ -2445,7 +2669,6 @@ fn emit_stmt(
                     }
                 }
             }
-
             if else_lines.is_empty() {
                 if let Some(else_b) = else_block.as_ref() {
                     if let Some(first) = else_b.stmts.first() {
@@ -2462,11 +2685,65 @@ fn emit_stmt(
                 }
             }
 
-            if !then_lines.is_empty()
+            let then_rest = &then_block.stmts[then_skip..];
+            let else_rest = else_block
+                .as_ref()
+                .map(|b| &b.stmts[else_skip..])
+                .unwrap_or(&[]);
+
+            let hoisted_any = !then_lines.is_empty()
                 || !else_lines.is_empty()
                 || then_call.is_some()
-                || else_call.is_some()
+                || else_call.is_some();
+
+            // If we can't hoist all uniformity-sensitive ops out of the `if` using the prefix
+            // patterns above (e.g. sensitive ops occur later in a branch or are nested), fall back
+            // to emitting the whole `if` in a predicated form.
+            if contains_sensitive
+                && (!hoisted_any
+                    || block_contains_uniformity_sensitive_ops(
+                        &Block {
+                            stmts: then_rest.to_vec(),
+                        },
+                        stage,
+                    )
+                    || block_contains_uniformity_sensitive_ops(
+                        &Block {
+                            stmts: else_rest.to_vec(),
+                        },
+                        stage,
+                    ))
             {
+                emit_block_predicated(
+                    wgsl,
+                    then_block,
+                    &cond_e,
+                    indent,
+                    depth + 1,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                )?;
+                if let Some(else_block) = else_block.as_ref() {
+                    emit_block_predicated(
+                        wgsl,
+                        else_block,
+                        &not_cond_e,
+                        indent,
+                        depth + 1,
+                        stage,
+                        f32_defs,
+                        sampler_types,
+                        subroutine_infos,
+                        state,
+                    )?;
+                }
+                return Ok(());
+            }
+
+            if hoisted_any {
                 for line in &then_lines {
                     let _ = writeln!(wgsl, "{pad}{line}");
                 }
@@ -2494,12 +2771,6 @@ fn emit_stmt(
                         state,
                     )?;
                 }
-
-                let then_rest = &then_block.stmts[then_skip..];
-                let else_rest = else_block
-                    .as_ref()
-                    .map(|b| &b.stmts[else_skip..])
-                    .unwrap_or(&[]);
 
                 match (!then_rest.is_empty(), !else_rest.is_empty()) {
                     (false, false) => return Ok(()),
@@ -3026,8 +3297,7 @@ pub fn generate_wgsl_with_options(
     //
     // WGSL functions cannot capture entry-point locals. Declaring registers as module-scope
     // `var<private>` allows helper functions (`call` targets) to access the same register state as
-    // the main program. For embedded constant definitions (`defi` / `defb`) we emit module-scope
-    // `const` instead.
+    // the main program.
     for idx in &usage.int_consts {
         if let Some(value) = i32_defs.get(idx).copied() {
             let _ = writeln!(
@@ -3248,7 +3518,7 @@ pub fn generate_wgsl_with_options(
             }
 
             // Load uniform-provided integer/bool constants into private registers so SM3 call
-            // targets can read them. Embedded `defi` / `defb` constants are emitted as module-scope
+            // targets can read them. Embedded `defi` / `defb` values are emitted as module-scope
             // `const` and do not require initialization here.
             for idx in &usage.int_consts {
                 if !i32_defs.contains_key(idx) {
@@ -3483,7 +3753,7 @@ pub fn generate_wgsl_with_options(
             }
 
             // Load uniform-provided integer/bool constants into private registers so SM3 call
-            // targets can read them. Embedded `defi` / `defb` constants are emitted as module-scope
+            // targets can read them. Embedded `defi` / `defb` values are emitted as module-scope
             // `const` and do not require initialization here.
             for idx in &usage.int_consts {
                 if !i32_defs.contains_key(idx) {
