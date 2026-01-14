@@ -665,6 +665,15 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   UINT64 availPa;
   UINT64 usedPa;
 
+  /*
+   * If the adapter is being stopped/removed (including surprise removal), avoid
+   * BAR0 MMIO and treat bring-up as a no-op success so management SRBs can be
+   * completed without causing faults.
+   */
+  if (devExt->Removed || devExt->SurpriseRemoved) {
+    return TRUE;
+  }
+
   if (devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
     return FALSE;
   }
@@ -681,6 +690,16 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
    * Clear any pending-reset latch: we are now actively resetting/reinitializing.
    */
   InterlockedExchange(&devExt->ResetPending, 0);
+
+  /*
+   * Re-check removal state after latching ResetInProgress. Stop/remove can race
+   * with reset attempts; if the adapter is now being removed, bail out without
+   * touching hardware and clear ResetInProgress so restart paths don't get stuck.
+   */
+  if (devExt->Removed || devExt->SurpriseRemoved || devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
+    InterlockedExchange(&devExt->ResetInProgress, 0);
+    return TRUE;
+  }
   /* Refresh whether StorPort assigned message-signaled interrupts (MSI/MSI-X). */
   AerovblkCaptureInterruptMode(devExt);
 
