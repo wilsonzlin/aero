@@ -21,7 +21,10 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
         # The alias list may evolve, so avoid brittle exact-string matching.
         self.assertRegex(
             self.text,
-            r'Alias\("WithVirtioInputLeds",\s*"EnableVirtioInputLeds"(?:,\s*"RequireVirtioInputLeds")?\)',
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputLeds")(?=[^)]*"EnableVirtioInputLeds")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
         )
 
     def test_wait_result_enforces_leds_marker_when_required(self) -> None:
