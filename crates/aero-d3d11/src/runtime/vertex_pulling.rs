@@ -622,3 +622,59 @@ impl VertexPullingLayout {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn wgsl_prelude_parses_with_extended_load_helpers() {
+        // Create a minimal layout with one pulling slot so we get a prelude with at least one
+        // vertex buffer binding.
+        let pulling = VertexPullingLayout {
+            d3d_slot_to_pulling_slot: BTreeMap::from([(0, 0)]),
+            pulling_slot_to_d3d_slot: vec![0],
+            required_strides: vec![0],
+            attributes: Vec::new(),
+        };
+
+        let wgsl = format!(
+            r#"
+{prelude}
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) _gid: vec3<u32>) {{
+    _ = load_attr_f16x2(0u, 0u);
+    _ = load_attr_f16x4(0u, 0u);
+    _ = load_attr_u32(0u, 0u);
+    _ = load_attr_i32(0u, 0u);
+    _ = load_attr_u16(0u, 0u);
+    _ = load_attr_u16x2(0u, 0u);
+    _ = load_attr_u16x4(0u, 0u);
+    _ = load_attr_i16x2(0u, 0u);
+    _ = load_attr_i16x4(0u, 0u);
+    _ = load_attr_u8x2(0u, 0u);
+    _ = load_attr_i8x2(0u, 0u);
+    _ = load_attr_unorm8x2(0u, 0u);
+    _ = load_attr_snorm8x2(0u, 0u);
+    _ = load_attr_unorm16x2(0u, 0u);
+    _ = load_attr_unorm16x4(0u, 0u);
+    _ = load_attr_snorm16x2(0u, 0u);
+    _ = load_attr_snorm16x4(0u, 0u);
+    _ = load_attr_unorm10_10_10_2(0u, 0u);
+}}
+"#,
+            prelude = pulling.wgsl_prelude()
+        );
+
+        let module = naga::front::wgsl::parse_str(&wgsl).expect("vertex pulling WGSL should parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("vertex pulling WGSL should validate");
+    }
+}

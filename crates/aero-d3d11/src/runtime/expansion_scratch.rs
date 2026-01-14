@@ -162,21 +162,28 @@ impl SegmentedArena {
 struct ScratchState {
     buffer: Arc<wgpu::Buffer>,
     max_buffer_size: u64,
-    storage_alignment: u64,
+    min_alignment: u64,
     required_alignment: u64,
     arenas: SegmentedArena,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScratchArenaKind {
+    Storage,
+    Metadata,
+}
+
 /// Per-frame transient GPU scratch for compute-generated geometry/tessellation expansion.
 ///
-/// This is a single `wgpu::Buffer` partitioned into `frames_in_flight` non-overlapping segments.
-/// Call [`ExpansionScratchAllocator::begin_frame`] at a natural frame boundary (e.g. `PRESENT`,
-/// `FLUSH`) to advance to the next segment.
+/// This is a pair of `wgpu::Buffer`s (storage + metadata), each partitioned into `frames_in_flight`
+/// non-overlapping segments. Call [`ExpansionScratchAllocator::begin_frame`] at a natural frame
+/// boundary (e.g. `PRESENT`, `FLUSH`) to advance to the next segment.
 #[derive(Debug, Clone)]
 pub struct ExpansionScratchAllocator {
     desc: ExpansionScratchDescriptor,
     arena_index: usize,
-    state: Option<ScratchState>,
+    storage_state: Option<ScratchState>,
+    metadata_state: Option<ScratchState>,
 }
 
 impl ExpansionScratchAllocator {
@@ -188,18 +195,28 @@ impl ExpansionScratchAllocator {
                 ..desc
             },
             arena_index: 0,
-            state: None,
+            storage_state: None,
+            metadata_state: None,
         }
     }
 
     pub fn reset(&mut self) {
         self.arena_index = 0;
-        self.state = None;
+        self.storage_state = None;
+        self.metadata_state = None;
     }
 
     pub fn begin_frame(&mut self) {
         self.arena_index = (self.arena_index + 1) % self.desc.frames_in_flight;
-        if let Some(state) = self.state.as_mut() {
+        if let Some(state) = self.storage_state.as_mut() {
+            state.arenas.begin_frame();
+            debug_assert_eq!(
+                state.arenas.arena_index(),
+                self.arena_index,
+                "segmented arena index must track allocator index"
+            );
+        }
+        if let Some(state) = self.metadata_state.as_mut() {
             state.arenas.begin_frame();
             debug_assert_eq!(
                 state.arenas.arena_index(),
@@ -211,7 +228,10 @@ impl ExpansionScratchAllocator {
 
     /// Returns the backing buffer size (per frame segment) once initialized.
     pub fn per_frame_capacity(&self) -> Option<u64> {
-        self.state.as_ref().map(|s| s.arenas.per_frame_capacity)
+        self.storage_state
+            .as_ref()
+            .map(|s| s.arenas.per_frame_capacity)
+            .or_else(|| self.metadata_state.as_ref().map(|s| s.arenas.per_frame_capacity))
     }
 
     /// Ensure the scratch allocator is initialized.
@@ -227,7 +247,7 @@ impl ExpansionScratchAllocator {
     }
 
     fn ensure_init(&mut self, device: &wgpu::Device) -> Result<(), ExpansionScratchError> {
-        if self.state.is_some() {
+        if self.storage_state.is_some() && self.metadata_state.is_some() {
             return Ok(());
         }
 
@@ -240,6 +260,7 @@ impl ExpansionScratchAllocator {
         let max_buffer_size = device.limits().max_buffer_size;
         let storage_alignment = (device.limits().min_storage_buffer_offset_alignment as u64).max(1);
         let uniform_alignment = (device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
+        let metadata_min_alignment = lcm_u64(storage_alignment, uniform_alignment);
 
         // Segment boundaries must be aligned so offsets are valid for copy operations, and so
         // callers can bind subranges as storage/uniform buffers if needed.
@@ -247,7 +268,7 @@ impl ExpansionScratchAllocator {
         // WebGPU requires these alignments to be powers of two, but use LCM to keep this robust.
         let required_alignment = lcm_u64(
             wgpu::COPY_BUFFER_ALIGNMENT,
-            lcm_u64(lcm_u64(storage_alignment, uniform_alignment), 16),
+            lcm_u64(metadata_min_alignment, 16),
         );
 
         let mut per_frame_capacity =
@@ -277,62 +298,128 @@ impl ExpansionScratchAllocator {
             });
         }
 
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        // NOTE: wgpu tracks buffer usages at the buffer level, and disallows binding the same
+        // buffer as both writable storage and uniform within a single dispatch. Geometry/tessellation
+        // emulation prepasses need both:
+        // - writable storage outputs (expanded vertex/index/indirect/counter)
+        // - uniform/metadata inputs
+        //
+        // Use two backing buffers to avoid STORAGE_READ_WRITE+UNIFORM conflicts.
+        let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: self.desc.label,
             size: total_size,
-            usage: self.desc.usage,
+            usage: self.desc.usage | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let buffer = Arc::new(buffer);
+        let storage_buffer = Arc::new(storage_buffer);
 
-        let arenas = SegmentedArena::new(
+        let mut metadata_label_string = String::new();
+        let metadata_label: Option<&str> = self.desc.label.map(|label| {
+            metadata_label_string = format!("{label} (metadata)");
+            metadata_label_string.as_str()
+        });
+        let metadata_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: metadata_label,
+            size: total_size,
+            usage: self.desc.usage
+                | wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let metadata_buffer = Arc::new(metadata_buffer);
+
+        let storage_arenas = SegmentedArena::new(
             self.desc.frames_in_flight,
             per_frame_capacity,
             self.arena_index,
         );
-        self.state = Some(ScratchState {
-            buffer,
+        let metadata_arenas = SegmentedArena::new(
+            self.desc.frames_in_flight,
+            per_frame_capacity,
+            self.arena_index,
+        );
+
+        self.storage_state = Some(ScratchState {
+            buffer: storage_buffer,
             max_buffer_size,
-            storage_alignment,
+            min_alignment: storage_alignment,
             required_alignment,
-            arenas,
+            arenas: storage_arenas,
+        });
+        self.metadata_state = Some(ScratchState {
+            buffer: metadata_buffer,
+            max_buffer_size,
+            min_alignment: metadata_min_alignment,
+            required_alignment,
+            arenas: metadata_arenas,
         });
         Ok(())
     }
 
-    fn realloc_buffer(
+    fn realloc_buffers(
         &mut self,
         device: &wgpu::Device,
         new_per_frame_capacity: u64,
     ) -> Result<(), ExpansionScratchError> {
-        let Some(state) = self.state.as_mut() else {
+        let Some(storage_state) = self.storage_state.as_mut() else {
             return Err(ExpansionScratchError::InvalidDescriptor(
                 "internal error: realloc called before init",
             ));
         };
+        let Some(metadata_state) = self.metadata_state.as_mut() else {
+            return Err(ExpansionScratchError::InvalidDescriptor(
+                "internal error: realloc called before init",
+            ));
+        };
+        debug_assert_eq!(
+            storage_state.max_buffer_size, metadata_state.max_buffer_size,
+            "storage/metadata buffers must share a max_buffer_size"
+        );
 
         let frames_u64 = self.desc.frames_in_flight as u64;
         let total_size = new_per_frame_capacity.checked_mul(frames_u64).ok_or(
             ExpansionScratchError::BufferTooLarge {
                 requested: u64::MAX,
-                max: state.max_buffer_size,
+                max: storage_state.max_buffer_size,
             },
         )?;
-        if total_size > state.max_buffer_size {
+        if total_size > storage_state.max_buffer_size {
             return Err(ExpansionScratchError::BufferTooLarge {
                 requested: total_size,
-                max: state.max_buffer_size,
+                max: storage_state.max_buffer_size,
             });
         }
 
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: self.desc.label,
             size: total_size,
-            usage: self.desc.usage,
+            usage: self.desc.usage | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        state.buffer = Arc::new(buffer);
-        state.arenas = SegmentedArena::new(
+        storage_state.buffer = Arc::new(storage_buffer);
+        storage_state.arenas = SegmentedArena::new(
+            self.desc.frames_in_flight,
+            new_per_frame_capacity,
+            self.arena_index,
+        );
+
+        let mut metadata_label_string = String::new();
+        let metadata_label: Option<&str> = self.desc.label.map(|label| {
+            metadata_label_string = format!("{label} (metadata)");
+            metadata_label_string.as_str()
+        });
+        let metadata_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: metadata_label,
+            size: total_size,
+            usage: self.desc.usage
+                | wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        metadata_state.buffer = Arc::new(metadata_buffer);
+        metadata_state.arenas = SegmentedArena::new(
             self.desc.frames_in_flight,
             new_per_frame_capacity,
             self.arena_index,
@@ -343,11 +430,15 @@ impl ExpansionScratchAllocator {
     fn alloc_inner(
         &mut self,
         device: &wgpu::Device,
+        arena: ScratchArenaKind,
         size: u64,
         alignment: u64,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
         self.ensure_init(device)?;
-        let state = self.state.as_mut().expect("initialized above");
+        let state = match arena {
+            ScratchArenaKind::Storage => self.storage_state.as_mut().expect("initialized above"),
+            ScratchArenaKind::Metadata => self.metadata_state.as_mut().expect("initialized above"),
+        };
 
         if size == 0 {
             return Err(ExpansionScratchError::InvalidDescriptor(
@@ -359,7 +450,7 @@ impl ExpansionScratchAllocator {
         // binding offsets (`min_storage_buffer_offset_alignment`).
         let alignment = alignment.max(1);
         let alignment = lcm_u64(alignment, wgpu::COPY_BUFFER_ALIGNMENT);
-        let alignment = lcm_u64(alignment, state.storage_alignment);
+        let alignment = lcm_u64(alignment, state.min_alignment);
 
         let size = align_up(size, wgpu::COPY_BUFFER_ALIGNMENT);
 
@@ -397,10 +488,13 @@ impl ExpansionScratchAllocator {
             }
         }
 
-        self.realloc_buffer(device, new_per_frame_capacity)?;
+        self.realloc_buffers(device, new_per_frame_capacity)?;
 
         // Retry the allocation in the fresh segment.
-        let state = self.state.as_mut().expect("realloc keeps state present");
+        let state = match arena {
+            ScratchArenaKind::Storage => self.storage_state.as_mut().expect("realloc keeps state present"),
+            ScratchArenaKind::Metadata => self.metadata_state.as_mut().expect("realloc keeps state present"),
+        };
         let remaining = state.arenas.remaining();
         let per_frame_capacity = state.arenas.per_frame_capacity;
         let offset =
@@ -425,7 +519,7 @@ impl ExpansionScratchAllocator {
         device: &wgpu::Device,
         size: u64,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, size, 16)
+        self.alloc_inner(device, ScratchArenaKind::Storage, size, 16)
     }
 
     pub fn alloc_index_output(
@@ -433,7 +527,7 @@ impl ExpansionScratchAllocator {
         device: &wgpu::Device,
         size: u64,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, size, 4)
+        self.alloc_inner(device, ScratchArenaKind::Storage, size, 4)
     }
 
     pub fn alloc_indirect_draw(
@@ -446,7 +540,7 @@ impl ExpansionScratchAllocator {
             ));
         }
         let (size, align) = DrawIndirectArgs::layout();
-        self.alloc_inner(device, size, align)
+        self.alloc_inner(device, ScratchArenaKind::Storage, size, align)
     }
 
     pub fn alloc_indirect_draw_indexed(
@@ -459,7 +553,7 @@ impl ExpansionScratchAllocator {
             ));
         }
         let (size, align) = DrawIndexedIndirectArgs::layout();
-        self.alloc_inner(device, size, align)
+        self.alloc_inner(device, ScratchArenaKind::Storage, size, align)
     }
 
     /// Allocate a combined storage buffer used by the translated GS prepass:
@@ -483,14 +577,14 @@ impl ExpansionScratchAllocator {
             .ok_or(ExpansionScratchError::InvalidDescriptor(
                 "indirect args allocation overflows when adding GS prepass counters",
             ))?;
-        self.alloc_inner(device, size, align)
+        self.alloc_inner(device, ScratchArenaKind::Storage, size, align)
     }
 
     pub fn alloc_counter_u32(
         &mut self,
         device: &wgpu::Device,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, 4, 4)
+        self.alloc_inner(device, ScratchArenaKind::Storage, 4, 4)
     }
 
     /// Allocate a small counter block for GS/HS/DS-style compute expansion passes.
@@ -502,7 +596,7 @@ impl ExpansionScratchAllocator {
         &mut self,
         device: &wgpu::Device,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, 16, 4)
+        self.alloc_inner(device, ScratchArenaKind::Storage, 16, 4)
     }
 
     pub fn alloc_metadata(
@@ -511,7 +605,7 @@ impl ExpansionScratchAllocator {
         size: u64,
         alignment: u64,
     ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
-        self.alloc_inner(device, size, alignment)
+        self.alloc_inner(device, ScratchArenaKind::Metadata, size, alignment)
     }
 }
 

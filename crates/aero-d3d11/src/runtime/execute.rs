@@ -3021,15 +3021,23 @@ mod tests {
                     return out;
                 }
             "#;
+
+            // Ensure the shader declares an output that is not supported by this runtime protocol
+            // (which only exposes RT0). wgpu does not consistently validate this at pipeline-creation
+            // time across backends, so validate trimming logic directly.
+            let declared =
+                crate::runtime::wgsl_link::declared_ps_output_locations(fs_wgsl).unwrap();
+            assert_eq!(declared, BTreeSet::from([0u32, 1u32]));
+
             let keep_output_locations = BTreeSet::from([0u32]);
-            let expected_trimmed_wgsl = super::super::wgsl_link::trim_ps_outputs_to_locations(
+            let expected_trimmed_wgsl = crate::runtime::wgsl_link::trim_ps_outputs_to_locations(
                 fs_wgsl,
                 &keep_output_locations,
             );
-            assert!(
-                !expected_trimmed_wgsl.contains("@location(1)"),
-                "sanity check: trimmed WGSL should drop unbound outputs"
-            );
+            let declared_trimmed =
+                crate::runtime::wgsl_link::declared_ps_output_locations(&expected_trimmed_wgsl)
+                    .unwrap();
+            assert_eq!(declared_trimmed, keep_output_locations);
             #[cfg(debug_assertions)]
             let expected_trimmed_hash = aero_gpu::pipeline_key::hash_wgsl(&expected_trimmed_wgsl);
 

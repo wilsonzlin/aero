@@ -8278,9 +8278,6 @@ impl AerogpuD3d11Executor {
         if self.state.ds.is_some() && self.state.hs.is_none() {
             bail!("tessellation draw requires a bound HS (DS is bound without HS)");
         }
-        if self.state.hs.is_some() && self.state.ds.is_some() {
-            bail!("tessellation (HS/DS) compute expansion is not wired up yet");
-        }
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
         // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
@@ -8448,6 +8445,12 @@ impl AerogpuD3d11Executor {
                     );
                 }
             }
+        }
+
+        // After validating patchlist/HS invariants, reject draws that bind tessellation stages until
+        // the HS/DS compute expansion path is implemented.
+        if self.state.hs.is_some() && self.state.ds.is_some() {
+            bail!("tessellation (HS/DS) compute expansion is not wired up yet");
         }
 
         if primitive_count == 0 || instance_count == 0 {
@@ -28390,11 +28393,23 @@ fn cs_main() {
                 "expansion scratch allocations should share a backing buffer"
             );
 
+            // Metadata allocations should use a separate backing buffer so wgpu does not reject
+            // STORAGE_READ_WRITE+UNIFORM usage within a single dispatch.
+            let meta = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, 4, 4)
+                .expect("alloc_metadata");
+            let ptr_meta = Arc::as_ptr(&meta.buffer) as usize;
+            assert_ne!(
+                ptr_meta, ptr_a,
+                "metadata allocations must not share the storage backing buffer"
+            );
+
             // Force growth by requesting more than the current per-frame capacity.
             let c = exec
                 .expansion_scratch
-                .alloc_metadata(&exec.device, cap_a.saturating_add(1), 16)
-                .expect("alloc_metadata grow");
+                .alloc_vertex_output(&exec.device, cap_a.saturating_add(1))
+                .expect("alloc_vertex_output grow");
             let ptr_c = Arc::as_ptr(&c.buffer) as usize;
             let cap_c = exec
                 .expansion_scratch
@@ -28472,6 +28487,7 @@ fn cs_main() {
                 pos: [f32; 3],
                 color: [f32; 4],
             }
+
             // Minimal triangle vertex buffer that matches `vs_passthrough` + `ilay_pos3_color`.
             let verts = [
                 Vertex {
@@ -28517,14 +28533,12 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
@@ -28574,9 +28588,10 @@ fn cs_main() {
 
             let stats_before = exec.pipeline_cache.stats();
 
-            // Minimal stream that triggers `exec_draw_with_compute_prepass` by binding a non-zero
+            // Minimal streams that trigger `exec_draw_with_compute_prepass` by binding a non-zero
             // geometry shader handle. Use two draws with different primitive counts so the
-            // expansion output buffer sizes differ.
+            // expansion output buffer sizes differ; pipeline selection should be independent of
+            // primitive count.
             const RT: u32 = 1;
             const VS: u32 = 2;
             const PS: u32 = 3;
@@ -28599,6 +28614,7 @@ fn cs_main() {
                 pos: [f32; 3],
                 color: [f32; 4],
             }
+
             // 2-triangle quad (6 vertices) so the second draw can consume 6 vertices.
             let verts = [
                 Vertex {
@@ -28656,14 +28672,12 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
@@ -28671,10 +28685,9 @@ fn cs_main() {
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
-            // TriangleList: 3 vertices = 1 primitive, 6 vertices = 2 primitives.
-            let mut guest_mem = VecGuestMemory::new(0);
             writer.draw(3, 1, 0, 0);
             let stream_first = writer.finish();
+            let mut guest_mem = VecGuestMemory::new(0);
             exec.execute_cmd_stream(&stream_first, None, &mut guest_mem)
                 .expect("first GS prepass draw should succeed");
 
@@ -28693,14 +28706,12 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.draw(6, 1, 0, 0);
