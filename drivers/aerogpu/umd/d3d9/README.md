@@ -328,7 +328,7 @@ The current implementation targets:
   - Cube textures are supported (advertised via `D3DPTEXTURECAPS_CUBEMAP`) and are represented as 2D array textures with
     6 layers (`Depth/array_layers == 6`). Some runtime/header combinations may not populate a meaningful `Depth` field for
     cube resources (it may be `Depth == 1`); the UMD normalizes `D3DRTYPE_CUBETEXTURE` resources to 6 layers. Cube
-    textures must be square; invalid descriptors are rejected at `CreateResource` time. Volume textures (`D3DRTYPE_VOLUME`
+    textures must be square; invalid descriptors are rejected at `CreateResource`/`OpenResource` time. Volume textures (`D3DRTYPE_VOLUME`
     / `D3DRTYPE_VOLUMETEXTURE`) are not supported.
   - Compatibility: some D3D9 runtimes/WDK header vintages may pass `Type == 0` for non-buffer surface resources; the UMD
     treats it as a non-array 2D surface descriptor (`Depth == 1`) rather than rejecting it as an unknown type.
