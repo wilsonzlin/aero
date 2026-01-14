@@ -67,7 +67,8 @@ Quick reality check (as of this repo revision):
 - 🚧 Remaining (P0): **validate the full Win7 driver bring-up and rendering loop** on the canonical browser machine:
   driver install → real ring submissions → `AEROGPU_CMD` execution in the GPU worker → fence completion →
   scanout present + vblank pacing (DWM stability).
-  - Note: by default (no backend, submission bridge disabled), `aero_machine` completes fences without executing ACMD so guests can boot.
+  - Note: by default (no backend, submission bridge disabled), `aero_machine` completes fences without executing ACMD so guests can boot
+    (with optional vblank pacing when vblank is active and the submission contains a vsync present).
   - Rust-side submission bridge tests: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked`
   - Browser command-submission e2e: `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts`
   - Browser vsync completion policy e2e: `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu_vsync_completion.spec.ts`
