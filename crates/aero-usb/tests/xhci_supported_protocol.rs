@@ -73,11 +73,17 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     // DWORD3: speed ID count.
     let dword3 = xhci.mmio_read_u32(&mut mem, xecp + 12);
     let psic = (dword3 & 0xf) as u8;
+    let psio = ((dword3 >> 16) & 0xffff) as u16;
     assert!(psic >= 1, "Supported Protocol should expose at least one speed ID");
+    assert_eq!(
+        psio, 4,
+        "PSI descriptor table should begin immediately after DWORD3 (PSIO=4)"
+    );
 
     let mut speed_ids = Vec::new();
+    let psi_base = xecp + u64::from(psio) * 4;
     for i in 0..psic {
-        let psi = xhci.mmio_read_u32(&mut mem, xecp + 16 + (i as u64) * 4);
+        let psi = xhci.mmio_read_u32(&mut mem, psi_base + (i as u64) * 4);
         speed_ids.push((psi & 0x0f) as u8);
     }
 

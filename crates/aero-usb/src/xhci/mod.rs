@@ -1247,19 +1247,19 @@ impl XhciController {
             regs::PSIV_FULL_SPEED,
             regs::PSI_TYPE_FULL,
             12,
-            0,
+            1,
         ));
         caps.push(regs::encode_psi(
             regs::PSIV_LOW_SPEED,
             regs::PSI_TYPE_LOW,
             15,
-            3,
+            0,
         ));
         caps.push(regs::encode_psi(
             regs::PSIV_HIGH_SPEED,
             regs::PSI_TYPE_HIGH,
             48,
-            1,
+            2,
         ));
 
         caps
