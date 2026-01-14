@@ -47,8 +47,9 @@ This is the **coordination hub**. You wire together the work from all other work
   - AHCI (MSI) and NVMe (MSI + single-vector MSI-X) in both `aero-machine` and `aero-pc-platform`
     (see `crates/aero-machine/src/lib.rs::{process_ahci,process_nvme}` and
     `crates/aero-pc-platform/src/lib.rs::{process_ahci,process_nvme}`), and
-  - virtio-pci MSI-X delivery for virtio-blk (and virtio-net in `aero-machine`) via real virtio
-    interrupt sinks plus MSI-X enable/function-mask mirroring in `VirtioPciBar0Mmio` (see VTP-009).
+  - virtio-pci MSI-X delivery for virtio-blk/virtio-input (and virtio-net in `aero-machine`) via
+    real virtio interrupt sinks plus MSI-X enable/function-mask mirroring in `VirtioPciBar0Mmio`
+    (see VTP-009).
 - **Snapshots + restore plumbing**:
   format + tooling in `crates/aero-snapshot/`, IO device state in `crates/aero-io-snapshot/`,
   canonical machine integration/tests in `crates/aero-machine/tests/*`.
@@ -218,7 +219,7 @@ Status legend:
 | VTP-006 | MSI-X support | Implemented | P1 | VTP-002, DM-007 | High | Transport MSI-X logic: `crates/aero-virtio/src/pci.rs` (`MsixCapability` + `InterruptSink::signal_msix`). Platform wiring: `crates/aero-pc-platform/src/lib.rs::VirtioPciBar0Mmio::sync_pci_config` + `sync_virtio_msix_from_platform`, and `crates/aero-machine/src/lib.rs::VirtioPciBar0Mmio::sync_pci_command` + `sync_virtio_msix_from_platform` (see tests `crates/aero-pc-platform/tests/pc_platform_virtio_blk_msix*.rs` and `crates/aero-machine/tests/virtio_blk_msix.rs`). |
 | VTP-007 | Unit tests | Implemented | P0 | VTP-003 | Medium | `cargo test -p aero-virtio` (see `crates/aero-virtio/tests/*`) |
 | VTP-008 | Config option: disable modern | Implemented | P1 | VTP-004 | Low | `VirtioPciOptions::{modern_only,legacy_only,transitional}` |
-| VTP-009 | Wire virtio MSI/MSI-X into canonical machine/platform | Implemented | P1 | VTP-006 | High | `aero_pc_platform`: `VirtioPlatformInterruptSink` delivers `MsiMessage` into `PlatformInterrupts::trigger_msi`; `VirtioPciBar0Mmio::sync_pci_config` mirrors PCI command + MSI-X enable/mask into the virtio transport. `aero_machine`: `VirtioMsixInterruptSink` delivers `MsiMessage`; `VirtioPciBar0Mmio::sync_pci_command` mirrors PCI command + MSI-X enable/mask (see `crates/aero-machine/tests/virtio_blk_msix.rs` and `crates/aero-machine/tests/virtio_input_msix.rs`). `NoopVirtioInterruptSink` is only used when the machine is configured without interrupt delivery (i.e. `Machine` has no `PlatformInterrupts`). |
+| VTP-009 | Wire virtio MSI/MSI-X into canonical machine/platform | Implemented | P1 | VTP-006 | High | `aero_pc_platform`: `VirtioPlatformInterruptSink` delivers `MsiMessage` into `PlatformInterrupts::trigger_msi`; `VirtioPciBar0Mmio::sync_pci_config` mirrors PCI command + MSI-X enable/mask into the virtio transport. `aero_machine`: virtio-net/virtio-blk/virtio-input use `VirtioMsixInterruptSink` to deliver `MsiMessage`; `VirtioPciBar0Mmio::sync_pci_command` mirrors PCI command + MSI-X enable/mask (see `crates/aero-machine/tests/virtio_blk_msix.rs` and `crates/aero-machine/tests/virtio_input_msix.rs`). `NoopVirtioInterruptSink` is only used for configurations/devices without interrupt delivery (i.e. `Machine` has no `PlatformInterrupts`). |
 
 ### Canonical machine/platform gaps (actionable)
 
