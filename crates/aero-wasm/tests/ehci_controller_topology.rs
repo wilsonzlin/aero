@@ -15,9 +15,9 @@ fn make_controller() -> EhciControllerBridge {
 fn ehci_attach_hub_rejects_reserved_webusb_root_port() {
     let mut ehci = make_controller();
 
-    // Root port 0 is reserved by the EHCI bridge for WebUSB passthrough.
+    // Root port 1 is reserved by the EHCI bridge for WebUSB passthrough.
     let err = ehci
-        .attach_hub(0, 4)
+        .attach_hub(1, 4)
         .expect_err("expected attach_hub on reserved root port to error");
     assert!(err.is_instance_of::<js_sys::Error>());
 }
@@ -26,7 +26,7 @@ fn ehci_attach_hub_rejects_reserved_webusb_root_port() {
 fn ehci_detach_rejects_reserved_webusb_root_port() {
     let mut ehci = make_controller();
 
-    let path = serde_wasm_bindgen::to_value(&vec![0u32]).expect("path");
+    let path = serde_wasm_bindgen::to_value(&vec![1u32]).expect("path");
     let err = ehci
         .detach_at_path(path)
         .expect_err("expected detach_at_path on reserved root port to error");
