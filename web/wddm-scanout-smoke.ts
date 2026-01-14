@@ -325,10 +325,17 @@ async function main(): Promise<void> {
     }
 
     // Capture the latest metrics message so tests can assert outputSource/scanout telemetry.
+    //
+    // The GPU worker only emits metrics while processing ticks, so keep sending ticks until we
+    // observe at least one metrics snapshot (bounded).
     {
       const deadline = performance.now() + 2000;
       while (!lastMetrics && performance.now() < deadline) {
-        await sleep(10);
+        worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+        await sleep(20);
+      }
+      if (!lastMetrics) {
+        throw new Error("Timed out waiting for GPU metrics message (outputSource/scanout telemetry)");
       }
     }
 
