@@ -30,7 +30,7 @@ const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
 const TAG_CONFIG: u16 = 13;
 const TAG_MFINDEX: u16 = 14;
 
-// New in snapshot v0.4.
+// New in snapshot v0.5.
 const TAG_SLOTS: u16 = 15;
 const TAG_EVENT_RING_PRODUCER: u16 = 16;
 const TAG_PENDING_EVENTS: u16 = 17;
@@ -326,7 +326,7 @@ fn decode_pending_events(buf: &[u8]) -> SnapshotResult<VecDeque<Trb>> {
 
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 4);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 5);
 
     fn save_state(&self) -> Vec<u8> {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -378,13 +378,64 @@ impl IoSnapshot for XhciController {
         // - 11: host_controller_error
         // - 12: ports
         //
-        // Version 0.4 swapped those tags to resolve a collision introduced in 0.3, so we accept
-        // either mapping based on the snapshot minor version.
-        let (tag_host_controller_error, tag_ports) = if r.header().device_version.minor <= 3 {
-            (11u16, 12u16)
+        // Version 0.4 swapped those tags to resolve a collision introduced in 0.3. Some historical
+        // snapshots used the 0.4 header while still encoding fields using the 0.3 tag mapping, so:
+        // 1) choose a default mapping based on snapshot minor version
+        // 2) override it when field "shapes" clearly indicate the opposite mapping.
+        let mut tag_host_controller_error = if r.header().device_version.minor <= 3 {
+            11u16
         } else {
-            (TAG_HOST_CONTROLLER_ERROR, TAG_PORTS)
+            TAG_HOST_CONTROLLER_ERROR
         };
+        let mut tag_ports = if r.header().device_version.minor <= 3 {
+            12u16
+        } else {
+            TAG_PORTS
+        };
+
+        // `host_controller_error` is a bool (single byte 0/1) while `ports` is a nested vec-bytes
+        // encoding (>= 4 bytes, starting with a u32 port count). Use that to disambiguate.
+        let bytes11 = r.bytes(11);
+        let bytes12 = r.bytes(12);
+        let is_bool = |bytes: &[u8]| bytes.len() == 1 && (bytes[0] == 0 || bytes[0] == 1);
+
+        let bool_tag = match (bytes11, bytes12) {
+            (Some(b11), Some(b12)) => {
+                if is_bool(b11) && !is_bool(b12) {
+                    Some(11u16)
+                } else if is_bool(b12) && !is_bool(b11) {
+                    Some(12u16)
+                } else {
+                    None
+                }
+            }
+            (Some(b11), None) if is_bool(b11) => Some(11u16),
+            (None, Some(b12)) if is_bool(b12) => Some(12u16),
+            _ => None,
+        };
+
+        let ports_tag = match (bytes11, bytes12) {
+            (Some(b11), Some(b12)) => {
+                if b11.len() >= 4 && b12.len() < 4 {
+                    Some(11u16)
+                } else if b12.len() >= 4 && b11.len() < 4 {
+                    Some(12u16)
+                } else {
+                    None
+                }
+            }
+            (Some(b11), None) if b11.len() >= 4 => Some(11u16),
+            (None, Some(b12)) if b12.len() >= 4 => Some(12u16),
+            _ => None,
+        };
+
+        if let Some(tag) = bool_tag {
+            tag_host_controller_error = tag;
+            tag_ports = if tag == 11 { 12 } else { 11 };
+        } else if let Some(tag) = ports_tag {
+            tag_ports = tag;
+            tag_host_controller_error = if tag == 11 { 12 } else { 11 };
+        }
 
         let port_count = r.u8(TAG_PORT_COUNT)?.unwrap_or(DEFAULT_PORT_COUNT).max(1);
         // Preserve existing port/device instances when possible so snapshot restore can apply
