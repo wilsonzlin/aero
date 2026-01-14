@@ -517,6 +517,11 @@ fn decodes_and_translates_ld_shader_from_dxbc() {
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@fragment"));
     assert!(translated.wgsl.contains("textureLoad(t0"));
+    assert!(
+        !translated.wgsl.contains("floor(") && !translated.wgsl.contains("select("),
+        "textureLoad lowering should not use float-vs-bitcast heuristics:\n{}",
+        translated.wgsl
+    );
     assert!(translated
         .reflection
         .bindings
