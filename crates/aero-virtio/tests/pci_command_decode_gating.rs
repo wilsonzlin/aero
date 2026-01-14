@@ -1,4 +1,4 @@
-use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
+use aero_virtio::devices::blk::{MemDisk, VirtioBlk, VIRTIO_BLK_SECTOR_SIZE};
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, VIRTIO_PCI_LEGACY_STATUS, VIRTIO_STATUS_ACKNOWLEDGE,
 };
@@ -7,7 +7,9 @@ use aero_virtio::pci::{
 /// when called directly (without an outer PCI bus/router that already checks `COMMAND.MEM`).
 #[test]
 fn virtio_pci_bar0_mmio_is_gated_on_pci_command_mem() {
-    let blk = VirtioBlk::new(Box::new(MemDisk::new(16 * 512)));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(
+        16 * (VIRTIO_BLK_SECTOR_SIZE as usize),
+    )));
     let mut dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
 
     // PCI COMMAND starts cleared (decode disabled). Reads should behave like open bus.
@@ -34,7 +36,9 @@ fn virtio_pci_bar0_mmio_is_gated_on_pci_command_mem() {
 /// callers cannot program the device before decode is enabled.
 #[test]
 fn virtio_pci_legacy_io_is_gated_on_pci_command_io() {
-    let blk = VirtioBlk::new(Box::new(MemDisk::new(16 * 512)));
+    let blk = VirtioBlk::new(Box::new(MemDisk::new(
+        16 * (VIRTIO_BLK_SECTOR_SIZE as usize),
+    )));
     let mut dev =
         VirtioPciDevice::new_transitional(Box::new(blk), Box::new(InterruptLog::default()));
 
