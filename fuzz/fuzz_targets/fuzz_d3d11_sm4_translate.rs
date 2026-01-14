@@ -572,6 +572,7 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
     let is_vertex = (cfg & 1) == 0;
     let major = if (cfg & 2) == 0 { 4u8 } else { 5u8 };
     let sg1_mode = (cfg >> 2) & 3;
+    let patch_sig_mode = (cfg >> 4) & 3;
 
     let (tokens, max_input_reg_count) = gen_sm4_tokens(&mut u, is_vertex, major);
     let shader_bytes = tokens_to_bytes(&tokens);
@@ -579,6 +580,7 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
     // Synthetic signatures: declare v0..v{max_input_reg_count-1} (capped) and the required output.
     let mut sig_in = Vec::<SigParam>::new();
     let mut sig_out = Vec::<SigParam>::new();
+    let mut sig_patch = Vec::<SigParam>::new();
 
     let max_inputs = (max_input_reg_count as usize).min(MAX_SYNTH_SIGNATURE_PARAMS);
     for reg in 0..max_inputs {
@@ -617,6 +619,32 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
         system_value_type: out_sys_value,
         component_type: 0,
         register: 0,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream: 0,
+    });
+
+    // Patch-constant signatures (`PCSG`/`PCG1` and legacy `PSGN`/`PSG1`) are only used for HS/DS, but
+    // include them in some synthetic DXBC variants to exercise the signature collection logic in
+    // `aero_d3d11::parse_signatures` (including fallback between IDs and malformed-chunk handling).
+    //
+    // Keep it tiny: just a couple of parameters with common tessellation semantics.
+    sig_patch.push(SigParam {
+        semantic_name: &b"SV_TessFactor"[..],
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 0,
+        register: 0,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream: 0,
+    });
+    sig_patch.push(SigParam {
+        semantic_name: &b"SV_InsideTessFactor"[..],
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 0,
+        register: 1,
         mask: 0xF,
         read_write_mask: 0xF,
         stream: 0,
@@ -675,6 +703,51 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
             chunks.push(DxbcChunkOwned {
                 fourcc: *b"OSG1",
                 data: vec![0u8; 4],
+            });
+        }
+    }
+
+    match patch_sig_mode {
+        0 => {}
+        1 => {
+            // Only the classic v0 IDs.
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PCSG",
+                data: build_signature_chunk_v0(&sig_patch),
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PSGN",
+                data: build_signature_chunk_v0(&sig_patch),
+            });
+        }
+        2 => {
+            // Preferred v1 IDs.
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PCG1",
+                data: build_signature_chunk_v1(&sig_patch),
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PSG1",
+                data: build_signature_chunk_v1(&sig_patch),
+            });
+        }
+        _ => {
+            // Malformed preferred IDs + valid fallbacks (exercise fallback logic).
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PCG1",
+                data: vec![0u8; 4],
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PSG1",
+                data: vec![0u8; 4],
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PCSG",
+                data: build_signature_chunk_v0(&sig_patch),
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"PSGN",
+                data: build_signature_chunk_v0(&sig_patch),
             });
         }
     }
