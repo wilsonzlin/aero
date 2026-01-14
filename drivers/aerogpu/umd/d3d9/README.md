@@ -264,9 +264,10 @@ The current implementation targets:
 
 - **Render targets**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`
 - **Depth/stencil**: `D3DFMT_D24S8`
+- **Mipmapped textures**: 2D textures with `Levels > 1` are supported for common uncompressed formats (validated by `d3d9_mipmapped_texture_smoke`).
 - **Legacy sampled texture formats** (via shader sampling + `UpdateTexture`): `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
-  (validated by `d3d9_texture_16bit_sampling`; the `A1R5G5B5` path is only exercised when `CheckDeviceFormat` reports it supported).
-  16-bit RGB formats are exposed for texture sampling only (not render targets).
+  (validated by `d3d9ex_texture_16bit_formats`; `d3d9_texture_16bit_sampling` additionally exercises `R5G6B5` and optionally `A1R5G5B5`).
+  16-bit RGB formats are exposed for texture sampling only (not render targets). `X1R5G5B5` is treated as alpha=1 when sampling.
 - **BC/DXT textures**: `D3DFMT_DXT1..DXT5` are only exposed when the active device reports
   ABI minor `>= 2` via `KMTQAITYPE_UMDRIVERPRIVATE` (`aerogpu_umd_private_v1.device_abi_version_u32`).
   - When unsupported, `GetCaps(GETFORMAT*)` omits them and `CreateResource` rejects them to avoid emitting
@@ -277,7 +278,7 @@ The current implementation targets:
 - VB/IB draws: `DrawPrimitive*` / `DrawIndexedPrimitive*` with DEFAULT-pool buffers, including dynamic
   `Lock/Unlock` dirty-range tracking (`d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`).
 - User-pointer draws: `DrawPrimitiveUP` / `DrawIndexedPrimitiveUP` (`d3d9ex_triangle`,
-  `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_fixedfunc_textured_triangle`).
+  `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_fixedfunc_textured_triangle`, `d3d9ex_fixedfunc_texture_stage_state`).
 
 ### Blit / compositor operations
 
@@ -344,7 +345,7 @@ Limitations (bring-up):
   (built from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD). Fixed-function
   lighting/material is still not implemented.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
-- Only a minimal subset of **stage0** texture stage state is interpreted to select a built-in pixel shader variant (Diffuse / Texture0 / Texture0*Diffuse modulate, with independent color vs alpha selection). Stages `> 0` and other `D3DTSS_*` state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
+- Only a minimal subset of **stage0** texture stage state is interpreted to select a built-in pixel shader variant (Diffuse / Texture0 / Texture0*Diffuse modulate, with independent color vs alpha selection; validated by `d3d9ex_fixedfunc_texture_stage_state`). Stages `> 0` and other `D3DTSS_*` state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
 
 ### Known limitations / next steps
@@ -359,9 +360,11 @@ This subset is validated via:
 
 - **Host-side unit tests** under `drivers/aerogpu/umd/d3d9/tests/` (command-stream and fixed-function/FVF translation coverage).
 - **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests:
-  `d3d9ex_triangle`, `d3d9ex_fixedfunc_textured_triangle`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
-  `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`, `d3d9_process_vertices_sanity`, `d3d9ex_draw_indexed_primitive_up`,
-  `d3d9ex_scissor_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused
+  `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
+  `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
+  `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
+  `d3d9_process_vertices_sanity`, `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`,
+  `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused
   `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
 ## Call tracing (bring-up / debugging)
