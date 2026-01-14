@@ -586,7 +586,7 @@ If the OS boots far enough that you can run tools (local console preferred; RDP 
 - Guest Tools ISO/zip (often mounted as `X:`):
  - x64: `X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
  - x86: `X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
- - Optional top-level tools payload (when present): `X:\tools\aerogpu_dbgctl.exe` (or under `X:\tools\*\aerogpu_dbgctl.exe`)
+ - Optional top-level tools payload (when present): `X:\tools\aerogpu_dbgctl.exe` (or under `X:\tools\<arch>\aerogpu_dbgctl.exe`)
 - CI-staged packages (host-side): `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (and `...\x86\...`)
 
 Example (Guest Tools ISO/zip often mounted as `X:`; replace `X:` with your actual drive letter):

@@ -492,7 +492,7 @@ On a Win7 guest, `aerogpu_dbgctl.exe` is shipped on the Guest Tools ISO/zip unde
 
 - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
-- Optional top-level tools payload (when present): `<GuestToolsDrive>:\tools\aerogpu_dbgctl.exe` (or under `<GuestToolsDrive>:\tools\*\aerogpu_dbgctl.exe`)
+- Optional top-level tools payload (when present): `<GuestToolsDrive>:\tools\aerogpu_dbgctl.exe` (or under `<GuestToolsDrive>:\tools\<arch>\aerogpu_dbgctl.exe`)
 
 ```cmd
 cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin

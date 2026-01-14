@@ -172,7 +172,7 @@ dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
    On a Win7 guest, `aerogpu_dbgctl.exe` is shipped on the Guest Tools ISO/zip under:
    - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
    - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
-   - Optional top-level tools payload (when present): `<GuestToolsDrive>:\tools\aerogpu_dbgctl.exe` (or under `<GuestToolsDrive>:\tools\*\aerogpu_dbgctl.exe`)
+   - Optional top-level tools payload (when present): `<GuestToolsDrive>:\tools\aerogpu_dbgctl.exe` (or under `<GuestToolsDrive>:\tools\<arch>\aerogpu_dbgctl.exe`)
 
    CI-staged driver packages also include dbgctl at:
    - `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
