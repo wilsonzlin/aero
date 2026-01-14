@@ -237,11 +237,15 @@ cargo test -p aero-usb --lib
 # Optional: also run a small input-focused Playwright subset.
 cargo xtask input --e2e
 
-# If you're running in a constrained sandbox, consider using safe-run:
-bash ./scripts/safe-run.sh cargo xtask input
-bash ./scripts/safe-run.sh cargo xtask input --rust-only
-
-# --- Manual / debugging (run pieces individually) ---
+ # If you're running in a constrained sandbox, consider using safe-run:
+ bash ./scripts/safe-run.sh cargo xtask input
+ bash ./scripts/safe-run.sh cargo xtask input --rust-only
+ 
+ # Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
+ # `cargo xtask input` can exceed this. Bump the timeout if you see a timeout kill:
+ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
+ 
+ # --- Manual / debugging (run pieces individually) ---
 
 # Rust device-model tests
 bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
