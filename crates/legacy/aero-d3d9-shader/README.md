@@ -15,8 +15,8 @@ adding maintenance burden to workspace-wide builds.
 Because it is excluded from the workspace, build it directly:
 
 ```sh
-cargo test --manifest-path crates/aero-d3d9-shader/Cargo.toml
+cargo test --manifest-path crates/legacy/aero-d3d9-shader/Cargo.toml
 ```
 
-Note: Cargo may generate a local `crates/aero-d3d9-shader/Cargo.lock` when building this crate
+Note: Cargo may generate a local `crates/legacy/aero-d3d9-shader/Cargo.lock` when building this crate
 standalone.
