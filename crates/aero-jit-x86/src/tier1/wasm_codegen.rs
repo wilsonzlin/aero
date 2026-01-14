@@ -758,11 +758,7 @@ impl Tier1WasmCodegen {
 
         if options.inline_tlb {
             let has_store_mem = options.inline_tlb_stores
-                && block
-                    .insts
-                    .iter()
-                    .take_while(|inst| !matches!(inst, IrInst::CallHelper { .. }))
-                    .any(|inst| matches!(inst, IrInst::Store { .. }));
+                && (uses_store_u8 || uses_store_u16 || uses_store_u32 || uses_store_u64);
             if has_store_mem {
                 // Cache the code-version table pointer and length in locals so the RAM write
                 // fast-path can bump code page versions without repeated loads from `cpu_ptr`.
