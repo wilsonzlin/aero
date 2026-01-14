@@ -75,7 +75,7 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     }
 
     // Write a red pixel at (0,0) in BGRX format via the BAR1-mapped LFB.
-    let lfb_base = u64::from(bar1_base) + 0x20000;
+    let lfb_base = dev.borrow().bar1_lfb_base();
     mem.write(
         lfb_base,
         4,

@@ -22,8 +22,8 @@ pub struct AeroGpuDeviceConfig {
     pub vblank_hz: Option<u32>,
     /// Size in bytes of the BAR1 VRAM aperture.
     ///
-    /// Must be a power-of-two and large enough for the legacy VGA window backing (128KiB) plus
-    /// the VBE linear framebuffer region.
+    /// Must be a power-of-two and large enough for the legacy VGA backing region plus the VBE
+    /// linear framebuffer (LFB) region.
     pub vram_size_bytes: u32,
 }
 
@@ -37,7 +37,10 @@ impl Default for AeroGpuDeviceConfig {
     }
 }
 
-const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = 0x20000;
+// Keep the VBE framebuffer region aligned with the canonical VGA/VBE VRAM layout:
+// - first 256KiB reserved for legacy VGA planes (4×64KiB)
+// - VBE packed-pixel framebuffer starts after that region.
+const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32;
 const LEGACY_VGA_WINDOW_BASE: u32 = 0xA0000;
 const LEGACY_VGA_WINDOW_SIZE: u32 = 0x20000;
 
@@ -139,8 +142,9 @@ impl AeroGpuPciDevice {
             vram_size: cfg.vram_size_bytes as usize,
             vram_bar_base: bar1,
             lfb_offset: AEROGPU_PCI_BAR1_LFB_OFFSET,
-            // Back only planes 0/1 (text mode) in the reserved legacy VGA window (128KiB).
-            legacy_plane_count: 2,
+            // Reserve the full 4-plane VGA backing region so VBE mode switches do not clobber
+            // legacy plane contents.
+            legacy_plane_count: 4,
         });
 
         Self {
