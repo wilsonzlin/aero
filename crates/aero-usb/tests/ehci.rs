@@ -1387,6 +1387,105 @@ fn ehci_async_qtd_budget_exceeded_sets_hse_and_halts() {
 }
 
 #[test]
+fn ehci_async_qtd_exact_budget_limit_termination_does_not_fault() {
+    // This matches the internal `MAX_QTD_STEPS_PER_QH` constant in `src/ehci/schedule.rs`.
+    const QTD_COUNT: usize = 1024;
+    // QH_CUR_QTD offset (see `src/ehci/schedule_async.rs`).
+    const QH_CUR_QTD: u32 = 0x0c;
+
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+    c.hub_mut().attach(0, Box::new(TestDevice));
+    reset_port(&mut c, &mut mem, 0);
+
+    // Build a chain of already-inactive qTDs with exactly `MAX_QTD_STEPS_PER_QH` elements. This
+    // should be fully consumed without triggering a schedule fault.
+    let first_qtd: u32 = 0x2000;
+    for i in 0..QTD_COUNT {
+        let addr = first_qtd + (i as u32) * 0x20;
+        let next = if i + 1 == QTD_COUNT {
+            LINK_TERMINATE
+        } else {
+            addr + 0x20
+        };
+        write_qtd(
+            &mut mem,
+            addr,
+            next,
+            qtd_token(QTD_TOKEN_PID_OUT, 0, false, false),
+            0,
+        );
+    }
+
+    let ep_char = qh_epchar(0, 0, 64);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        first_qtd,
+    );
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_eq!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+
+    // Overlay should have returned to idle after consuming the full qTD chain.
+    assert_eq!(mem.read_u32(ASYNC_QH + QH_CUR_QTD) & LINK_ADDR_MASK, 0);
+}
+
+#[test]
+fn ehci_async_qtd_exact_budget_limit_null_termination_does_not_fault() {
+    // This matches the internal `MAX_QTD_STEPS_PER_QH` constant in `src/ehci/schedule.rs`.
+    const QTD_COUNT: usize = 1024;
+    const QH_CUR_QTD: u32 = 0x0c;
+
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+    c.hub_mut().attach(0, Box::new(TestDevice));
+    reset_port(&mut c, &mut mem, 0);
+
+    let first_qtd: u32 = 0x2000;
+    for i in 0..QTD_COUNT {
+        let addr = first_qtd + (i as u32) * 0x20;
+        let next = if i + 1 == QTD_COUNT { 0 } else { addr + 0x20 };
+        write_qtd(
+            &mut mem,
+            addr,
+            next,
+            qtd_token(QTD_TOKEN_PID_OUT, 0, false, false),
+            0,
+        );
+    }
+
+    let ep_char = qh_epchar(0, 0, 64);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        first_qtd,
+    );
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_eq!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+    assert_eq!(mem.read_u32(ASYNC_QH + QH_CUR_QTD) & LINK_ADDR_MASK, 0);
+}
+
+#[test]
 fn ehci_periodic_link_budget_exceeded_sets_hse_and_halts() {
     const LINK_COUNT: usize = 64 * 1024;
     let mut mem = TestMemory::new(0x220000);

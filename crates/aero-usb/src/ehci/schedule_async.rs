@@ -296,7 +296,12 @@ fn process_qh<M: MemoryBus + ?Sized>(
     let mut visited_qtd: Vec<u32> = Vec::with_capacity(16);
     for _ in 0..MAX_QTD_STEPS_PER_QH {
         // If no current qTD is loaded, attempt to fetch the one pointed to by QH.Next qTD.
-        let cur_qtd = ctx.mem.read_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64) & LINK_ADDR_MASK;
+        //
+        // Load and process the qTD within the same budget iteration so that the qTD step budget
+        // corresponds to the number of qTDs observed (rather than counting an extra iteration just
+        // to populate the QH overlay).
+        let mut cur_qtd =
+            ctx.mem.read_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64) & LINK_ADDR_MASK;
         if cur_qtd == 0 {
             let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
             if next.terminated() {
@@ -311,8 +316,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             }
             visited_qtd.push(addr);
             load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
-            // Loop and process the now-loaded qTD in the same tick.
-            continue;
+            cur_qtd = addr;
         }
 
         if !visited_qtd.contains(&cur_qtd) {
