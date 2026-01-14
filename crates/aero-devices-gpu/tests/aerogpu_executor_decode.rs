@@ -339,7 +339,8 @@ fn ring_pending_exceeds_entry_count_advances_head_to_tail() {
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 9);
     assert_eq!(regs.stats.malformed_submissions, 1);
     assert_eq!(regs.completed_fence, 0);
-    assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
+    assert_eq!(regs.error_code, AerogpuErrorCode::CmdDecode as u32);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
 }
 
 #[test]

@@ -440,6 +440,7 @@ impl AeroGpuExecutor {
             // Driver and device are out of sync; drop all pending work to avoid looping.
             AeroGpuRingHeader::write_head(mem, regs.ring_gpa, tail);
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+            regs.record_error(AerogpuErrorCode::CmdDecode, 0);
             return;
         }
 

@@ -6,7 +6,7 @@ use aero_protocol::aerogpu::aerogpu_ring::{
     AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
     AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
 };
-use emulator::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs};
+use emulator::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, AerogpuErrorCode};
 use emulator::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
@@ -325,7 +325,8 @@ fn ring_pending_exceeds_entry_count_advances_head_to_tail() {
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 9);
     assert_eq!(regs.stats.malformed_submissions, 1);
     assert_eq!(regs.completed_fence, 0);
-    assert_eq!(regs.irq_status & irq_bits::ERROR, 0);
+    assert_eq!(regs.error_code, AerogpuErrorCode::CmdDecode as u32);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
 }
 
 #[test]
