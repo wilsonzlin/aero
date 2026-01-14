@@ -646,8 +646,11 @@ canonical ABI this field is repurposed as the **geometry shader (GS) handle**:
 - `reserved0 == 0` → GS unbound
 - `reserved0 != 0` → GS is bound to handle `reserved0`
 
-The extended layout appends `{gs, hs, ds}` as explicit trailing fields. When using the extended
-layout, producers SHOULD set `reserved0 = 0` and treat the appended `gs` field as authoritative.
+The extended layout appends `{gs, hs, ds}` as explicit trailing fields.
+
+When using the extended layout, producers MAY still populate `reserved0` with the GS handle as a
+redundant compatibility copy (so tooling/hosts that only understand the legacy 24-byte packet can
+still observe a bound GS). If they do so, it SHOULD match the appended `gs` field.
 
 ```c
 // Existing prefix (ABI 1.0+):
