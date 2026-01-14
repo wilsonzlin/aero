@@ -519,53 +519,69 @@ const syncCursorToPresenter = (): void => {
   if (!p) return;
 
   if (p.setCursorRenderEnabled) {
-    p.setCursorRenderEnabled(cursorRenderEnabled);
+    try {
+      p.setCursorRenderEnabled(cursorRenderEnabled);
+    } catch (err) {
+      postPresenterError(err, presenter?.backend);
+    }
   }
 
   if (cursorImage && cursorWidth > 0 && cursorHeight > 0 && p.setCursorImageRgba8) {
-    p.setCursorImageRgba8(cursorImage, cursorWidth, cursorHeight);
+    try {
+      p.setCursorImageRgba8(cursorImage, cursorWidth, cursorHeight);
+    } catch (err) {
+      postPresenterError(err, presenter?.backend);
+    }
   }
 
   if (p.setCursorState) {
-    p.setCursorState(cursorEnabled, cursorX, cursorY, cursorHotX, cursorHotY);
+    try {
+      p.setCursorState(cursorEnabled, cursorX, cursorY, cursorHotX, cursorHotY);
+    } catch (err) {
+      postPresenterError(err, presenter?.backend);
+    }
   }
 };
 
 const redrawCursor = (): void => {
-  const p = getCursorPresenter();
-  if (!p) return;
-  if (p.redraw) {
-    p.redraw();
-    return;
-  }
-
-  // If the presenter does not implement the cursor APIs, there is nothing to redraw.
-  if (!p.setCursorImageRgba8 && !p.setCursorState && !p.setCursorRenderEnabled) return;
-  if (!presenter) return;
-
-  // Best-effort fallback: re-present the last output so backends that only apply cursor state
-  // during present() can reflect the latest cursor updates without clobbering the current
-  // output source (framebuffer vs AeroGPU vs WDDM scanout).
-  if (aerogpuLastOutputSource === "aerogpu") {
-    const last = aerogpuLastPresentedFrame;
-    if (!last) return;
-    presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
-    return;
-  }
-
-  if (aerogpuLastOutputSource === "wddm_scanout") {
-    const lastScanout = wddmScanoutRgba;
-    if (lastScanout && wddmScanoutWidth > 0 && wddmScanoutHeight > 0) {
-      presenter.present(lastScanout, wddmScanoutWidth * BYTES_PER_PIXEL_RGBA8);
+  try {
+    const p = getCursorPresenter();
+    if (!p) return;
+    if (p.redraw) {
+      p.redraw();
       return;
     }
-    // If the scanout cache is unavailable, fall through and attempt to read the current frame.
-  }
 
-  const frame = getCurrentFrameInfo();
-  if (!frame) return;
-  aerogpuLastOutputSource = frame.outputSource;
-  presenter.present(frame.pixels, frame.strideBytes);
+    // If the presenter does not implement the cursor APIs, there is nothing to redraw.
+    if (!p.setCursorImageRgba8 && !p.setCursorState && !p.setCursorRenderEnabled) return;
+    if (!presenter) return;
+
+    // Best-effort fallback: re-present the last output so backends that only apply cursor state
+    // during present() can reflect the latest cursor updates without clobbering the current
+    // output source (framebuffer vs AeroGPU vs WDDM scanout).
+    if (aerogpuLastOutputSource === "aerogpu") {
+      const last = aerogpuLastPresentedFrame;
+      if (!last) return;
+      presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+      return;
+    }
+
+    if (aerogpuLastOutputSource === "wddm_scanout") {
+      const lastScanout = wddmScanoutRgba;
+      if (lastScanout && wddmScanoutWidth > 0 && wddmScanoutHeight > 0) {
+        presenter.present(lastScanout, wddmScanoutWidth * BYTES_PER_PIXEL_RGBA8);
+        return;
+      }
+      // If the scanout cache is unavailable, fall through and attempt to read the current frame.
+    }
+
+    const frame = getCurrentFrameInfo();
+    if (!frame) return;
+    aerogpuLastOutputSource = frame.outputSource;
+    presenter.present(frame.pixels, frame.strideBytes);
+  } catch (err) {
+    postPresenterError(err, presenter?.backend);
+  }
 };
 
 const MAX_HW_CURSOR_DIM = 256;
@@ -4125,6 +4141,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       const h = Math.max(0, req.height | 0);
       if (w === 0 || h === 0) {
         postPresenterError(new PresenterError("invalid_cursor_image", "cursor_set_image width/height must be non-zero"));
+        break;
+      }
+
+      const requiredBytes = w * h * BYTES_PER_PIXEL_RGBA8;
+      if (req.rgba8.byteLength < requiredBytes) {
+        postPresenterError(
+          new PresenterError(
+            "invalid_cursor_image",
+            `cursor_set_image rgba8 buffer too small: expected at least ${requiredBytes} bytes, got ${req.rgba8.byteLength}`,
+          ),
+        );
         break;
       }
 

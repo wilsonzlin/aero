@@ -675,6 +675,10 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
       : cpuCount !== 1 && typeof newWithCpuCount === "function"
         ? newWithCpuCount(ramSizeBytes >>> 0, cpuCount)
         : new api.Machine(ramSizeBytes >>> 0);
+  const machineInstance = machine;
+  if (!machineInstance) {
+    throw new Error("Machine init failed (machine is null)");
+  }
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
   // Bochs VBE programming requires the legacy VGA/VBE device model. When running with AeroGPU
   // enabled (and VGA disabled), ignore any requested VBE mode so we keep text-mode scanout via
@@ -701,8 +705,8 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   } else {
     diskImage = buildSerialBootSector(bootMessage);
   }
-  machine.set_disk_image(diskImage);
-  machine.reset();
+  machineInstance.set_disk_image(diskImage);
+  machineInstance.reset();
 
   // Prefer shared-buffer transport when supported; otherwise fall back to copy frames.
   transport = ensureSharedFramebuffer() ? "shared" : "copy";
