@@ -503,28 +503,42 @@ static void dump_hex(const BYTE *buf, DWORD len)
     }
 }
 
-static int reset_vioinput_counters(const SELECTED_DEVICE *dev)
+static int reset_vioinput_counters(const SELECTED_DEVICE *dev, int quiet)
 {
     DWORD bytes = 0;
     BOOL ok;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
-        wprintf(L"Invalid device handle\n");
+        if (quiet) {
+            fwprintf(stderr, L"Invalid device handle\n");
+        } else {
+            wprintf(L"Invalid device handle\n");
+        }
         return 1;
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
-        wprintf(L"Device was not opened with GENERIC_WRITE; cannot reset counters\n");
+        if (quiet) {
+            fwprintf(stderr, L"Device was not opened with GENERIC_WRITE; cannot reset counters\n");
+        } else {
+            wprintf(L"Device was not opened with GENERIC_WRITE; cannot reset counters\n");
+        }
         return 1;
     }
 
     ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_RESET_COUNTERS, NULL, 0, NULL, 0, &bytes, NULL);
     if (!ok) {
-        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)");
+        if (quiet) {
+            print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)");
+        } else {
+            print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)");
+        }
         return 1;
     }
 
-    wprintf(L"\nvirtio-input driver diagnostic counters reset.\n");
+    if (!quiet) {
+        wprintf(L"\nvirtio-input driver diagnostic counters reset.\n");
+    }
     return 0;
 }
 
@@ -4807,10 +4821,6 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--keyboard, --mouse, and --tablet are mutually exclusive.\n");
         return 2;
     }
-    if (opt.query_counters && opt.reset_counters) {
-        wprintf(L"--counters/--counters-json and --reset-counters are mutually exclusive.\n");
-        return 2;
-    }
     if (opt.list_only && (opt.query_counters || opt.reset_counters)) {
         wprintf(L"--list is mutually exclusive with --counters/--counters-json/--reset-counters.\n");
         return 2;
@@ -5207,9 +5217,15 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.reset_counters) {
-        int rc = reset_vioinput_counters(&dev);
-        free_selected_device(&dev);
-        return rc;
+        int rc = reset_vioinput_counters(&dev, opt.quiet);
+        if (rc != 0) {
+            free_selected_device(&dev);
+            return rc;
+        }
+        if (!opt.query_counters) {
+            free_selected_device(&dev);
+            return 0;
+        }
     }
     if (opt.query_counters) {
         int rc = opt.query_counters_json ? dump_vioinput_counters_json(&dev) : dump_vioinput_counters(&dev);

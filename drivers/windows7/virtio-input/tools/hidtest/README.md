@@ -183,6 +183,13 @@ Reset virtio-input driver diagnostic counters:
 hidtest.exe --reset-counters
 ```
 
+Tip: combine with `--counters` / `--counters-json` to verify reset immediately (the tool's own enumeration traffic is cleared by the reset):
+
+```bat
+hidtest.exe --reset-counters --counters
+hidtest.exe --reset-counters --counters-json
+```
+
 Toggle the virtio-input driver diagnostics log mask at runtime (**DBG/diagnostics driver builds only**):
 
 ```bat
