@@ -7,8 +7,13 @@ import {
   type ResolvedAeroConfig,
 } from "../config/aero_config";
 import type { AeroConfigManager } from "../config/manager";
+import type { PlatformFeatureReport } from "../platform/features";
 
-export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigManager): void {
+export function mountSettingsPanel(
+  container: HTMLElement,
+  manager: AeroConfigManager,
+  report?: PlatformFeatureReport,
+): void {
   const fieldset = document.createElement("fieldset");
   const legend = document.createElement("legend");
   legend.textContent = "Settings";
@@ -38,8 +43,12 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
 
   const vmRuntimeHelpText =
     "VM runtime backend. " +
-    "legacy uses CPU-only WasmVm + JS I/O shims; machine uses wasm api.Machine with AHCI/IDE. " +
+    "legacy uses CPU-only WasmVm + JS I/O shims; machine uses wasm api.Machine with AHCI/IDE and requires OPFS SyncAccessHandle (FileSystemFileHandle.createSyncAccessHandle()). " +
     "Changing this requires a restart/reload to apply.";
+  const vmRuntimeOpfsMissingHint =
+    "This browser does not support OPFS SyncAccessHandle, so the machine runtime is disabled. " +
+    "Use a Chromium-based browser (Chrome/Edge) or enable the File System Access APIs.";
+  const supportsMachineRuntime = report?.opfsSyncAccessHandle !== false;
 
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
@@ -75,13 +84,20 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   webgpuHint.className = "hint";
 
   const vmRuntimeSelect = document.createElement("select");
+  let machineVmRuntimeOption: HTMLOptionElement | null = null;
   for (const [value, label] of [
     ["legacy", "legacy (default)"],
-    ["machine", "machine (canonical full-system VM)"],
+    ["machine", "machine (canonical full-system VM; requires OPFS SyncAccessHandle)"],
   ] as const) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = label;
+    if (value === "machine") {
+      machineVmRuntimeOption = option;
+      if (!supportsMachineRuntime) {
+        option.disabled = true;
+      }
+    }
     vmRuntimeSelect.appendChild(option);
   }
   const vmRuntimeHint = document.createElement("div");
@@ -215,7 +231,14 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     manager.updateStoredConfig({ enableWebGPU: webgpuCheckbox.checked });
   });
   vmRuntimeSelect.addEventListener("change", () => {
-    manager.updateStoredConfig({ vmRuntime: vmRuntimeSelect.value as AeroConfig["vmRuntime"] });
+    const value = vmRuntimeSelect.value as AeroConfig["vmRuntime"];
+    if (value === "machine" && !supportsMachineRuntime) {
+      // Machine runtime selection requires OPFS SyncAccessHandle; keep the stored
+      // config unchanged and revert the selection to the current effective value.
+      vmRuntimeSelect.value = manager.getState().effective.vmRuntime ?? "legacy";
+      return;
+    }
+    manager.updateStoredConfig({ vmRuntime: value });
   });
   logSelect.addEventListener("change", () => {
     manager.updateStoredConfig({ logLevel: logSelect.value as AeroConfig["logLevel"] });
@@ -283,7 +306,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
       proxyHint.textContent = proxyHelpText;
     }
     if (!state.lockedKeys.has("vmRuntime")) {
-      vmRuntimeHint.textContent = vmRuntimeHelpText;
+      vmRuntimeHint.textContent = supportsMachineRuntime ? vmRuntimeHelpText : `${vmRuntimeHelpText} ${vmRuntimeOpfsMissingHint}`;
     }
     if (!state.lockedKeys.has("virtioNetMode")) {
       virtioNetModeHint.textContent = virtioNetModeHelpText;
@@ -371,6 +394,12 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
         webgpuCheckbox.disabled = false;
         webgpuHint.textContent = "";
       }
+    }
+
+    // Keep the machine option in sync with the platform report so browsers that
+    // lack OPFS SyncAccessHandle can't opt into an unsupported runtime.
+    if (machineVmRuntimeOption) {
+      machineVmRuntimeOption.disabled = !supportsMachineRuntime;
     }
   }
 }

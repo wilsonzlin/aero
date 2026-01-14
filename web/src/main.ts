@@ -492,7 +492,7 @@ function render(): void {
   const missing = explainMissingRequirements(report);
 
   const settingsHost = el("div", { class: "panel" });
-  mountSettingsPanel(settingsHost, configManager);
+  mountSettingsPanel(settingsHost, configManager, report);
 
   const statusHost = el("div", { class: "panel" });
   mountStatusPanel(statusHost, configManager, workerCoordinator);
