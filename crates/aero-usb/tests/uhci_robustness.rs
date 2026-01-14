@@ -1,6 +1,7 @@
 use aero_usb::uhci::regs;
 use aero_usb::uhci::UhciController;
 use aero_usb::MemoryBus;
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbOutResult};
 
 const FRAME_LIST_BASE: u32 = 0x1000;
 const QH_ADDR: u32 = 0x2000;
@@ -9,6 +10,12 @@ const TD_ADDR: u32 = 0x3000;
 // UHCI link pointer bits.
 const LINK_PTR_T: u32 = 1 << 0;
 const LINK_PTR_Q: u32 = 1 << 1;
+
+// UHCI TD bits (see `src/uhci/schedule.rs`).
+const TD_STATUS_ACTIVE: u32 = 1 << 23;
+
+// UHCI token PIDs (see `src/uhci/schedule.rs`).
+const PID_OUT: u32 = 0xe1;
 
 struct TestMem {
     data: Vec<u8>,
@@ -36,6 +43,23 @@ impl MemoryBus for TestMem {
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         let addr = paddr as usize;
         self.data[addr..addr + buf.len()].copy_from_slice(buf);
+    }
+}
+
+#[derive(Default)]
+struct AlwaysAckDevice;
+
+impl UsbDeviceModel for AlwaysAckDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Ack
+    }
+
+    fn handle_out_transfer(&mut self, _ep: u8, _data: &[u8]) -> UsbOutResult {
+        UsbOutResult::Ack
     }
 }
 
@@ -110,6 +134,89 @@ fn uhci_td_self_loop_sets_hse_and_errint() {
     ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
 
     ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert!(ctrl.irq_level());
+}
+
+#[test]
+fn uhci_active_td_cycle_sets_hse_and_errint() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x4000);
+
+    // Attach a device so TD processing advances through the chain within a single frame.
+    ctrl.hub_mut()
+        .attach(0, Box::new(AlwaysAckDevice::default()));
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, TD_ADDR);
+
+    let td2 = TD_ADDR + 0x10;
+
+    // TD1 -> TD2 -> TD1 cycle.
+    mem.write_u32(TD_ADDR, td2);
+    mem.write_u32(td2, TD_ADDR);
+
+    // Mark both TDs active and runnable (OUT to device address 0, endpoint 1, 1 byte).
+    let token = PID_OUT | (1u32 << 15) | (0u32 << 21);
+    let buffer = 0x3800;
+    for &td in &[TD_ADDR, td2] {
+        mem.write_u32(td + 4, TD_STATUS_ACTIVE);
+        mem.write_u32(td + 8, token);
+        mem.write_u32(td + 12, buffer);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert!(ctrl.irq_level());
+}
+
+#[test]
+fn uhci_long_active_td_chain_budget_sets_hse_and_errint() {
+    let mut ctrl = UhciController::new();
+    // Allocate enough space for a long TD chain.
+    let mut mem = TestMem::new(0x20000);
+
+    ctrl.hub_mut()
+        .attach(0, Box::new(AlwaysAckDevice::default()));
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, TD_ADDR);
+
+    let token = PID_OUT | (1u32 << 15) | (0u32 << 21);
+    let buffer = 0x18000;
+    // Build an acyclic chain long enough to exceed the internal TD-walking budget.
+    let chain_len = 4096u32;
+    for i in 0..chain_len {
+        let td = TD_ADDR + i * 0x10;
+        let next = if i + 1 < chain_len {
+            TD_ADDR + (i + 1) * 0x10
+        } else {
+            LINK_PTR_T
+        };
+        mem.write_u32(td, next);
+        mem.write_u32(td + 4, TD_STATUS_ACTIVE);
+        mem.write_u32(td + 8, token);
+        mem.write_u32(td + 12, buffer);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    let fr0 = ctrl.io_read(regs::REG_FRNUM, 2) as u16;
+    ctrl.tick_1ms(&mut mem);
+    let fr1 = ctrl.io_read(regs::REG_FRNUM, 2) as u16;
+    assert_eq!(fr1, (fr0 + 1) & 0x07ff);
 
     let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
     assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
