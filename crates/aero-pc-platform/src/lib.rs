@@ -708,67 +708,6 @@ impl MmioHandler for SharedPciBarMmioRouterMmio {
     }
 }
 
-/// Generic adapter for PCI device models that maintain an internal PCI config image and need more
-/// than just `COMMAND` + BAR base synchronization.
-///
-/// This is similar to [`PciConfigSyncedMmioBar`], but syncs the full config-space *state* (including
-/// capability-backed state such as MSI enable/address/data) from the platform's canonical PCI config
-/// space on every MMIO access.
-///
-/// This is used for devices that can raise MSI interrupts as a direct side effect of MMIO accesses
-/// (e.g. xHCI asserting an interrupt on a RUN edge). In such cases, syncing only `COMMAND` is not
-/// sufficient: MSI must be reflected immediately for correctness.
-struct PciConfigStateSyncedMmio<T> {
-    pci_cfg: SharedPciConfigPorts,
-    dev: Rc<RefCell<T>>,
-    bdf: PciBdf,
-}
-
-impl<T> PciConfigStateSyncedMmio<T> {
-    fn new(pci_cfg: SharedPciConfigPorts, dev: Rc<RefCell<T>>, bdf: PciBdf) -> Self {
-        Self { pci_cfg, dev, bdf }
-    }
-}
-
-impl<T: PciDevice> PciConfigStateSyncedMmio<T> {
-    fn sync_pci_state(&mut self) {
-        let pci_state = {
-            let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(self.bdf)
-                .map(|cfg| cfg.snapshot_state())
-        };
-
-        if let Some(state) = pci_state {
-            self.dev.borrow_mut().config_mut().restore_state(&state);
-        }
-    }
-}
-
-impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigStateSyncedMmio<T> {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if !(1..=8).contains(&size) {
-            return all_ones(size);
-        }
-        self.sync_pci_state();
-        MmioHandler::read(&mut *self.dev.borrow_mut(), offset, size) & all_ones(size)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if !(1..=8).contains(&size) {
-            return;
-        }
-        self.sync_pci_state();
-        MmioHandler::write(
-            &mut *self.dev.borrow_mut(),
-            offset,
-            size,
-            value & all_ones(size),
-        );
-    }
-}
-
 #[derive(Clone)]
 struct PciIoBarRouterPort {
     router: SharedPciIoBarRouter,
@@ -2281,12 +2220,14 @@ impl PcPlatform {
             let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
             let bar = XhciPciDevice::MMIO_BAR_INDEX;
             // xHCI can raise an interrupt as an immediate side effect of MMIO writes (e.g. RUN
-            // edges). Mirror the full PCI config space state (including MSI) on every MMIO access
-            // so MSI enable/address changes take effect immediately.
-            let handler = Rc::new(RefCell::new(PciConfigStateSyncedMmio::new(
+            // edges). Keep the device model's internal PCI config image synchronized (including
+            // MSI/MSI-X enable + message fields) so interrupt delivery observes the guest's latest
+            // config space programming.
+            let handler = Rc::new(RefCell::new(PciConfigSyncedMmioBar::new(
                 pc.pci_cfg.clone(),
                 xhci,
                 bdf,
+                bar,
             )));
             pc.register_pci_mmio_bar_handler(bdf, bar, handler);
         }
