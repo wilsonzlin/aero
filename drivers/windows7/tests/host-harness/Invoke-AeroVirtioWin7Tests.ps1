@@ -302,6 +302,7 @@ param(
 
   # If set, print the computed QEMU argument list and exit 0 without launching QEMU (or starting the HTTP server).
   [Parameter(Mandatory = $false)]
+  [Alias("PrintQemuArgs")]
   [switch]$DryRun,
 
   # Extra args passed verbatim to QEMU (advanced use).
@@ -5119,6 +5120,11 @@ if ($DryRun) {
       "-device", $blk
     ) + $virtioSndArgs + $QemuExtraArgs
   }
+
+  # First line: machine-readable JSON argv array (parity with the Python harness dry-run mode).
+  $argvJson = ConvertTo-Json -Compress -InputObject (@($qemuSystemResolved) + $qemuArgs)
+  Write-Host $argvJson
+  Write-Host ""
 
   Write-Host "DryRun: QEMU argv (one per line):"
   Write-Host "  $qemuSystemResolved"

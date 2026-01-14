@@ -54,6 +54,9 @@ class DryRunQemuCmdTests(unittest.TestCase):
                 mock.patch.object(sys, "argv", argv),
                 mock.patch.object(self.harness.subprocess, "run") as mock_run,
                 mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                mock.patch.object(
+                    self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
+                ),
                 contextlib.redirect_stdout(out),
             ):
                 rc = self.harness.main()
@@ -61,6 +64,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
             self.assertEqual(rc, 0)
 
             stdout = out.getvalue()
+            self.assertIn("qemu-system", stdout)
             # Expect the modern-only virtio-net device arg in default (contract-v1) mode.
             self.assertIn(
                 "-device virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision=0x01",
@@ -140,6 +144,9 @@ class DryRunQemuCmdTests(unittest.TestCase):
                 mock.patch.object(sys, "argv", argv),
                 mock.patch.object(self.harness.subprocess, "run") as mock_run,
                 mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                mock.patch.object(
+                    self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
+                ),
                 contextlib.redirect_stdout(out),
             ):
                 rc = self.harness.main()
