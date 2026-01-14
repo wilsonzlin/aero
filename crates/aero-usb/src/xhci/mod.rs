@@ -3165,9 +3165,15 @@ impl XhciController {
         // Even if the pointer is malformed (misaligned), treat it as "present" so we do not fall
         // back to controller-local ring cursors (which could otherwise cause DMA based on stale
         // snapshot state).
+        //
+        // Also treat the slot as having a guest context if we've previously observed a non-zero
+        // Device Context pointer for it. This prevents a guest (or malformed snapshot) from
+        // clearing DCBAA[slot] back to 0 and re-enabling DMA via controller-local shadow ring
+        // cursors.
         let guest_ctx_present = self
             .read_device_context_ptr_raw(mem, slot_id)
-            .is_some_and(|raw| raw != 0);
+            .is_some_and(|raw| raw != 0)
+            || slot.device_context_ptr != 0;
 
         let guest_endpoint_state = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id);
         if let Some(state) = guest_endpoint_state {
