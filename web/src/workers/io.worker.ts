@@ -235,6 +235,7 @@ import {
   MAX_INPUT_EVENTS_PER_BATCH,
   validateInputBatchBuffer,
 } from "./io_input_batch";
+import { MAX_INPUT_BATCH_RECYCLE_BYTES, shouldRecycleInputBatchBuffer } from "./input_batch_recycle_guard";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -639,9 +640,27 @@ const MAX_QUEUED_SNAPSHOT_PAUSED_BYTES = 16 * 1024 * 1024;
 let queuedSnapshotPausedBytes = 0;
 const queuedSnapshotPausedMessages: unknown[] = [];
 
-const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
+const MAX_QUEUED_INPUT_BATCH_BYTES = MAX_INPUT_BATCH_RECYCLE_BYTES;
 let queuedInputBatchBytes = 0;
 const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
+
+function postInputBatchRecycle(buffer: ArrayBuffer): void {
+  // Input batch recycling is a performance optimization. Avoid recycling extremely large buffers so
+  // a malicious or buggy sender cannot force the main thread's recycle pool to retain unbounded
+  // memory. The cap matches `MAX_QUEUED_INPUT_BATCH_BYTES` (used to bound snapshot-paused input
+  // buffering) so existing tests that intentionally allocate up to that limit remain supported.
+  if (!shouldRecycleInputBatchBuffer(buffer, MAX_QUEUED_INPUT_BATCH_BYTES)) return;
+  const msg: InputBatchRecycleMessage = { type: "in:input-batch-recycle", buffer };
+  try {
+    ctx.postMessage(msg, [buffer]);
+  } catch {
+    try {
+      ctx.postMessage(msg);
+    } catch {
+      // ignore
+    }
+  }
+}
 
 function estimateQueuedSnapshotPausedBytes(msg: unknown): number {
   // We only estimate byte sizes for the high-frequency, byte-bearing message types.
@@ -696,7 +715,7 @@ function flushQueuedInputBatches(): void {
       handleInputBatch(entry.buffer);
     }
     if (entry.recycle) {
-      ctx.postMessage({ type: "in:input-batch-recycle", buffer: entry.buffer } satisfies InputBatchRecycleMessage, [entry.buffer]);
+      postInputBatchRecycle(entry.buffer);
     }
   }
 }
@@ -5087,16 +5106,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const msg = data as Partial<InputBatchMessage> & { recycle?: unknown };
         const buffer = msg.buffer;
         if (buffer instanceof ArrayBuffer && msg.recycle === true) {
-          const recycleMsg: InputBatchRecycleMessage = { type: "in:input-batch-recycle", buffer };
-          try {
-            ctx.postMessage(recycleMsg, [buffer]);
-          } catch {
-            try {
-              ctx.postMessage(recycleMsg);
-            } catch {
-              // ignore
-            }
-          }
+          postInputBatchRecycle(buffer);
         }
         machineHostOnlyUnavailable(machineHostOnlyMessageLabel(data));
         return;
@@ -5726,7 +5736,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
           if (status) Atomics.add(status, StatusIndex.IoInputBatchDropCounter, 1);
           if (recycle) {
-            ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
+            postInputBatchRecycle(buffer);
           }
         }
         return;
@@ -5735,7 +5745,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         handleInputBatch(buffer);
       }
       if (recycle) {
-        ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
+        postInputBatchRecycle(buffer);
       }
       return;
     }

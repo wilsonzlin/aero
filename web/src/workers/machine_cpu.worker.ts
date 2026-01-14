@@ -61,6 +61,7 @@ import {
 import type { WasmApi } from "../runtime/wasm_loader";
 import { diskMetaToOpfsCowPaths } from "../storage/opfs_paths";
 import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
+import { MAX_INPUT_BATCH_RECYCLE_BYTES, shouldRecycleInputBatchBuffer } from "./input_batch_recycle_guard";
 
 function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, but OPFS write streams
@@ -318,7 +319,7 @@ const BIOS_DRIVE_CD0 = 0xe0;
 const BIOS_DRIVE_CD_LAST = 0xef;
 
 const MAX_INPUT_BATCHES_PER_TICK = 8;
-const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
+const MAX_QUEUED_INPUT_BATCH_BYTES = MAX_INPUT_BATCH_RECYCLE_BYTES;
 let queuedInputBatchBytes = 0;
 const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
 
@@ -1124,6 +1125,11 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
 }
 
 function postInputBatchRecycle(buffer: ArrayBuffer): void {
+  // Input batch recycling is a performance optimization. Avoid recycling extremely large buffers so
+  // a malicious or buggy sender cannot force the main thread's recycle pool to retain unbounded
+  // memory. The cap matches `MAX_QUEUED_INPUT_BATCH_BYTES` (used to bound snapshot-paused input
+  // buffering) so tests that intentionally allocate up to that limit remain supported.
+  if (!shouldRecycleInputBatchBuffer(buffer, MAX_QUEUED_INPUT_BATCH_BYTES)) return;
   const msg: InputBatchRecycleMessage = { type: "in:input-batch-recycle", buffer };
   try {
     ctx.postMessage(msg, [buffer]);
