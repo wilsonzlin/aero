@@ -7392,30 +7392,11 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   }
   dev->current_cs_uavs.fill(nullptr);
 
-  dev->current_rtv_count = 0;
-  dev->current_rtvs.fill(0);
-  dev->current_rtv_resources.fill(nullptr);
-  dev->current_dsv = 0;
-  dev->current_dsv_resource = nullptr;
+  // Resource binding pointer caches used for hazard tracking / software rasterizer.
   dev->current_vs_srvs.fill(nullptr);
   dev->current_ps_srvs.fill(nullptr);
   dev->current_gs_srvs.fill(nullptr);
   dev->current_cs_srvs.fill(nullptr);
-  dev->current_vs = 0;
-  dev->current_ps = 0;
-  dev->current_cs = 0;
-  dev->current_gs = 0;
-  dev->current_input_layout = 0;
-  dev->current_input_layout_obj = nullptr;
-  dev->current_vb_resources.fill(nullptr);
-  dev->current_vb_strides_bytes.fill(0);
-  dev->current_vb_offsets_bytes.fill(0);
-  dev->current_vb = nullptr;
-  dev->current_vb_stride_bytes = 0;
-  dev->current_vb_offset_bytes = 0;
-  dev->current_ib = nullptr;
-  dev->current_ib_format = kDxgiFormatUnknown;
-  dev->current_ib_offset_bytes = 0;
   dev->current_vs_cb0 = nullptr;
   dev->current_vs_cb0_first_constant = 0;
   dev->current_vs_cb0_num_constants = 0;
@@ -7428,28 +7409,6 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_vs_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
   dev->current_ps_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
   dev->current_ps_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  dev->current_dss = nullptr;
-  dev->current_stencil_ref = 0;
-  dev->current_rs = nullptr;
-  dev->current_bs = nullptr;
-  dev->current_blend_factor[0] = 1.0f;
-  dev->current_blend_factor[1] = 1.0f;
-  dev->current_blend_factor[2] = 1.0f;
-  dev->current_blend_factor[3] = 1.0f;
-  dev->current_sample_mask = kD3DSampleMaskAll;
-  dev->scissor_valid = false;
-  dev->scissor_left = 0;
-  dev->scissor_top = 0;
-  dev->scissor_right = 0;
-  dev->scissor_bottom = 0;
-  dev->current_vs_forced_z_valid = false;
-  dev->current_vs_forced_z = 0.0f;
-  dev->viewport_x = 0.0f;
-  dev->viewport_y = 0.0f;
-  dev->viewport_width = 0.0f;
-  dev->viewport_height = 0.0f;
-  dev->viewport_min_depth = 0.0f;
-  dev->viewport_max_depth = 1.0f;
 
   // Reset input-assembler state to D3D11 defaults.
   //
@@ -7464,6 +7423,8 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   }
   il_cmd->input_layout_handle = 0;
   il_cmd->reserved0 = 0;
+  dev->current_input_layout = 0;
+  dev->current_input_layout_obj = nullptr;
 
   const uint32_t default_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   auto* topo_cmd =
@@ -7485,6 +7446,12 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   }
   vb_cmd->start_slot = 0;
   vb_cmd->buffer_count = static_cast<uint32_t>(vb_zeros.size());
+  dev->current_vb_resources.fill(nullptr);
+  dev->current_vb_strides_bytes.fill(0);
+  dev->current_vb_offsets_bytes.fill(0);
+  dev->current_vb = nullptr;
+  dev->current_vb_stride_bytes = 0;
+  dev->current_vb_offset_bytes = 0;
 
   auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!ib_cmd) {
@@ -7495,14 +7462,49 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
+  dev->current_ib = nullptr;
+  dev->current_ib_format = kDxgiFormatUnknown;
+  dev->current_ib_offset_bytes = 0;
 
-  EmitSetRenderTargetsLocked(dev);
+  std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> rtv_zeros{};
+  if (!AppendSetRenderTargetsCmdLocked(dev, /*rtv_count=*/0, rtv_zeros, /*dsv=*/0)) {
+    return;
+  }
+  dev->current_rtv_count = 0;
+  dev->current_rtvs.fill(0);
+  dev->current_rtv_resources.fill(nullptr);
+  dev->current_dsv = 0;
+  dev->current_dsv_resource = nullptr;
 
-  (void)EmitBlendStateLocked(dev, nullptr, dev->current_blend_factor, dev->current_sample_mask);
-  (void)EmitDepthStencilStateLocked(dev, nullptr);
-  (void)EmitRasterizerStateLocked(dev, nullptr);
+  const float default_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  const uint32_t default_sample_mask = kD3DSampleMaskAll;
+  if (!EmitBlendStateLocked(dev, nullptr, default_blend_factor, default_sample_mask)) {
+    return;
+  }
+  dev->current_bs = nullptr;
+  std::memcpy(dev->current_blend_factor, default_blend_factor, sizeof(dev->current_blend_factor));
+  dev->current_sample_mask = default_sample_mask;
 
-  (void)EmitBindShadersLocked(dev);
+  if (!EmitDepthStencilStateLocked(dev, nullptr)) {
+    return;
+  }
+  dev->current_dss = nullptr;
+  dev->current_stencil_ref = 0;
+
+  if (!EmitRasterizerStateLocked(dev, nullptr)) {
+    return;
+  }
+  dev->current_rs = nullptr;
+
+  if (!EmitBindShadersCmdLocked(dev, /*vs=*/0, /*ps=*/0, /*cs=*/0, /*gs=*/0)) {
+    return;
+  }
+  dev->current_vs = 0;
+  dev->current_ps = 0;
+  dev->current_cs = 0;
+  dev->current_gs = 0;
+  dev->current_vs_forced_z_valid = false;
+  dev->current_vs_forced_z = 0.0f;
 
   // Reset viewport/scissor state as part of ClearState. The AeroGPU protocol
   // uses a degenerate (0x0) viewport/scissor to encode "use default".
