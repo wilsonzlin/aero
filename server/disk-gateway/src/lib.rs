@@ -50,16 +50,36 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        let bind = std::env::var("DISK_GATEWAY_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
+        let bind = match std::env::var("DISK_GATEWAY_BIND") {
+            Ok(v) => v,
+            Err(std::env::VarError::NotPresent) => "127.0.0.1:3000".to_owned(),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidEnv("DISK_GATEWAY_BIND"));
+            }
+        };
         let bind: SocketAddr = bind
             .parse()
             .map_err(|_| ConfigError::InvalidEnv("DISK_GATEWAY_BIND"))?;
-        let public_dir =
-            std::env::var("DISK_GATEWAY_PUBLIC_DIR").unwrap_or_else(|_| "./public-images".into());
-        let private_dir =
-            std::env::var("DISK_GATEWAY_PRIVATE_DIR").unwrap_or_else(|_| "./private-images".into());
-        let token_secret = std::env::var("DISK_GATEWAY_TOKEN_SECRET")
-            .map_err(|_| ConfigError::MissingEnv("DISK_GATEWAY_TOKEN_SECRET"))?;
+
+        let public_dir = std::env::var_os("DISK_GATEWAY_PUBLIC_DIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("./public-images"));
+        let private_dir = std::env::var_os("DISK_GATEWAY_PRIVATE_DIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("./private-images"));
+
+        let token_secret = match std::env::var("DISK_GATEWAY_TOKEN_SECRET") {
+            Ok(v) if !v.trim().is_empty() => v,
+            Ok(_) => return Err(ConfigError::InvalidEnv("DISK_GATEWAY_TOKEN_SECRET")),
+            Err(std::env::VarError::NotPresent) => {
+                return Err(ConfigError::MissingEnv("DISK_GATEWAY_TOKEN_SECRET"));
+            }
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidEnv("DISK_GATEWAY_TOKEN_SECRET"));
+            }
+        };
         let cors_allowed_origins = AllowedOrigins::from_env()?;
         let corp_policy = CorpPolicy::from_env()?;
         let lease_ttl = std::env::var("DISK_GATEWAY_LEASE_TTL_SECONDS")
@@ -80,8 +100,8 @@ impl Config {
 
         Ok(Self {
             bind,
-            public_dir: PathBuf::from(public_dir),
-            private_dir: PathBuf::from(private_dir),
+            public_dir,
+            private_dir,
             token_secret,
             cors_allowed_origins,
             corp_policy,
@@ -133,13 +153,25 @@ mod config_env_tests {
         let _guard = ENV_LOCK.lock().unwrap();
 
         let prev_bind = std::env::var_os("DISK_GATEWAY_BIND");
+        let prev_public = std::env::var_os("DISK_GATEWAY_PUBLIC_DIR");
+        let prev_private = std::env::var_os("DISK_GATEWAY_PRIVATE_DIR");
+        let prev_cors = std::env::var_os("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        let prev_corp = std::env::var_os("DISK_GATEWAY_CORP");
         let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
         std::env::remove_var("DISK_GATEWAY_BIND");
+        std::env::remove_var("DISK_GATEWAY_PUBLIC_DIR");
+        std::env::remove_var("DISK_GATEWAY_PRIVATE_DIR");
+        std::env::remove_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        std::env::remove_var("DISK_GATEWAY_CORP");
 
         let cfg = Config::from_env().expect("Config::from_env should succeed with defaults");
         assert_eq!(cfg.bind, "127.0.0.1:3000".parse().unwrap());
 
         restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_PUBLIC_DIR", prev_public);
+        restore_var("DISK_GATEWAY_PRIVATE_DIR", prev_private);
+        restore_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS", prev_cors);
+        restore_var("DISK_GATEWAY_CORP", prev_corp);
         restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
     }
 
@@ -148,7 +180,11 @@ mod config_env_tests {
         let _guard = ENV_LOCK.lock().unwrap();
 
         let prev_bind = set_var_scoped("DISK_GATEWAY_BIND", "not-a-socket-addr");
+        let prev_cors = std::env::var_os("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        let prev_corp = std::env::var_os("DISK_GATEWAY_CORP");
         let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
+        std::env::remove_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        std::env::remove_var("DISK_GATEWAY_CORP");
 
         let err = Config::from_env().expect_err("expected Config::from_env to reject invalid bind");
         match err {
@@ -157,7 +193,142 @@ mod config_env_tests {
         }
 
         restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS", prev_cors);
+        restore_var("DISK_GATEWAY_CORP", prev_corp);
         restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+
+    #[test]
+    fn from_env_rejects_empty_token_secret() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let prev_bind = std::env::var_os("DISK_GATEWAY_BIND");
+        let prev_cors = std::env::var_os("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        let prev_corp = std::env::var_os("DISK_GATEWAY_CORP");
+        let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "   ");
+        std::env::remove_var("DISK_GATEWAY_BIND");
+        std::env::remove_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        std::env::remove_var("DISK_GATEWAY_CORP");
+
+        let err = Config::from_env().expect_err("expected Config::from_env to reject empty secret");
+        match err {
+            ConfigError::InvalidEnv(var) => assert_eq!(var, "DISK_GATEWAY_TOKEN_SECRET"),
+            other => panic!("expected InvalidEnv, got {other:?}"),
+        }
+
+        restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS", prev_cors);
+        restore_var("DISK_GATEWAY_CORP", prev_corp);
+        restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_env_rejects_non_utf8_bind() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let prev_bind =
+            set_var_scoped_os("DISK_GATEWAY_BIND", OsString::from_vec(vec![0xFF, 0xFE, 0xFD]));
+        let prev_cors = std::env::var_os("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        let prev_corp = std::env::var_os("DISK_GATEWAY_CORP");
+        let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
+        std::env::remove_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        std::env::remove_var("DISK_GATEWAY_CORP");
+
+        let err = Config::from_env().expect_err("expected Config::from_env to reject non-utf8 bind");
+        match err {
+            ConfigError::InvalidEnv(var) => assert_eq!(var, "DISK_GATEWAY_BIND"),
+            other => panic!("expected InvalidEnv, got {other:?}"),
+        }
+
+        restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS", prev_cors);
+        restore_var("DISK_GATEWAY_CORP", prev_corp);
+        restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_env_accepts_non_utf8_public_dir() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let prev_public = set_var_scoped_os(
+            "DISK_GATEWAY_PUBLIC_DIR",
+            OsString::from_vec(vec![b'p', b'u', b'b', 0xFF]),
+        );
+        let prev_private = std::env::var_os("DISK_GATEWAY_PRIVATE_DIR");
+        let prev_bind = std::env::var_os("DISK_GATEWAY_BIND");
+        let prev_cors = std::env::var_os("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        let prev_corp = std::env::var_os("DISK_GATEWAY_CORP");
+        let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
+        std::env::remove_var("DISK_GATEWAY_PRIVATE_DIR");
+        std::env::remove_var("DISK_GATEWAY_BIND");
+        std::env::remove_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS");
+        std::env::remove_var("DISK_GATEWAY_CORP");
+
+        let cfg = Config::from_env().expect("expected Config::from_env to accept non-utf8 dirs");
+        assert_eq!(
+            cfg.public_dir.as_os_str().as_bytes(),
+            [b'p', b'u', b'b', 0xFF]
+        );
+
+        restore_var("DISK_GATEWAY_PUBLIC_DIR", prev_public);
+        restore_var("DISK_GATEWAY_PRIVATE_DIR", prev_private);
+        restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS", prev_cors);
+        restore_var("DISK_GATEWAY_CORP", prev_corp);
+        restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_env_rejects_non_utf8_cors_allowed_origins() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let prev_bind = std::env::var_os("DISK_GATEWAY_BIND");
+        let prev_public = std::env::var_os("DISK_GATEWAY_PUBLIC_DIR");
+        let prev_private = std::env::var_os("DISK_GATEWAY_PRIVATE_DIR");
+        let prev_cors = set_var_scoped_os(
+            "DISK_GATEWAY_CORS_ALLOWED_ORIGINS",
+            OsString::from_vec(vec![0xFF, 0xFE, 0xFD]),
+        );
+        let prev_corp = std::env::var_os("DISK_GATEWAY_CORP");
+        let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
+        std::env::remove_var("DISK_GATEWAY_BIND");
+        std::env::remove_var("DISK_GATEWAY_PUBLIC_DIR");
+        std::env::remove_var("DISK_GATEWAY_PRIVATE_DIR");
+        std::env::remove_var("DISK_GATEWAY_CORP");
+
+        let err = Config::from_env()
+            .expect_err("expected Config::from_env to reject non-utf8 cors origins");
+        match err {
+            ConfigError::InvalidEnv(var) => assert_eq!(var, "DISK_GATEWAY_CORS_ALLOWED_ORIGINS"),
+            other => panic!("expected InvalidEnv, got {other:?}"),
+        }
+
+        restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_PUBLIC_DIR", prev_public);
+        restore_var("DISK_GATEWAY_PRIVATE_DIR", prev_private);
+        restore_var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS", prev_cors);
+        restore_var("DISK_GATEWAY_CORP", prev_corp);
+        restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+
+    #[cfg(unix)]
+    fn set_var_scoped_os(key: &str, value: std::ffi::OsString) -> Option<std::ffi::OsString> {
+        let prev = std::env::var_os(key);
+        std::env::set_var(key, value);
+        prev
     }
 }
 
@@ -169,7 +340,13 @@ pub enum AllowedOrigins {
 
 impl AllowedOrigins {
     fn from_env() -> Result<Self, ConfigError> {
-        let raw = std::env::var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS").unwrap_or_else(|_| "*".into());
+        let raw = match std::env::var("DISK_GATEWAY_CORS_ALLOWED_ORIGINS") {
+            Ok(v) => v,
+            Err(std::env::VarError::NotPresent) => "*".to_owned(),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidEnv("DISK_GATEWAY_CORS_ALLOWED_ORIGINS"));
+            }
+        };
         let raw = raw.trim();
         if raw == "*" || raw.is_empty() {
             return Ok(Self::Any);
@@ -216,7 +393,13 @@ pub enum CorpPolicy {
 
 impl CorpPolicy {
     fn from_env() -> Result<Self, ConfigError> {
-        let raw = std::env::var("DISK_GATEWAY_CORP").unwrap_or_else(|_| "same-site".into());
+        let raw = match std::env::var("DISK_GATEWAY_CORP") {
+            Ok(v) => v,
+            Err(std::env::VarError::NotPresent) => "same-site".to_owned(),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidEnv("DISK_GATEWAY_CORP"));
+            }
+        };
         match raw.trim() {
             "same-site" => Ok(Self::SameSite),
             "cross-origin" => Ok(Self::CrossOrigin),
