@@ -450,30 +450,31 @@ export class RemoteCacheManager {
       throw new Error(`invalid validators.sizeBytes=${opts.validators.sizeBytes}`);
     }
 
-    const expectedValidators: RemoteCacheMetaV1["validators"] = {
-      sizeBytes: opts.validators.sizeBytes,
-      etag: normalizeOptionalHeader(opts.validators.etag),
-      lastModified: normalizeOptionalHeader(opts.validators.lastModified),
-    };
+    const expectedValidators: RemoteCacheMetaV1["validators"] = Object.create(null) as RemoteCacheMetaV1["validators"];
+    expectedValidators.sizeBytes = opts.validators.sizeBytes;
+    const expectedEtag = normalizeOptionalHeader(opts.validators.etag);
+    if (expectedEtag !== undefined) expectedValidators.etag = expectedEtag;
+    const expectedLastModified = normalizeOptionalHeader(opts.validators.lastModified);
+    if (expectedLastModified !== undefined) expectedValidators.lastModified = expectedLastModified;
 
     let invalidated = false;
     let meta = await this.readMeta(cacheKey);
     if (!meta || meta.chunkSizeBytes !== opts.chunkSizeBytes || !validatorsMatch(meta.validators, expectedValidators)) {
       invalidated = meta !== null;
       await this.clearCache(cacheKey);
-      meta = {
-        version: META_VERSION,
-        imageId: parts.imageId,
-        imageVersion: parts.version,
-        deliveryType: parts.deliveryType,
-        validators: expectedValidators,
-        chunkSizeBytes: opts.chunkSizeBytes,
-        createdAtMs: now,
-        lastAccessedAtMs: now,
-        accessCounter: 0,
-        chunkLastAccess: {},
-        cachedRanges: [],
-      };
+      const next = Object.create(null) as RemoteCacheMetaV1;
+      next.version = META_VERSION;
+      next.imageId = parts.imageId;
+      next.imageVersion = parts.version;
+      next.deliveryType = parts.deliveryType;
+      next.validators = expectedValidators;
+      next.chunkSizeBytes = opts.chunkSizeBytes;
+      next.createdAtMs = now;
+      next.lastAccessedAtMs = now;
+      next.accessCounter = 0;
+      next.chunkLastAccess = Object.create(null) as Record<string, number>;
+      next.cachedRanges = [];
+      meta = next;
       await this.writeMeta(cacheKey, meta);
     } else {
       // Touch: update the access timestamp (do not mutate cached ranges).
