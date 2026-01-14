@@ -114,6 +114,17 @@ fn translates_sync_all_memory_with_group_sync_to_wgsl() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert!(translated.wgsl.contains("storageBarrier()"));
     assert!(translated.wgsl.contains("workgroupBarrier()"));
+    // When both barriers are needed, ensure the storage barrier comes first so device-memory
+    // ordering is established before the final workgroup barrier.
+    let storage_pos = translated
+        .wgsl
+        .find("storageBarrier()")
+        .expect("missing storageBarrier()");
+    let workgroup_pos = translated
+        .wgsl
+        .find("workgroupBarrier()")
+        .expect("missing workgroupBarrier()");
+    assert!(storage_pos < workgroup_pos);
     assert_wgsl_validates(&translated.wgsl);
 }
 
