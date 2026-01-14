@@ -132,7 +132,7 @@ def _iter_query_pci_buses(query_pci_result: object) -> list[dict[str, object]]:
     return buses
 
 
-def _qemu_device_help_text(qemu_system: str) -> str | None:
+def _qemu_device_help_text(qemu_system: str) -> str:
     try:
         proc = subprocess.run(
             [qemu_system, "-device", "help"],
@@ -141,10 +141,13 @@ def _qemu_device_help_text(qemu_system: str) -> str | None:
             check=False,
             text=True,
         )
-    except FileNotFoundError:
-        return None
-    except OSError:
-        return None
+    except FileNotFoundError as e:
+        raise RuntimeError(f"qemu-system binary not found: {qemu_system}") from e
+    except OSError as e:
+        raise RuntimeError(f"failed to run '{qemu_system} -device help': {e}") from e
+    if proc.returncode != 0:
+        out = (proc.stdout or "").strip()
+        raise RuntimeError(f"failed to query QEMU device list (exit={proc.returncode}). Output:\n{out}")
     return proc.stdout or ""
 
 
@@ -388,9 +391,10 @@ def main() -> int:
 
     device_help_text: Final[str] = ""
     if args.with_virtio_snd or args.with_virtio_tablet:
-        help_text = _qemu_device_help_text(args.qemu_system)
-        if help_text is None:
-            print(f"ERROR: qemu-system binary not found: {args.qemu_system}", file=sys.stderr)
+        try:
+            help_text = _qemu_device_help_text(args.qemu_system)
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
             return 2
         device_help_text = help_text or ""
 
