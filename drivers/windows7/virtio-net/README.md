@@ -48,7 +48,6 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
   - TCP/UDP checksum offload (IPv4/IPv6) via `VIRTIO_NET_F_CSUM`
   - TCP segmentation offload (TSO/LSO, IPv4/IPv6) via `VIRTIO_NET_F_HOST_TSO4` / `VIRTIO_NET_F_HOST_TSO6`
     (uses `virtio_net_hdr` GSO fields)
-    (uses `virtio_net_hdr` GSO fields)
 - RX checksum reporting (optional; when offered by the host and negotiated):
   - When `VIRTIO_NET_F_GUEST_CSUM` is negotiated and the device sets `VIRTIO_NET_HDR_F_DATA_VALID` in the RX `virtio_net_hdr`,
     the driver indicates the checksum success to NDIS via `TcpIpChecksumNetBufferListInfo` so the Windows stack can skip software
