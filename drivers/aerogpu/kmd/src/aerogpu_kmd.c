@@ -9488,7 +9488,18 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         ULONGLONG lastSubmittedFenceSnapshot = AeroGpuAtomicReadU64(&adapter->LastSubmittedFence);
         ULONGLONG lastCompletedFenceSnapshot = AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
         BOOLEAN haveCompletedFence = FALSE;
-        if ((handled & (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR)) != 0) {
+        /*
+         * Update completed fence tracking whenever the device reports a fence advancement, even if
+         * dxgkrnl has temporarily masked DMA_COMPLETED interrupt delivery.
+         *
+         * The KMD still needs a reasonably fresh LastCompletedFence for internal bookkeeping:
+         * - retiring PendingSubmissions (contiguous DMA buffers, dbgctl READ_GPA, etc.)
+         * - debugging forward progress via dbgctl QUERY_FENCE/QUERY_PERF
+         *
+         * Note: we only *notify* dxgkrnl of DMA_COMPLETED when the fence interrupt is enabled
+         * (handled & IRQ_FENCE), but we track the fence regardless when IRQ_STATUS reports it.
+         */
+        if ((status & AEROGPU_IRQ_FENCE) != 0 || (handled & AEROGPU_IRQ_ERROR) != 0) {
             completedFence64 = AeroGpuReadCompletedFence(adapter);
 
             /*
