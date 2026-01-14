@@ -74,6 +74,8 @@ constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
 constexpr uint32_t kD3dTaDiffuse = 0u;
 constexpr uint32_t kD3dTaTexture = 2u;
 constexpr uint32_t kD3dTaTFactor = 3u;
+constexpr uint32_t kD3dTaComplement = 0x10u;
+constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;
 
 // D3DRS_* render state IDs (from d3d9types.h).
 constexpr uint32_t kD3dRsAmbient = 26u;       // D3DRS_AMBIENT
@@ -89,6 +91,13 @@ constexpr uint32_t kD3dTransformWorld0 = 256u;
 constexpr uint32_t kPsOpAdd = 0x04000002u;
 constexpr uint32_t kPsOpMul = 0x04000005u;
 constexpr uint32_t kPsOpTexld = 0x04000042u;
+// Source register tokens used by the fixed-function ps_2_0 token builder
+// (`fixedfunc_ps20` in `aerogpu_d3d9_driver.cpp`). These validate that stage0
+// argument modifiers are encoded into the generated shader bytecode.
+constexpr uint32_t kPsSrcTemp0Comp = 0x06E40000u;  // (1 - r0.xyzw)
+constexpr uint32_t kPsSrcTemp0W = 0x00FF0000u;     // r0.wwww (alpha replicate)
+constexpr uint32_t kPsSrcInput0Comp = 0x16E40000u; // (1 - v0.xyzw)
+constexpr uint32_t kPsSrcInput0W = 0x10FF0000u;    // v0.wwww (alpha replicate)
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -5943,6 +5952,100 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
   return true;
 }
 
+bool TestStage0ArgModifiersEmitSourceMods() {
+  struct Case {
+    const char* name = nullptr;
+    uint32_t color_arg1 = kD3dTaTexture;
+    uint32_t expected_src_token = 0;
+    bool expect_texld = false;
+  };
+
+  const Case cases[] = {
+      {"color_texture_complement", kD3dTaTexture | kD3dTaComplement, kPsSrcTemp0Comp, /*expect_texld=*/true},
+      {"color_texture_alpha_replicate", kD3dTaTexture | kD3dTaAlphaReplicate, kPsSrcTemp0W, /*expect_texld=*/true},
+      {"color_diffuse_complement", kD3dTaDiffuse | kD3dTaComplement, kPsSrcInput0Comp, /*expect_texld=*/false},
+      {"color_diffuse_alpha_replicate", kD3dTaDiffuse | kD3dTaAlphaReplicate, kPsSrcInput0W, /*expect_texld=*/false},
+  };
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  for (const auto& c : cases) {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+    if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+      return false;
+    }
+
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      if (!Check(hr2 == S_OK, msg)) {
+        std::fprintf(stderr, "FAIL: %s (SetTextureStageState %s) hr=0x%08x\n", c.name, msg, static_cast<unsigned>(hr2));
+        return false;
+      }
+      return true;
+    };
+
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1, "COLOROP=SELECTARG1")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssColorArg1, c.color_arg1, "COLORARG1")) {
+      return false;
+    }
+    // Disable alpha stage so alpha replicate tokens are driven only by COLORARG1.
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable, "ALPHAOP=DISABLE")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr == S_OK, c.name)) {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "PS must be bound")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld) == c.expect_texld, "PS texld token expectation")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, c.expected_src_token), "PS contains expected source-mod token")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6470,6 +6573,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage0OpExpansionSelectsShadersAndCaches()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0ArgModifiersEmitSourceMods()) {
     return 1;
   }
   if (!aerogpu::TestTextureFactorRenderStateUpdatesPsConstantWhenUsed()) {
