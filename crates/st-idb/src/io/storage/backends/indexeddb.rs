@@ -6,10 +6,10 @@ use std::collections::HashSet;
 use wasm_bindgen::JsValue;
 
 const DEFAULT_BLOCK_SIZE: usize = 1024 * 1024; // 1 MiB
-// Hard cap to avoid absurd allocations from untrusted/corrupt metadata.
-//
-// Larger blocks can be useful for sequential throughput, but extremely large blocks cause
-// pathological I/O patterns and huge in-memory allocations when caching/reading blocks.
+                                               // Hard cap to avoid absurd allocations from untrusted/corrupt metadata.
+                                               //
+                                               // Larger blocks can be useful for sequential throughput, but extremely large blocks cause
+                                               // pathological I/O patterns and huge in-memory allocations when caching/reading blocks.
 const MAX_BLOCK_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 const META_STORE: &str = "meta";
 const BLOCKS_STORE: &str = "blocks";

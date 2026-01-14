@@ -70,74 +70,86 @@ fn bench_code_cache(c: &mut Criterion) {
     group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
 
     for &size in SIZES {
-        group.bench_with_input(BenchmarkId::new("get_cloned_hit", size), &size, |b, &size| {
-            let mut cache = CodeCache::new(size, 0);
-            for i in 0..size {
-                cache.insert(dummy_handle(i as u64, i as u32, 16));
-            }
-
-            let rips: Vec<u64> = (0..size as u64).collect();
-            let mut pos = 0usize;
-
-            b.iter(|| {
-                let mut checksum = 0u64;
-                for _ in 0..OPS_PER_ITER {
-                    let rip = rips[pos];
-                    pos = (pos + 1) % rips.len();
-                    let handle = cache.get_cloned(black_box(rip));
-                    checksum ^= handle
-                        .as_ref()
-                        .map(|h| u64::from(h.table_index))
-                        .unwrap_or(0);
+        group.bench_with_input(
+            BenchmarkId::new("get_cloned_hit", size),
+            &size,
+            |b, &size| {
+                let mut cache = CodeCache::new(size, 0);
+                for i in 0..size {
+                    cache.insert(dummy_handle(i as u64, i as u32, 16));
                 }
-                black_box(checksum);
-            });
-        });
 
-        group.bench_with_input(BenchmarkId::new("get_cloned_miss", size), &size, |b, &size| {
-            let mut cache = CodeCache::new(size, 0);
-            for i in 0..size {
-                cache.insert(dummy_handle(i as u64, i as u32, 16));
-            }
+                let rips: Vec<u64> = (0..size as u64).collect();
+                let mut pos = 0usize;
 
-            let miss_rip = (size as u64).wrapping_mul(0x1_0000).wrapping_add(123);
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let rip = rips[pos];
+                        pos = (pos + 1) % rips.len();
+                        let handle = cache.get_cloned(black_box(rip));
+                        checksum ^= handle
+                            .as_ref()
+                            .map(|h| u64::from(h.table_index))
+                            .unwrap_or(0);
+                    }
+                    black_box(checksum);
+                });
+            },
+        );
 
-            b.iter(|| {
-                let mut checksum = 0u64;
-                for _ in 0..OPS_PER_ITER {
-                    let handle = cache.get_cloned(black_box(miss_rip));
-                    checksum ^= handle.is_some() as u64;
+        group.bench_with_input(
+            BenchmarkId::new("get_cloned_miss", size),
+            &size,
+            |b, &size| {
+                let mut cache = CodeCache::new(size, 0);
+                for i in 0..size {
+                    cache.insert(dummy_handle(i as u64, i as u32, 16));
                 }
-                black_box(checksum);
-            });
-        });
+
+                let miss_rip = (size as u64).wrapping_mul(0x1_0000).wrapping_add(123);
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let handle = cache.get_cloned(black_box(miss_rip));
+                        checksum ^= handle.is_some() as u64;
+                    }
+                    black_box(checksum);
+                });
+            },
+        );
 
         // Replace existing keys: no eviction, but exercises HashMap replacement + LRU relinking.
-        group.bench_with_input(BenchmarkId::new("insert_replace", size), &size, |b, &size| {
-            let mut cache = CodeCache::new(size, 0);
-            for i in 0..size {
-                cache.insert(dummy_handle(i as u64, i as u32, 16));
-            }
-
-            let rips: Vec<u64> = (0..size as u64).collect();
-            let mut pos = 0usize;
-            let mut gen = 0u32;
-
-            b.iter(|| {
-                let mut checksum = 0u64;
-                for _ in 0..OPS_PER_ITER {
-                    let rip = rips[pos];
-                    pos = (pos + 1) % rips.len();
-
-                    gen = gen.wrapping_add(1);
-                    let handle = dummy_handle(rip, gen, 16);
-                    let evicted = cache.insert(black_box(handle));
-                    checksum ^= evicted.len() as u64;
+        group.bench_with_input(
+            BenchmarkId::new("insert_replace", size),
+            &size,
+            |b, &size| {
+                let mut cache = CodeCache::new(size, 0);
+                for i in 0..size {
+                    cache.insert(dummy_handle(i as u64, i as u32, 16));
                 }
-                checksum ^= cache.len() as u64;
-                black_box(checksum);
-            });
-        });
+
+                let rips: Vec<u64> = (0..size as u64).collect();
+                let mut pos = 0usize;
+                let mut gen = 0u32;
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let rip = rips[pos];
+                        pos = (pos + 1) % rips.len();
+
+                        gen = gen.wrapping_add(1);
+                        let handle = dummy_handle(rip, gen, 16);
+                        let evicted = cache.insert(black_box(handle));
+                        checksum ^= evicted.len() as u64;
+                    }
+                    checksum ^= cache.len() as u64;
+                    black_box(checksum);
+                });
+            },
+        );
 
         // Insert distinct keys into a full cache so every insert triggers an eviction.
         group.bench_with_input(BenchmarkId::new("insert_evict", size), &size, |b, &size| {
@@ -251,4 +263,3 @@ criterion_group! {
 
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
-

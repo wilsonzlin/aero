@@ -206,7 +206,10 @@ impl WasmSharedGuestMemory {
         base_usize
             .checked_add(size as usize)
             .ok_or(GuestMemoryError::SizeTooLarge { size })?;
-        Ok(Self { base: base_usize, size })
+        Ok(Self {
+            base: base_usize,
+            size,
+        })
     }
 
     #[inline]
@@ -217,11 +220,14 @@ impl WasmSharedGuestMemory {
             len,
             size: self.size,
         })?;
-        let ptr = self.base.checked_add(start).ok_or(GuestMemoryError::OutOfRange {
-            paddr,
-            len,
-            size: self.size,
-        })?;
+        let ptr = self
+            .base
+            .checked_add(start)
+            .ok_or(GuestMemoryError::OutOfRange {
+                paddr,
+                len,
+                size: self.size,
+            })?;
         ptr.checked_add(len).ok_or(GuestMemoryError::OutOfRange {
             paddr,
             len,

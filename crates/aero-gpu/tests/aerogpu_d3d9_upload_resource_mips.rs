@@ -259,19 +259,11 @@ fn d3d9_upload_resource_uses_padded_mip0_row_pitch_for_mip_offsets() {
 
     writer.upload_resource(SRC_HANDLE, mip1_offset_bytes, &mip1_rgba);
     writer.copy_texture2d(
-        DST_HANDLE,
-        SRC_HANDLE,
-        0, // dst_mip_level
+        DST_HANDLE, SRC_HANDLE, 0, // dst_mip_level
         0, // dst_array_layer
         1, // src_mip_level
         0, // src_array_layer
-        0,
-        0,
-        0,
-        0,
-        mip1_w,
-        mip1_h,
-        0,
+        0, 0, 0, 0, mip1_w, mip1_h, 0,
     );
 
     exec.execute_cmd_stream(&writer.finish())

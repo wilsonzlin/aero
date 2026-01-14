@@ -92,7 +92,12 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     {
         let mut d = dev.borrow_mut();
         d.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, wddm_fb_gpa as u32);
-        d.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (wddm_fb_gpa >> 32) as u32);
+        d.mmio_write(
+            &mut mem,
+            mmio::SCANOUT0_FB_GPA_HI,
+            4,
+            (wddm_fb_gpa >> 32) as u32,
+        );
         d.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 128);
         d.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 96);
         d.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 128 * 4);

@@ -4,10 +4,9 @@ use aero_d3d11::binding_model::{
 };
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, Builtin, CmpOp,
-    CmpType, DxbcFile,
-    DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel,
-    ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
-    SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    CmpType, DxbcFile, DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef,
+    SamplerRef, ShaderModel, ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module,
+    Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -1025,9 +1024,9 @@ fn translates_usubb_emits_borrow_and_writes_both_destinations() {
     assert_wgsl_validates(&translated.wgsl);
 
     assert!(
-        translated
-            .wgsl
-            .contains("let usubb_borrow_0 = select(vec4<u32>(0u), vec4<u32>(1u), usubb_a_0 < usubb_b_0);"),
+        translated.wgsl.contains(
+            "let usubb_borrow_0 = select(vec4<u32>(0u), vec4<u32>(1u), usubb_a_0 < usubb_b_0);"
+        ),
         "expected borrow computation using `a < b`:\n{}",
         translated.wgsl
     );
@@ -1283,8 +1282,12 @@ fn rdef_cbuffer_arrays_expand_used_slots() {
     // Should declare the full b0..b3 range.
     assert!(translated.wgsl.contains("struct Cb0"));
     assert!(translated.wgsl.contains("struct Cb3"));
-    assert!(translated.wgsl.contains("@group(1) @binding(0) var<uniform> cb0"));
-    assert!(translated.wgsl.contains("@group(1) @binding(3) var<uniform> cb3"));
+    assert!(translated
+        .wgsl
+        .contains("@group(1) @binding(0) var<uniform> cb0"));
+    assert!(translated
+        .wgsl
+        .contains("@group(1) @binding(3) var<uniform> cb3"));
 
     // Reflection should include the expanded bindings with the RDEF-derived size (64 bytes -> 4 regs).
     for slot in 0..4 {
@@ -2025,9 +2028,7 @@ fn translates_if_bool_test_uses_raw_bits_for_boolean_masks() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(
-        translated
-            .wgsl
-            .contains("if (bitcast<u32>((r0).x) != 0u)"),
+        translated.wgsl.contains("if (bitcast<u32>((r0).x) != 0u)"),
         "expected `if_nz` to test raw bits via `bitcast<u32>`:\n{}",
         translated.wgsl
     );

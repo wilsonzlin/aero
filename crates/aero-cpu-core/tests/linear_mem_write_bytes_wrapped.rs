@@ -113,7 +113,9 @@ impl SplitTestBus {
             return Ok(&self.low[start..end]);
         }
 
-        let off = vaddr.checked_sub(self.high_base).ok_or(Exception::MemoryFault)?;
+        let off = vaddr
+            .checked_sub(self.high_base)
+            .ok_or(Exception::MemoryFault)?;
         let start = usize::try_from(off).map_err(|_| Exception::MemoryFault)?;
         let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
         if end > self.high.len() {
@@ -132,7 +134,9 @@ impl SplitTestBus {
             return Ok(&mut self.low[start..end]);
         }
 
-        let off = vaddr.checked_sub(self.high_base).ok_or(Exception::MemoryFault)?;
+        let off = vaddr
+            .checked_sub(self.high_base)
+            .ok_or(Exception::MemoryFault)?;
         let start = usize::try_from(off).map_err(|_| Exception::MemoryFault)?;
         let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
         if end > self.high.len() {

@@ -294,7 +294,11 @@ fn xhci_bulk_out_nak_leaves_trb_pending_until_ack() {
         normal_trb_addr,
         make_normal_trb(buf, payload.len() as u32, true, false, true),
     );
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let out_received = Rc::new(RefCell::new(Vec::new()));
     let dev = BulkOutNakOnceDevice::new(out_received.clone());
@@ -306,7 +310,10 @@ fn xhci_bulk_out_nak_leaves_trb_pending_until_ack() {
     xhci.tick_1ms(&mut mem);
     assert!(xhci.take_events().is_empty());
     assert!(out_received.borrow().is_empty());
-    assert_eq!(xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr, ring_base);
+    assert_eq!(
+        xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        ring_base
+    );
 
     // Second tick: device ACKs; TD completes and payload is delivered once.
     xhci.tick_1ms(&mut mem);
@@ -337,7 +344,11 @@ fn xhci_bulk_out_success_without_ioc_advances_ring_without_event() {
         normal_trb_addr,
         make_normal_trb(buf, payload.len() as u32, true, false, false),
     );
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     let out_received = Rc::new(RefCell::new(Vec::new()));
@@ -348,7 +359,10 @@ fn xhci_bulk_out_success_without_ioc_advances_ring_without_event() {
     xhci.tick_1ms(&mut mem);
 
     assert_eq!(out_received.borrow().as_slice(), &[payload.to_vec()]);
-    assert!(xhci.take_events().is_empty(), "IOC=0 should suppress event on success");
+    assert!(
+        xhci.take_events().is_empty(),
+        "IOC=0 should suppress event on success"
+    );
     assert_eq!(
         xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
         link_trb_addr
@@ -409,8 +423,16 @@ fn xhci_bulk_in_success_without_ioc_advances_ring_without_event() {
     let sentinel = [0xa5u8; 4];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, false));
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, true, false, false),
+    );
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
@@ -688,8 +710,16 @@ fn xhci_bulk_out_chained_normal_trbs_concatenate_payload() {
     mem.write(buf1 as u32, &[0x30, 0x40]);
 
     // TD: Normal (CH=1) then Normal (CH=0, IOC=1).
-    write_trb(&mut mem, trb0_addr, make_normal_trb(buf0, 2, true, true, false));
-    write_trb(&mut mem, trb1_addr, make_normal_trb(buf1, 2, true, false, true));
+    write_trb(
+        &mut mem,
+        trb0_addr,
+        make_normal_trb(buf0, 2, true, true, false),
+    );
+    write_trb(
+        &mut mem,
+        trb1_addr,
+        make_normal_trb(buf1, 2, true, false, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     let out_received = Rc::new(RefCell::new(Vec::new()));
@@ -763,7 +793,11 @@ fn xhci_bulk_in_timeout_completes_with_usb_transaction_error() {
     let sentinel = [0xa5u8; 4];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, ring_base, make_normal_trb(buf, 4, true, false, false));
+    write_trb(
+        &mut mem,
+        ring_base,
+        make_normal_trb(buf, 4, true, false, false),
+    );
 
     let mut xhci = XhciTransferExecutor::new(Box::new(TimeoutInDevice));
     xhci.add_endpoint(0x81, ring_base);
@@ -779,7 +813,10 @@ fn xhci_bulk_in_timeout_completes_with_usb_transaction_error() {
     assert_eq!(events[0].ep_addr, 0x81);
     assert_eq!(events[0].trb_ptr, ring_base);
     assert_eq!(events[0].residual, 4);
-    assert_eq!(events[0].completion_code, CompletionCode::UsbTransactionError);
+    assert_eq!(
+        events[0].completion_code,
+        CompletionCode::UsbTransactionError
+    );
     assert!(!xhci.endpoint_state(0x81).unwrap().halted);
     assert_eq!(
         xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
@@ -803,8 +840,16 @@ fn xhci_bulk_in_timeout_does_not_halt_and_allows_subsequent_trbs() {
     mem.write(buf1 as u32, &sentinel);
 
     // First TD will timeout; second TD should succeed.
-    write_trb(&mut mem, trb0_addr, make_normal_trb(buf0, 4, true, false, false));
-    write_trb(&mut mem, trb1_addr, make_normal_trb(buf1, 4, true, false, true));
+    write_trb(
+        &mut mem,
+        trb0_addr,
+        make_normal_trb(buf0, 4, true, false, false),
+    );
+    write_trb(
+        &mut mem,
+        trb1_addr,
+        make_normal_trb(buf1, 4, true, false, true),
+    );
 
     let dev = TimeoutOnceInDevice::new();
     let call_count = dev.call_count.clone();
@@ -819,9 +864,15 @@ fn xhci_bulk_in_timeout_does_not_halt_and_allows_subsequent_trbs() {
     assert_eq!(events[0].ep_addr, 0x81);
     assert_eq!(events[0].trb_ptr, trb0_addr);
     assert_eq!(events[0].residual, 4);
-    assert_eq!(events[0].completion_code, CompletionCode::UsbTransactionError);
+    assert_eq!(
+        events[0].completion_code,
+        CompletionCode::UsbTransactionError
+    );
     assert!(!xhci.endpoint_state(0x81).unwrap().halted);
-    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, trb1_addr);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        trb1_addr
+    );
 
     // Guest buffers should be unchanged after the timeout.
     let mut got0 = [0u8; 4];
@@ -836,7 +887,10 @@ fn xhci_bulk_in_timeout_does_not_halt_and_allows_subsequent_trbs() {
     assert_eq!(call_count.get(), 2);
     let events = xhci.take_events();
     assert_single_success_event(&events, 0x81, trb1_addr, 0);
-    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, ring_base + 2 * TRB_LEN);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        ring_base + 2 * TRB_LEN
+    );
 
     mem.read(buf1 as u32, &mut got1);
     assert_eq!(got1, [1, 2, 3, 4]);
@@ -860,8 +914,16 @@ fn xhci_bulk_out_timeout_does_not_halt_and_allows_subsequent_trbs() {
     mem.write(buf1 as u32, &payload1);
 
     // First TD will timeout (IOC=0); second TD should succeed.
-    write_trb(&mut mem, trb0_addr, make_normal_trb(buf0, 4, true, false, false));
-    write_trb(&mut mem, trb1_addr, make_normal_trb(buf1, 4, true, false, true));
+    write_trb(
+        &mut mem,
+        trb0_addr,
+        make_normal_trb(buf0, 4, true, false, false),
+    );
+    write_trb(
+        &mut mem,
+        trb1_addr,
+        make_normal_trb(buf1, 4, true, false, true),
+    );
 
     let out_received = Rc::new(RefCell::new(Vec::new()));
     let dev = TimeoutOnceOutDevice::new(out_received.clone());
@@ -877,9 +939,15 @@ fn xhci_bulk_out_timeout_does_not_halt_and_allows_subsequent_trbs() {
     assert_eq!(events[0].ep_addr, 0x01);
     assert_eq!(events[0].trb_ptr, trb0_addr);
     assert_eq!(events[0].residual, 4);
-    assert_eq!(events[0].completion_code, CompletionCode::UsbTransactionError);
+    assert_eq!(
+        events[0].completion_code,
+        CompletionCode::UsbTransactionError
+    );
     assert!(!xhci.endpoint_state(0x01).unwrap().halted);
-    assert_eq!(xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr, trb1_addr);
+    assert_eq!(
+        xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        trb1_addr
+    );
     assert!(out_received.borrow().is_empty());
 
     // Tick #2: should complete the second TD successfully.
@@ -888,7 +956,10 @@ fn xhci_bulk_out_timeout_does_not_halt_and_allows_subsequent_trbs() {
     let events = xhci.take_events();
     assert_single_success_event(&events, 0x01, trb1_addr, 0);
     assert_eq!(out_received.borrow().as_slice(), &[payload1.to_vec()]);
-    assert_eq!(xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr, ring_base + 2 * TRB_LEN);
+    assert_eq!(
+        xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        ring_base + 2 * TRB_LEN
+    );
 }
 
 #[test]
@@ -909,7 +980,11 @@ fn xhci_transfer_executor_advances_past_unsupported_trb_and_processes_next() {
     let buf = alloc.alloc(4, 0x10) as u64;
     let sentinel = [0xa5u8; 4];
     mem.write(buf as u32, &sentinel);
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, true, false, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
@@ -932,7 +1007,10 @@ fn xhci_transfer_executor_advances_past_unsupported_trb_and_processes_next() {
         }]
     );
     assert!(!xhci.endpoint_state(0x81).unwrap().halted);
-    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, normal_trb_addr);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        normal_trb_addr
+    );
 
     // Buffer should be unchanged after the unsupported TRB.
     let mut got = [0u8; 4];
@@ -971,7 +1049,11 @@ fn xhci_transfer_executor_noop_trb_advances_ring_and_does_not_touch_device() {
     let buf = alloc.alloc(4, 0x10) as u64;
     let sentinel = [0xa5u8; 4];
     mem.write(buf as u32, &sentinel);
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, true, false, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
@@ -983,7 +1065,11 @@ fn xhci_transfer_executor_noop_trb_advances_ring_and_does_not_touch_device() {
     // Tick #1: the NoOp TRB should complete successfully, advance the ring, and not invoke the
     // device model (queue should be untouched, guest buffers unchanged).
     xhci.tick_1ms(&mut mem);
-    assert_eq!(in_queue.borrow().len(), 1, "NoOp TRB must not consume IN queue");
+    assert_eq!(
+        in_queue.borrow().len(),
+        1,
+        "NoOp TRB must not consume IN queue"
+    );
 
     let mut got = [0u8; 4];
     mem.read(buf as u32, &mut got);
@@ -999,7 +1085,10 @@ fn xhci_transfer_executor_noop_trb_advances_ring_and_does_not_touch_device() {
             completion_code: CompletionCode::Success,
         }]
     );
-    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, normal_trb_addr);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        normal_trb_addr
+    );
 
     // Tick #2: the Normal TRB should now complete and DMA the queued bytes.
     xhci.tick_1ms(&mut mem);

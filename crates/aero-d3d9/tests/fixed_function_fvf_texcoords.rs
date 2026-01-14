@@ -1,5 +1,7 @@
 use aero_d3d9::fixed_function::fvf::{Fvf, FvfLayout, TexCoordSize};
-use aero_d3d9::fixed_function::shader_gen::{generate_fixed_function_shaders, FixedFunctionShaderDesc};
+use aero_d3d9::fixed_function::shader_gen::{
+    generate_fixed_function_shaders, FixedFunctionShaderDesc,
+};
 use aero_d3d9::fixed_function::tss::{
     AlphaTestState, FogState, LightingState, TextureArg, TextureOp, TextureStageState,
 };
@@ -7,9 +9,12 @@ use aero_gpu_utils::validate_wgsl_render_shader;
 
 fn validate_wgsl_module(wgsl: &str) {
     let module = naga::front::wgsl::parse_str(wgsl).expect("wgsl parse");
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&module)
-        .expect("wgsl validate");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
 }
 
 #[test]
@@ -30,7 +35,10 @@ fn fixed_function_fvf_layout_allows_5_to_8_texcoords() {
         // Position is always first, at location 0.
         assert_eq!(layout.vertex_attributes[0].shader_location, 0);
         assert_eq!(layout.vertex_attributes[0].offset, 0);
-        assert_eq!(layout.vertex_attributes[0].format, wgpu::VertexFormat::Float32x3);
+        assert_eq!(
+            layout.vertex_attributes[0].format,
+            wgpu::VertexFormat::Float32x3
+        );
 
         // Default texcoord size is 2 components, packed sequentially.
         for i in 0..tex_count {

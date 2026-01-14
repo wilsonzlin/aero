@@ -137,14 +137,7 @@ fn aerogpu_cmd_depth_only_draw_after_destroying_last_rt_still_works() {
         );
         writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
         writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
-        writer.set_depth_stencil_state(
-            true,
-            true,
-            AerogpuCompareFunc::Less,
-            false,
-            0,
-            0,
-        );
+        writer.set_depth_stencil_state(true, true, AerogpuCompareFunc::Less, false, 0, 0);
 
         // Bind a color RT, clear depth, then destroy that RT *without* calling SET_RENDER_TARGETS
         // again. This leaves the executor state with a DSV bound but no live RTVs, and ensures it
@@ -174,7 +167,11 @@ fn aerogpu_cmd_depth_only_draw_after_destroying_last_rt_still_works() {
             .await
             .expect("readback should succeed");
         for px in pixels.chunks_exact(4) {
-            assert_eq!(px, &[0, 0, 0, 255], "color draw should be rejected by depth");
+            assert_eq!(
+                px,
+                &[0, 0, 0, 255],
+                "color draw should be rejected by depth"
+            );
         }
     });
 }

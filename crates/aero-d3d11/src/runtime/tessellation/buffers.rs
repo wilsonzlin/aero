@@ -54,10 +54,9 @@ impl core::fmt::Display for TessellationSizingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TessellationSizingError::InvalidParam(msg) => write!(f, "invalid param: {msg}"),
-            TessellationSizingError::CountTooLarge { what, count, max } => write!(
-                f,
-                "{what} too large (count={count} max_supported={max})"
-            ),
+            TessellationSizingError::CountTooLarge { what, count, max } => {
+                write!(f, "{what} too large (count={count} max_supported={max})")
+            }
             TessellationSizingError::Overflow(msg) => write!(f, "size overflow: {msg}"),
         }
     }
@@ -231,8 +230,11 @@ impl TessellationDrawScratchSizes {
 
         let patch_count_total = params.patch_count_total as u64;
         let control_points = params.control_points as u64;
-        let control_point_count_total =
-            checked_mul_u64(patch_count_total, control_points, "patch_count_total * control_points")?;
+        let control_point_count_total = checked_mul_u64(
+            patch_count_total,
+            control_points,
+            "patch_count_total * control_points",
+        )?;
         require_u32_count(control_point_count_total, "control_point_count_total")?;
 
         // Intermediate stage IO: per-control-point payloads.
@@ -255,7 +257,8 @@ impl TessellationDrawScratchSizes {
         )?;
 
         let (metadata_size, _metadata_align) = TessellationPatchMetadata::layout();
-        let tess_metadata_bytes = checked_mul_u64(patch_count_total, metadata_size, "metadata bytes")?;
+        let tess_metadata_bytes =
+            checked_mul_u64(patch_count_total, metadata_size, "metadata bytes")?;
 
         let max_vertices_per_patch = worst_case_vertices_per_patch(params.max_tess_factor)?;
         let expanded_vertex_count_total = checked_mul_u64(

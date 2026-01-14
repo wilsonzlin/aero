@@ -26,7 +26,10 @@ fn assert_piix3_ide_pci_intx_is_configured(pc: &mut PcPlatform) {
 
     let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, pin))
         .expect("router-selected GSI should fit in u8");
-    assert_eq!(expected_irq, 11, "topology contract expects IDE INTA# -> GSI11");
+    assert_eq!(
+        expected_irq, 11,
+        "topology contract expects IDE INTA# -> GSI11"
+    );
 
     // PCI config-space Interrupt Line/Pin should match the router-selected GSI.
     assert_eq!(pci_cfg_read_u8(pc, bdf, 0x3C), expected_irq);
@@ -136,7 +139,11 @@ fn piix3_ide_ata_read_dma_moves_data_into_guest_memory_and_raises_irq14() {
 
     // Bus master status should reflect successful completion + IRQ.
     let bm_status = pc.io.read(bm_base + 2, 1) as u8;
-    assert_ne!(bm_status & 0x04, 0, "BMIDE should set IRQ bit on completion");
+    assert_ne!(
+        bm_status & 0x04,
+        0,
+        "BMIDE should set IRQ bit on completion"
+    );
 
     assert_eq!(pic_pending_irq(&pc), Some(14));
 }
@@ -232,8 +239,11 @@ fn piix3_ide_atapi_read10_dma_moves_data_into_guest_memory_and_raises_irq15() {
 
     // Bus master status should reflect successful completion + IRQ.
     let bm_status = pc.io.read(bm_base + 8 + 2, 1) as u8;
-    assert_ne!(bm_status & 0x04, 0, "BMIDE should set IRQ bit on completion");
+    assert_ne!(
+        bm_status & 0x04,
+        0,
+        "BMIDE should set IRQ bit on completion"
+    );
 
     assert_eq!(pic_pending_irq(&pc), Some(15));
 }
-

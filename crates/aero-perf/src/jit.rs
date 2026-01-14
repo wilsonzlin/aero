@@ -385,7 +385,11 @@ pub struct JitRollingExport {
     pub blocks_compiled_per_s: f64,
 }
 
-pub fn totals_to_export(enabled: bool, totals: JitMetricsTotals, rolling: JitRollingExport) -> JitExport {
+pub fn totals_to_export(
+    enabled: bool,
+    totals: JitMetricsTotals,
+    rolling: JitRollingExport,
+) -> JitExport {
     JitExport {
         enabled,
         totals: JitTotalsExport {

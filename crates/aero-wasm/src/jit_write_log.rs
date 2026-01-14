@@ -145,8 +145,8 @@ mod tests {
 
     use aero_cpu_core::jit::cache::CompiledBlockHandle;
     use aero_cpu_core::jit::runtime::{
-        CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
-        DEFAULT_CODE_VERSION_MAX_PAGES,
+        CompileRequestSink, DEFAULT_CODE_VERSION_MAX_PAGES, JitBackend, JitBlockExit, JitConfig,
+        JitRuntime,
     };
 
     use super::GuestWriteLog;

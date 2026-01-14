@@ -321,10 +321,7 @@ fn tier2_trace_with_multiple_store_widths_reuses_mem_write_type() {
     let tys = func_types(&wasm);
     assert_eq!(
         tys[ty_u8 as usize],
-        (
-            vec![ValType::I32, ValType::I64, ValType::I32],
-            Vec::new()
-        ),
+        (vec![ValType::I32, ValType::I64, ValType::I32], Vec::new()),
         "expected shared mem_write type to have signature (i32, i64, i32) -> ()"
     );
 

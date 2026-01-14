@@ -232,11 +232,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
 
     // --- Port reset / enable sequence ---
     let portsc_before = xhci.mmio_read(&mut mem, reg_portsc1, 4);
-    assert_ne!(
-        portsc_before & PORTSC_CCS,
-        0,
-        "device should be connected"
-    );
+    assert_ne!(portsc_before & PORTSC_CCS, 0, "device should be connected");
     assert_eq!(portsc_before & PORTSC_PED, 0, "port starts disabled");
 
     // Assert port reset.

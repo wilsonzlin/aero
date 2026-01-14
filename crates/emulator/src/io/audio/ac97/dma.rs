@@ -291,14 +291,7 @@ mod tests {
             self.data[start..start + data.len()].copy_from_slice(data);
         }
 
-        fn write_desc(
-            &mut self,
-            bdbar: u64,
-            index: u8,
-            buf_addr: u64,
-            len_words: u16,
-            ioc: bool,
-        ) {
+        fn write_desc(&mut self, bdbar: u64, index: u8, buf_addr: u64, len_words: u16, ioc: bool) {
             let base = bdbar + (index as u64) * BDL_ENTRY_BYTES;
             self.write_u32(base, buf_addr as u32);
             let mut ctl = u32::from(len_words);

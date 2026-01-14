@@ -7,7 +7,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use memory::MemoryBus;
 
-use crate::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, AerogpuErrorCode, FEATURE_VBLANK};
+use crate::devices::aerogpu_regs::{
+    irq_bits, ring_control, AeroGpuRegs, AerogpuErrorCode, FEATURE_VBLANK,
+};
 use crate::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,

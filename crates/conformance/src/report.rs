@@ -457,8 +457,8 @@ fn read_register_for_addr(state: &CpuState, reg: Register) -> Option<u64> {
 
 fn decode_instruction_aero(bytes: &[u8], ip: u64) -> Option<String> {
     // Optional: this is best-effort and intentionally avoids pulling in the full CPU core.
-    let decoded = aero_cpu_decoder::decode_one(aero_cpu_decoder::DecodeMode::Bits64, ip, bytes)
-        .ok()?;
+    let decoded =
+        aero_cpu_decoder::decode_one(aero_cpu_decoder::DecodeMode::Bits64, ip, bytes).ok()?;
 
     let mut formatter = iced_x86::IntelFormatter::new();
     let mut disasm = String::new();
@@ -621,7 +621,13 @@ fn format_memory_dump(out: &mut String, label: &str, memory: &[u8], base: u64, l
             .join(" ");
         let ascii = chunk
             .iter()
-            .map(|b| if b.is_ascii_graphic() { *b as char } else { '.' })
+            .map(|b| {
+                if b.is_ascii_graphic() {
+                    *b as char
+                } else {
+                    '.'
+                }
+            })
             .collect::<String>();
         let _ = writeln!(out, "  {addr:#018x}: {hex:<47} |{ascii}|");
     }
@@ -683,10 +689,7 @@ fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], base: u6
         );
     }
 
-    let first_diff_idx = diffs
-        .first()
-        .map(|(idx, _, _)| *idx)
-        .unwrap_or(compare_len);
+    let first_diff_idx = diffs.first().map(|(idx, _, _)| *idx).unwrap_or(compare_len);
     format_memory_window(out, expected, actual, base, len, first_diff_idx);
 }
 

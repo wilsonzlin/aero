@@ -87,7 +87,10 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     m.write_physical_u64(desc_gpa + 56, 0);
 
     // Program BAR0 registers.
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO), ring_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
         (ring_gpa >> 32) as u32,
@@ -101,7 +104,10 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
         pci::AEROGPU_RING_CONTROL_ENABLE,
     );
 
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO), fence_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
         (fence_gpa >> 32) as u32,
@@ -147,9 +153,9 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     let completed_fence = (u64::from(
         m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
     ) << 32)
-        | u64::from(m.read_physical_u32(
-            bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO),
-        ));
+        | u64::from(
+            m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+        );
     assert_eq!(completed_fence, signal_fence);
 
     // Fence page written.
@@ -157,7 +163,10 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
         m.read_physical_u32(fence_gpa + 0),
         ring::AEROGPU_FENCE_PAGE_MAGIC
     );
-    assert_eq!(m.read_physical_u32(fence_gpa + 4), pci::AEROGPU_ABI_VERSION_U32);
+    assert_eq!(
+        m.read_physical_u32(fence_gpa + 4),
+        pci::AEROGPU_ABI_VERSION_U32
+    );
     assert_eq!(m.read_physical_u64(fence_gpa + 8), signal_fence);
 
     // IRQ status latched and PCI INTx line asserted.
@@ -166,9 +175,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
 
     let pci_intx = m.pci_intx_router().expect("pc platform enabled");
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
-    let gsi = pci_intx
-        .borrow()
-        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
     assert!(
         interrupts.borrow().gsi_level(gsi),
         "expected AeroGPU INTx to assert after fence completion"
@@ -238,9 +245,9 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     let completed_fence = (u64::from(
         m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
     ) << 32)
-        | u64::from(m.read_physical_u32(
-            bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO),
-        ));
+        | u64::from(
+            m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+        );
     assert_eq!(completed_fence, 0);
     assert_eq!(m.read_physical_u64(fence_gpa + 8), 0);
 
@@ -320,7 +327,10 @@ fn aerogpu_submit_flag_no_irq_suppresses_fence_interrupt() {
     m.write_physical_u64(desc_gpa + 56, 0);
 
     // Program BAR0 registers.
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO), ring_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
         (ring_gpa >> 32) as u32,
@@ -334,7 +344,10 @@ fn aerogpu_submit_flag_no_irq_suppresses_fence_interrupt() {
         pci::AEROGPU_RING_CONTROL_ENABLE,
     );
 
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO), fence_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
         (fence_gpa >> 32) as u32,
@@ -361,9 +374,7 @@ fn aerogpu_submit_flag_no_irq_suppresses_fence_interrupt() {
 
     let pci_intx = m.pci_intx_router().expect("pc platform enabled");
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
-    let gsi = pci_intx
-        .borrow()
-        .gsi_for_intx(bdf, PciInterruptPin::IntA);
+    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
     assert!(
         !interrupts.borrow().gsi_level(gsi),
         "expected AeroGPU INTx to remain deasserted when AEROGPU_SUBMIT_FLAG_NO_IRQ is set"

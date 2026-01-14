@@ -1,10 +1,10 @@
+use aero_platform::io::PortIoDevice;
 use emulator::io::pci::PciDevice;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::hub::UsbHubDevice;
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
-use aero_platform::io::PortIoDevice;
 use memory::{Bus, MemoryBus};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -75,10 +75,7 @@ fn uhci_usbcmd_roundtrips_extended_bits_and_halted_tracks_rs() {
 
     // Writes should preserve common driver bits (MAXP/CF) and ignore unknown bits.
     uhci.write(REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP | 0xff00) as u32);
-    assert_eq!(
-        uhci.read(REG_USBCMD, 2) as u16,
-        USBCMD_CF | USBCMD_MAXP
-    );
+    assert_eq!(uhci.read(REG_USBCMD, 2) as u16, USBCMD_CF | USBCMD_MAXP);
     assert_ne!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
 
     // Setting RS clears HALTED.
@@ -91,10 +88,7 @@ fn uhci_usbcmd_roundtrips_extended_bits_and_halted_tracks_rs() {
 
     // Clearing RS sets HALTED.
     uhci.write(REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP) as u32);
-    assert_eq!(
-        uhci.read(REG_USBCMD, 2) as u16,
-        USBCMD_CF | USBCMD_MAXP
-    );
+    assert_eq!(uhci.read(REG_USBCMD, 2) as u16, USBCMD_CF | USBCMD_MAXP);
     assert_ne!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
 }
 
@@ -145,10 +139,7 @@ fn uhci_global_reset_resets_state_and_latches_greset_until_cleared() {
 
     // Clearing GRESET leaves other writable bits intact.
     uhci.write(REG_USBCMD, 2, (USBCMD_CF | USBCMD_MAXP) as u32);
-    assert_eq!(
-        uhci.read(REG_USBCMD, 2) as u16,
-        USBCMD_CF | USBCMD_MAXP
-    );
+    assert_eq!(uhci.read(REG_USBCMD, 2) as u16, USBCMD_CF | USBCMD_MAXP);
 }
 
 #[test]
@@ -457,10 +448,7 @@ fn uhci_register_block_supports_dword_accesses() {
     let w = ((USBSTS_USBERRINT as u32) << 16) | (USBCMD_CF | USBCMD_MAXP) as u32;
     uhci.write(REG_USBCMD, 4, w);
     assert_eq!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_USBERRINT, 0);
-    assert_eq!(
-        uhci.read(REG_USBCMD, 2) as u16,
-        USBCMD_CF | USBCMD_MAXP
-    );
+    assert_eq!(uhci.read(REG_USBCMD, 2) as u16, USBCMD_CF | USBCMD_MAXP);
 }
 
 #[test]
@@ -511,18 +499,12 @@ fn uhci_fgr_latches_resume_detect_and_can_irq() {
 
     // Raising FGR latches RESUMEDETECT in USBSTS and asserts IRQ.
     uhci.write(REG_USBCMD, 2, (USBCMD_MAXP | USBCMD_RS | USBCMD_FGR) as u32);
-    assert_ne!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_ne!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(uhci.irq_level());
 
     // W1C should clear RESUMEDETECT and drop IRQ.
     uhci.write(REG_USBSTS, 2, USBSTS_RESUMEDETECT as u32);
-    assert_eq!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_eq!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(!uhci.irq_level());
 }
 
@@ -552,18 +534,12 @@ fn uhci_port_resume_detect_latches_resume_sts_and_can_irq() {
     // A port-level resume-detect event should latch the global USBSTS bit and assert IRQ.
     uhci.controller.hub_mut().force_resume_detect_for_tests(0);
     uhci.tick_1ms(&mut mem);
-    assert_ne!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_ne!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(uhci.irq_level());
 
     // W1C clears the latched status.
     uhci.write(REG_USBSTS, 2, USBSTS_RESUMEDETECT as u32);
-    assert_eq!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_eq!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(!uhci.irq_level());
 }
 
@@ -619,10 +595,7 @@ fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
     uhci.tick_1ms(&mut mem);
 
     assert_ne!(uhci.read(REG_PORTSC1, 2) as u16 & PORTSC_RD, 0);
-    assert_ne!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_ne!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(uhci.irq_level());
 }
 
@@ -677,10 +650,7 @@ fn uhci_remote_wakeup_only_triggers_for_activity_while_suspended() {
     uhci.tick_1ms(&mut mem);
 
     assert_eq!(uhci.read(REG_PORTSC1, 2) as u16 & PORTSC_RD, 0);
-    assert_eq!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_eq!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(!uhci.irq_level());
 }
 
@@ -805,10 +775,7 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
     uhci.tick_1ms(&mut mem);
 
     assert_ne!(uhci.read(REG_PORTSC1, 2) as u16 & PORTSC_RD, 0);
-    assert_ne!(
-        uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
-        0
-    );
+    assert_ne!(uhci.read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT, 0);
     assert!(uhci.irq_level());
 }
 

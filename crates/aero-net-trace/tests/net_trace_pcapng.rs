@@ -174,4 +174,3 @@ fn synthetic_tcp_exchange_is_written_to_pcapng() {
     assert_eq!(rx_payload[23], 6);
     assert_eq!(rx_flags.map(|v| v & 0b11), Some(1));
 }
-

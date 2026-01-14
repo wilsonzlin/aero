@@ -115,4 +115,3 @@ criterion_group! {
     targets = bench_exact_port_hit, bench_exact_port_miss
 }
 criterion_main!(benches);
-

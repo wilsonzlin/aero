@@ -4,10 +4,12 @@
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use aero_d3d11::runtime::{
-        PersistedShaderArtifact, PersistedShaderStage, ShaderCache, ShaderCacheSource,
-        ShaderTranslationFlags, D3D11_TRANSLATOR_CACHE_VERSION,
+        D3D11_TRANSLATOR_CACHE_VERSION, PersistedShaderArtifact, PersistedShaderStage, ShaderCache,
+        ShaderCacheSource, ShaderTranslationFlags,
     };
-    use aero_d3d11::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, Sm4Program};
+    use aero_d3d11::{
+        DxbcFile, ShaderReflection, Sm4Program, parse_signatures, translate_sm4_module_to_wgsl,
+    };
     use serde::Serialize;
     use wasm_bindgen::prelude::*;
 
@@ -27,7 +29,9 @@ mod wasm {
     }
 
     #[wasm_bindgen]
-    pub async fn run_d3d11_shader_cache_demo(caps_hash: Option<String>) -> Result<JsValue, JsValue> {
+    pub async fn run_d3d11_shader_cache_demo(
+        caps_hash: Option<String>,
+    ) -> Result<JsValue, JsValue> {
         let flags = ShaderTranslationFlags::new(caps_hash.clone());
         let mut cache = ShaderCache::new();
 
@@ -64,8 +68,8 @@ mod wasm {
                 if signature_driven {
                     let module =
                         aero_d3d11::sm4::decode_program(&program).map_err(|e| e.to_string())?;
-                    let translated =
-                        translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).map_err(|e| e.to_string())?;
+                    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+                        .map_err(|e| e.to_string())?;
                     wgsl = translated.wgsl;
                     reflection = translated.reflection;
                 } else {

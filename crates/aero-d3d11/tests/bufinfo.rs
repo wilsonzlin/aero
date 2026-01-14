@@ -1,10 +1,10 @@
-use aero_dxbc::test_utils as dxbc_test_utils;
-use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::sm4::decode_program;
+use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
     translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderSignatures, Sm4Inst, Sm4Program,
     WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 // `bufinfo` opcode IDs are not currently modeled explicitly; the decoder recognizes the operand
@@ -74,7 +74,13 @@ fn reg_src_resource(slot: u32) -> Vec<u32> {
 
 fn reg_src_uav(slot: u32) -> Vec<u32> {
     vec![
-        operand_token(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0, OPERAND_SEL_MASK, 0, 1),
+        operand_token(
+            OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+            0,
+            OPERAND_SEL_MASK,
+            0,
+            1,
+        ),
         slot,
     ]
 }
@@ -142,7 +148,6 @@ fn decodes_and_translates_bufinfo_raw_to_array_length() {
         translated.wgsl
     );
     assert_wgsl_validates(&translated.wgsl);
-
 }
 
 #[test]
@@ -177,13 +182,23 @@ fn decodes_and_translates_bufinfo_structured_uses_decl_stride() {
 
     let module = decode_program(&program).expect("SM4 decode");
     assert!(
-        matches!(module.instructions[0], Sm4Inst::BufInfoStructured { stride_bytes: 16, .. }),
+        matches!(
+            module.instructions[0],
+            Sm4Inst::BufInfoStructured {
+                stride_bytes: 16,
+                ..
+            }
+        ),
         "expected structured bufinfo to be refined using the declared stride"
     );
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
         .expect("translate");
-    assert!(translated.wgsl.contains("16u"), "expected stride literal in WGSL:\n{}", translated.wgsl);
+    assert!(
+        translated.wgsl.contains("16u"),
+        "expected stride literal in WGSL:\n{}",
+        translated.wgsl
+    );
     assert!(
         translated.wgsl.contains("bitcast<vec4<f32>>"),
         "expected structured bufinfo to store integer bits via bitcast:\n{}",

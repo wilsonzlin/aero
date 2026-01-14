@@ -153,4 +153,3 @@ fn xhci_webusb_restore_clears_host_state_and_allows_retry() {
         "expected re-emitted host action to allocate a new id after restore"
     );
 }
-

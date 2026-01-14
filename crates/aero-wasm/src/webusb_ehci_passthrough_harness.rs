@@ -126,12 +126,16 @@ impl WebUsbEhciPassthroughHarness {
         if !self.controller_attached {
             return Err(js_sys::Error::new("EHCI harness controller is not attached").into());
         }
-        self.device
-            .as_mut()
-            .ok_or_else(|| js_sys::Error::new("EHCI harness passthrough device is not attached").into())
+        self.device.as_mut().ok_or_else(|| {
+            js_sys::Error::new("EHCI harness passthrough device is not attached").into()
+        })
     }
 
-    fn begin_control_in(&mut self, kind: PendingKind, setup: BusSetupPacket) -> Result<(), JsValue> {
+    fn begin_control_in(
+        &mut self,
+        kind: PendingKind,
+        setup: BusSetupPacket,
+    ) -> Result<(), JsValue> {
         let _ = self.ensure_device()?;
         self.last_error = None;
         self.pending = Some(PendingControlIn::new(kind, setup));
@@ -170,7 +174,10 @@ impl WebUsbEhciPassthroughHarness {
                         w_index: 0,
                         w_length: len_u16,
                     };
-                    self.pending = Some(PendingControlIn::new(PendingKind::ConfigDescriptorFull, setup));
+                    self.pending = Some(PendingControlIn::new(
+                        PendingKind::ConfigDescriptorFull,
+                        setup,
+                    ));
                 }
             }
             PendingKind::ConfigDescriptorFull => {
@@ -370,10 +377,16 @@ impl WebUsbEhciPassthroughHarness {
         // Avoid infinite loops if a device model misbehaves; we only need a few stage transitions
         // per tick for responsiveness.
         for _ in 0..8 {
-            let before_pending = self.pending.as_ref().map(|p| (p.kind, p.stage, p.received.len()));
+            let before_pending = self
+                .pending
+                .as_ref()
+                .map(|p| (p.kind, p.stage, p.received.len()));
             let before_error = self.last_error.is_some();
             self.step_once();
-            let after_pending = self.pending.as_ref().map(|p| (p.kind, p.stage, p.received.len()));
+            let after_pending = self
+                .pending
+                .as_ref()
+                .map(|p| (p.kind, p.stage, p.received.len()));
             let after_error = self.last_error.is_some();
 
             // Stop if we didn't make any progress this iteration (or if we hit an error).
@@ -441,7 +454,8 @@ impl WebUsbEhciPassthroughHarness {
         // time. This ensures the JS/TS runtime can observe USBSTS changes immediately when a host
         // completion is delivered (even if no further host actions are drained on the next tick).
         match &completion {
-            UsbHostCompletion::ControlIn { result, .. } | UsbHostCompletion::BulkIn { result, .. } => match result {
+            UsbHostCompletion::ControlIn { result, .. }
+            | UsbHostCompletion::BulkIn { result, .. } => match result {
                 UsbHostCompletionIn::Success { .. } => {
                     self.usbsts |= USBSTS_USBINT;
                 }
@@ -453,7 +467,8 @@ impl WebUsbEhciPassthroughHarness {
                     self.last_error.get_or_insert_with(|| message.clone());
                 }
             },
-            UsbHostCompletion::ControlOut { result, .. } | UsbHostCompletion::BulkOut { result, .. } => match result {
+            UsbHostCompletion::ControlOut { result, .. }
+            | UsbHostCompletion::BulkOut { result, .. } => match result {
                 UsbHostCompletionOut::Success { .. } => {
                     self.usbsts |= USBSTS_USBINT;
                 }

@@ -356,8 +356,8 @@ fn hda_process_completes_on_rirb_addr_overflow() {
 
     // Enable CORB + RIRB DMA engines.
     hda.mmio_write(0x4c, 1, 0x02); // CORBCTL.RUN
-    // Enable response interrupts so an incorrectly-handled response write would be observable via
-    // INTSTS.
+                                   // Enable response interrupts so an incorrectly-handled response write would be observable via
+                                   // INTSTS.
     hda.mmio_write(0x5a, 2, 1); // RINTCNT=1
     hda.mmio_write(0x5c, 1, 0x03); // RIRBCTL.RINTCTL | RUN
 

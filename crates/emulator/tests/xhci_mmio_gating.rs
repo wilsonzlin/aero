@@ -88,11 +88,17 @@ fn pci_command_mem_bit_gates_xhci_mmio() {
         dev.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 4),
         u32::MAX
     );
-    assert_eq!(dev.mmio_read(&mut mem, regs::REG_USBCMD, 4) & regs::USBCMD_RUN, 0);
+    assert_eq!(
+        dev.mmio_read(&mut mem, regs::REG_USBCMD, 4) & regs::USBCMD_RUN,
+        0
+    );
 
     // Writes should apply once MEM is enabled.
     dev.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    assert_ne!(dev.mmio_read(&mut mem, regs::REG_USBCMD, 4) & regs::USBCMD_RUN, 0);
+    assert_ne!(
+        dev.mmio_read(&mut mem, regs::REG_USBCMD, 4) & regs::USBCMD_RUN,
+        0
+    );
 }
 
 #[test]

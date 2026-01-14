@@ -19,4 +19,3 @@ fn machine_new_with_config_can_override_cpu_count() {
         .expect("Machine::new_with_config(cpu_count=4) should succeed");
     assert_eq!(m.cpu_count(), 4);
 }
-

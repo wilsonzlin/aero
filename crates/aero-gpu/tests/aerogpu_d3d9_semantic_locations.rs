@@ -101,10 +101,7 @@ fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
     // followed by a single destination operand token.
     // Total instruction length is 2 DWORDs (opcode token + dst operand).
     let opcode = 0x001Fu32;
-    let token = opcode
-        | (2u32 << 24)
-        | ((usage_raw as u32) << 16)
-        | ((usage_index as u32) << 20);
+    let token = opcode | (2u32 << 24) | ((usage_raw as u32) << 16) | ((usage_index as u32) << 20);
     vec![token, dst]
 }
 

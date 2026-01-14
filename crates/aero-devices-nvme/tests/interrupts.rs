@@ -49,8 +49,7 @@ fn enable_msi(dev: &mut NvmePciDevice, address: u64, data: u16) {
         .find_capability(PCI_CAP_ID_MSI)
         .expect("NVMe device should expose MSI capability") as u16;
 
-    dev.config_mut()
-        .write(cap_offset + 0x04, 4, address as u32);
+    dev.config_mut().write(cap_offset + 0x04, 4, address as u32);
     dev.config_mut()
         .write(cap_offset + 0x08, 4, (address >> 32) as u32);
     dev.config_mut()
@@ -177,4 +176,3 @@ fn nvme_delivers_msix_when_enabled() {
         "legacy INTx must be suppressed while MSI-X is active"
     );
 }
-

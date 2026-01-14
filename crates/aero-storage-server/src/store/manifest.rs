@@ -60,10 +60,7 @@ pub enum ManifestError {
     #[error("invalid file path for image {id}: {file}")]
     InvalidFilePath { id: String, file: String },
     #[error("invalid chunked_version for image {id}: {chunked_version}")]
-    InvalidChunkedVersion {
-        id: String,
-        chunked_version: String,
-    },
+    InvalidChunkedVersion { id: String, chunked_version: String },
     #[error("manifest.json is required but missing at {path}")]
     Missing { path: String },
     #[error("invalid etag for image {id}: {etag:?}: {reason}")]

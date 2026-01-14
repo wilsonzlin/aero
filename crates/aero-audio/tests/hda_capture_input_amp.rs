@@ -86,21 +86,21 @@ fn capture_produces_non_zero_pcm_by_default() {
     let buf_len = 0x2000u32;
 
     setup_capture_stream(
-        &mut hda,
-        &mut mem,
-        stream_id,
-        fmt_raw,
-        bdl_base,
-        buf_base,
-        buf_len,
+        &mut hda, &mut mem, stream_id, fmt_raw, bdl_base, buf_base, buf_len,
     );
 
     let output_frames = 480usize; // 10ms @ 48kHz.
     let mut capture = VecDequeCaptureSource::new();
     capture.push_samples(&vec![0.25f32; output_frames]);
 
-    let decoded =
-        run_capture_and_decode(&mut hda, &mut mem, &mut capture, output_frames, fmt_raw, buf_base);
+    let decoded = run_capture_and_decode(
+        &mut hda,
+        &mut mem,
+        &mut capture,
+        output_frames,
+        fmt_raw,
+        buf_base,
+    );
     assert_eq!(decoded.len(), output_frames);
     let max_abs = decoded
         .iter()
@@ -124,13 +124,7 @@ fn capture_is_silenced_when_input_amp_muted() {
     let buf_len = 0x2000u32;
 
     setup_capture_stream(
-        &mut hda,
-        &mut mem,
-        stream_id,
-        fmt_raw,
-        bdl_base,
-        buf_base,
-        buf_len,
+        &mut hda, &mut mem, stream_id, fmt_raw, bdl_base, buf_base, buf_len,
     );
 
     // Mute ADC input amp (direction=in, index=0, both channels, mute=1).
@@ -141,8 +135,14 @@ fn capture_is_silenced_when_input_amp_muted() {
     let mut capture = VecDequeCaptureSource::new();
     capture.push_samples(&vec![0.25f32; output_frames]);
 
-    let decoded =
-        run_capture_and_decode(&mut hda, &mut mem, &mut capture, output_frames, fmt_raw, buf_base);
+    let decoded = run_capture_and_decode(
+        &mut hda,
+        &mut mem,
+        &mut capture,
+        output_frames,
+        fmt_raw,
+        buf_base,
+    );
     assert_eq!(decoded.len(), output_frames);
     let max_abs = decoded
         .iter()
@@ -166,27 +166,28 @@ fn capture_amplitude_is_scaled_by_input_amp_gain() {
     let buf_len = 0x2000u32;
 
     setup_capture_stream(
-        &mut hda,
-        &mut mem,
-        stream_id,
-        fmt_raw,
-        bdl_base,
-        buf_base,
-        buf_len,
+        &mut hda, &mut mem, stream_id, fmt_raw, bdl_base, buf_base, buf_len,
     );
 
     // Low gain, unmuted.
     let gain: u16 = 0x10;
     let set_gain_payload: u16 = (1 << 15) | gain;
-    hda.codec_mut().execute_verb(4, verb_4(0x3, set_gain_payload));
+    hda.codec_mut()
+        .execute_verb(4, verb_4(0x3, set_gain_payload));
 
     let output_frames = 480usize;
     let input_sample = 0.5f32;
     let mut capture = VecDequeCaptureSource::new();
     capture.push_samples(&vec![input_sample; output_frames]);
 
-    let decoded =
-        run_capture_and_decode(&mut hda, &mut mem, &mut capture, output_frames, fmt_raw, buf_base);
+    let decoded = run_capture_and_decode(
+        &mut hda,
+        &mut mem,
+        &mut capture,
+        output_frames,
+        fmt_raw,
+        buf_base,
+    );
     assert_eq!(decoded.len(), output_frames);
 
     let observed = decoded[0][0];

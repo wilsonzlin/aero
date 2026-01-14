@@ -134,8 +134,7 @@ fn dns_cache_ttl_decrements_and_expires() {
 
     // Query within the TTL window: should be served from cache, with a TTL reflecting remaining
     // lifetime (clamped by the u32 TTL field and floored to seconds).
-    let resp_cached =
-        extract_single_frame(&send_dns_query(&mut stack, 0x1235, 53_001, name, 500));
+    let resp_cached = extract_single_frame(&send_dns_query(&mut stack, 0x1235, 53_001, name, 500));
     assert_dns_response_has_a_record(&resp_cached, 0x1235, addr.octets());
     assert_eq!(dns_answer_ttl_secs(&resp_cached), 1);
 
@@ -373,4 +372,3 @@ fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
     out.extend_from_slice(&1u16.to_be_bytes()); // IN
     out
 }
-

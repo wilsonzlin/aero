@@ -1,10 +1,10 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::fmt;
 use alloc::vec::Vec;
+use core::fmt;
 
-pub use super::trb::{CompletionCode, Trb, TrbType};
 use super::trb::TRB_LEN;
+pub use super::trb::{CompletionCode, Trb, TrbType};
 
 use super::trb::{Trb as XhciTrb, TrbType as XhciTrbType};
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
@@ -308,7 +308,11 @@ impl XhciTransferExecutor {
         }
     }
 
-    fn skip_link_trbs<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep: &mut EndpointState) -> bool {
+    fn skip_link_trbs<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        ep: &mut EndpointState,
+    ) -> bool {
         for _ in 0..MAX_LINK_SKIP {
             let trb = read_trb(mem, ep.ring.dequeue_ptr);
             if trb.cycle() != ep.ring.cycle {
@@ -645,9 +649,7 @@ impl EventRing {
         // Overwrite the cycle bit according to the producer cycle state.
         trb.set_cycle(self.cycle);
 
-        let addr = self
-            .base
-            .wrapping_add(self.enqueue_index as u64 * TRB_SIZE);
+        let addr = self.base.wrapping_add(self.enqueue_index as u64 * TRB_SIZE);
         write_xhci_trb(mem, addr, &trb);
 
         self.enqueue_index = self.enqueue_index.wrapping_add(1);
@@ -1061,10 +1063,8 @@ impl ControlEndpoint {
 
                                 match dev.handle_out(0, &chunk) {
                                     UsbOutResult::Ack => {
-                                        *transferred =
-                                            transferred.saturating_add(chunk_max as u32);
-                                        remaining =
-                                            remaining.saturating_sub(chunk_max as u32);
+                                        *transferred = transferred.saturating_add(chunk_max as u32);
+                                        remaining = remaining.saturating_sub(chunk_max as u32);
                                     }
                                     UsbOutResult::Nak => {
                                         // Retry without advancing the transfer offset.

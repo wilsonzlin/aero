@@ -397,7 +397,11 @@ mod tests {
 
         bm.finish_error();
         let st = bm.read(2, 1) as u8;
-        assert_eq!(st & 0x07, 0x06, "finish_error should set IRQ+ERR and clear ACTIVE");
+        assert_eq!(
+            st & 0x07,
+            0x06,
+            "finish_error should set IRQ+ERR and clear ACTIVE"
+        );
     }
 
     #[test]
@@ -420,7 +424,11 @@ mod tests {
         let mut req = DmaRequest::ata_read(vec![0xA5; 512]);
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdTooShort);
-        assert_ne!(bm.read(2, 1) & 0x01, 0, "ACTIVE should remain set until finish_* is called");
+        assert_ne!(
+            bm.read(2, 1) & 0x01,
+            0,
+            "ACTIVE should remain set until finish_* is called"
+        );
 
         // The first segment should have been transferred before we discovered the table ended.
         let mut out = vec![0u8; 256];
@@ -429,7 +437,11 @@ mod tests {
 
         bm.finish_error();
         let st = bm.read(2, 1) as u8;
-        assert_eq!(st & 0x07, 0x06, "finish_error should set IRQ+ERR and clear ACTIVE");
+        assert_eq!(
+            st & 0x07,
+            0x06,
+            "finish_error should set IRQ+ERR and clear ACTIVE"
+        );
     }
 
     #[test]
@@ -457,7 +469,11 @@ mod tests {
         let mut req = DmaRequest::ata_read(buf.clone());
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdMissingEndOfTable);
-        assert_ne!(bm.read(2, 1) & 0x01, 0, "ACTIVE should remain set until finish_* is called");
+        assert_ne!(
+            bm.read(2, 1) & 0x01,
+            0,
+            "ACTIVE should remain set until finish_* is called"
+        );
 
         // Data should still have been written into the guest buffers.
         let mut seg0 = vec![0u8; 256];
@@ -469,6 +485,10 @@ mod tests {
 
         bm.finish_error();
         let st = bm.read(2, 1) as u8;
-        assert_eq!(st & 0x07, 0x06, "finish_error should set IRQ+ERR and clear ACTIVE");
+        assert_eq!(
+            st & 0x07,
+            0x06,
+            "finish_error should set IRQ+ERR and clear ACTIVE"
+        );
     }
 }

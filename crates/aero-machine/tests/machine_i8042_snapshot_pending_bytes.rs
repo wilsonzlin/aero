@@ -75,4 +75,3 @@ fn machine_snapshot_roundtrip_preserves_pending_i8042_output_bytes() {
         "i8042 output buffer should remain empty after extra reads"
     );
 }
-

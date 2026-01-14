@@ -5,4 +5,3 @@
 //! `aero_pc_platform::firmware_pci::*` paths.
 
 pub use aero_pci_firmware_adapter::{PciConfigPortsBiosAdapter, SharedPciConfigPortsBiosAdapter};
-

@@ -27,9 +27,10 @@ async fn persistence_across_reopen() {
     backend.flush().await.unwrap();
     drop(backend);
 
-    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
-        .await
-        .unwrap();
+    let mut backend2 =
+        IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
     assert_eq!(backend2.capacity(), capacity);
     let mut buf = vec![0u8; 11];
     backend2.read_at(0, &mut buf).await.unwrap();
@@ -67,9 +68,10 @@ async fn non_default_block_size_persists_and_open_existing_works() {
     backend.flush().await.unwrap();
     drop(backend);
 
-    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
-        .await
-        .unwrap();
+    let mut backend2 =
+        IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
     assert_eq!(backend2.capacity(), capacity);
     assert_eq!(backend2.block_size(), block_size);
 
@@ -213,9 +215,10 @@ async fn eviction_writeback_persists_without_explicit_flush() {
     backend.write_at(block_size as u64, b"other").await.unwrap();
     drop(backend);
 
-    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
-        .await
-        .unwrap();
+    let mut backend2 =
+        IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
     let mut buf = vec![0u8; 10];
     backend2.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf, b"persist me");
@@ -241,9 +244,10 @@ async fn crash_safety_simulation_unflushed_write_lost() {
     // Intentionally skip flush() to simulate crash.
     drop(backend);
 
-    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
-        .await
-        .unwrap();
+    let mut backend2 =
+        IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
     let mut buf = vec![0u8; 3];
     backend2.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf, b"old");
@@ -252,9 +256,10 @@ async fn crash_safety_simulation_unflushed_write_lost() {
     backend2.flush().await.unwrap();
     drop(backend2);
 
-    let mut backend3 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
-        .await
-        .unwrap();
+    let mut backend3 =
+        IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
     let mut buf2 = vec![0u8; 3];
     backend3.read_at(0, &mut buf2).await.unwrap();
     assert_eq!(&buf2, b"new");
@@ -312,9 +317,10 @@ async fn clear_blocks_resets_persisted_data_and_cache() {
 
     // And the clearing should persist across re-open.
     drop(backend);
-    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
-        .await
-        .unwrap();
+    let mut backend2 =
+        IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
     let mut cleared2 = vec![0xAA; 11];
     backend2.read_at(0, &mut cleared2).await.unwrap();
     assert_eq!(cleared2, vec![0u8; 11]);

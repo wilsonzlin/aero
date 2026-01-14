@@ -28,7 +28,11 @@ fn ehci_controller_bridge_step_frames_advances_frindex_and_snapshot_roundtrips()
     let before = ctrl.mmio_read(caplen + OP_REG_FRINDEX, 4) & 0x3FFF;
     ctrl.step_frames(1);
     let after = ctrl.mmio_read(caplen + OP_REG_FRINDEX, 4) & 0x3FFF;
-    assert_eq!(after, (before + 8) & 0x3FFF, "FRINDEX must advance by 8 per 1ms frame");
+    assert_eq!(
+        after,
+        (before + 8) & 0x3FFF,
+        "FRINDEX must advance by 8 per 1ms frame"
+    );
 
     let snapshot = ctrl.save_state();
 
@@ -39,4 +43,3 @@ fn ehci_controller_bridge_step_frames_advances_frindex_and_snapshot_roundtrips()
     assert_eq!(caplen2, caplen, "CAPLENGTH must be stable across restore");
     assert_eq!(ctrl2.mmio_read(caplen + OP_REG_FRINDEX, 4) & 0x3FFF, after);
 }
-

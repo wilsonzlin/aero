@@ -76,4 +76,3 @@ fn debugcon_captures_port_e9_output() {
 
     assert_eq!(m.take_debugcon_output(), b"ABCDEFG");
 }
-

@@ -164,4 +164,3 @@ fn invalid_sizes_float_high_and_are_not_dispatched() {
     assert_eq!(reads.get(), 1);
     assert_eq!(writes.get(), 1);
 }
-

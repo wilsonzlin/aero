@@ -21,8 +21,8 @@ fn audio_frame_clock_conformance_vectors() {
     let json = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("failed to read {fixture_path:?}: {e}"));
 
-    let vectors: Vec<Vector> =
-        serde_json::from_str(&json).unwrap_or_else(|e| panic!("failed to parse {fixture_path:?}: {e}"));
+    let vectors: Vec<Vector> = serde_json::from_str(&json)
+        .unwrap_or_else(|e| panic!("failed to parse {fixture_path:?}: {e}"));
     assert!(
         !vectors.is_empty(),
         "fixture must contain at least one vector"

@@ -1145,15 +1145,16 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
 
     fn reset_all_aps_excluding_sender(&mut self) {
         if let Some(sender_idx) = self.apic_id.checked_sub(1).map(|v| v as usize) {
-            self.ap_cpus.for_each_mut_excluding_index(sender_idx, |idx, cpu| {
-                let apic_id = (idx + 1) as u8;
-                vcpu_init::reset_ap_vcpu_to_init_state(cpu);
-                set_cpu_apic_base_bsp_bit(cpu, false);
-                cpu.state.halted = true;
-                if let Some(interrupts) = &self.interrupts {
-                    interrupts.borrow().reset_lapic(apic_id);
-                }
-            });
+            self.ap_cpus
+                .for_each_mut_excluding_index(sender_idx, |idx, cpu| {
+                    let apic_id = (idx + 1) as u8;
+                    vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+                    set_cpu_apic_base_bsp_bit(cpu, false);
+                    cpu.state.halted = true;
+                    if let Some(interrupts) = &self.interrupts {
+                        interrupts.borrow().reset_lapic(apic_id);
+                    }
+                });
         } else {
             self.reset_all_aps();
         }
@@ -1185,10 +1186,11 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
 
     fn start_all_aps_excluding_sender(&mut self, vector: u8) {
         if let Some(sender_idx) = self.apic_id.checked_sub(1).map(|v| v as usize) {
-            self.ap_cpus.for_each_mut_excluding_index(sender_idx, |_idx, cpu| {
-                vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
-                set_cpu_apic_base_bsp_bit(cpu, false);
-            });
+            self.ap_cpus
+                .for_each_mut_excluding_index(sender_idx, |_idx, cpu| {
+                    vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
+                    set_cpu_apic_base_bsp_bit(cpu, false);
+                });
         } else {
             self.start_all_aps(vector);
         }
@@ -6514,7 +6516,7 @@ impl Machine {
                         self.aerogpu_mmio = Some(dev);
                     }
                 }
- 
+
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
                 // The PC platform installs a range-based PCI I/O BAR router over most ports, so
                 // legacy VGA ports must be wired as exact per-port mappings to avoid overlapping
@@ -6533,7 +6535,7 @@ impl Machine {
                         }
                     },
                 );
- 
+
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
                 // aliases `VRAM[0..128KiB]`.
                 self.mem.map_mmio_once(
@@ -6575,10 +6577,10 @@ impl Machine {
                     let vga = vga.borrow();
                     (u64::from(vga.lfb_base()), vga.vram_size())
                 };
-                pci_cfg
-                    .borrow_mut()
-                    .bus_mut()
-                    .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new(lfb_base, vram_size)));
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    VGA_PCI_BDF,
+                    Box::new(VgaPciConfigDevice::new(lfb_base, vram_size)),
+                );
             }
 
             if self.cfg.enable_aerogpu {
@@ -7973,10 +7975,8 @@ impl Machine {
                 ApCpus::Split { before, after },
                 &mut self.mem,
             );
-            let mut inner = aero_cpu_core::PagingBus::new_with_io(
-                phys,
-                StrictIoPortBus { io: &mut self.io },
-            );
+            let mut inner =
+                aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut self.io });
             std::mem::swap(&mut self.mmu, inner.mmu_mut());
             let mut bus = MachineCpuBus {
                 a20: self.chipset.a20(),
@@ -7984,7 +7984,8 @@ impl Machine {
                 inner,
             };
 
-            let _ = run_batch_cpu_core_with_assists(cfg, &mut self.assist, cpu, &mut bus, max_insts);
+            let _ =
+                run_batch_cpu_core_with_assists(cfg, &mut self.assist, cpu, &mut bus, max_insts);
             std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
         }
     }
@@ -8881,7 +8882,7 @@ impl snapshot::SnapshotSource for Machine {
         snapshot::cpu_state_from_cpu_core(&self.cpu.state)
     }
 
-        fn cpu_states(&self) -> Vec<snapshot::VcpuSnapshot> {
+    fn cpu_states(&self) -> Vec<snapshot::VcpuSnapshot> {
         let cpu_count = self.cfg.cpu_count as usize;
         let mut cpus = Vec::with_capacity(cpu_count);
 
@@ -10987,7 +10988,7 @@ mod tests {
         assert_eq!(overlay.disk_id, Machine::DISK_ID_INSTALL_MEDIA);
         assert_eq!(overlay.base_image, "/state/win7.iso");
         assert_eq!(overlay.overlay_image, "");
- 
+
         m.eject_install_media();
         assert!(
             m.ide_secondary_master_atapi_overlay.is_none(),

@@ -82,7 +82,8 @@ fn xhci_control_out_immediate_data_stage_delivers_payload() {
         | TRB_IOC
         | ((u32::from(TrbType::SetupStage.raw())) << TRB_TRB_TYPE_SHIFT)
         | SETUP_TRT_OUT;
-    Trb::new(u64::from_le_bytes(setup_bytes), 8, setup_control).write_to(&mut mem, setup_trb_addr as u64);
+    Trb::new(u64::from_le_bytes(setup_bytes), 8, setup_control)
+        .write_to(&mut mem, setup_trb_addr as u64);
 
     // Data Stage: OUT immediate data (IDT=1).
     let payload = [0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0];
@@ -160,7 +161,8 @@ fn xhci_control_in_immediate_data_stage_writes_trb_parameter() {
         | TRB_IOC
         | ((u32::from(TrbType::SetupStage.raw())) << TRB_TRB_TYPE_SHIFT)
         | SETUP_TRT_IN;
-    Trb::new(u64::from_le_bytes(setup_bytes), 8, setup_control).write_to(&mut mem, setup_trb_addr as u64);
+    Trb::new(u64::from_le_bytes(setup_bytes), 8, setup_control)
+        .write_to(&mut mem, setup_trb_addr as u64);
 
     // Data Stage: IN immediate data (IDT=1).
     let data_control = TRB_CYCLE
@@ -214,4 +216,3 @@ fn xhci_control_in_immediate_data_stage_writes_trb_parameter() {
         assert_eq!(evt.parameter, ptr as u64);
     }
 }
-

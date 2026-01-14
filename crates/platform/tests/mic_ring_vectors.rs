@@ -33,8 +33,8 @@ struct Expected {
 
 #[test]
 fn mic_ring_math_matches_shared_vectors() {
-    let fixture_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/mic_ring_vectors.json");
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/mic_ring_vectors.json");
     let fixture_bytes = std::fs::read(&fixture_path)
         .unwrap_or_else(|err| panic!("read {}: {err}", fixture_path.display()));
 
@@ -73,4 +73,3 @@ fn mic_ring_math_matches_shared_vectors() {
         );
     }
 }
-

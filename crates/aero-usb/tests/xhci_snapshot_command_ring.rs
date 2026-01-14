@@ -56,9 +56,19 @@ fn xhci_snapshot_preserves_cmd_kick_and_command_ring_cursor() {
     // Configure interrupter 0 event ring.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (ERST_BASE >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (ERST_BASE >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (EVENT_RING_BASE >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (EVENT_RING_BASE >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // Program the command ring dequeue pointer + cycle state.
@@ -109,4 +119,3 @@ fn xhci_snapshot_preserves_cmd_kick_and_command_ring_cursor() {
         assert_eq!(ev.slot_id(), 0);
     }
 }
-

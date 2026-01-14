@@ -65,4 +65,3 @@ fn golden_decode_len_matches_capstone_x86_32() {
         "only matched {matches} instructions after {attempts} attempts"
     );
 }
-

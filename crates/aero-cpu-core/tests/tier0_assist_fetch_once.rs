@@ -116,8 +116,10 @@ fn tier0_interpreter_assist_fetches_once() {
     let exit = interp.exec_block(&mut cpu);
     assert_eq!(exit.instructions_retired, 1);
 
-    assert_eq!(cpu.bus.fetches, 1, "expected single instruction fetch for assist");
+    assert_eq!(
+        cpu.bus.fetches, 1,
+        "expected single instruction fetch for assist"
+    );
     // Sanity-check: CPUID leaf 0 should match the deterministic policy in `cpuid.rs`.
     assert_eq!(cpu.cpu.state.read_reg(Register::EAX) as u32, 0x1F);
 }
-

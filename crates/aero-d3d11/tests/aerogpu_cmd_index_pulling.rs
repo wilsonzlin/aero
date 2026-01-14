@@ -121,7 +121,9 @@ async fn run_index_pulling_case(
         push_constant_ranges: &[],
     });
 
-    let lib = wgsl_index_pulling_lib(/*group=*/ 0, /*params_binding=*/ 0, /*index_binding=*/ 1);
+    let lib = wgsl_index_pulling_lib(
+        /*group=*/ 0, /*params_binding=*/ 0, /*index_binding=*/ 1,
+    );
     let wgsl = format!(
         r#"
 {lib}

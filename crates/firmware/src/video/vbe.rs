@@ -335,9 +335,9 @@ impl VbeDevice {
         buf[23] = 16; // YCharSize
         buf[24] = 1; // NumberOfPlanes
         buf[25] = mode.bpp; // BitsPerPixel
-        // NumberOfBanks / BankSize are only meaningful for banked access. We still populate them
-        // consistently so software that falls back to windowed access can determine the address
-        // range.
+                            // NumberOfBanks / BankSize are only meaningful for banked access. We still populate them
+                            // consistently so software that falls back to windowed access can determine the address
+                            // range.
         let bank_count = mode
             .framebuffer_size_bytes()
             .div_ceil(BANK_WINDOW_SIZE_BYTES)

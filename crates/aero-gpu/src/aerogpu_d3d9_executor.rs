@@ -1414,31 +1414,29 @@ impl AerogpuD3d9Executor {
 
         let mut samplers_bind_group_layouts_vs = HashMap::new();
         let mut samplers_bind_group_layouts_ps = HashMap::new();
-        let vs_bgl0 =
-            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::VERTEX, 0);
-        let ps_bgl0 =
-            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::FRAGMENT, 0);
+        let vs_bgl0 = create_samplers_bind_group_layout(&device, wgpu::ShaderStages::VERTEX, 0);
+        let ps_bgl0 = create_samplers_bind_group_layout(&device, wgpu::ShaderStages::FRAGMENT, 0);
 
         let mut pipeline_layouts = HashMap::new();
-        let pipeline_layout0 = if let Some(half_pixel_layout) = half_pixel_bind_group_layout.as_ref()
-        {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aerogpu-d3d9.pipeline_layout"),
-                bind_group_layouts: &[
-                    &constants_bind_group_layout,
-                    &vs_bgl0,
-                    &ps_bgl0,
-                    half_pixel_layout,
-                ],
-                push_constant_ranges: &[],
-            })
-        } else {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("aerogpu-d3d9.pipeline_layout"),
-                bind_group_layouts: &[&constants_bind_group_layout, &vs_bgl0, &ps_bgl0],
-                push_constant_ranges: &[],
-            })
-        };
+        let pipeline_layout0 =
+            if let Some(half_pixel_layout) = half_pixel_bind_group_layout.as_ref() {
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu-d3d9.pipeline_layout"),
+                    bind_group_layouts: &[
+                        &constants_bind_group_layout,
+                        &vs_bgl0,
+                        &ps_bgl0,
+                        half_pixel_layout,
+                    ],
+                    push_constant_ranges: &[],
+                })
+            } else {
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu-d3d9.pipeline_layout"),
+                    bind_group_layouts: &[&constants_bind_group_layout, &vs_bgl0, &ps_bgl0],
+                    push_constant_ranges: &[],
+                })
+            };
 
         samplers_bind_group_layouts_vs.insert(0, vs_bgl0);
         samplers_bind_group_layouts_ps.insert(0, ps_bgl0);
@@ -1644,7 +1642,8 @@ impl AerogpuD3d9Executor {
             &[0u8; CONSTANTS_BUFFER_SIZE_BYTES],
         );
         if let Some(buf) = self.half_pixel_uniform_buffer.as_ref() {
-            self.queue.write_buffer(buf, 0, &[0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES]);
+            self.queue
+                .write_buffer(buf, 0, &[0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES]);
         }
     }
 
@@ -2190,7 +2189,10 @@ impl AerogpuD3d9Executor {
             &mut self.half_pixel_uniform_buffer,
             &mut next.half_pixel_uniform_buffer,
         );
-        std::mem::swap(&mut self.half_pixel_bind_group, &mut next.half_pixel_bind_group);
+        std::mem::swap(
+            &mut self.half_pixel_bind_group,
+            &mut next.half_pixel_bind_group,
+        );
         std::mem::swap(
             &mut self.half_pixel_last_viewport_dims,
             &mut next.half_pixel_last_viewport_dims,
@@ -2582,7 +2584,7 @@ impl AerogpuD3d9Executor {
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("aerogpu-d3d9.shader"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl.as_str())),
-        });
+            });
 
         let mut used_samplers_mask = 0u16;
         let mut sampler_dim_key = 0u32;
@@ -2648,9 +2650,7 @@ impl AerogpuD3d9Executor {
                 .get_or_translate_with_source(dxbc_bytes, flags.clone(), move || async move {
                     let translated = shader_translate::translate_d3d9_shader_to_wgsl(
                         dxbc_bytes,
-                        shader::WgslOptions {
-                            half_pixel_center,
-                        },
+                        shader::WgslOptions { half_pixel_center },
                     )
                     .map_err(|e| e.to_string())?;
 
@@ -2699,7 +2699,7 @@ impl AerogpuD3d9Executor {
                             );
                         }
                     }
- 
+
                     let reflection = PersistentShaderReflection {
                         schema_version: PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION,
                         stage: PersistentShaderStage::from_stage(translated.version.stage),
@@ -3795,23 +3795,20 @@ impl AerogpuD3d9Executor {
                             let mut mip_base: u64 = 0;
                             let mut _mip_end: u64 = 0;
                             for mip in 0..mip_level_count {
-                                let start = *layout
-                                    .mip_offsets
-                                    .get(mip as usize)
-                                    .ok_or_else(|| {
+                                let start =
+                                    *layout.mip_offsets.get(mip as usize).ok_or_else(|| {
                                         AerogpuD3d9Error::Validation(
                                             "UPLOAD_RESOURCE: mip layout out of bounds".into(),
                                         )
                                     })?;
                                 let end = if mip + 1 < mip_level_count {
-                                    *layout
-                                        .mip_offsets
-                                        .get((mip + 1) as usize)
-                                        .ok_or_else(|| {
+                                    *layout.mip_offsets.get((mip + 1) as usize).ok_or_else(
+                                        || {
                                             AerogpuD3d9Error::Validation(
                                                 "UPLOAD_RESOURCE: mip layout out of bounds".into(),
                                             )
-                                        })?
+                                        },
+                                    )?
                                 } else {
                                     layout.layer_stride_bytes
                                 };
@@ -3883,536 +3880,578 @@ impl AerogpuD3d9Executor {
                             let pixel_row_pitch_u64 = u64::from(expected_row_pitch);
                             let units_per_row = width.div_ceil(src_block.block_width);
 
-                            let mut upload_segment = |segment_offset_bytes: u64,
-                                                      segment_size_bytes: u64,
-                                                      segment_data: &[u8]|
-                             -> Result<(), AerogpuD3d9Error> {
-                                if segment_size_bytes == 0 {
-                                    return Ok(());
-                                }
-
-                                let x_bytes = segment_offset_bytes % src_pitch_u64;
-                                let y_row = segment_offset_bytes / src_pitch_u64;
-                                if y_row >= u64::from(total_rows) {
-                                    return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
-                                }
-                                let origin_y_row: u32 = y_row.try_into().map_err(|_| {
-                                    AerogpuD3d9Error::Validation(
-                                        "UPLOAD_RESOURCE: origin_y out of range".into(),
-                                    )
-                                })?;
-
-                                let full_rows =
-                                    x_bytes == 0 && segment_size_bytes.is_multiple_of(src_pitch_u64);
-
-                                let (
-                                    origin_x_texels,
-                                    origin_y_texels,
-                                    copy_w_texels,
-                                    copy_h_texels,
-                                    buffer_rows,
-                                    src_bpr_bytes,
-                                    segment_data,
-                                ) = if full_rows {
-                                    let buffer_rows = u32::try_from(segment_size_bytes / src_pitch_u64)
-                                        .map_err(|_| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: texture row count out of range".into(),
-                                            )
-                                        })?;
-                                    if buffer_rows == 0 {
-                                        return Ok(());
-                                    }
-                                    if origin_y_row.saturating_add(buffer_rows) > total_rows {
-                                        return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
-                                    }
-
-                                    let origin_y_texels = origin_y_row
-                                        .checked_mul(src_block.block_height)
-                                        .ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: origin_y overflow".into(),
-                                            )
-                                        })?;
-                                    let end_row = origin_y_row + buffer_rows;
-                                    let copy_h_texels = if end_row == total_rows {
-                                        height.checked_sub(origin_y_texels).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: origin_y out of bounds".into(),
-                                            )
-                                        })?
-                                    } else {
-                                        buffer_rows.checked_mul(src_block.block_height).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: copy height overflow".into(),
-                                            )
-                                        })?
-                                    };
-                                    (
-                                        0u32,
-                                        origin_y_texels,
-                                        *width,
-                                        copy_h_texels,
-                                        buffer_rows,
-                                        src_pitch,
-                                        segment_data,
-                                    )
-                                } else {
-                                    // Single-row upload. Note: `segment_size_bytes` may include
-                                    // end-of-row padding bytes when the texture's row pitch is
-                                    // larger than its texel bytes-per-row. Those bytes do not map
-                                    // to any texels and are therefore ignored.
-                                    if x_bytes.saturating_add(segment_size_bytes) > src_pitch_u64 {
-                                        return Err(AerogpuD3d9Error::UploadNotSupported(
-                                            resource_handle,
-                                        ));
-                                    }
-
-                                    let used_size_bytes = if x_bytes >= pixel_row_pitch_u64 {
-                                        0
-                                    } else {
-                                        segment_size_bytes.min(pixel_row_pitch_u64 - x_bytes)
-                                    };
-                                    if used_size_bytes == 0 {
+                            let mut upload_segment =
+                                |segment_offset_bytes: u64,
+                                 segment_size_bytes: u64,
+                                 segment_data: &[u8]|
+                                 -> Result<(), AerogpuD3d9Error> {
+                                    if segment_size_bytes == 0 {
                                         return Ok(());
                                     }
 
-                                    if !x_bytes.is_multiple_of(bytes_per_unit)
-                                        || !used_size_bytes.is_multiple_of(bytes_per_unit)
-                                    {
-                                        return Err(AerogpuD3d9Error::UploadNotSupported(
-                                            resource_handle,
-                                        ));
-                                    }
-
-                                    let x_unit = u32::try_from(x_bytes / bytes_per_unit).map_err(|_| {
-                                        AerogpuD3d9Error::UploadNotSupported(resource_handle)
-                                    })?;
-
-                                    let units_to_copy =
-                                        u32::try_from(used_size_bytes / bytes_per_unit).map_err(|_| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: texture copy width out of range"
-                                                    .into(),
-                                            )
-                                        })?;
-                                    if units_to_copy == 0 {
-                                        return Ok(());
-                                    }
-
-                                    if x_unit.saturating_add(units_to_copy) > units_per_row {
+                                    let x_bytes = segment_offset_bytes % src_pitch_u64;
+                                    let y_row = segment_offset_bytes / src_pitch_u64;
+                                    if y_row >= u64::from(total_rows) {
                                         return Err(AerogpuD3d9Error::UploadOutOfBounds(
                                             resource_handle,
                                         ));
                                     }
-
-                                    let origin_x_texels =
-                                        x_unit.checked_mul(src_block.block_width).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: origin_x overflow".into(),
-                                            )
-                                        })?;
-                                    let origin_y_texels = origin_y_row
-                                        .checked_mul(src_block.block_height)
-                                        .ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: origin_y overflow".into(),
-                                            )
-                                        })?;
-
-                                    let end_unit = x_unit + units_to_copy;
-                                    let copy_w_texels = if end_unit == units_per_row {
-                                        width.checked_sub(origin_x_texels).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: origin_x out of bounds".into(),
-                                            )
-                                        })?
-                                    } else {
-                                        units_to_copy
-                                            .checked_mul(src_block.block_width)
-                                            .ok_or_else(|| {
-                                                AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: copy width overflow".into(),
-                                                )
-                                            })?
-                                    };
-
-                                    let end_row = origin_y_row + 1;
-                                    let copy_h_texels = if end_row == total_rows {
-                                        height.checked_sub(origin_y_texels).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: origin_y out of bounds".into(),
-                                            )
-                                        })?
-                                    } else {
-                                        src_block.block_height
-                                    };
-
-                                    let row_len_bytes = units_to_copy
-                                        .checked_mul(src_block.bytes_per_block)
-                                        .ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: row byte size overflow".into(),
-                                            )
-                                        })?;
-
-                                    let row_len_usize: usize = row_len_bytes.try_into().map_err(|_| {
+                                    let origin_y_row: u32 = y_row.try_into().map_err(|_| {
                                         AerogpuD3d9Error::Validation(
-                                            "UPLOAD_RESOURCE: row byte size out of range".into(),
+                                            "UPLOAD_RESOURCE: origin_y out of range".into(),
                                         )
                                     })?;
-                                    let segment_data =
-                                        segment_data.get(..row_len_usize).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: texture upload out of bounds"
-                                                    .into(),
-                                            )
-                                        })?;
 
-                                    (
+                                    let full_rows = x_bytes == 0
+                                        && segment_size_bytes.is_multiple_of(src_pitch_u64);
+
+                                    let (
                                         origin_x_texels,
                                         origin_y_texels,
                                         copy_w_texels,
                                         copy_h_texels,
-                                        1u32,
-                                        row_len_bytes,
+                                        buffer_rows,
+                                        src_bpr_bytes,
                                         segment_data,
-                                    )
-                                };
-
-                                let needs_16bit_expand = matches!(
-                                    *format_raw,
-                                    x if x == AerogpuFormat::B5G6R5Unorm as u32
-                                        || x == AerogpuFormat::B5G5R5A1Unorm as u32
-                                );
-
-                                if let (Some(bc), false) = (bc_format, dst_is_bc) {
-                                    // CPU BC fallback upload into RGBA8.
-                                    let tight_row_bytes = src_block.row_pitch_bytes(copy_w_texels)?;
-
-                                    let bc_bytes: Vec<u8> = if full_rows {
-                                        if src_bpr_bytes == tight_row_bytes {
-                                            segment_data.to_vec()
-                                        } else {
-                                            let src_bpr_usize: usize = src_bpr_bytes as usize;
-                                            let tight_usize: usize = tight_row_bytes as usize;
-                                            let buffer_rows_usize: usize = buffer_rows as usize;
-                                            let mut packed =
-                                                vec![0u8; tight_usize * buffer_rows_usize];
-                                            for row in 0..buffer_rows_usize {
-                                                let src_start = row * src_bpr_usize;
-                                                let dst_start = row * tight_usize;
-                                                packed[dst_start..dst_start + tight_usize]
-                                                    .copy_from_slice(
-                                                        &segment_data
-                                                            [src_start..src_start + tight_usize],
-                                                    );
-                                            }
-                                            packed
-                                        }
-                                    } else {
-                                        // Single-row segment is already tight (caller may have
-                                        // trimmed padding bytes).
-                                        segment_data.to_vec()
-                                    };
-
-                                    let rgba = match bc {
-                                        BcFormat::Bc1 => decompress_bc1_rgba8(
-                                            copy_w_texels,
-                                            copy_h_texels,
-                                            &bc_bytes,
-                                        ),
-                                        BcFormat::Bc2 => decompress_bc2_rgba8(
-                                            copy_w_texels,
-                                            copy_h_texels,
-                                            &bc_bytes,
-                                        ),
-                                        BcFormat::Bc3 => decompress_bc3_rgba8(
-                                            copy_w_texels,
-                                            copy_h_texels,
-                                            &bc_bytes,
-                                        ),
-                                        BcFormat::Bc7 => decompress_bc7_rgba8(
-                                            copy_w_texels,
-                                            copy_h_texels,
-                                            &bc_bytes,
-                                        ),
-                                    };
-
-                                    let unpadded_bpr =
-                                        copy_w_texels.checked_mul(4).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: bytes_per_row overflow".into(),
-                                            )
-                                        })?;
-                                    let padded_bpr = align_to(
-                                        unpadded_bpr,
-                                        wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
-                                    );
-                                    let bytes = if padded_bpr == unpadded_bpr {
-                                        rgba
-                                    } else {
-                                        let height_usize: usize =
-                                            copy_h_texels.try_into().map_err(|_| {
-                                                AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: height out of range".into(),
-                                                )
-                                            })?;
-                                        let padded_usize: usize = padded_bpr as usize;
-                                        let unpadded_usize: usize = unpadded_bpr as usize;
-                                        let mut padded = vec![0u8; padded_usize * height_usize];
-                                        for row in 0..height_usize {
-                                            let src_start = row * unpadded_usize;
-                                            let dst_start = row * padded_usize;
-                                            padded[dst_start..dst_start + unpadded_usize]
-                                                .copy_from_slice(
-                                                    &rgba[src_start..src_start + unpadded_usize],
-                                                );
-                                        }
-                                        padded
-                                    };
-
-                                    let staging = self.device.create_buffer_init(
-                                        &wgpu::util::BufferInitDescriptor {
-                                            label: Some("aerogpu-d3d9.upload_resource_staging"),
-                                            contents: &bytes,
-                                            usage: wgpu::BufferUsages::COPY_SRC,
-                                        },
-                                    );
-                                    let encoder = encoder_opt
-                                        .as_mut()
-                                        .expect("encoder exists for upload_resource");
-                                    encoder.copy_buffer_to_texture(
-                                        wgpu::ImageCopyBuffer {
-                                            buffer: &staging,
-                                            layout: wgpu::ImageDataLayout {
-                                                offset: 0,
-                                                bytes_per_row: Some(padded_bpr),
-                                                rows_per_image: Some(copy_h_texels),
-                                            },
-                                        },
-                                        wgpu::ImageCopyTexture {
-                                            texture,
-                                            mip_level: upload_mip_level,
-                                            origin: wgpu::Origin3d {
-                                                x: origin_x_texels,
-                                                y: origin_y_texels,
-                                                z: upload_origin_z,
-                                            },
-                                            aspect: wgpu::TextureAspect::All,
-                                        },
-                                        wgpu::Extent3d {
-                                            width: copy_w_texels,
-                                            height: copy_h_texels,
-                                            depth_or_array_layers: 1,
-                                        },
-                                    );
-                                    Ok(())
-                                } else if needs_16bit_expand {
-                                    // CPU expansion: 16-bit packed -> RGBA8
-                                    let src_row_bytes = copy_w_texels
-                                        .checked_mul(2)
-                                        .ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: 16-bit row byte size overflow"
+                                    ) = if full_rows {
+                                        let buffer_rows =
+                                            u32::try_from(segment_size_bytes / src_pitch_u64)
+                                                .map_err(|_| {
+                                                    AerogpuD3d9Error::Validation(
+                                                "UPLOAD_RESOURCE: texture row count out of range"
                                                     .into(),
                                             )
-                                        })?;
-                                    let unpadded_bpr = copy_w_texels
-                                        .checked_mul(4)
-                                        .ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: bytes_per_row overflow".into(),
-                                            )
-                                        })?;
-                                    let bytes_per_row =
-                                        align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                                                })?;
+                                        if buffer_rows == 0 {
+                                            return Ok(());
+                                        }
+                                        if origin_y_row.saturating_add(buffer_rows) > total_rows {
+                                            return Err(AerogpuD3d9Error::UploadOutOfBounds(
+                                                resource_handle,
+                                            ));
+                                        }
 
-                                    let height_usize: usize =
-                                        copy_h_texels.try_into().map_err(|_| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: height out of range".into(),
-                                            )
-                                        })?;
-                                    let bytes_per_row_usize = bytes_per_row as usize;
-                                    let unpadded_usize = unpadded_bpr as usize;
-                                    let src_pitch_usize = src_pitch as usize;
-                                    let src_row_usize = src_row_bytes as usize;
-
-                                    let mut bytes =
-                                        vec![0u8; bytes_per_row_usize * height_usize];
-                                    for row in 0..height_usize {
-                                        let src_start = if full_rows {
-                                            row.checked_mul(src_pitch_usize).ok_or_else(|| {
+                                        let origin_y_texels = origin_y_row
+                                            .checked_mul(src_block.block_height)
+                                            .ok_or_else(|| {
                                                 AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: texture row offset overflow"
+                                                    "UPLOAD_RESOURCE: origin_y overflow".into(),
+                                                )
+                                            })?;
+                                        let end_row = origin_y_row + buffer_rows;
+                                        let copy_h_texels = if end_row == total_rows {
+                                            height.checked_sub(origin_y_texels).ok_or_else(
+                                                || {
+                                                    AerogpuD3d9Error::Validation(
+                                                        "UPLOAD_RESOURCE: origin_y out of bounds"
+                                                            .into(),
+                                                    )
+                                                },
+                                            )?
+                                        } else {
+                                            buffer_rows
+                                                .checked_mul(src_block.block_height)
+                                                .ok_or_else(|| {
+                                                    AerogpuD3d9Error::Validation(
+                                                        "UPLOAD_RESOURCE: copy height overflow"
+                                                            .into(),
+                                                    )
+                                                })?
+                                        };
+                                        (
+                                            0u32,
+                                            origin_y_texels,
+                                            *width,
+                                            copy_h_texels,
+                                            buffer_rows,
+                                            src_pitch,
+                                            segment_data,
+                                        )
+                                    } else {
+                                        // Single-row upload. Note: `segment_size_bytes` may include
+                                        // end-of-row padding bytes when the texture's row pitch is
+                                        // larger than its texel bytes-per-row. Those bytes do not map
+                                        // to any texels and are therefore ignored.
+                                        if x_bytes.saturating_add(segment_size_bytes)
+                                            > src_pitch_u64
+                                        {
+                                            return Err(AerogpuD3d9Error::UploadNotSupported(
+                                                resource_handle,
+                                            ));
+                                        }
+
+                                        let used_size_bytes = if x_bytes >= pixel_row_pitch_u64 {
+                                            0
+                                        } else {
+                                            segment_size_bytes.min(pixel_row_pitch_u64 - x_bytes)
+                                        };
+                                        if used_size_bytes == 0 {
+                                            return Ok(());
+                                        }
+
+                                        if !x_bytes.is_multiple_of(bytes_per_unit)
+                                            || !used_size_bytes.is_multiple_of(bytes_per_unit)
+                                        {
+                                            return Err(AerogpuD3d9Error::UploadNotSupported(
+                                                resource_handle,
+                                            ));
+                                        }
+
+                                        let x_unit = u32::try_from(x_bytes / bytes_per_unit)
+                                            .map_err(|_| {
+                                                AerogpuD3d9Error::UploadNotSupported(
+                                                    resource_handle,
+                                                )
+                                            })?;
+
+                                        let units_to_copy =
+                                            u32::try_from(used_size_bytes / bytes_per_unit)
+                                                .map_err(|_| {
+                                                    AerogpuD3d9Error::Validation(
+                                                "UPLOAD_RESOURCE: texture copy width out of range"
+                                                    .into(),
+                                            )
+                                                })?;
+                                        if units_to_copy == 0 {
+                                            return Ok(());
+                                        }
+
+                                        if x_unit.saturating_add(units_to_copy) > units_per_row {
+                                            return Err(AerogpuD3d9Error::UploadOutOfBounds(
+                                                resource_handle,
+                                            ));
+                                        }
+
+                                        let origin_x_texels = x_unit
+                                            .checked_mul(src_block.block_width)
+                                            .ok_or_else(|| {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: origin_x overflow".into(),
+                                                )
+                                            })?;
+                                        let origin_y_texels = origin_y_row
+                                            .checked_mul(src_block.block_height)
+                                            .ok_or_else(|| {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: origin_y overflow".into(),
+                                                )
+                                            })?;
+
+                                        let end_unit = x_unit + units_to_copy;
+                                        let copy_w_texels = if end_unit == units_per_row {
+                                            width.checked_sub(origin_x_texels).ok_or_else(|| {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: origin_x out of bounds"
                                                         .into(),
                                                 )
                                             })?
                                         } else {
-                                            0
+                                            units_to_copy
+                                                .checked_mul(src_block.block_width)
+                                                .ok_or_else(|| {
+                                                    AerogpuD3d9Error::Validation(
+                                                        "UPLOAD_RESOURCE: copy width overflow"
+                                                            .into(),
+                                                    )
+                                                })?
                                         };
-                                        let src_end = src_start
-                                            .checked_add(src_row_usize)
+
+                                        let end_row = origin_y_row + 1;
+                                        let copy_h_texels = if end_row == total_rows {
+                                            height.checked_sub(origin_y_texels).ok_or_else(
+                                                || {
+                                                    AerogpuD3d9Error::Validation(
+                                                        "UPLOAD_RESOURCE: origin_y out of bounds"
+                                                            .into(),
+                                                    )
+                                                },
+                                            )?
+                                        } else {
+                                            src_block.block_height
+                                        };
+
+                                        let row_len_bytes = units_to_copy
+                                            .checked_mul(src_block.bytes_per_block)
                                             .ok_or_else(|| {
                                                 AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: texture row offset overflow"
+                                                    "UPLOAD_RESOURCE: row byte size overflow"
                                                         .into(),
                                                 )
                                             })?;
-                                        let src =
-                                            segment_data.get(src_start..src_end).ok_or_else(|| {
+
+                                        let row_len_usize: usize =
+                                            row_len_bytes.try_into().map_err(|_| {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: row byte size out of range"
+                                                        .into(),
+                                                )
+                                            })?;
+                                        let segment_data =
+                                            segment_data.get(..row_len_usize).ok_or_else(|| {
                                                 AerogpuD3d9Error::Validation(
                                                     "UPLOAD_RESOURCE: texture upload out of bounds"
                                                         .into(),
                                                 )
                                             })?;
 
-                                        let dst_start = row * bytes_per_row_usize;
-                                        let dst_end = dst_start + unpadded_usize;
-                                        let dst =
-                                            bytes.get_mut(dst_start..dst_end).ok_or_else(|| {
+                                        (
+                                            origin_x_texels,
+                                            origin_y_texels,
+                                            copy_w_texels,
+                                            copy_h_texels,
+                                            1u32,
+                                            row_len_bytes,
+                                            segment_data,
+                                        )
+                                    };
+
+                                    let needs_16bit_expand = matches!(
+                                        *format_raw,
+                                        x if x == AerogpuFormat::B5G6R5Unorm as u32
+                                            || x == AerogpuFormat::B5G5R5A1Unorm as u32
+                                    );
+
+                                    if let (Some(bc), false) = (bc_format, dst_is_bc) {
+                                        // CPU BC fallback upload into RGBA8.
+                                        let tight_row_bytes =
+                                            src_block.row_pitch_bytes(copy_w_texels)?;
+
+                                        let bc_bytes: Vec<u8> = if full_rows {
+                                            if src_bpr_bytes == tight_row_bytes {
+                                                segment_data.to_vec()
+                                            } else {
+                                                let src_bpr_usize: usize = src_bpr_bytes as usize;
+                                                let tight_usize: usize = tight_row_bytes as usize;
+                                                let buffer_rows_usize: usize = buffer_rows as usize;
+                                                let mut packed =
+                                                    vec![0u8; tight_usize * buffer_rows_usize];
+                                                for row in 0..buffer_rows_usize {
+                                                    let src_start = row * src_bpr_usize;
+                                                    let dst_start = row * tight_usize;
+                                                    packed[dst_start..dst_start + tight_usize]
+                                                        .copy_from_slice(
+                                                            &segment_data[src_start
+                                                                ..src_start + tight_usize],
+                                                        );
+                                                }
+                                                packed
+                                            }
+                                        } else {
+                                            // Single-row segment is already tight (caller may have
+                                            // trimmed padding bytes).
+                                            segment_data.to_vec()
+                                        };
+
+                                        let rgba = match bc {
+                                            BcFormat::Bc1 => decompress_bc1_rgba8(
+                                                copy_w_texels,
+                                                copy_h_texels,
+                                                &bc_bytes,
+                                            ),
+                                            BcFormat::Bc2 => decompress_bc2_rgba8(
+                                                copy_w_texels,
+                                                copy_h_texels,
+                                                &bc_bytes,
+                                            ),
+                                            BcFormat::Bc3 => decompress_bc3_rgba8(
+                                                copy_w_texels,
+                                                copy_h_texels,
+                                                &bc_bytes,
+                                            ),
+                                            BcFormat::Bc7 => decompress_bc7_rgba8(
+                                                copy_w_texels,
+                                                copy_h_texels,
+                                                &bc_bytes,
+                                            ),
+                                        };
+
+                                        let unpadded_bpr =
+                                            copy_w_texels.checked_mul(4).ok_or_else(|| {
                                                 AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: staging out of bounds".into(),
+                                                    "UPLOAD_RESOURCE: bytes_per_row overflow"
+                                                        .into(),
                                                 )
                                             })?;
-
-                                        match *format_raw {
-                                            x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
-                                                expand_b5g6r5_unorm_to_rgba8(src, dst);
-                                            }
-                                            x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
-                                                expand_b5g5r5a1_unorm_to_rgba8(src, dst);
-                                            }
-                                            _ => unreachable!("needs_16bit_expand checked above"),
-                                        }
-                                    }
-
-                                    let staging = self.device.create_buffer_init(
-                                        &wgpu::util::BufferInitDescriptor {
-                                            label: Some("aerogpu-d3d9.upload_resource_staging"),
-                                            contents: &bytes,
-                                            usage: wgpu::BufferUsages::COPY_SRC,
-                                        },
-                                    );
-                                    let encoder = encoder_opt
-                                        .as_mut()
-                                        .expect("encoder exists for upload_resource");
-                                    encoder.copy_buffer_to_texture(
-                                        wgpu::ImageCopyBuffer {
-                                            buffer: &staging,
-                                            layout: wgpu::ImageDataLayout {
-                                                offset: 0,
-                                                bytes_per_row: Some(bytes_per_row),
-                                                rows_per_image: Some(copy_h_texels),
-                                            },
-                                        },
-                                        wgpu::ImageCopyTexture {
-                                            texture,
-                                            mip_level: upload_mip_level,
-                                            origin: wgpu::Origin3d {
-                                                x: origin_x_texels,
-                                                y: origin_y_texels,
-                                                z: upload_origin_z,
-                                            },
-                                            aspect: wgpu::TextureAspect::All,
-                                        },
-                                        wgpu::Extent3d {
-                                            width: copy_w_texels,
-                                            height: copy_h_texels,
-                                            depth_or_array_layers: 1,
-                                        },
-                                    );
-                                    Ok(())
-                                } else {
-                                    // Direct upload.
-                                    let bytes_per_row =
-                                        align_to(src_bpr_bytes, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-
-                                    let bytes: Vec<u8> = if full_rows {
-                                        if bytes_per_row != src_bpr_bytes {
-                                            let src_bpr_usize: usize = src_bpr_bytes as usize;
-                                            let dst_bpr_usize: usize = bytes_per_row as usize;
-                                            let rows_usize: usize = buffer_rows as usize;
-                                            let mut staging =
-                                                vec![0u8; dst_bpr_usize * rows_usize];
-                                            for row in 0..rows_usize {
-                                                let src_start = row * src_bpr_usize;
-                                                let dst_start = row * dst_bpr_usize;
-                                                staging[dst_start..dst_start + src_bpr_usize]
+                                        let padded_bpr = align_to(
+                                            unpadded_bpr,
+                                            wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+                                        );
+                                        let bytes = if padded_bpr == unpadded_bpr {
+                                            rgba
+                                        } else {
+                                            let height_usize: usize =
+                                                copy_h_texels.try_into().map_err(|_| {
+                                                    AerogpuD3d9Error::Validation(
+                                                        "UPLOAD_RESOURCE: height out of range"
+                                                            .into(),
+                                                    )
+                                                })?;
+                                            let padded_usize: usize = padded_bpr as usize;
+                                            let unpadded_usize: usize = unpadded_bpr as usize;
+                                            let mut padded = vec![0u8; padded_usize * height_usize];
+                                            for row in 0..height_usize {
+                                                let src_start = row * unpadded_usize;
+                                                let dst_start = row * padded_usize;
+                                                padded[dst_start..dst_start + unpadded_usize]
                                                     .copy_from_slice(
-                                                        &segment_data
-                                                            [src_start..src_start + src_bpr_usize],
+                                                        &rgba
+                                                            [src_start..src_start + unpadded_usize],
                                                     );
                                             }
+                                            padded
+                                        };
+
+                                        let staging = self.device.create_buffer_init(
+                                            &wgpu::util::BufferInitDescriptor {
+                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
+                                                contents: &bytes,
+                                                usage: wgpu::BufferUsages::COPY_SRC,
+                                            },
+                                        );
+                                        let encoder = encoder_opt
+                                            .as_mut()
+                                            .expect("encoder exists for upload_resource");
+                                        encoder.copy_buffer_to_texture(
+                                            wgpu::ImageCopyBuffer {
+                                                buffer: &staging,
+                                                layout: wgpu::ImageDataLayout {
+                                                    offset: 0,
+                                                    bytes_per_row: Some(padded_bpr),
+                                                    rows_per_image: Some(copy_h_texels),
+                                                },
+                                            },
+                                            wgpu::ImageCopyTexture {
+                                                texture,
+                                                mip_level: upload_mip_level,
+                                                origin: wgpu::Origin3d {
+                                                    x: origin_x_texels,
+                                                    y: origin_y_texels,
+                                                    z: upload_origin_z,
+                                                },
+                                                aspect: wgpu::TextureAspect::All,
+                                            },
+                                            wgpu::Extent3d {
+                                                width: copy_w_texels,
+                                                height: copy_h_texels,
+                                                depth_or_array_layers: 1,
+                                            },
+                                        );
+                                        Ok(())
+                                    } else if needs_16bit_expand {
+                                        // CPU expansion: 16-bit packed -> RGBA8
+                                        let src_row_bytes =
+                                            copy_w_texels.checked_mul(2).ok_or_else(|| {
+                                                AerogpuD3d9Error::Validation(
+                                                "UPLOAD_RESOURCE: 16-bit row byte size overflow"
+                                                    .into(),
+                                            )
+                                            })?;
+                                        let unpadded_bpr =
+                                            copy_w_texels.checked_mul(4).ok_or_else(|| {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: bytes_per_row overflow"
+                                                        .into(),
+                                                )
+                                            })?;
+                                        let bytes_per_row = align_to(
+                                            unpadded_bpr,
+                                            wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+                                        );
+
+                                        let height_usize: usize =
+                                            copy_h_texels.try_into().map_err(|_| {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: height out of range".into(),
+                                                )
+                                            })?;
+                                        let bytes_per_row_usize = bytes_per_row as usize;
+                                        let unpadded_usize = unpadded_bpr as usize;
+                                        let src_pitch_usize = src_pitch as usize;
+                                        let src_row_usize = src_row_bytes as usize;
+
+                                        let mut bytes =
+                                            vec![0u8; bytes_per_row_usize * height_usize];
+                                        for row in 0..height_usize {
+                                            let src_start = if full_rows {
+                                                row.checked_mul(src_pitch_usize).ok_or_else(
+                                                    || {
+                                                        AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: texture row offset overflow"
+                                                        .into(),
+                                                )
+                                                    },
+                                                )?
+                                            } else {
+                                                0
+                                            };
+                                            let src_end = src_start
+                                                .checked_add(src_row_usize)
+                                                .ok_or_else(|| {
+                                                    AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: texture row offset overflow"
+                                                        .into(),
+                                                )
+                                                })?;
+                                            let src = segment_data
+                                                .get(src_start..src_end)
+                                                .ok_or_else(|| {
+                                                    AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: texture upload out of bounds"
+                                                        .into(),
+                                                )
+                                                })?;
+
+                                            let dst_start = row * bytes_per_row_usize;
+                                            let dst_end = dst_start + unpadded_usize;
+                                            let dst = bytes
+                                                .get_mut(dst_start..dst_end)
+                                                .ok_or_else(|| {
+                                                    AerogpuD3d9Error::Validation(
+                                                        "UPLOAD_RESOURCE: staging out of bounds"
+                                                            .into(),
+                                                    )
+                                                })?;
+
+                                            match *format_raw {
+                                                x if x == AerogpuFormat::B5G6R5Unorm as u32 => {
+                                                    expand_b5g6r5_unorm_to_rgba8(src, dst);
+                                                }
+                                                x if x == AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                                                    expand_b5g5r5a1_unorm_to_rgba8(src, dst);
+                                                }
+                                                _ => {
+                                                    unreachable!("needs_16bit_expand checked above")
+                                                }
+                                            }
+                                        }
+
+                                        let staging = self.device.create_buffer_init(
+                                            &wgpu::util::BufferInitDescriptor {
+                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
+                                                contents: &bytes,
+                                                usage: wgpu::BufferUsages::COPY_SRC,
+                                            },
+                                        );
+                                        let encoder = encoder_opt
+                                            .as_mut()
+                                            .expect("encoder exists for upload_resource");
+                                        encoder.copy_buffer_to_texture(
+                                            wgpu::ImageCopyBuffer {
+                                                buffer: &staging,
+                                                layout: wgpu::ImageDataLayout {
+                                                    offset: 0,
+                                                    bytes_per_row: Some(bytes_per_row),
+                                                    rows_per_image: Some(copy_h_texels),
+                                                },
+                                            },
+                                            wgpu::ImageCopyTexture {
+                                                texture,
+                                                mip_level: upload_mip_level,
+                                                origin: wgpu::Origin3d {
+                                                    x: origin_x_texels,
+                                                    y: origin_y_texels,
+                                                    z: upload_origin_z,
+                                                },
+                                                aspect: wgpu::TextureAspect::All,
+                                            },
+                                            wgpu::Extent3d {
+                                                width: copy_w_texels,
+                                                height: copy_h_texels,
+                                                depth_or_array_layers: 1,
+                                            },
+                                        );
+                                        Ok(())
+                                    } else {
+                                        // Direct upload.
+                                        let bytes_per_row = align_to(
+                                            src_bpr_bytes,
+                                            wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+                                        );
+
+                                        let bytes: Vec<u8> = if full_rows {
+                                            if bytes_per_row != src_bpr_bytes {
+                                                let src_bpr_usize: usize = src_bpr_bytes as usize;
+                                                let dst_bpr_usize: usize = bytes_per_row as usize;
+                                                let rows_usize: usize = buffer_rows as usize;
+                                                let mut staging =
+                                                    vec![0u8; dst_bpr_usize * rows_usize];
+                                                for row in 0..rows_usize {
+                                                    let src_start = row * src_bpr_usize;
+                                                    let dst_start = row * dst_bpr_usize;
+                                                    staging[dst_start..dst_start + src_bpr_usize]
+                                                        .copy_from_slice(
+                                                            &segment_data[src_start
+                                                                ..src_start + src_bpr_usize],
+                                                        );
+                                                }
+                                                staging
+                                            } else {
+                                                segment_data.to_vec()
+                                            }
+                                        } else if bytes_per_row != src_bpr_bytes {
+                                            let mut staging = vec![0u8; bytes_per_row as usize];
+                                            staging[..src_bpr_bytes as usize]
+                                                .copy_from_slice(segment_data);
                                             staging
                                         } else {
                                             segment_data.to_vec()
-                                        }
-                                    } else if bytes_per_row != src_bpr_bytes {
-                                        let mut staging = vec![0u8; bytes_per_row as usize];
-                                        staging[..src_bpr_bytes as usize]
-                                            .copy_from_slice(segment_data);
-                                        staging
-                                    } else {
-                                        segment_data.to_vec()
-                                    };
+                                        };
 
-                                    let mut bytes = bytes;
+                                        let mut bytes = bytes;
 
-                                    let force_opaque_alpha = is_x8_format(*format_raw)
-                                        && src_block.block_width == 1
-                                        && src_block.block_height == 1
-                                        && src_block.bytes_per_block == 4;
-                                    if force_opaque_alpha {
-                                        let row_bytes = copy_w_texels as usize * 4;
-                                        let stride = bytes_per_row as usize;
-                                        for row in 0..copy_h_texels as usize {
-                                            let start = row * stride;
-                                            force_opaque_alpha_rgba8(
-                                                &mut bytes[start..start + row_bytes],
-                                            );
+                                        let force_opaque_alpha = is_x8_format(*format_raw)
+                                            && src_block.block_width == 1
+                                            && src_block.block_height == 1
+                                            && src_block.bytes_per_block == 4;
+                                        if force_opaque_alpha {
+                                            let row_bytes = copy_w_texels as usize * 4;
+                                            let stride = bytes_per_row as usize;
+                                            for row in 0..copy_h_texels as usize {
+                                                let start = row * stride;
+                                                force_opaque_alpha_rgba8(
+                                                    &mut bytes[start..start + row_bytes],
+                                                );
+                                            }
                                         }
+
+                                        let staging = self.device.create_buffer_init(
+                                            &wgpu::util::BufferInitDescriptor {
+                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
+                                                contents: &bytes,
+                                                usage: wgpu::BufferUsages::COPY_SRC,
+                                            },
+                                        );
+                                        let encoder = encoder_opt
+                                            .as_mut()
+                                            .expect("encoder exists for upload_resource");
+                                        encoder.copy_buffer_to_texture(
+                                            wgpu::ImageCopyBuffer {
+                                                buffer: &staging,
+                                                layout: wgpu::ImageDataLayout {
+                                                    offset: 0,
+                                                    bytes_per_row: Some(bytes_per_row),
+                                                    rows_per_image: Some(buffer_rows),
+                                                },
+                                            },
+                                            wgpu::ImageCopyTexture {
+                                                texture,
+                                                mip_level: upload_mip_level,
+                                                origin: wgpu::Origin3d {
+                                                    x: origin_x_texels,
+                                                    y: origin_y_texels,
+                                                    z: upload_origin_z,
+                                                },
+                                                aspect: wgpu::TextureAspect::All,
+                                            },
+                                            wgpu::Extent3d {
+                                                width: copy_w_texels,
+                                                height: copy_h_texels,
+                                                depth_or_array_layers: 1,
+                                            },
+                                        );
+                                        Ok(())
                                     }
-
-                                    let staging = self.device.create_buffer_init(
-                                        &wgpu::util::BufferInitDescriptor {
-                                            label: Some("aerogpu-d3d9.upload_resource_staging"),
-                                            contents: &bytes,
-                                            usage: wgpu::BufferUsages::COPY_SRC,
-                                        },
-                                    );
-                                    let encoder = encoder_opt
-                                        .as_mut()
-                                        .expect("encoder exists for upload_resource");
-                                    encoder.copy_buffer_to_texture(
-                                        wgpu::ImageCopyBuffer {
-                                            buffer: &staging,
-                                            layout: wgpu::ImageDataLayout {
-                                                offset: 0,
-                                                bytes_per_row: Some(bytes_per_row),
-                                                rows_per_image: Some(buffer_rows),
-                                            },
-                                        },
-                                        wgpu::ImageCopyTexture {
-                                            texture,
-                                            mip_level: upload_mip_level,
-                                            origin: wgpu::Origin3d {
-                                                x: origin_x_texels,
-                                                y: origin_y_texels,
-                                                z: upload_origin_z,
-                                            },
-                                            aspect: wgpu::TextureAspect::All,
-                                        },
-                                        wgpu::Extent3d {
-                                            width: copy_w_texels,
-                                            height: copy_h_texels,
-                                            depth_or_array_layers: 1,
-                                        },
-                                    );
-                                    Ok(())
-                                }
-                            };
+                                };
 
                             let mut cursor: usize = 0;
                             let mut cur_offset = offset_bytes;
@@ -4429,11 +4468,13 @@ impl AerogpuD3d9Executor {
                                                         .into(),
                                                 )
                                             })?;
-                                        let end = cursor.checked_add(full_rows_usize).ok_or_else(|| {
-                                            AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: segment size overflow".into(),
-                                            )
-                                        })?;
+                                        let end = cursor.checked_add(full_rows_usize).ok_or_else(
+                                            || {
+                                                AerogpuD3d9Error::Validation(
+                                                    "UPLOAD_RESOURCE: segment size overflow".into(),
+                                                )
+                                            },
+                                        )?;
                                         let segment = data.get(cursor..end).ok_or_else(|| {
                                             AerogpuD3d9Error::Validation(
                                                 "UPLOAD_RESOURCE: segment out of bounds".into(),
@@ -4454,18 +4495,20 @@ impl AerogpuD3d9Executor {
                                 }
 
                                 let x_bytes = cur_offset % src_pitch_u64;
-                                let row_remaining = src_pitch_u64.checked_sub(x_bytes).ok_or_else(|| {
-                                    AerogpuD3d9Error::Validation(
-                                        "UPLOAD_RESOURCE: row remaining underflow".into(),
-                                    )
-                                })?;
+                                let row_remaining =
+                                    src_pitch_u64.checked_sub(x_bytes).ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "UPLOAD_RESOURCE: row remaining underflow".into(),
+                                        )
+                                    })?;
                                 let seg_size_bytes = remaining.min(row_remaining);
                                 debug_assert!(seg_size_bytes != 0);
-                                let seg_size_usize: usize = seg_size_bytes.try_into().map_err(|_| {
-                                    AerogpuD3d9Error::Validation(
-                                        "UPLOAD_RESOURCE: segment size out of range".into(),
-                                    )
-                                })?;
+                                let seg_size_usize: usize =
+                                    seg_size_bytes.try_into().map_err(|_| {
+                                        AerogpuD3d9Error::Validation(
+                                            "UPLOAD_RESOURCE: segment size out of range".into(),
+                                        )
+                                    })?;
                                 let end = cursor.checked_add(seg_size_usize).ok_or_else(|| {
                                     AerogpuD3d9Error::Validation(
                                         "UPLOAD_RESOURCE: segment size overflow".into(),
@@ -4478,11 +4521,12 @@ impl AerogpuD3d9Executor {
                                 })?;
                                 upload_segment(cur_offset, seg_size_bytes, segment)?;
                                 cursor = end;
-                                cur_offset = cur_offset.checked_add(seg_size_bytes).ok_or_else(|| {
-                                    AerogpuD3d9Error::Validation(
-                                        "UPLOAD_RESOURCE: offset overflow".into(),
-                                    )
-                                })?;
+                                cur_offset =
+                                    cur_offset.checked_add(seg_size_bytes).ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "UPLOAD_RESOURCE: offset overflow".into(),
+                                        )
+                                    })?;
                                 remaining -= seg_size_bytes;
                             }
 
@@ -6851,8 +6895,8 @@ impl AerogpuD3d9Executor {
 
             // Collect render target formats/extents so we can build per-format pipelines without
             // holding borrows into `self.resources`.
-                let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool, bool)> = Vec::new();
-                for slot in 0..rt.color_count.min(8) as usize {
+            let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool, bool)> = Vec::new();
+            for slot in 0..rt.color_count.min(8) as usize {
                 let handle = rt.colors[slot];
                 if handle == 0 {
                     continue;
@@ -10446,7 +10490,10 @@ mod tests {
                     });
                     assert_eq!(info.block_width, exp.block_width, "format={format:?}");
                     assert_eq!(info.block_height, exp.block_height, "format={format:?}");
-                    assert_eq!(info.bytes_per_block, exp.bytes_per_block, "format={format:?}");
+                    assert_eq!(
+                        info.bytes_per_block, exp.bytes_per_block,
+                        "format={format:?}"
+                    );
                 }
                 None => {
                     assert!(
@@ -10490,7 +10537,9 @@ mod tests {
         assert!(super::is_opaque_alpha_format(
             AerogpuFormat::R8G8B8X8UnormSrgb as u32
         ));
-        assert!(super::is_opaque_alpha_format(AerogpuFormat::B5G6R5Unorm as u32));
+        assert!(super::is_opaque_alpha_format(
+            AerogpuFormat::B5G6R5Unorm as u32
+        ));
 
         assert!(!super::is_opaque_alpha_format(
             AerogpuFormat::B8G8R8A8Unorm as u32

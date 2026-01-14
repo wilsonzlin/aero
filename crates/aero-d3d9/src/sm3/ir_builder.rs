@@ -1,3 +1,4 @@
+use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 use crate::sm3::decode::{
     DclInfo, DclUsage, DecodedInstruction, DecodedShader, Opcode, Operand, RegisterFile,
     ResultShift, SrcModifier,
@@ -8,7 +9,6 @@ use crate::sm3::ir::{
     Src, Stmt, TexSampleKind,
 };
 use crate::sm3::types::ShaderStage;
-use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
 use std::collections::{BTreeSet, HashMap};
 
@@ -482,9 +482,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
 
             Opcode::Call => return Err(err(inst, "call/callnz not supported")),
 
-            Opcode::Unknown(op) => {
-                return Err(err(inst, format!("unsupported opcode 0x{op:04x}")))
-            }
+            Opcode::Unknown(op) => return Err(err(inst, format!("unsupported opcode 0x{op:04x}"))),
         }
     }
 
@@ -664,7 +662,10 @@ fn build_loop_init(inst: &DecodedInstruction) -> Result<LoopInit, BuildError> {
         return Err(err(inst, "loop first operand must be a loop register"));
     }
     if !matches!(loop_reg.modifier, SrcModifier::None) {
-        return Err(err(inst, "loop register operand cannot have a source modifier"));
+        return Err(err(
+            inst,
+            "loop register operand cannot have a source modifier",
+        ));
     }
 
     let ctrl_reg = match inst.operands.get(1) {
@@ -672,7 +673,10 @@ fn build_loop_init(inst: &DecodedInstruction) -> Result<LoopInit, BuildError> {
         _ => return Err(err(inst, "loop missing integer constant operand")),
     };
     if ctrl_reg.reg.file != RegisterFile::ConstInt {
-        return Err(err(inst, "loop second operand must be an integer constant register"));
+        return Err(err(
+            inst,
+            "loop second operand must be an integer constant register",
+        ));
     }
     if !matches!(ctrl_reg.modifier, SrcModifier::None) {
         return Err(err(
@@ -1057,7 +1061,7 @@ fn remap_input_regs_in_block(block: &mut Block, remap: &HashMap<u32, u32>) {
                     remap_input_regs_in_block(else_block, remap);
                 }
             }
-        Stmt::Loop { init: _, body } => remap_input_regs_in_block(body, remap),
+            Stmt::Loop { init: _, body } => remap_input_regs_in_block(body, remap),
             Stmt::Break => {}
             Stmt::BreakIf { cond } => remap_input_regs_in_cond(cond, remap),
             Stmt::Discard { src } => remap_input_regs_in_src(src, remap),

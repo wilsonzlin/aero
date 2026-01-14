@@ -318,7 +318,12 @@ fn xhci_interrupt_in_nak_is_retried_on_tick_without_additional_doorbells() {
     // Configure interrupter 0 to deliver events into our guest event ring.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
     xhci.mmio_write(
         &mut mem,
@@ -386,9 +391,7 @@ fn xhci_tick_has_bounded_work_budget_for_large_transfer_backlogs() {
     let dcbaa = alloc.alloc(0x200, 0x40) as u64;
 
     let transfers: usize = 1000;
-    let transfer_ring_base = alloc
-        .alloc((transfers as u32) * 16, 0x10)
-        .into();
+    let transfer_ring_base = alloc.alloc((transfers as u32) * 16, 0x10).into();
     let buf_base = alloc.alloc((transfers as u32) * 8, 0x10) as u64;
 
     #[derive(Clone)]

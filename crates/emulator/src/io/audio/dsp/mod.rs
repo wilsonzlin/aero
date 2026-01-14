@@ -337,13 +337,15 @@ mod tests {
 
         // Exercise both the "resample only" and "remix then resample" pipeline orders.
         for output_channels in [2usize, 1usize] {
-            let mut sp = StreamProcessor::new(input, 48_000, output_channels, ResamplerKind::Linear)
-                .unwrap();
+            let mut sp =
+                StreamProcessor::new(input, 48_000, output_channels, ResamplerKind::Linear)
+                    .unwrap();
             let out_single = process_single_shot(&mut sp, &bytes);
             assert!(out_single.len().is_multiple_of(output_channels));
 
-            let mut sp = StreamProcessor::new(input, 48_000, output_channels, ResamplerKind::Linear)
-                .unwrap();
+            let mut sp =
+                StreamProcessor::new(input, 48_000, output_channels, ResamplerKind::Linear)
+                    .unwrap();
             let out_chunked = process_chunked(&mut sp, &bytes, input_channels, &[7, 13, 64]);
             assert!(out_chunked.len().is_multiple_of(output_channels));
 

@@ -1,8 +1,8 @@
 mod common;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::FourCC;
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;

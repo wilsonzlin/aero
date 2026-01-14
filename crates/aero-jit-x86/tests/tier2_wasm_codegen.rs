@@ -15,10 +15,10 @@ use aero_jit_x86::tier2::ir::{
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
-use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_jit_x86::tier2::wasm_codegen::{
     Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
 };
+use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_jit_x86::wasm::{
     IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
@@ -948,9 +948,7 @@ fn tier2_trace_wasm_matches_interpreter_on_shift_flags_used_by_guard() {
         .unwrap();
     install_code_version_table(&memory, &mut store, &[1]);
 
-    let got_rip = trace_fn
-        .call(&mut store, (CPU_PTR, JIT_CTX_PTR))
-        .unwrap() as u64;
+    let got_rip = trace_fn.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, interp_state.cpu.rip);
 
     let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
@@ -1641,9 +1639,15 @@ fn tier2_loop_trace_invalidates_when_storemem_bumps_code_version_interpreter_mat
                 dst: v(0),
                 value: store_addr,
             },
-            Instr::Const { dst: v(1), value: 0xAA },
+            Instr::Const {
+                dst: v(1),
+                value: 0xAA,
+            },
             // Loop termination threshold for the regression "no invalidation" path.
-            Instr::Const { dst: v(2), value: 3 },
+            Instr::Const {
+                dst: v(2),
+                value: 3,
+            },
         ],
         body: vec![
             Instr::GuardCodeVersion {
@@ -1656,7 +1660,10 @@ fn tier2_loop_trace_invalidates_when_storemem_bumps_code_version_interpreter_mat
                 dst: v(3),
                 reg: Gpr::Rax,
             },
-            Instr::Const { dst: v(4), value: 1 },
+            Instr::Const {
+                dst: v(4),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(5),
                 op: BinOp::Add,
@@ -1703,13 +1710,8 @@ fn tier2_loop_trace_invalidates_when_storemem_bumps_code_version_interpreter_mat
 
     let mut interp_state = init_state.clone();
     let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
-    let expected = aero_jit_x86::tier2::interp::run_trace(
-        &trace,
-        &env,
-        &mut bus,
-        &mut interp_state,
-        5,
-    );
+    let expected =
+        aero_jit_x86::tier2::interp::run_trace(&trace, &env, &mut bus, &mut interp_state, 5);
     assert_eq!(
         expected.exit,
         RunExit::Invalidate { next_rip: entry_rip },

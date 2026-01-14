@@ -54,9 +54,15 @@ impl AeroGpuScanout0State {
                 || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
                 || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
                 || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 => 4usize,
+                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
+            {
+                4usize
+            }
             x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 => 2usize,
+                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
+            {
+                2usize
+            }
             _ => return None,
         };
 
@@ -826,7 +832,9 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        let mut next = self.next_vblank_ns.unwrap_or(now_ns.saturating_add(interval_ns));
+        let mut next = self
+            .next_vblank_ns
+            .unwrap_or(now_ns.saturating_add(interval_ns));
         if now_ns < next {
             self.next_vblank_ns = Some(next);
             return;
@@ -979,7 +987,8 @@ impl AeroGpuMmioDevice {
         // Publish the new head after processing submissions.
         mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, head);
 
-        if self.fence_gpa != 0 && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0 {
+        if self.fence_gpa != 0 && (self.supported_features() & pci::AEROGPU_FEATURE_FENCE_PAGE) != 0
+        {
             write_fence_page(mem, self.fence_gpa, self.abi_version, self.completed_fence);
         }
     }
@@ -989,7 +998,9 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_MAGIC as u64 => pci::AEROGPU_MMIO_MAGIC,
             x if x == pci::AEROGPU_MMIO_REG_ABI_VERSION as u64 => self.abi_version,
             x if x == pci::AEROGPU_MMIO_REG_FEATURES_LO as u64 => self.supported_features() as u32,
-            x if x == pci::AEROGPU_MMIO_REG_FEATURES_HI as u64 => (self.supported_features() >> 32) as u32,
+            x if x == pci::AEROGPU_MMIO_REG_FEATURES_HI as u64 => {
+                (self.supported_features() >> 32) as u32
+            }
 
             x if x == pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64 => self.ring_gpa as u32,
             x if x == pci::AEROGPU_MMIO_REG_RING_GPA_HI as u64 => (self.ring_gpa >> 32) as u32,
@@ -999,7 +1010,9 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_FENCE_GPA_LO as u64 => self.fence_gpa as u32,
             x if x == pci::AEROGPU_MMIO_REG_FENCE_GPA_HI as u64 => (self.fence_gpa >> 32) as u32,
 
-            x if x == pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO as u64 => self.completed_fence as u32,
+            x if x == pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO as u64 => {
+                self.completed_fence as u32
+            }
             x if x == pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI as u64 => {
                 (self.completed_fence >> 32) as u32
             }
@@ -1011,8 +1024,12 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64 => self.scanout0_width,
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64 => self.scanout0_height,
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64 => self.scanout0_format,
-            x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64 => self.scanout0_pitch_bytes,
-            x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => self.scanout0_fb_gpa as u32,
+            x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64 => {
+                self.scanout0_pitch_bytes
+            }
+            x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => {
+                self.scanout0_fb_gpa as u32
+            }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64 => {
                 (self.scanout0_fb_gpa >> 32) as u32
             }
@@ -1042,7 +1059,9 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64 => self.cursor_height,
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64 => self.cursor_format,
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64 => self.cursor_fb_gpa as u32,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64 => (self.cursor_fb_gpa >> 32) as u32,
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64 => {
+                (self.cursor_fb_gpa >> 32) as u32
+            }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64 => self.cursor_pitch_bytes,
 
             _ => 0,

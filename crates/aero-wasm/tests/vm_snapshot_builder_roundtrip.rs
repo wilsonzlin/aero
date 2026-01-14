@@ -314,13 +314,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
             .cloned()
             .collect::<Vec<_>>()
             .as_slice(),
-        &[
-            "audio.hda",
-            "input.i8042",
-            "net.e1000",
-            "net.stack",
-            "usb"
-        ],
+        &["audio.hda", "input.i8042", "net.e1000", "net.stack", "usb"],
         "restored device kinds should be canonical"
     );
     assert_eq!(

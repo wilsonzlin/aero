@@ -346,9 +346,7 @@ impl ImageStore for LocalFsImageStore {
         if let Some(version) = resolved.chunked_version.as_deref() {
             path = path.join(Path::new(version));
         }
-        let path = path
-            .join("chunks")
-            .join(Path::new(chunk_name));
+        let path = path.join("chunks").join(Path::new(chunk_name));
         open_chunked_file(&self.root, &path, CONTENT_TYPE_DISK_IMAGE).await
     }
 

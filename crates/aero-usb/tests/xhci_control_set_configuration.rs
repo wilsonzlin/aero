@@ -63,7 +63,10 @@ fn xhci_control_set_configuration_configures_keyboard() {
     // Ring the endpoint-0 doorbell (endpoint ID 1).
     xhci.ring_doorbell(&mut mem, slot_id, 1);
 
-    assert!(keyboard.configured(), "control transfer should apply configuration");
+    assert!(
+        keyboard.configured(),
+        "control transfer should apply configuration"
+    );
 
     let evt = Trb::read_from(&mut mem, event_ring_base as u64);
     assert_eq!(evt.trb_type(), TrbType::TransferEvent);
@@ -71,4 +74,3 @@ fn xhci_control_set_configuration_configures_keyboard() {
     assert_eq!(evt.status & 0x00ff_ffff, 0);
     assert_eq!(evt.parameter, status_trb_addr as u64);
 }
-

@@ -1,7 +1,7 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::acpi_pm::{
-    AcpiSleepState, DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN,
-    SLP_TYP_S5,
+    AcpiSleepState, DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT,
+    PM1_CNT_SCI_EN, SLP_TYP_S5,
 };
 use aero_devices::clock::Clock;
 use aero_devices::hpet::HPET_MMIO_BASE;

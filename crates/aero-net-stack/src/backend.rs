@@ -190,9 +190,8 @@ impl NetStackBackend {
 
         if max == 0 || self.pending_actions.len() >= max {
             self.dropped_actions = self.dropped_actions.saturating_add(1);
-            self.dropped_action_bytes = self
-                .dropped_action_bytes
-                .saturating_add(payload_len as u64);
+            self.dropped_action_bytes =
+                self.dropped_action_bytes.saturating_add(payload_len as u64);
             return;
         }
 
@@ -202,9 +201,8 @@ impl NetStackBackend {
             let new_total = self.pending_action_bytes.saturating_add(payload_len);
             if max_bytes == 0 || new_total > max_bytes {
                 self.dropped_actions = self.dropped_actions.saturating_add(1);
-                self.dropped_action_bytes = self
-                    .dropped_action_bytes
-                    .saturating_add(payload_len as u64);
+                self.dropped_action_bytes =
+                    self.dropped_action_bytes.saturating_add(payload_len as u64);
                 return;
             }
             self.pending_action_bytes = new_total;

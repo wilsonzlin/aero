@@ -53,4 +53,3 @@ fn nvme_enable_with_large_aqa_does_not_panic() {
     let csts = ctrl.mmio_read(NVME_REG_CSTS, 4) as u32;
     assert_eq!(csts & CSTS_RDY, 0);
 }
-

@@ -18,7 +18,8 @@ use aero_gpu_trace::{BlobKind, TraceReader, TraceRecord};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -339,16 +340,12 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
         ("synthetic_payloads", synthetic_payloads),
     ] {
         group.throughput(criterion::Throughput::Bytes(bytes.len() as u64));
-        group.bench_with_input(
-            BenchmarkId::new(name, bytes.len()),
-            &bytes,
-            |b, bytes| {
-                b.iter(|| {
-                    let view = parse_cmd_stream(black_box(bytes)).unwrap();
-                    black_box(view.cmds.len());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new(name, bytes.len()), &bytes, |b, bytes| {
+            b.iter(|| {
+                let view = parse_cmd_stream(black_box(bytes)).unwrap();
+                black_box(view.cmds.len());
+            });
+        });
     }
     group.finish();
 }
@@ -373,17 +370,13 @@ fn bench_cmd_optimize(c: &mut Criterion) {
         ("synthetic_internal_bind_groups_1024", bind_group_cmds),
     ] {
         group.throughput(criterion::Throughput::Elements(cmds.len() as u64));
-        group.bench_with_input(
-            BenchmarkId::new(name, "state_only"),
-            &cmds,
-            |b, cmds| {
-                b.iter_batched(
-                    || cmds.clone(),
-                    |cmds| black_box(opt_default.optimize(cmds)),
-                    BatchSize::LargeInput,
-                );
-            },
-        );
+        group.bench_with_input(BenchmarkId::new(name, "state_only"), &cmds, |b, cmds| {
+            b.iter_batched(
+                || cmds.clone(),
+                |cmds| black_box(opt_default.optimize(cmds)),
+                BatchSize::LargeInput,
+            );
+        });
 
         group.bench_with_input(
             BenchmarkId::new(name, "with_draw_coalescing"),

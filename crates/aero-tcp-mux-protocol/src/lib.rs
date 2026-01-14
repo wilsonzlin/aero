@@ -71,35 +71,74 @@ pub struct ErrorPayload {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    FrameTooLarge { len: usize, max: usize },
-    FrameTooShort { len: usize },
-    FrameTruncatedPayload { expected: usize, got: usize },
-    FrameTrailingBytes { trailing: usize },
+    FrameTooLarge {
+        len: usize,
+        max: usize,
+    },
+    FrameTooShort {
+        len: usize,
+    },
+    FrameTruncatedPayload {
+        expected: usize,
+        got: usize,
+    },
+    FrameTrailingBytes {
+        trailing: usize,
+    },
 
-    TruncatedStreamHeader { pending: usize },
+    TruncatedStreamHeader {
+        pending: usize,
+    },
     TruncatedStreamPayload {
         pending: usize,
         payload_len: usize,
     },
 
-    OpenHostTooLong { len: usize, max: usize },
-    OpenMetadataTooLong { len: usize, max: usize },
-    OpenInvalidPort { port: u16 },
-    OpenPayloadTooShort { len: usize },
-    OpenPayloadTruncatedHost { host_len: usize, remaining: usize },
+    OpenHostTooLong {
+        len: usize,
+        max: usize,
+    },
+    OpenMetadataTooLong {
+        len: usize,
+        max: usize,
+    },
+    OpenInvalidPort {
+        port: u16,
+    },
+    OpenPayloadTooShort {
+        len: usize,
+    },
+    OpenPayloadTruncatedHost {
+        host_len: usize,
+        remaining: usize,
+    },
     OpenPayloadTruncatedMetadata {
         metadata_len: usize,
         remaining: usize,
     },
-    OpenPayloadTrailingBytes { trailing: usize },
+    OpenPayloadTrailingBytes {
+        trailing: usize,
+    },
 
-    ClosePayloadWrongLen { len: usize },
+    ClosePayloadWrongLen {
+        len: usize,
+    },
 
-    ErrorMessageTooLong { len: usize, max: usize },
-    ErrorPayloadTooShort { len: usize },
-    ErrorPayloadLengthMismatch { expected: usize, got: usize },
+    ErrorMessageTooLong {
+        len: usize,
+        max: usize,
+    },
+    ErrorPayloadTooShort {
+        len: usize,
+    },
+    ErrorPayloadLengthMismatch {
+        expected: usize,
+        got: usize,
+    },
 
-    InvalidUtf8 { context: &'static str },
+    InvalidUtf8 {
+        context: &'static str,
+    },
 }
 
 impl fmt::Display for Error {
@@ -224,12 +263,13 @@ pub fn decode_frame_with_limits(buf: &[u8], limits: &Limits) -> Result<Frame, Er
         });
     }
 
-    let expected_total = TCP_MUX_HEADER_LEN
-        .checked_add(payload_len)
-        .ok_or(Error::FrameTooLarge {
-            len: payload_len,
-            max: limits.max_payload_len,
-        })?;
+    let expected_total =
+        TCP_MUX_HEADER_LEN
+            .checked_add(payload_len)
+            .ok_or(Error::FrameTooLarge {
+                len: payload_len,
+                max: limits.max_payload_len,
+            })?;
 
     if buf.len() < expected_total {
         return Err(Error::FrameTruncatedPayload {
@@ -267,7 +307,10 @@ pub struct FrameParser {
 
 #[derive(Debug, Clone)]
 enum ParserState {
-    Header { buf: [u8; TCP_MUX_HEADER_LEN], filled: usize },
+    Header {
+        buf: [u8; TCP_MUX_HEADER_LEN],
+        filled: usize,
+    },
     Payload {
         msg_type: u8,
         stream_id: u32,
@@ -381,7 +424,9 @@ impl FrameParser {
                     Err(Error::TruncatedStreamHeader { pending: *filled })
                 }
             }
-            ParserState::Payload { payload_len, buf, .. } => Err(Error::TruncatedStreamPayload {
+            ParserState::Payload {
+                payload_len, buf, ..
+            } => Err(Error::TruncatedStreamPayload {
                 pending: buf.len(),
                 payload_len: *payload_len,
             }),
@@ -395,7 +440,11 @@ impl Default for FrameParser {
     }
 }
 
-pub fn encode_open_payload(host: &str, port: u16, metadata: Option<&str>) -> Result<Vec<u8>, Error> {
+pub fn encode_open_payload(
+    host: &str,
+    port: u16,
+    metadata: Option<&str>,
+) -> Result<Vec<u8>, Error> {
     let host_bytes = host.as_bytes();
     if host_bytes.len() > u16::MAX as usize {
         return Err(Error::OpenHostTooLong {
@@ -445,7 +494,9 @@ pub fn decode_open_payload(buf: &[u8]) -> Result<OpenPayload, Error> {
     let host_bytes = &buf[offset..offset + host_len];
     offset += host_len;
     let host = core::str::from_utf8(host_bytes)
-        .map_err(|_| Error::InvalidUtf8 { context: "OPEN host" })?
+        .map_err(|_| Error::InvalidUtf8 {
+            context: "OPEN host",
+        })?
         .to_owned();
 
     let port = u16::from_be_bytes([buf[offset], buf[offset + 1]]);

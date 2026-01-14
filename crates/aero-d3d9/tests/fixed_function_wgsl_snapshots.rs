@@ -1,5 +1,7 @@
 use aero_d3d9::fixed_function::fvf::Fvf;
-use aero_d3d9::fixed_function::shader_gen::{generate_fixed_function_shaders, FixedFunctionShaderDesc};
+use aero_d3d9::fixed_function::shader_gen::{
+    generate_fixed_function_shaders, FixedFunctionShaderDesc,
+};
 use aero_d3d9::fixed_function::tss::{
     AlphaTestState, FogState, LightingState, TextureArg, TextureOp, TextureResultTarget,
     TextureStageState,

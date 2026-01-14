@@ -1057,9 +1057,7 @@ mod tests {
                 SnapshotWriter::new(UsbHidGamepad::DEVICE_ID, UsbHidGamepad::DEVICE_VERSION);
             w.field_bytes(
                 TAG_PENDING_REPORTS,
-                Encoder::new()
-                    .u32(MAX_PENDING_REPORTS as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PENDING_REPORTS as u32 + 1).finish(),
             );
             w.finish()
         };

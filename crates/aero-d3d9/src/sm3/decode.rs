@@ -1,9 +1,10 @@
-use crate::sm3::types::{ShaderStage, ShaderVersion};
 use crate::shader_limits::{
     MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX, MAX_D3D9_INPUT_REGISTER_INDEX,
-    MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX,
-    MAX_D3D9_SHADER_TOKEN_COUNT, MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXTURE_REGISTER_INDEX,
+    MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_BYTECODE_BYTES,
+    MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT, MAX_D3D9_TEMP_REGISTER_INDEX,
+    MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
+use crate::sm3::types::{ShaderStage, ShaderVersion};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodeError {
@@ -137,12 +138,12 @@ impl Opcode {
             9 => Self::Dp4,
             10 => Self::Min,
             11 => Self::Max,
-            16 => Self::Lit,    // 0x10
+            16 => Self::Lit, // 0x10
             12 => Self::Slt,
             13 => Self::Sge,
             14 => Self::Exp,
             15 => Self::Log,
-            19 => Self::Frc, // 0x13
+            19 => Self::Frc,  // 0x13
             20 => Self::M4x4, // 0x14
             21 => Self::M4x3, // 0x15
             22 => Self::M3x4, // 0x16
@@ -154,9 +155,9 @@ impl Opcode {
             29 => Self::EndLoop,
             31 => Self::Dcl,
             32 => Self::Pow,
-            33 => Self::Crs, // 0x21
-            34 => Self::Sgn, // 0x22
-            35 => Self::Abs,   // 0x23
+            33 => Self::Crs,    // 0x21
+            34 => Self::Sgn,    // 0x22
+            35 => Self::Abs,    // 0x23
             36 => Self::Nrm,    // 0x24
             37 => Self::SinCos, // 0x25
             40 => Self::If,
@@ -177,13 +178,13 @@ impl Opcode {
             // Some opcode tables list `seq`/`sne` (set on equal / set on not equal)
             // in this neighborhood. We accept the commonly cited values; anything
             // else is treated as `Unknown`.
-            84 => Self::Seq, // 0x54
-            85 => Self::Sne, // 0x55
-            86 => Self::Dsx, // 0x56
-            87 => Self::Dsy, // 0x57
-            88 => Self::Cmp, // 0x58
+            84 => Self::Seq,    // 0x54
+            85 => Self::Sne,    // 0x55
+            86 => Self::Dsx,    // 0x56
+            87 => Self::Dsy,    // 0x57
+            88 => Self::Cmp,    // 0x58
             89 => Self::Dp2Add, // 0x59
-            90 => Self::Dp2, // 0x5A
+            90 => Self::Dp2,    // 0x5A
             0xFFFE => Self::Comment,
             0xFFFF => Self::End,
             other => Self::Unknown(other),
@@ -846,10 +847,7 @@ fn decode_operands_and_extras(
             if stage != ShaderStage::Pixel {
                 return Err(DecodeError {
                     token_index: 0,
-                    message: format!(
-                        "opcode {} is only valid in pixel shaders",
-                        opcode.name()
-                    ),
+                    message: format!("opcode {} is only valid in pixel shaders", opcode.name()),
                 });
             }
             parse_fixed_operands(
@@ -887,17 +885,20 @@ fn decode_operands_and_extras(
             // instead of branching on `operand_tokens.len()`.
             let (dst, dst_consumed) = decode_dst_operand(operand_tokens, 0, stage, major)?;
             operands.push(Operand::Dst(dst));
-            let (src0, src0_consumed) = decode_src_operand(operand_tokens, dst_consumed, stage, major)?;
+            let (src0, src0_consumed) =
+                decode_src_operand(operand_tokens, dst_consumed, stage, major)?;
             operands.push(Operand::Src(src0));
             let mut token_cursor = dst_consumed + src0_consumed;
             if token_cursor == operand_tokens.len() {
                 // 2-operand form: dst, src0
             } else {
                 // 4-operand form: dst, src0, src1, src2
-                let (src1, src1_consumed) = decode_src_operand(operand_tokens, token_cursor, stage, major)?;
+                let (src1, src1_consumed) =
+                    decode_src_operand(operand_tokens, token_cursor, stage, major)?;
                 operands.push(Operand::Src(src1));
                 token_cursor += src1_consumed;
-                let (src2, src2_consumed) = decode_src_operand(operand_tokens, token_cursor, stage, major)?;
+                let (src2, src2_consumed) =
+                    decode_src_operand(operand_tokens, token_cursor, stage, major)?;
                 operands.push(Operand::Src(src2));
                 token_cursor += src2_consumed;
 
@@ -1433,9 +1434,7 @@ fn decode_register_ref(
     if index > max_index {
         return Err(DecodeError {
             token_index: start,
-            message: format!(
-                "register index {index} in {file:?} exceeds maximum {max_index}"
-            ),
+            message: format!("register index {index} in {file:?} exceeds maximum {max_index}"),
         });
     }
     let mut consumed = 1usize;

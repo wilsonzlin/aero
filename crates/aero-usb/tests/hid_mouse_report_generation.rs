@@ -96,7 +96,10 @@ fn mouse_motion_splits_deltas_with_saturation_and_remainder() {
     let reports = drain_interrupt_reports(&mut mouse);
     assert_eq!(reports.len(), 2);
 
-    assert_eq!(parse_report(&reports[0]), (0x00, 127, -127, Some(0), Some(0)));
+    assert_eq!(
+        parse_report(&reports[0]),
+        (0x00, 127, -127, Some(0), Some(0))
+    );
     assert_eq!(parse_report(&reports[1]), (0x00, 1, -1, Some(0), Some(0)));
 }
 
@@ -110,8 +113,14 @@ fn mouse_motion_splits_large_dx_dy_into_multiple_reports() {
     let reports = drain_interrupt_reports(&mut mouse);
     assert_eq!(reports.len(), 3);
 
-    assert_eq!(parse_report(&reports[0]), (0x00, 127, -127, Some(0), Some(0)));
-    assert_eq!(parse_report(&reports[1]), (0x00, 127, -127, Some(0), Some(0)));
+    assert_eq!(
+        parse_report(&reports[0]),
+        (0x00, 127, -127, Some(0), Some(0))
+    );
+    assert_eq!(
+        parse_report(&reports[1]),
+        (0x00, 127, -127, Some(0), Some(0))
+    );
     assert_eq!(parse_report(&reports[2]), (0x00, 46, -46, Some(0), Some(0)));
 }
 
@@ -161,7 +170,11 @@ fn mouse_buttons_4_and_5_are_reported_in_report_protocol_but_masked_in_boot_prot
 
     let reports = drain_interrupt_reports(&mut mouse);
     let last = reports.last().expect("expected button reports");
-    assert_eq!(last.len(), 5, "report protocol mouse report should be 5 bytes");
+    assert_eq!(
+        last.len(),
+        5,
+        "report protocol mouse report should be 5 bytes"
+    );
     assert_eq!(parse_report(last), (0x19, 0, 0, Some(0), Some(0)));
 
     // Switching to boot protocol must mask the extra button bits. We trigger a report via motion

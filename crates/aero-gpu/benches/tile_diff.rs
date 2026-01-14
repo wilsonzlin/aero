@@ -263,11 +263,8 @@ fn bench_merge_and_cap_rects(c: &mut Criterion) {
                 ),
                 move |b| {
                     b.iter(|| {
-                        let out = merge_and_cap_rects(
-                            black_box(&rects),
-                            (size.width, size.height),
-                            CAP,
-                        );
+                        let out =
+                            merge_and_cap_rects(black_box(&rects), (size.width, size.height), CAP);
                         black_box(out.rects.len());
                     })
                 },

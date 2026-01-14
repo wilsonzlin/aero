@@ -120,7 +120,10 @@ fn parse_seed_env(input: &str) -> Option<u64> {
     // notation for seeds.
     let cleaned: String = trimmed.chars().filter(|c| *c != '_').collect();
     let cleaned = cleaned.as_str();
-    let (radix, digits) = match cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+    let (radix, digits) = match cleaned
+        .strip_prefix("0x")
+        .or_else(|| cleaned.strip_prefix("0X"))
+    {
         Some(rest) => (16, rest),
         None => (10, cleaned),
     };
@@ -216,7 +219,9 @@ pub fn run(
                     shell_quote_single(v)
                 ));
             }
-            repro_lines.push(format!("AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting}"));
+            repro_lines.push(format!(
+                "AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting}"
+            ));
             repro_lines.push(format!("AERO_CONFORMANCE_CASES={minimal_cases}"));
             repro_lines.push(format!("AERO_CONFORMANCE_SEED={seed:#x}"));
             if let Some(filter) = filter_env.as_deref() {
@@ -225,9 +230,8 @@ pub fn run(
                     shell_quote_single(filter)
                 ));
             }
-            repro_lines.push(
-                "cargo test -p conformance --locked instruction_conformance".to_string(),
-            );
+            repro_lines
+                .push("cargo test -p conformance --locked instruction_conformance".to_string());
 
             let repro = format!("repro:\n  {}", repro_lines.join(" \\\n  "));
             let hint = format!(
@@ -259,7 +263,9 @@ fn shell_quote_single(s: &str) -> String {
     format!("'{escaped}'")
 }
 
-fn templates_for_run(templates: Vec<InstructionTemplate>) -> Result<Vec<InstructionTemplate>, String> {
+fn templates_for_run(
+    templates: Vec<InstructionTemplate>,
+) -> Result<Vec<InstructionTemplate>, String> {
     let filter = std::env::var("AERO_CONFORMANCE_FILTER")
         .ok()
         .map(|v| v.trim().to_string())
@@ -380,7 +386,9 @@ fn compare_outcomes(
     actual: &ExecOutcome,
 ) -> Option<String> {
     if expected.fault != actual.fault {
-        return Some(report::format_failure(mem_base, template, case, expected, actual));
+        return Some(report::format_failure(
+            mem_base, template, case, expected, actual,
+        ));
     }
 
     if expected.fault.is_some() {
@@ -391,13 +399,17 @@ fn compare_outcomes(
     let actual_state = &actual.state;
 
     if !report::states_equal(expected_state, actual_state, template.flags_mask) {
-        return Some(report::format_failure(mem_base, template, case, expected, actual));
+        return Some(report::format_failure(
+            mem_base, template, case, expected, actual,
+        ));
     }
 
     if template.mem_compare_len > 0
         && !report::memory_equal(&expected.memory, &actual.memory, template.mem_compare_len)
     {
-        return Some(report::format_failure(mem_base, template, case, expected, actual));
+        return Some(report::format_failure(
+            mem_base, template, case, expected, actual,
+        ));
     }
 
     None
@@ -462,8 +474,8 @@ mod tests {
     fn template_filter_can_force_name_substring() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "name:add");
-        let filtered =
-            templates_for_run(crate::corpus::templates()).expect("name:add should match at least one template");
+        let filtered = templates_for_run(crate::corpus::templates())
+            .expect("name:add should match at least one template");
 
         assert!(
             filtered.iter().all(|t| t.name.contains("add")),
@@ -524,8 +536,10 @@ mod tests {
         let mem_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
         let mut aero = aero::AeroBackend::new(mem_fault_signal);
 
-        let fault_templates: Vec<&InstructionTemplate> =
-            templates.iter().filter(|t| t.kind.is_fault_template()).collect();
+        let fault_templates: Vec<&InstructionTemplate> = templates
+            .iter()
+            .filter(|t| t.kind.is_fault_template())
+            .collect();
 
         let mut saw_ud2 = false;
         let mut saw_mem_abs0 = false;

@@ -80,7 +80,9 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if !opts.skip_fixtures {
         let xtask_exe = std::env::current_exe().map_err(|e| {
-            XtaskError::Message(format!("failed to resolve current xtask executable path: {e}"))
+            XtaskError::Message(format!(
+                "failed to resolve current xtask executable path: {e}"
+            ))
         })?;
         let mut cmd = Command::new(&xtask_exe);
         cmd.current_dir(&repo_root).args(["fixtures", "--check"]);
@@ -176,7 +178,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "-p",
             "aero-machine",
         ]);
-        runner.run_step("WASM: cargo check (wasm32) aero-devices-storage + aero-machine", &mut cmd)?;
+        runner.run_step(
+            "WASM: cargo check (wasm32) aero-devices-storage + aero-machine",
+            &mut cmd,
+        )?;
     }
 
     let mut resolved_node_dir: Option<PathBuf> = None;

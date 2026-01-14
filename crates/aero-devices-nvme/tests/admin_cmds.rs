@@ -89,7 +89,8 @@ fn submit_admin(
     let slot = *next_sq_slot as u64;
     mem.write_physical(asq + slot * 64, &cmd);
     *next_sq_slot += 1;
-    dev.controller.mmio_write(0x1000, 4, u64::from(*next_sq_slot));
+    dev.controller
+        .mmio_write(0x1000, 4, u64::from(*next_sq_slot));
     dev.process(mem);
 
     let cqe_addr = acq + u64::from(*next_cq_slot) * 16;
@@ -130,7 +131,15 @@ fn admin_delete_io_sq_cq_allows_recreate() {
     set_prp1(&mut cmd, io_cq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_eq!(cqe.cid, 1);
     assert_success_status(cqe.status);
 
@@ -140,7 +149,15 @@ fn admin_delete_io_sq_cq_allows_recreate() {
     set_prp1(&mut cmd, io_sq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_eq!(cqe.cid, 2);
     assert_success_status(cqe.status);
 
@@ -148,7 +165,15 @@ fn admin_delete_io_sq_cq_allows_recreate() {
     let mut cmd = build_command(0x00);
     set_cid(&mut cmd, 3);
     set_cdw10(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_eq!(cqe.cid, 3);
     assert_success_status(cqe.status);
 
@@ -156,7 +181,15 @@ fn admin_delete_io_sq_cq_allows_recreate() {
     let mut cmd = build_command(0x04);
     set_cid(&mut cmd, 4);
     set_cdw10(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_eq!(cqe.cid, 4);
     assert_success_status(cqe.status);
 
@@ -166,7 +199,15 @@ fn admin_delete_io_sq_cq_allows_recreate() {
     set_prp1(&mut cmd, io_cq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_eq!(cqe.cid, 5);
     assert_success_status(cqe.status);
 
@@ -175,7 +216,15 @@ fn admin_delete_io_sq_cq_allows_recreate() {
     set_prp1(&mut cmd, io_sq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_eq!(cqe.cid, 6);
     assert_success_status(cqe.status);
 }
@@ -197,21 +246,45 @@ fn admin_get_set_features_roundtrip() {
     let mut cmd = build_command(0x0a); // GET FEATURES
     set_cid(&mut cmd, 1);
     set_cdw10(&mut cmd, 0x07); // Number of Queues
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 0x00ff_00ff);
 
     let mut cmd = build_command(0x0a);
     set_cid(&mut cmd, 2);
     set_cdw10(&mut cmd, 0x08); // Interrupt Coalescing
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 0);
 
     let mut cmd = build_command(0x0a);
     set_cid(&mut cmd, 3);
     set_cdw10(&mut cmd, 0x06); // Volatile Write Cache
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 0);
 
@@ -220,14 +293,30 @@ fn admin_get_set_features_roundtrip() {
     set_cid(&mut cmd, 4);
     set_cdw10(&mut cmd, 0x08);
     set_cdw11(&mut cmd, 0x1234);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 0x1234);
 
     let mut cmd = build_command(0x0a);
     set_cid(&mut cmd, 5);
     set_cdw10(&mut cmd, 0x08);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 0x1234);
 
@@ -236,14 +325,30 @@ fn admin_get_set_features_roundtrip() {
     set_cid(&mut cmd, 6);
     set_cdw10(&mut cmd, 0x07);
     set_cdw11(&mut cmd, (3u32 << 16) | 3u32);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, (3u32 << 16) | 3u32);
 
     let mut cmd = build_command(0x0a);
     set_cid(&mut cmd, 7);
     set_cdw10(&mut cmd, 0x07);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, (3u32 << 16) | 3u32);
 
@@ -252,14 +357,30 @@ fn admin_get_set_features_roundtrip() {
     set_cid(&mut cmd, 8);
     set_cdw10(&mut cmd, 0x06);
     set_cdw11(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 1);
 
     let mut cmd = build_command(0x0a);
     set_cid(&mut cmd, 9);
     set_cdw10(&mut cmd, 0x06);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
     assert_eq!(cqe.dw0, 1);
 }
@@ -284,21 +405,45 @@ fn snapshot_restore_preserves_features_and_queue_existence() {
     set_cid(&mut cmd, 1);
     set_cdw10(&mut cmd, 0x08);
     set_cdw11(&mut cmd, 0xbeef);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
 
     let mut cmd = build_command(0x09);
     set_cid(&mut cmd, 2);
     set_cdw10(&mut cmd, 0x06);
     set_cdw11(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
 
     let mut cmd = build_command(0x09);
     set_cid(&mut cmd, 3);
     set_cdw10(&mut cmd, 0x07);
     set_cdw11(&mut cmd, (7u32 << 16) | 7u32); // request 8x queues
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
 
     // Create IO CQ+SQ.
@@ -307,7 +452,15 @@ fn snapshot_restore_preserves_features_and_queue_existence() {
     set_prp1(&mut cmd, io_cq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 0x3);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
 
     let mut cmd = build_command(0x01);
@@ -315,7 +468,15 @@ fn snapshot_restore_preserves_features_and_queue_existence() {
     set_prp1(&mut cmd, io_sq);
     set_cdw10(&mut cmd, (15u32 << 16) | 1);
     set_cdw11(&mut cmd, 1);
-    let cqe = submit_admin(&mut dev, &mut mem, asq, acq, &mut sq_slot, &mut cq_slot, cmd);
+    let cqe = submit_admin(
+        &mut dev,
+        &mut mem,
+        asq,
+        acq,
+        &mut sq_slot,
+        &mut cq_slot,
+        cmd,
+    );
     assert_success_status(cqe.status);
 
     let snap = dev.save_state();
@@ -382,4 +543,3 @@ fn snapshot_restore_preserves_features_and_queue_existence() {
     assert_eq!(cqe.cid, 0x99);
     assert_success_status(cqe.status);
 }
-

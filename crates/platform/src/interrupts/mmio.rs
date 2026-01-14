@@ -1,5 +1,5 @@
-use aero_interrupts::apic::{IoApic, LocalApic};
 use super::SharedPlatformInterrupts;
+use aero_interrupts::apic::{IoApic, LocalApic};
 use memory::MmioHandler;
 use std::sync::{Arc, Mutex};
 
@@ -43,7 +43,9 @@ impl MmioHandler for LapicMmio {
         match &self.backend {
             LapicMmioBackend::Direct(lapic) => lapic.mmio_read(offset, &mut buf[..size]),
             LapicMmioBackend::Platform(interrupts) => {
-                interrupts.borrow().lapic_mmio_read(offset, &mut buf[..size]);
+                interrupts
+                    .borrow()
+                    .lapic_mmio_read(offset, &mut buf[..size]);
             }
         }
         u64::from_le_bytes(buf)

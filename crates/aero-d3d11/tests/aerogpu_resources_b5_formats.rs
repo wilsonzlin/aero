@@ -113,7 +113,11 @@ fn push_b5_subresource(
         }
         for i in 0..pad_len {
             // Vary padding per row to make it obvious if the upload path accidentally consumes it.
-            let b = if (y + i) % 2 == 0 { pad_pattern[0] } else { pad_pattern[1] };
+            let b = if (y + i) % 2 == 0 {
+                pad_pattern[0]
+            } else {
+                pad_pattern[1]
+            };
             dst.push(b);
         }
     }
@@ -163,7 +167,7 @@ fn upload_resource_b5_formats_expand_to_rgba8() -> Result<()> {
             // row0
             b5.extend_from_slice(&[0x00, 0xF8, 0xE0, 0x07]);
             b5.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // padding (must be ignored)
-            // row1
+                                                             // row1
             b5.extend_from_slice(&[0x1F, 0x00, 0xFF, 0xFF]);
             b5.extend_from_slice(&[0xFE, 0xED, 0xFA, 0xCE]); // padding (must be ignored)
             assert_eq!(b5.len(), row_pitch_bytes as usize * height as usize);
@@ -325,14 +329,7 @@ fn upload_resource_b5_formats_expand_to_rgba8_for_mips_and_array_layers() -> Res
                     0 => [0x00, 0xF8], // red
                     _ => [0xFF, 0xFF], // white
                 };
-                push_b5_subresource(
-                    &mut bytes,
-                    4,
-                    4,
-                    row_pitch_bytes,
-                    mip0_color,
-                    [0xDE, 0xAD],
-                )?;
+                push_b5_subresource(&mut bytes, 4, 4, row_pitch_bytes, mip0_color, [0xDE, 0xAD])?;
 
                 // mip1 2x2, tight rows
                 let mip1_color = match layer {
@@ -419,14 +416,7 @@ fn upload_resource_b5_formats_expand_to_rgba8_for_mips_and_array_layers() -> Res
                     0 => [0x00, 0xFC], // red, a=1
                     _ => [0xFF, 0x7F], // white, a=0
                 };
-                push_b5_subresource(
-                    &mut bytes,
-                    4,
-                    4,
-                    row_pitch_bytes,
-                    mip0_color,
-                    [0x11, 0x22],
-                )?;
+                push_b5_subresource(&mut bytes, 4, 4, row_pitch_bytes, mip0_color, [0x11, 0x22])?;
 
                 // mip1 2x2
                 let mip1_color = match layer {
@@ -460,12 +450,12 @@ fn upload_resource_b5_formats_expand_to_rgba8_for_mips_and_array_layers() -> Res
             );
 
             for (layer, mip, w, h, expected_px) in [
-                (0u32, 0u32, 4u32, 4u32, [255u8, 0, 0, 255]),     // red, a=1
-                (0u32, 1u32, 2u32, 2u32, [0u8, 255, 0, 0]),       // green, a=0
-                (0u32, 2u32, 1u32, 1u32, [0u8, 0, 255, 255]),     // blue, a=1
-                (1u32, 0u32, 4u32, 4u32, [255u8, 255, 255, 0]),   // white, a=0
-                (1u32, 1u32, 2u32, 2u32, [0u8, 0, 0, 255]),       // black, a=1
-                (1u32, 2u32, 1u32, 1u32, [255u8, 0, 0, 0]),       // red, a=0
+                (0u32, 0u32, 4u32, 4u32, [255u8, 0, 0, 255]), // red, a=1
+                (0u32, 1u32, 2u32, 2u32, [0u8, 255, 0, 0]),   // green, a=0
+                (0u32, 2u32, 1u32, 1u32, [0u8, 0, 255, 255]), // blue, a=1
+                (1u32, 0u32, 4u32, 4u32, [255u8, 255, 255, 0]), // white, a=0
+                (1u32, 1u32, 2u32, 2u32, [0u8, 0, 0, 255]),   // black, a=1
+                (1u32, 2u32, 1u32, 1u32, [255u8, 0, 0, 0]),   // red, a=0
             ] {
                 let readback = read_texture_rgba8_subresource(
                     resources.device(),
@@ -488,17 +478,15 @@ fn upload_resource_b5_formats_expand_to_rgba8_for_mips_and_array_layers() -> Res
 #[test]
 fn ensure_texture_uploaded_guest_backed_b5_formats_expand_to_rgba8() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 b5 guest-backed test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 b5 guest-backed test device").await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
 
         let mut resources = AerogpuResourceManager::new(device, queue);
 

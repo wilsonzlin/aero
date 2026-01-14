@@ -61,11 +61,8 @@ fn machine_snapshot_preserves_virtio_blk_msix_enable_and_mask() {
             // Virtio-pci MSI-X table+PBA are located in BAR0 after the device-specific config
             // window. Match the runtime virtio-pci layout (`aero_virtio::pci`).
             cfg.add_capability(Box::new(MsixCapability::new(
-                /* table_size */ 2,
-                /* table_bir */ 0,
-                /* table_offset */ 0x3100,
-                /* pba_bir */ 0,
-                /* pba_offset */ 0x3120,
+                /* table_size */ 2, /* table_bir */ 0, /* table_offset */ 0x3100,
+                /* pba_bir */ 0, /* pba_offset */ 0x3120,
             )))
         });
 

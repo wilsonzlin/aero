@@ -141,8 +141,8 @@ fn presenter_randomized_uploads_match_source_slices() {
         rng.fill_bytes(&mut frame_data);
 
         let cap = rng.gen_range_usize(0..=16);
-        let mut presenter =
-            Presenter::new(width, height, bpp, RecordingWriter::default()).with_max_rects_per_frame(cap);
+        let mut presenter = Presenter::new(width, height, bpp, RecordingWriter::default())
+            .with_max_rects_per_frame(cap);
 
         let rect_count = rng.gen_range_usize(0..=32);
         let mut dirty = Vec::with_capacity(rect_count);
@@ -169,12 +169,7 @@ fn presenter_randomized_uploads_match_source_slices() {
             continue;
         }
 
-        let sum_uploaded: usize = presenter
-            .writer()
-            .calls
-            .iter()
-            .map(|c| c.data.len())
-            .sum();
+        let sum_uploaded: usize = presenter.writer().calls.iter().map(|c| c.data.len()).sum();
         assert_eq!(telemetry.bytes_uploaded, sum_uploaded);
 
         for call in &presenter.writer().calls {
@@ -190,8 +185,7 @@ fn presenter_randomized_uploads_match_source_slices() {
             };
             assert_eq!(call.bytes_per_row, expected_bpr);
 
-            let expected_len =
-                required_data_len(expected_bpr, row_bytes_rect, rect.h as usize);
+            let expected_len = required_data_len(expected_bpr, row_bytes_rect, rect.h as usize);
             assert_eq!(call.data.len(), expected_len);
 
             // Validate row copies for the active row_bytes range (padding bytes are don't-care).

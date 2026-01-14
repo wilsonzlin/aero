@@ -8,44 +8,43 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
     AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateSampler,
     AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
-    AerogpuCmdDestroyResource, AerogpuCmdDestroySampler, AerogpuCmdDestroyShader, AerogpuCmdDraw,
-    AerogpuCmdDispatch, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
-    AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent,
-    AerogpuCmdPresentEx,
-    AerogpuCmdReleaseSharedSurface, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
-    AerogpuCmdSetConstantBuffers, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
-    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
-    AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
-    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
-    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode,
-    AerogpuDepthStencilState, AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
+    AerogpuCmdDestroyResource, AerogpuCmdDestroySampler, AerogpuCmdDestroyShader,
+    AerogpuCmdDispatch, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface,
+    AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
+    AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface,
+    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetConstantBuffers,
+    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
+    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
+    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetSamplers,
+    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
+    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdSetVertexBuffers,
+    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
+    AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuDepthStencilState,
+    AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
     AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState,
     AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
-    AerogpuUnorderedAccessBufferBinding,
-    AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST,
-    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
-    AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC,
-    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_STORAGE, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AerogpuUnorderedAccessBufferBinding, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS, AEROGPU_PRESENT_FLAG_NONE,
+    AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_NONE,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_STORAGE, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuErrorCode, AerogpuFormat,
-    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE,
-    AEROGPU_FEATURE_ERROR_INFO, AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK,
-    AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
-    AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
-    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-    AEROGPU_PCI_BAR0_INDEX, AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_BAR1_INDEX,
-    AEROGPU_PCI_BAR1_SIZE_BYTES, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID,
-    AEROGPU_PCI_PROG_IF, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID,
-    AEROGPU_PCI_SUBSYSTEM_VENDOR_ID, AEROGPU_PCI_VENDOR_ID,
-    AEROGPU_RING_CONTROL_ENABLE,
+    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_ERROR_INFO,
+    AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK,
+    AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL,
+    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO, AEROGPU_PCI_BAR0_INDEX,
+    AEROGPU_PCI_BAR0_SIZE_BYTES, AEROGPU_PCI_BAR1_INDEX, AEROGPU_PCI_BAR1_SIZE_BYTES,
+    AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF,
+    AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
+    AEROGPU_PCI_VENDOR_ID, AEROGPU_RING_CONTROL_ENABLE,
 };
 use aero_protocol::aerogpu::aerogpu_ring::{
     write_fence_page_completed_fence_le, AerogpuAllocEntry, AerogpuAllocTableHeader,
@@ -54,15 +53,14 @@ use aero_protocol::aerogpu::aerogpu_ring::{
     AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 use aero_protocol::aerogpu::aerogpu_umd_private::{
-    AerogpuUmdPrivateV1, AEROGPU_UMDPRIV_FEATURE_CURSOR, AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE,
-    AEROGPU_UMDPRIV_FEATURE_ERROR_INFO, AEROGPU_UMDPRIV_FEATURE_SCANOUT,
-    AEROGPU_UMDPRIV_FEATURE_TRANSFER,
-    AEROGPU_UMDPRIV_FEATURE_VBLANK, AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE,
-    AEROGPU_UMDPRIV_FLAG_HAS_VBLANK, AEROGPU_UMDPRIV_FLAG_IS_LEGACY,
-    AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP, AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU,
-    AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI,
-    AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO, AEROGPU_UMDPRIV_MMIO_REG_MAGIC,
-    AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
+    AerogpuUmdPrivateV1, AEROGPU_UMDPRIV_FEATURE_CURSOR, AEROGPU_UMDPRIV_FEATURE_ERROR_INFO,
+    AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE, AEROGPU_UMDPRIV_FEATURE_SCANOUT,
+    AEROGPU_UMDPRIV_FEATURE_TRANSFER, AEROGPU_UMDPRIV_FEATURE_VBLANK,
+    AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE, AEROGPU_UMDPRIV_FLAG_HAS_VBLANK,
+    AEROGPU_UMDPRIV_FLAG_IS_LEGACY, AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP,
+    AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION,
+    AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO,
+    AEROGPU_UMDPRIV_MMIO_REG_MAGIC, AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
 };
 use aero_protocol::aerogpu::aerogpu_wddm_alloc::{
     AerogpuWddmAllocKind, AerogpuWddmAllocPriv, AerogpuWddmAllocPrivV2,
@@ -2651,10 +2649,22 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_completed_fence"),
         24
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"), 40);
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"), 44);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring0_head"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"),
+        36
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
+        40
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"),
+        44
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "total_submissions"),
         48
@@ -2691,7 +2701,10 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_reset_time_100ns"),
         112
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "vblank_seq"), 120);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "vblank_seq"),
+        120
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "last_vblank_time_ns"),
         128
@@ -2716,12 +2729,12 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "ring_push_failures"),
         160
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "selftest_count"), 168);
     assert_eq!(
-        abi.offset(
-            "aerogpu_escape_query_perf_out",
-            "selftest_last_error_code"
-        ),
+        abi.offset("aerogpu_escape_query_perf_out", "selftest_count"),
+        168
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "selftest_last_error_code"),
         176
     );
     assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "flags"), 180);
@@ -2762,10 +2775,22 @@ fn rust_layout_matches_c_headers() {
     );
 
     assert_eq!(abi.offset("aerogpu_escape_query_error_out", "flags"), 16);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_code"), 20);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_fence"), 24);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_count"), 32);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "reserved0"), 36);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "error_code"),
+        20
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "error_fence"),
+        24
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "error_count"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "reserved0"),
+        36
+    );
 
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);
@@ -2804,12 +2829,12 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_dbgctl_ring_desc_v2", "alloc_table_size_bytes"),
         32
     );
-    assert_eq!(
-        abi.offset("aerogpu_dbgctl_ring_desc_v2", "reserved0"),
-        36
-    );
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc_v2", "reserved0"), 36);
 
-    assert_eq!(abi.offset("aerogpu_escape_dump_ring_v2_inout", "ring_id"), 16);
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "ring_id"),
+        16
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_dump_ring_v2_inout", "ring_format"),
         20
@@ -2838,9 +2863,15 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.offset("aerogpu_escape_dump_ring_v2_inout", "desc"), 52);
 
-    assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "timeout_ms"), 16);
+    assert_eq!(
+        abi.offset("aerogpu_escape_selftest_inout", "timeout_ms"),
+        16
+    );
     assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "passed"), 20);
-    assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "error_code"), 24);
+    assert_eq!(
+        abi.offset("aerogpu_escape_selftest_inout", "error_code"),
+        24
+    );
     assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "reserved0"), 28);
 
     assert_eq!(
@@ -2877,12 +2908,18 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_scanout_out", "vidpn_source_id"),
         16
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_scanout_out", "reserved0"), 20);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_scanout_out", "reserved0"),
+        20
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_scanout_out", "cached_enable"),
         24
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_scanout_out", "cached_width"), 28);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_scanout_out", "cached_width"),
+        28
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_scanout_out", "cached_height"),
         32
@@ -2899,7 +2936,10 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_scanout_out", "mmio_enable"),
         44
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_scanout_out", "mmio_width"), 48);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_scanout_out", "mmio_width"),
+        48
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_scanout_out", "mmio_height"),
         52
@@ -2912,57 +2952,51 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_scanout_out", "mmio_pitch_bytes"),
         60
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_scanout_out", "mmio_fb_gpa"), 64);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_scanout_out", "mmio_fb_gpa"),
+        64
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_scanout_out_v2", "cached_fb_gpa"),
         72
     );
 
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "flags"), 16);
     assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "flags"),
-        16
+        abi.offset("aerogpu_escape_query_cursor_out", "reserved0"),
+        20
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "reserved0"), 20);
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "enable"),
-        24
-    );
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "enable"), 24);
     assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "x"), 28);
     assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "y"), 32);
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "hot_x"),
-        36
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "hot_y"),
-        40
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "width"),
-        44
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "height"),
-        48
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "format"),
-        52
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_cursor_out", "fb_gpa"),
-        56
-    );
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "hot_x"), 36);
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "hot_y"), 40);
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "width"), 44);
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "height"), 48);
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "format"), 52);
+    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "fb_gpa"), 56);
     assert_eq!(
         abi.offset("aerogpu_escape_query_cursor_out", "pitch_bytes"),
         64
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_cursor_out", "reserved1"), 68);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_cursor_out", "reserved1"),
+        68
+    );
 
     assert_eq!(abi.offset("aerogpu_escape_query_error_out", "flags"), 16);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_code"), 20);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_fence"), 24);
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_count"), 32);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "error_code"),
+        20
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "error_fence"),
+        24
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "error_count"),
+        32
+    );
 
     assert_eq!(
         abi.offset("aerogpu_escape_map_shared_handle_inout", "shared_handle"),
@@ -2981,17 +3015,29 @@ fn rust_layout_matches_c_headers() {
         28
     );
 
-    assert_eq!(abi.offset("aerogpu_escape_query_error_out", "reserved0"), 36);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_error_out", "reserved0"),
+        36
+    );
 
     assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "gpa"), 16);
-    assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "size_bytes"), 24);
+    assert_eq!(
+        abi.offset("aerogpu_escape_read_gpa_inout", "size_bytes"),
+        24
+    );
     assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "reserved0"), 28);
     assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "status"), 32);
-    assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "bytes_copied"), 36);
+    assert_eq!(
+        abi.offset("aerogpu_escape_read_gpa_inout", "bytes_copied"),
+        36
+    );
     assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "data"), 40);
 
     assert_eq!(abi.offset("aerogpu_dbgctl_createallocation_desc", "seq"), 0);
-    assert_eq!(abi.offset("aerogpu_dbgctl_createallocation_desc", "call_seq"), 4);
+    assert_eq!(
+        abi.offset("aerogpu_dbgctl_createallocation_desc", "call_seq"),
+        4
+    );
     assert_eq!(
         abi.offset("aerogpu_dbgctl_createallocation_desc", "alloc_index"),
         8
@@ -3004,7 +3050,10 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_dbgctl_createallocation_desc", "create_flags"),
         16
     );
-    assert_eq!(abi.offset("aerogpu_dbgctl_createallocation_desc", "alloc_id"), 20);
+    assert_eq!(
+        abi.offset("aerogpu_dbgctl_createallocation_desc", "alloc_id"),
+        20
+    );
     assert_eq!(
         abi.offset("aerogpu_dbgctl_createallocation_desc", "priv_flags"),
         24
@@ -3039,7 +3088,10 @@ fn rust_layout_matches_c_headers() {
         20
     );
     assert_eq!(
-        abi.offset("aerogpu_escape_dump_createallocation_inout", "entry_capacity"),
+        abi.offset(
+            "aerogpu_escape_dump_createallocation_inout",
+            "entry_capacity"
+        ),
         24
     );
     assert_eq!(
@@ -3069,8 +3121,14 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"),
         1u64 << 31
     );
-    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1);
-    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED"), 2);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"),
+        1
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED"),
+        2
+    );
 
     assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_OK"), 0);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE"), 1);
@@ -3099,7 +3157,10 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE"),
         11
     );
-    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"), 12);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"),
+        12
+    );
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED"),
         13
@@ -4471,7 +4532,10 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE"),
         11
     );
-    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"), 12);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"),
+        12
+    );
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED"),
         13

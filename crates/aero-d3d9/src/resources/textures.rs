@@ -624,7 +624,12 @@ fn expand_r5g6b5_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>
         let r5 = ((c >> 11) & 0x1F) as u8;
         let g6 = ((c >> 5) & 0x3F) as u8;
         let b5 = (c & 0x1F) as u8;
-        [expand_5_to_8(b5), expand_6_to_8(g6), expand_5_to_8(r5), 0xFF]
+        [
+            expand_5_to_8(b5),
+            expand_6_to_8(g6),
+            expand_5_to_8(r5),
+            0xFF,
+        ]
     })
 }
 
@@ -645,7 +650,12 @@ fn expand_x1r5g5b5_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u
         let g5 = ((c >> 5) & 0x1F) as u8;
         let b5 = (c & 0x1F) as u8;
         // X1* formats treat alpha as 1.0 regardless of the stored bit.
-        [expand_5_to_8(b5), expand_5_to_8(g5), expand_5_to_8(r5), 0xFF]
+        [
+            expand_5_to_8(b5),
+            expand_5_to_8(g5),
+            expand_5_to_8(r5),
+            0xFF,
+        ]
     })
 }
 
@@ -1099,7 +1109,7 @@ mod tests {
             out,
             vec![
                 255, 255, 255, 255, // a=1
-                255, 255, 255, 0,   // a=0
+                255, 255, 255, 0, // a=0
             ]
         );
     }
@@ -1148,7 +1158,8 @@ mod tests {
         assert_eq!(
             out,
             vec![
-                0x22, 0x44, 0x88, 0xFF, // bit replication: 0x2->0x22, 0x4->0x44, 0x8->0x88, 0xF->0xFF
+                0x22, 0x44, 0x88,
+                0xFF, // bit replication: 0x2->0x22, 0x4->0x44, 0x8->0x88, 0xF->0xFF
                 0xFF, 0xFF, 0xFF, 0x00, // alpha=0
             ]
         );

@@ -24,4 +24,3 @@ fn sm3_pipeline_decodes_and_builds_ir_for_fxc_fixtures() {
         sm3::verify_ir(&ir).expect("sm3 verify_ir");
     }
 }
-

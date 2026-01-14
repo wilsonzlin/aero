@@ -75,7 +75,7 @@ fn aerogpu_cmd_upload_resource_supports_16bit_packed_formats() {
             // row0
             b5.extend_from_slice(&[0x00, 0xF8, 0xE0, 0x07]);
             b5.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // padding (must be ignored)
-            // row1
+                                                             // row1
             b5.extend_from_slice(&[0x1F, 0x00, 0xFF, 0xFF]);
             b5.extend_from_slice(&[0xFE, 0xED, 0xFA, 0xCE]); // padding (must be ignored)
             assert_eq!(b5.len(), row_pitch_bytes as usize * height as usize);
@@ -214,7 +214,7 @@ fn aerogpu_cmd_upload_resource_supports_partial_b5_texture_uploads() {
         // row0
         b5.extend_from_slice(&[0x00, 0xF8, 0xE0, 0x07]);
         b5.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // padding
-        // row1
+                                                         // row1
         b5.extend_from_slice(&[0x1F, 0x00, 0xFF, 0xFF]);
         b5.extend_from_slice(&[0xFE, 0xED, 0xFA, 0xCE]); // padding
         assert_eq!(b5.len(), row_pitch_bytes as usize * height as usize);
@@ -321,7 +321,7 @@ fn aerogpu_cmd_guest_backed_b5_formats_expand_on_upload_and_copy() {
         // row0: red, green
         src_565.extend_from_slice(&[0x00, 0xF8, 0xE0, 0x07]);
         src_565.extend_from_slice(&[0xDE, 0xAD]); // padding
-        // row1: blue, white
+                                                  // row1: blue, white
         src_565.extend_from_slice(&[0x1F, 0x00, 0xFF, 0xFF]);
         src_565.extend_from_slice(&[0xBE, 0xEF]); // padding
         assert_eq!(src_565.len(), src_bytes_len);
@@ -334,7 +334,7 @@ fn aerogpu_cmd_guest_backed_b5_formats_expand_on_upload_and_copy() {
         // row0: red (a=1), green (a=0)
         src_5551.extend_from_slice(&[0x00, 0xFC, 0xE0, 0x03]);
         src_5551.extend_from_slice(&[0x11, 0x22]); // padding
-        // row1: blue (a=1), white (a=0)
+                                                   // row1: blue (a=1), white (a=0)
         src_5551.extend_from_slice(&[0x1F, 0x80, 0xFF, 0x7F]);
         src_5551.extend_from_slice(&[0x33, 0x44]); // padding
         assert_eq!(src_5551.len(), src_bytes_len);

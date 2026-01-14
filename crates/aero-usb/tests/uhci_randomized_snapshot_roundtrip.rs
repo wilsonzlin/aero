@@ -239,10 +239,7 @@ fn gen_write_op(rng: &mut Rng) -> Op {
             }
             regs::REG_FRNUM | REG_FRNUM_HI => (rng.next_u32() & 0x07ff) as u32,
             regs::REG_SOFMOD => (rng.next_u32() & 0xff) as u32,
-            regs::REG_PORTSC1
-            | REG_PORTSC1_HI
-            | regs::REG_PORTSC2
-            | REG_PORTSC2_HI => {
+            regs::REG_PORTSC1 | REG_PORTSC1_HI | regs::REG_PORTSC2 | REG_PORTSC2_HI => {
                 const CSC: u16 = 1 << 1;
                 const PED: u16 = 1 << 2;
                 const PEDC: u16 = 1 << 3;
@@ -379,11 +376,7 @@ fn prepare_resume_detect_edge_case(
     // Put the port into enabled+suspended state.
     const PORTSC_PED: u16 = 1 << 2;
     const PORTSC_SUSP: u16 = 1 << 12;
-    ctrl.io_write(
-        regs::REG_PORTSC1,
-        2,
-        (PORTSC_PED | PORTSC_SUSP) as u32,
-    );
+    ctrl.io_write(regs::REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP) as u32);
 
     // Generate a remote wake event while suspended.
     kb.key_event(0x04, true);
@@ -397,11 +390,7 @@ fn prepare_resume_detect_edge_case(
 
     // Clear the controller-level status bit while leaving the port-level RD asserted. Correct edge
     // tracking should prevent the status bit from re-latching on the next tick.
-    ctrl.io_write(
-        regs::REG_USBSTS,
-        2,
-        regs::USBSTS_RESUMEDETECT as u32,
-    );
+    ctrl.io_write(regs::REG_USBSTS, 2, regs::USBSTS_RESUMEDETECT as u32);
     let usbsts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
     assert_eq!(
         usbsts & regs::USBSTS_RESUMEDETECT,

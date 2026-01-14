@@ -222,11 +222,8 @@ pub trait BlockDevice {
 /// Keeping this as a separate trait makes the sector size contract explicit and prevents
 /// accidental mixing of 512-byte disk semantics with 2048-byte CD-ROM semantics.
 pub trait CdromDevice {
-    fn read_sector(
-        &mut self,
-        lba: u64,
-        buf: &mut [u8; CDROM_SECTOR_SIZE],
-    ) -> Result<(), DiskError>;
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; CDROM_SECTOR_SIZE])
+        -> Result<(), DiskError>;
 
     /// Total number of 2048-byte sectors addressable via `LBA` in [`CdromDevice::read_sector`].
     fn size_in_sectors(&self) -> u64;

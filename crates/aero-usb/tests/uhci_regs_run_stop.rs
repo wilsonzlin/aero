@@ -98,4 +98,3 @@ fn uhci_usbsts_w1c_does_not_clear_hchalted() {
     uhci.io_write(REG_USBSTS, 2, USBSTS_HCHALTED as u32);
     assert_ne!(read_u16(&uhci, REG_USBSTS) & USBSTS_HCHALTED, 0);
 }
-

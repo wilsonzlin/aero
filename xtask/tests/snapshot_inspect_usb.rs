@@ -216,4 +216,3 @@ fn snapshot_inspect_decodes_ausb_container_entries() {
         "expected `UHCI` to appear before `XHCI` in stdout:\n{stdout}"
     );
 }
-

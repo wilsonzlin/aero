@@ -21,9 +21,9 @@ mod drain_queue;
 // - `web/src/arch/guest_ram_translate.ts` (and its wrapper `web/src/runtime/shared_layout.ts`)
 #[cfg(any(test, target_arch = "wasm32"))]
 mod guest_phys {
+    pub use aero_guest_phys::translate_guest_paddr_range_to_offset as translate_guest_paddr_range;
     #[cfg(test)]
     pub use aero_guest_phys::{HIGH_RAM_START, LOW_RAM_END};
-    pub use aero_guest_phys::translate_guest_paddr_range_to_offset as translate_guest_paddr_range;
 
     #[cfg(test)]
     mod tests {
@@ -110,6 +110,7 @@ mod wasm {
     use std::sync::{Arc, OnceLock};
 
     use crate::drain_queue::DrainQueue;
+    use crate::guest_layout::PCI_MMIO_BASE;
     use aero_gpu::GpuErrorEvent;
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
@@ -120,7 +121,6 @@ mod wasm {
     };
     use aero_protocol::aerogpu::aerogpu_cmd as cmd;
     use aero_protocol::aerogpu::aerogpu_ring as ring;
-    use crate::guest_layout::PCI_MMIO_BASE;
     use futures_intrusive::channel::shared::oneshot_channel;
     use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
     use wasm_bindgen::prelude::*;
@@ -1769,8 +1769,9 @@ mod wasm {
                     // Slow path: pack the rect into an aligned staging buffer.
                     let upload_bpr = padded_bytes_per_row(row_bytes);
                     let total_u64 = u64::from(upload_bpr).saturating_mul(u64::from(h));
-                    let total = usize::try_from(total_u64)
-                        .map_err(|_| JsValue::from_str("Dirty rect upload scratch size overflow"))?;
+                    let total = usize::try_from(total_u64).map_err(|_| {
+                        JsValue::from_str("Dirty rect upload scratch size overflow")
+                    })?;
 
                     if self.upload_scratch_bytes_per_row != upload_bpr {
                         self.upload_scratch_bytes_per_row = upload_bpr;
@@ -3054,7 +3055,8 @@ mod wasm {
             .checked_mul(u64::from(height))
             .and_then(|v| v.checked_mul(4))
             .ok_or_else(|| JsValue::from_str("Test pattern size overflow (width*height*4)"))?;
-        let len = usize::try_from(len_u64).map_err(|_| JsValue::from_str("Test pattern too large"))?;
+        let len =
+            usize::try_from(len_u64).map_err(|_| JsValue::from_str("Test pattern too large"))?;
         let mut rgba = vec![0u8; len];
 
         for y in 0..height {

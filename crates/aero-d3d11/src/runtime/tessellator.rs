@@ -300,7 +300,10 @@ mod tests {
                         "level={level} t={t} idx[{idx_i}] out of bounds: {idx} >= {vtx_count}"
                     );
                 }
-                assert!(a != b && b != c && a != c, "level={level} t={t} degenerate triangle");
+                assert!(
+                    a != b && b != c && a != c,
+                    "level={level} t={t} degenerate triangle"
+                );
 
                 // Track uniqueness ignoring winding.
                 let mut tri = [a, b, c];

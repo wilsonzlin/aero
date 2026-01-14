@@ -75,7 +75,10 @@ async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec
 #[test]
 fn compute_bitfield_ops_produce_expected_results() {
     pollster::block_on(async {
-        let test_name = concat!(module_path!(), "::compute_bitfield_ops_produce_expected_results");
+        let test_name = concat!(
+            module_path!(),
+            "::compute_bitfield_ops_produce_expected_results"
+        );
 
         let (device, queue, supports_compute) =
             match common::wgpu::create_device_queue("aero-d3d11 bitfield semantics test device")
@@ -233,7 +236,9 @@ fn compute_bitfield_ops_produce_expected_results() {
         let out = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sm4 bitfield semantics out buffer"),
             size: OUT_SIZE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&out, 0, &vec![0u8; OUT_SIZE as usize]);

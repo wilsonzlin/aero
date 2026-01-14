@@ -74,9 +74,7 @@ impl aero_devices_storage::atapi::IsoBackend for IsoBackendAdapter {
     }
 
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()> {
-        self.inner
-            .read_sectors(lba, buf)
-            .map_err(io::Error::other)
+        self.inner.read_sectors(lba, buf).map_err(io::Error::other)
     }
 }
 

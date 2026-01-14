@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
-use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::aerogpu_regs::mmio;
+use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::MemoryBus;
@@ -41,7 +41,12 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
 
     dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_FORMAT, 4, AeroGpuFormat::B8G8R8X8Unorm as u32);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
 
     // Enable scanout0 (WDDM).

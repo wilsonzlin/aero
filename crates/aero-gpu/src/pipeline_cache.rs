@@ -7,10 +7,10 @@ use lru::LruCache;
 use tracing::warn;
 
 use crate::error::GpuError;
+use crate::passthrough_vs::PassthroughVertexShaderKey;
 use crate::pipeline_key::{
     hash_wgsl, ComputePipelineKey, RenderPipelineKey, ShaderHash, ShaderModuleKey, ShaderStage,
 };
-use crate::passthrough_vs::PassthroughVertexShaderKey;
 use crate::stats::PipelineCacheStats;
 use crate::GpuCapabilities;
 

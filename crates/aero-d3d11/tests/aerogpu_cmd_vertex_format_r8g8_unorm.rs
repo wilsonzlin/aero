@@ -1,14 +1,14 @@
 mod common;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -459,7 +459,10 @@ fn aerogpu_cmd_renders_with_r8g8_unorm_vertex_attribute() {
         stream.extend_from_slice(&(ilay_bytes.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&ilay_bytes);
-        stream.resize(stream.len() + (align4(ilay_bytes.len()) - ilay_bytes.len()), 0);
+        stream.resize(
+            stream.len() + (align4(ilay_bytes.len()) - ilay_bytes.len()),
+            0,
+        );
         end_cmd(&mut stream, start);
 
         // SET_INPUT_LAYOUT

@@ -120,7 +120,10 @@ pub(crate) async fn chunk_name_path_len_guard(
     next.run(req).await
 }
 
-pub async fn options_manifest(State(state): State<ImagesState>, req_headers: HeaderMap) -> Response {
+pub async fn options_manifest(
+    State(state): State<ImagesState>,
+    req_headers: HeaderMap,
+) -> Response {
     let permit = match images::try_acquire_bytes_permit(&state, &req_headers) {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -218,16 +221,28 @@ async fn serve_manifest(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("meta");
                 tracing::error!(error = %err, "store get_image failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("meta");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -239,16 +254,28 @@ async fn serve_manifest(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("open_range");
                 tracing::error!(error = %err, "store open_chunked_manifest failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("open_range");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -315,16 +342,28 @@ async fn serve_manifest_version(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("meta");
                 tracing::error!(error = %err, "store get_image failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("meta");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -340,16 +379,28 @@ async fn serve_manifest_version(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("open_range");
                 tracing::error!(error = %err, "store open_chunked_manifest_version failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("open_range");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -480,20 +531,36 @@ async fn serve_chunk(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("meta");
                 tracing::error!(error = %err, "store get_image failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("meta");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
-        let chunk = match state.store().open_chunked_chunk(&image_id, &chunk_name).await {
+        let chunk = match state
+            .store()
+            .open_chunked_chunk(&image_id, &chunk_name)
+            .await
+        {
             Ok(obj) => obj,
             Err(StoreError::NotFound) | Err(StoreError::InvalidImageId { .. }) => {
                 return response_with_status(StatusCode::NOT_FOUND, &state, &req_headers);
@@ -501,16 +568,28 @@ async fn serve_chunk(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("open_range");
                 tracing::error!(error = %err, "store open_chunked_chunk failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("open_range");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -531,7 +610,9 @@ async fn serve_chunk(
         }
 
         if want_body {
-            state.metrics().observe_image_bytes_served(&image_id, meta.size);
+            state
+                .metrics()
+                .observe_image_bytes_served(&image_id, meta.size);
         }
 
         let mut response = Response::new(if want_body {
@@ -546,7 +627,10 @@ async fn serve_chunk(
             header::CONTENT_TYPE,
             HeaderValue::from_static(crate::store::CONTENT_TYPE_DISK_IMAGE),
         );
-        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("identity"));
+        headers.insert(
+            header::CONTENT_ENCODING,
+            HeaderValue::from_static("identity"),
+        );
         headers.insert(
             HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
@@ -594,16 +678,28 @@ async fn serve_chunk_version(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("meta");
                 tracing::error!(error = %err, "store get_image failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("meta");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -619,16 +715,28 @@ async fn serve_chunk_version(
             Err(StoreError::Manifest(err)) => {
                 state.metrics().inc_store_error("manifest");
                 tracing::error!(error = %err, "store manifest error");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::Io(err)) => {
                 state.metrics().inc_store_error("open_range");
                 tracing::error!(error = %err, "store open_chunked_chunk_version failed");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
             Err(StoreError::InvalidRange { .. }) => {
                 state.metrics().inc_store_error("open_range");
-                return response_with_status(StatusCode::INTERNAL_SERVER_ERROR, &state, &req_headers);
+                return response_with_status(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state,
+                    &req_headers,
+                );
             }
         };
 
@@ -648,7 +756,9 @@ async fn serve_chunk_version(
         }
 
         if want_body {
-            state.metrics().observe_image_bytes_served(&image_id, meta.size);
+            state
+                .metrics()
+                .observe_image_bytes_served(&image_id, meta.size);
         }
 
         let mut response = Response::new(if want_body {
@@ -663,7 +773,10 @@ async fn serve_chunk_version(
             header::CONTENT_TYPE,
             HeaderValue::from_static(crate::store::CONTENT_TYPE_DISK_IMAGE),
         );
-        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("identity"));
+        headers.insert(
+            header::CONTENT_ENCODING,
+            HeaderValue::from_static("identity"),
+        );
         headers.insert(
             HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
@@ -737,7 +850,11 @@ fn not_modified_response(
     response
 }
 
-fn response_with_status(status: StatusCode, state: &ImagesState, req_headers: &HeaderMap) -> Response {
+fn response_with_status(
+    status: StatusCode,
+    state: &ImagesState,
+    req_headers: &HeaderMap,
+) -> Response {
     let mut response = Response::new(Body::empty());
     *response.status_mut() = status;
     let headers = response.headers_mut();

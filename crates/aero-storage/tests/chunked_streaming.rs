@@ -64,15 +64,20 @@ async fn start_chunked_server(
     (url, state, shutdown_tx)
 }
 
-async fn handle_request(req: Request<Body>, state: Arc<State>) -> Result<Response<Body>, Infallible> {
+async fn handle_request(
+    req: Request<Body>,
+    state: Arc<State>,
+) -> Result<Response<Body>, Infallible> {
     match *req.method() {
         Method::GET => match req.uri().path() {
             "/manifest.json" => {
                 state.counters.manifest_get.fetch_add(1, Ordering::SeqCst);
                 let mut resp = Response::new(Body::from(state.manifest_body.clone()));
                 *resp.status_mut() = StatusCode::OK;
-                resp.headers_mut()
-                    .insert(hyper::header::CONTENT_TYPE, "application/json".parse().unwrap());
+                resp.headers_mut().insert(
+                    hyper::header::CONTENT_TYPE,
+                    "application/json".parse().unwrap(),
+                );
                 return Ok(resp);
             }
             path if path.starts_with("/chunks/") && path.ends_with(".bin") => {

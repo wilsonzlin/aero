@@ -1,7 +1,7 @@
 mod common;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
@@ -178,102 +178,106 @@ fn gs_test_011_point_to_triangle_emulation_renders_triangle() {
             Err(e) => {
                 common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
-             }
-         };
+            }
+        };
 
         if !common::require_gs_prepass_or_skip(&exec, test_name) {
             return;
         }
 
-          // Draw a single point near the top-right. Without GS emulation the point does not cover
-          // the center pixel. With GS emulation, the GS emits a centered triangle.
-         let vertex = VertexPos3Color4 {
-             pos: [0.75, 0.75, 0.0],
-             color: [0.0, 0.0, 0.0, 1.0],
-         };
-         let vb_bytes = bytemuck::bytes_of(&vertex);
-         assert_eq!(vb_bytes.len(), 28);
+        // Draw a single point near the top-right. Without GS emulation the point does not cover
+        // the center pixel. With GS emulation, the GS emits a centered triangle.
+        let vertex = VertexPos3Color4 {
+            pos: [0.75, 0.75, 0.0],
+            color: [0.0, 0.0, 0.0, 1.0],
+        };
+        let vb_bytes = bytemuck::bytes_of(&vertex);
+        assert_eq!(vb_bytes.len(), 28);
 
-         const VB: u32 = 1;
-         const RT: u32 = 2;
-         const VS: u32 = 3;
-         const GS: u32 = 4;
-         const PS: u32 = 5;
-         const IL: u32 = 6;
+        const VB: u32 = 1;
+        const RT: u32 = 2;
+        const VS: u32 = 3;
+        const GS: u32 = 4;
+        const PS: u32 = 5;
+        const IL: u32 = 6;
 
-         let mut writer = AerogpuCmdWriter::new();
+        let mut writer = AerogpuCmdWriter::new();
 
-         writer.create_buffer(
-             VB,
-             AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
-             vb_bytes.len() as u64,
-             0,
-             0,
-         );
-         writer.upload_resource(VB, 0, vb_bytes);
+        writer.create_buffer(
+            VB,
+            AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+            vb_bytes.len() as u64,
+            0,
+            0,
+        );
+        writer.upload_resource(VB, 0, vb_bytes);
 
-         let (width, height) = (64u32, 64u32);
-         writer.create_texture2d(
-             RT,
-             AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-             AerogpuFormat::B8G8R8A8Unorm as u32,
-             width,
-             height,
-             1,
-             1,
-             0,
-             0,
-             0,
-         );
+        let (width, height) = (64u32, 64u32);
+        writer.create_texture2d(
+            RT,
+            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            AerogpuFormat::B8G8R8A8Unorm as u32,
+            width,
+            height,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
 
-         writer.set_render_targets(&[RT], 0);
-         writer.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+        writer.set_render_targets(&[RT], 0);
+        writer.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
 
-         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, &build_vs_pos_only_dxbc());
-         writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, DXBC_GS_POINT_TO_TRIANGLE);
-         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
+        writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, &build_vs_pos_only_dxbc());
+        writer.create_shader_dxbc_ex(
+            GS,
+            AerogpuShaderStageEx::Geometry,
+            DXBC_GS_POINT_TO_TRIANGLE,
+        );
+        writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
 
-         writer.create_input_layout(IL, ILAY_POS3_COLOR);
-         writer.set_input_layout(IL);
+        writer.create_input_layout(IL, ILAY_POS3_COLOR);
+        writer.set_input_layout(IL);
 
-         writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
-         writer.set_vertex_buffers(
-             0,
-             &[AerogpuVertexBufferBinding {
-                 buffer: VB,
-                 stride_bytes: 28,
-                 offset_bytes: 0,
-                 reserved0: 0,
-             }],
-         );
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
+        writer.set_vertex_buffers(
+            0,
+            &[AerogpuVertexBufferBinding {
+                buffer: VB,
+                stride_bytes: 28,
+                offset_bytes: 0,
+                reserved0: 0,
+            }],
+        );
 
-         writer.bind_shaders_with_gs(VS, GS, PS, 0);
-         // Disable face culling so the test does not depend on backend-specific winding conventions.
-         writer.set_rasterizer_state_ext(
-             AerogpuFillMode::Solid,
-             AerogpuCullMode::None,
-             false,
-             false,
-             0,
-             false,
-         );
+        writer.bind_shaders_with_gs(VS, GS, PS, 0);
+        // Disable face culling so the test does not depend on backend-specific winding conventions.
+        writer.set_rasterizer_state_ext(
+            AerogpuFillMode::Solid,
+            AerogpuCullMode::None,
+            false,
+            false,
+            0,
+            false,
+        );
 
-         writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
-         writer.draw(1, 1, 0, 0);
-         writer.present(0, 0);
+        writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
+        writer.draw(1, 1, 0, 0);
+        writer.present(0, 0);
 
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
 
-          let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-              Ok(report) => report,
-              Err(err) => {
-                 if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
-                      return;
-                  }
-                  panic!("GS emulation draw failed: {err:#}");
-              }
-          };
+        let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            Ok(report) => report,
+            Err(err) => {
+                if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                    return;
+                }
+                panic!("GS emulation draw failed: {err:#}");
+            }
+        };
 
         exec.poll_wait();
 
@@ -286,11 +290,14 @@ fn gs_test_011_point_to_triangle_emulation_renders_triangle() {
         let pixels = exec.read_texture_rgba8(presented_rt).await.unwrap();
         assert_eq!(pixels.len(), (width * height * 4) as usize);
 
-         // Center pixel should be shaded green from the emitted triangle.
-         let w = width as usize;
-         assert_eq!(rgba_at(&pixels, w, (width / 2) as usize, (height / 2) as usize), &[0, 255, 0, 255]);
+        // Center pixel should be shaded green from the emitted triangle.
+        let w = width as usize;
+        assert_eq!(
+            rgba_at(&pixels, w, (width / 2) as usize, (height / 2) as usize),
+            &[0, 255, 0, 255]
+        );
 
-         // Corner should remain at clear color (red).
-         assert_eq!(rgba_at(&pixels, w, 0, 0), &[255, 0, 0, 255]);
-     });
- }
+        // Corner should remain at clear color (red).
+        assert_eq!(rgba_at(&pixels, w, 0, 0), &[255, 0, 0, 255]);
+    });
+}

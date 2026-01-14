@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use aero_gpu_vga::{VBE_FRAMEBUFFER_OFFSET, SVGA_LFB_BASE};
+use aero_gpu_vga::{SVGA_LFB_BASE, VBE_FRAMEBUFFER_OFFSET};
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
@@ -41,7 +41,9 @@ fn patch_vga_state_to_legacy_vga_snapshot_v1(bytes: &mut [u8], legacy_payload: &
         off += 8;
 
         let data_start = off;
-        let data_end = data_start.checked_add(len).expect("device data end overflow");
+        let data_end = data_start
+            .checked_add(len)
+            .expect("device data end overflow");
         if data_end > devices_end || data_end > bytes.len() {
             break;
         }
@@ -123,4 +125,3 @@ fn machine_restore_migrates_legacy_vga_snapshot_v1_vram_layout() {
     assert_eq!(vm2.display_resolution(), (64, 64));
     assert_eq!(vm2.display_framebuffer()[0], 0xFF00_00FF);
 }
-

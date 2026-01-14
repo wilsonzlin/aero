@@ -164,16 +164,13 @@ impl WorkerVmSnapshot {
             ));
         }
 
-        let mut file = OpfsSyncFile::create(&path)
-            .await
-            .map_err(|e| {
-                crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
-            })?;
+        let mut file = OpfsSyncFile::create(&path).await.map_err(|e| {
+            crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
+        })?;
 
-        aero_snapshot::save_snapshot(&mut file, self, SaveOptions::default())
-            .map_err(|e| {
-                crate::opfs_snapshot_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
-            })?;
+        aero_snapshot::save_snapshot(&mut file, self, SaveOptions::default()).map_err(|e| {
+            crate::opfs_snapshot_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
+        })?;
 
         file.close().map_err(|e| {
             crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
@@ -186,11 +183,9 @@ impl WorkerVmSnapshot {
         self.devices.clear();
         self.restored_mmu = false;
 
-        let mut file = OpfsSyncFile::open(&path, false)
-            .await
-            .map_err(|e| {
-                crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e)
-            })?;
+        let mut file = OpfsSyncFile::open(&path, false).await.map_err(|e| {
+            crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e)
+        })?;
 
         aero_snapshot::restore_snapshot_with_options(&mut file, self, RestoreOptions::default())
             .map_err(|e| {
@@ -201,10 +196,9 @@ impl WorkerVmSnapshot {
                 )
             })?;
 
-        file.close()
-            .map_err(|e| {
-                crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e)
-            })?;
+        file.close().map_err(|e| {
+            crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e)
+        })?;
 
         self.build_restore_result()
     }

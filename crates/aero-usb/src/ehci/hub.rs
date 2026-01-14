@@ -122,7 +122,7 @@ impl Port {
 
         if self.connected {
             v |= PORTSC_CCS;
- 
+
             // Speed reporting:
             //
             // Guest EHCI drivers consult PORTSC.HSP + PORTSC.LS (line status) to determine the
@@ -362,12 +362,7 @@ impl Port {
         // resume signaling window. EHCI does not expose a dedicated "resume detect" status bit like
         // UHCI, so we model remote wake as the port entering the same resume state software would
         // request by setting PORTSC.FPR.
-        if self.enabled
-            && self.powered
-            && self.suspended
-            && !self.resuming
-            && !self.port_owner
-        {
+        if self.enabled && self.powered && self.suspended && !self.resuming && !self.port_owner {
             if let Some(dev) = self.device.as_mut() {
                 if dev.model_mut().poll_remote_wakeup() {
                     self.resuming = true;
@@ -461,7 +456,9 @@ impl RootHubPortSlot {
 
     fn any_port_change(&self) -> bool {
         match self {
-            RootHubPortSlot::Local(p) => p.connect_change || p.enable_change || p.over_current_change,
+            RootHubPortSlot::Local(p) => {
+                p.connect_change || p.enable_change || p.over_current_change
+            }
             RootHubPortSlot::Usb2Mux { mux, port } => {
                 let st = mux.borrow().ehci_read_portsc(*port);
                 (st & (PORTSC_CSC | PORTSC_PEDC)) != 0
@@ -509,7 +506,9 @@ impl RootHubPortSlot {
 
                 rec.finish()
             }
-            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow().save_snapshot_ehci_port_record(*port),
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                mux.borrow().save_snapshot_ehci_port_record(*port)
+            }
         }
     }
 
@@ -564,9 +563,9 @@ impl RootHubPortSlot {
 
                 Ok(())
             }
-            RootHubPortSlot::Usb2Mux { mux, port } => mux
-                .borrow_mut()
-                .load_snapshot_ehci_port_record(*port, buf),
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                mux.borrow_mut().load_snapshot_ehci_port_record(*port, buf)
+            }
         }
     }
 }
@@ -762,7 +761,11 @@ impl RootHub {
         for p in &mut self.ports {
             match p {
                 RootHubPortSlot::Local(port) => {
-                    if port.port_owner || !(port.enabled && port.powered) || port.suspended || port.resuming {
+                    if port.port_owner
+                        || !(port.enabled && port.powered)
+                        || port.suspended
+                        || port.resuming
+                    {
                         continue;
                     }
                     if let Some(dev) = port.device.as_mut() {

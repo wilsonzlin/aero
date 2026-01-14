@@ -70,7 +70,10 @@ async fn start_chunk_server(
     (url, state, shutdown_tx)
 }
 
-async fn handle_request(req: Request<Body>, state: Arc<State>) -> Result<Response<Body>, Infallible> {
+async fn handle_request(
+    req: Request<Body>,
+    state: Arc<State>,
+) -> Result<Response<Body>, Infallible> {
     match *req.method() {
         Method::GET => {}
         _ => {
@@ -87,7 +90,10 @@ async fn handle_request(req: Request<Body>, state: Arc<State>) -> Result<Respons
         *resp.status_mut() = StatusCode::OK;
         resp.headers_mut().insert(
             CONTENT_LENGTH,
-            (state.manifest_body.len() as u64).to_string().parse().unwrap(),
+            (state.manifest_body.len() as u64)
+                .to_string()
+                .parse()
+                .unwrap(),
         );
         return Ok(resp);
     }
@@ -122,8 +128,10 @@ async fn handle_request(req: Request<Body>, state: Arc<State>) -> Result<Respons
 
         let mut resp = Response::new(Body::from(bytes.clone()));
         *resp.status_mut() = StatusCode::OK;
-        resp.headers_mut()
-            .insert(CONTENT_LENGTH, (bytes.len() as u64).to_string().parse().unwrap());
+        resp.headers_mut().insert(
+            CONTENT_LENGTH,
+            (bytes.len() as u64).to_string().parse().unwrap(),
+        );
         return Ok(resp);
     }
 

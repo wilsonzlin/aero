@@ -1,11 +1,11 @@
-use aero_io_snapshot::io::state::IoSnapshot;
 use aero_devices::pci::{
     msix::PCI_CAP_ID_MSIX, MsixCapability, PciBdf, PciDevice, PciInterruptPin, PciIntxRouter,
     PciIntxRouterConfig,
 };
 use aero_devices::usb::xhci::XhciPciDevice;
-use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -105,10 +105,7 @@ fn xhci_msix_interrupt_reaches_guest_idt_vector() {
     dev.config_mut().set_command(0x2);
 
     // Enable MSI-X in config space.
-    let cap_offset = dev
-        .config_mut()
-        .find_capability(PCI_CAP_ID_MSIX)
-        .unwrap() as u16;
+    let cap_offset = dev.config_mut().find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
     let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
     dev.config_mut()
         .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15)));
@@ -154,7 +151,10 @@ fn xhci_intx_fallback_routes_through_pci_intx_router() {
     program_ioapic_entry(&mut interrupts, gsi, low, 0);
 
     dev.raise_event_interrupt();
-    assert!(dev.irq_level(), "device should assert INTx when MSI is disabled");
+    assert!(
+        dev.irq_level(),
+        "device should assert INTx when MSI is disabled"
+    );
     intx_router.assert_intx(bdf, pin, &mut interrupts);
     assert_eq!(interrupts.get_pending(), Some(vector));
 
@@ -170,7 +170,10 @@ fn xhci_irq_level_is_gated_by_pci_command_intx_disable() {
     let mut dev = XhciPciDevice::default();
 
     dev.raise_event_interrupt();
-    assert!(dev.irq_level(), "xHCI should assert legacy INTx when MSI is disabled");
+    assert!(
+        dev.irq_level(),
+        "xHCI should assert legacy INTx when MSI is disabled"
+    );
 
     // PCI command bit 10 disables legacy INTx assertion.
     dev.config_mut().set_command(1 << 10);
@@ -205,10 +208,7 @@ fn xhci_msix_snapshot_roundtrip_preserves_table_and_pba() {
     dev.config_mut().set_command(0x2);
 
     // Enable MSI-X in config space.
-    let cap_offset = dev
-        .config_mut()
-        .find_capability(PCI_CAP_ID_MSIX)
-        .unwrap() as u16;
+    let cap_offset = dev.config_mut().find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
     let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
     dev.config_mut()
         .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15)));

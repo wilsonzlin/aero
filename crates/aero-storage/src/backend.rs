@@ -525,9 +525,7 @@ impl StorageBackend for StdFileBackend {
                     buf.len() - written
                 )));
             }
-            written = written
-                .checked_add(n)
-                .ok_or(DiskError::OffsetOverflow)?;
+            written = written.checked_add(n).ok_or(DiskError::OffsetOverflow)?;
         }
         Ok(())
     }

@@ -94,17 +94,11 @@ fn pending_actions_is_bounded_and_drain_actions_is_fifo() {
     assert_eq!(actions.len(), 2);
     assert!(matches!(
         actions[0],
-        Action::DnsResolve {
-            request_id: 1,
-            ..
-        }
+        Action::DnsResolve { request_id: 1, .. }
     ));
     assert!(matches!(
         actions[1],
-        Action::DnsResolve {
-            request_id: 2,
-            ..
-        }
+        Action::DnsResolve { request_id: 2, .. }
     ));
 
     let stats = backend.stats();

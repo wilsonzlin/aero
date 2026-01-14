@@ -184,9 +184,8 @@ fn xhci_mmio_read_write_does_not_panic_on_malformed_guest_accesses() {
                 "panic in XhciController::mmio_write(offset=0x{offset:x}, size={size}, value=0x{value:x})"
             );
 
-            let read_res = catch_unwind(AssertUnwindSafe(|| {
-                xhci.mmio_read(&mut mem, offset, size)
-            }));
+            let read_res =
+                catch_unwind(AssertUnwindSafe(|| xhci.mmio_read(&mut mem, offset, size)));
             assert!(
                 read_res.is_ok(),
                 "panic in XhciController::mmio_read(offset=0x{offset:x}, size={size})"
@@ -209,9 +208,7 @@ fn xhci_mmio_read_write_does_not_panic_on_malformed_guest_accesses() {
             "panic in XhciController::mmio_write iter={iter} offset=0x{offset:x} size={size} value=0x{value:x}"
         );
 
-        let read_res = catch_unwind(AssertUnwindSafe(|| {
-            xhci.mmio_read(&mut mem, offset, size)
-        }));
+        let read_res = catch_unwind(AssertUnwindSafe(|| xhci.mmio_read(&mut mem, offset, size)));
         assert!(
             read_res.is_ok(),
             "panic in XhciController::mmio_read iter={iter} offset=0x{offset:x} size={size}"

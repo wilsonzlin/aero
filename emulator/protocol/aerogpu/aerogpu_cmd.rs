@@ -261,7 +261,10 @@ pub enum AerogpuShaderStageResolved {
     Hull,
     Domain,
     /// Unknown/unsupported value (either an invalid legacy stage, or an unknown stage_ex).
-    Unknown { shader_stage: u32, stage_ex: u32 },
+    Unknown {
+        shader_stage: u32,
+        stage_ex: u32,
+    },
 }
 
 /// Resolve the effective stage from `(shader_stage, reserved0)` according to the stage_ex rules.

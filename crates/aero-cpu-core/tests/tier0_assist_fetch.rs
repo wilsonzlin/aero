@@ -140,4 +140,3 @@ fn tier0_exec_glue_does_not_double_fetch_on_assist() {
         "each retired instruction should require exactly one fetch"
     );
 }
-

@@ -9,8 +9,7 @@
 
 use std::{
     collections::HashMap,
-    fmt,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -21,7 +20,8 @@ use std::{
 
 use crate::range_set::RangeSet;
 use crate::streaming::{
-    ChunkStore, DirectoryChunkStore, SparseFileChunkStore, StreamingCacheBackend, StreamingDiskError,
+    ChunkStore, DirectoryChunkStore, SparseFileChunkStore, StreamingCacheBackend,
+    StreamingDiskError,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING};
 use serde::{Deserialize, Serialize};
@@ -112,7 +112,9 @@ impl From<StreamingDiskError> for ChunkedStreamingDiskError {
             StreamingDiskError::RangeNotSupported => ChunkedStreamingDiskError::Protocol(
                 "remote server does not support HTTP Range requests".to_string(),
             ),
-            StreamingDiskError::HttpStatus { status } => ChunkedStreamingDiskError::HttpStatus { status },
+            StreamingDiskError::HttpStatus { status } => {
+                ChunkedStreamingDiskError::HttpStatus { status }
+            }
             StreamingDiskError::Http(msg) => ChunkedStreamingDiskError::Http(msg),
             StreamingDiskError::Protocol(msg) => ChunkedStreamingDiskError::Protocol(msg),
             StreamingDiskError::Io(msg) => ChunkedStreamingDiskError::Io(msg),
@@ -175,7 +177,11 @@ impl fmt::Debug for ChunkedStreamingDiskConfig {
         // The URL and request headers may embed auth material (signed URLs, Authorization tokens).
         // Redact by default to avoid accidental leakage in logs.
         let url = redact_url_for_logs(&self.manifest_url);
-        let header_names: Vec<&str> = self.request_headers.iter().map(|(k, _)| k.as_str()).collect();
+        let header_names: Vec<&str> = self
+            .request_headers
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
 
         f.debug_struct("ChunkedStreamingDiskConfig")
             .field("manifest_url", &url)
@@ -284,9 +290,13 @@ fn parse_hex_sha256(value: &str) -> Result<[u8; 32], ChunkedStreamingDiskError> 
     Ok(out)
 }
 
-fn parse_manifest_v1(raw: ManifestV1Raw) -> Result<ChunkedDiskManifestV1, ChunkedStreamingDiskError> {
+fn parse_manifest_v1(
+    raw: ManifestV1Raw,
+) -> Result<ChunkedDiskManifestV1, ChunkedStreamingDiskError> {
     if raw.schema != MANIFEST_SCHEMA_V1 {
-        return Err(ChunkedStreamingDiskError::UnsupportedManifestSchema(raw.schema));
+        return Err(ChunkedStreamingDiskError::UnsupportedManifestSchema(
+            raw.schema,
+        ));
     }
 
     if raw.version.trim().is_empty() {
@@ -365,12 +375,7 @@ fn parse_manifest_v1(raw: ManifestV1Raw) -> Result<ChunkedDiskManifestV1, Chunke
         )));
     }
 
-    let min_width = raw
-        .chunk_count
-        .saturating_sub(1)
-        .to_string()
-        .len()
-        .max(1);
+    let min_width = raw.chunk_count.saturating_sub(1).to_string().len().max(1);
     if chunk_index_width < min_width {
         return Err(ChunkedStreamingDiskError::Protocol(format!(
             "chunkIndexWidth too small: need>={min_width} got={chunk_index_width}"
@@ -430,7 +435,9 @@ fn parse_manifest_v1(raw: ManifestV1Raw) -> Result<ChunkedDiskManifestV1, Chunke
         .saturating_sub(1)
         .checked_mul(raw.chunk_size)
         .and_then(|v| v.checked_add(derived_last_size))
-        .ok_or_else(|| ChunkedStreamingDiskError::Protocol("chunk size sum overflow".to_string()))?;
+        .ok_or_else(|| {
+            ChunkedStreamingDiskError::Protocol("chunk size sum overflow".to_string())
+        })?;
     if sum != raw.total_size {
         return Err(ChunkedStreamingDiskError::Protocol(format!(
             "chunk sizes do not sum to totalSize: sum={sum} totalSize={}",
@@ -614,7 +621,9 @@ impl Clone for ChunkedStreamingDisk {
 }
 
 impl ChunkedStreamingDisk {
-    pub async fn open(config: ChunkedStreamingDiskConfig) -> Result<Self, ChunkedStreamingDiskError> {
+    pub async fn open(
+        config: ChunkedStreamingDiskConfig,
+    ) -> Result<Self, ChunkedStreamingDiskError> {
         if !config.manifest_url.has_host() {
             return Err(ChunkedStreamingDiskError::UrlNotAbsolute(
                 redact_url_for_logs(&config.manifest_url).to_string(),
@@ -708,12 +717,14 @@ impl ChunkedStreamingDisk {
             Some(_) => {
                 cache.clear()?;
                 meta_store.remove()?;
-                let fresh = CacheMeta::fresh(&manifest, manifest_sha256_hex.clone(), config.cache_backend);
+                let fresh =
+                    CacheMeta::fresh(&manifest, manifest_sha256_hex.clone(), config.cache_backend);
                 meta_store.save(&fresh)?;
                 RangeSet::new()
             }
             None => {
-                let fresh = CacheMeta::fresh(&manifest, manifest_sha256_hex.clone(), config.cache_backend);
+                let fresh =
+                    CacheMeta::fresh(&manifest, manifest_sha256_hex.clone(), config.cache_backend);
                 meta_store.save(&fresh)?;
                 RangeSet::new()
             }
@@ -824,7 +835,7 @@ impl ChunkedStreamingDisk {
             tokio::task::JoinSet::new();
 
         let launch = |chunk_index: u64,
-                          join_set: &mut tokio::task::JoinSet<
+                      join_set: &mut tokio::task::JoinSet<
             Result<u64, ChunkedStreamingDiskError>,
         >| {
             let disk = self.clone();
@@ -844,9 +855,7 @@ impl ChunkedStreamingDisk {
             let chunk_index = match res {
                 Ok(v) => v?,
                 Err(err) => {
-                    return Err(ChunkedStreamingDiskError::Io(format!(
-                        "join error: {err}"
-                    )))
+                    return Err(ChunkedStreamingDiskError::Io(format!("join error: {err}")))
                 }
             };
 
@@ -1037,7 +1046,10 @@ impl ChunkedStreamingDisk {
         let mut last_err = None;
 
         for attempt in 0..self.inner.options.max_retries {
-            match self.fetch_chunk_once(chunk_index, expected_len, token).await {
+            match self
+                .fetch_chunk_once(chunk_index, expected_len, token)
+                .await
+            {
                 Ok(bytes) => return Ok(bytes),
                 Err(e) => {
                     let should_retry = match &e {
@@ -1077,10 +1089,17 @@ impl ChunkedStreamingDisk {
             return Ok(Vec::new());
         }
 
-        let url = chunk_url(&self.inner.manifest_url, self.inner.manifest.chunk_index_width, chunk_index)
-            .map_err(|e| ChunkedStreamingDiskError::Protocol(e.to_string()))?;
+        let url = chunk_url(
+            &self.inner.manifest_url,
+            self.inner.manifest.chunk_index_width,
+            chunk_index,
+        )
+        .map_err(|e| ChunkedStreamingDiskError::Protocol(e.to_string()))?;
 
-        self.inner.telemetry.http_gets.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .telemetry
+            .http_gets
+            .fetch_add(1, Ordering::Relaxed);
 
         let req = self
             .inner
@@ -1158,7 +1177,9 @@ async fn fetch_and_parse_manifest(
         }
     }
 
-    let bytes = read_response_bytes_with_limit(resp, MAX_MANIFEST_JSON_BYTES, &CancellationToken::new()).await?;
+    let bytes =
+        read_response_bytes_with_limit(resp, MAX_MANIFEST_JSON_BYTES, &CancellationToken::new())
+            .await?;
     let digest = Sha256::digest(&bytes);
     let mut digest_arr = [0u8; 32];
     digest_arr.copy_from_slice(&digest);
@@ -1176,9 +1197,9 @@ fn copy_from_chunk(
     bytes: &[u8],
     buf: &mut [u8],
 ) -> Result<(), ChunkedStreamingDiskError> {
-    let chunk_start = chunk_index.checked_mul(chunk_size).ok_or_else(|| {
-        ChunkedStreamingDiskError::Protocol("chunk offset overflow".to_string())
-    })?;
+    let chunk_start = chunk_index
+        .checked_mul(chunk_size)
+        .ok_or_else(|| ChunkedStreamingDiskError::Protocol("chunk offset overflow".to_string()))?;
     let chunk_end = chunk_start
         .checked_add(bytes.len() as u64)
         .ok_or_else(|| ChunkedStreamingDiskError::Protocol("chunk end overflow".to_string()))?;
@@ -1241,9 +1262,7 @@ async fn read_response_bytes_with_limit(
     Ok(out)
 }
 
-fn build_header_map(
-    headers: &[(String, String)],
-) -> Result<HeaderMap, ChunkedStreamingDiskError> {
+fn build_header_map(headers: &[(String, String)]) -> Result<HeaderMap, ChunkedStreamingDiskError> {
     let mut out = HeaderMap::new();
     for (name, value) in headers {
         let name_lower = name.to_ascii_lowercase();
@@ -1346,7 +1365,11 @@ impl ChunkedStreamingDiskSync {
         self.disk.telemetry_snapshot()
     }
 
-    pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), ChunkedStreamingDiskError> {
+    pub fn read_at(
+        &mut self,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<(), ChunkedStreamingDiskError> {
         self.rt.block_on(self.disk.read_at(offset, buf))
     }
 

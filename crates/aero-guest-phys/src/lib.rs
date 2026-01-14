@@ -140,15 +140,9 @@ pub fn translate_guest_paddr_chunk(ram_bytes: u64, paddr: u64, len: usize) -> Gu
     } else if paddr < LOW_RAM_END {
         // Address is below ECAM but past the end of low RAM (only possible when `ram_bytes` is
         // smaller than `LOW_RAM_END`).
-        (
-            GuestRamChunk::OutOfBounds { len: 0 },
-            LOW_RAM_END - paddr,
-        )
+        (GuestRamChunk::OutOfBounds { len: 0 }, LOW_RAM_END - paddr)
     } else if paddr < HIGH_RAM_START {
-        (
-            GuestRamChunk::Hole { len: 0 },
-            HIGH_RAM_START - paddr,
-        )
+        (GuestRamChunk::Hole { len: 0 }, HIGH_RAM_START - paddr)
     } else if high_ram_bytes != 0 && paddr < high_ram_end {
         let diff = paddr - HIGH_RAM_START;
         let Some(ram_offset) = LOW_RAM_END.checked_add(diff) else {

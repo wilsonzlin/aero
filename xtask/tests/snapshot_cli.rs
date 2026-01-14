@@ -1013,7 +1013,9 @@ fn snapshot_validate_rejects_snapshots_with_both_mmu_and_mmus_sections() {
         .args(["snapshot", "validate", snap.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("snapshot contains both MMU and MMUS"));
+        .stderr(predicate::str::contains(
+            "snapshot contains both MMU and MMUS",
+        ));
 }
 
 #[test]

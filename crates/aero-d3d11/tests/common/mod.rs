@@ -21,10 +21,7 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
 ///
 /// Some backends/adapters (notably wgpu-GL/WebGL2 paths) do not support compute shaders and/or
 /// indirect execution. Until slow-path fallbacks exist, these tests should skip rather than fail.
-pub fn skip_if_compute_or_indirect_unsupported(
-    test_name: &str,
-    err: &anyhow::Error,
-) -> bool {
+pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Error) -> bool {
     let msg = err.to_string();
 
     // Older code paths may return `GpuError::Unsupported("compute")` through various wrappers.

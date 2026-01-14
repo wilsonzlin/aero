@@ -567,10 +567,10 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     out.push(0); // DUTY_WIDTH
     out.push(0); // DAY_ALRM
     out.push(0); // MON_ALRM
-    // Century byte stored in the emulated RTC/CMOS device model.
-    //
-    // Many PC firmware implementations (and QEMU) set this to 0x32 so ACPI OSes
-    // can read the full year without relying on heuristics.
+                 // Century byte stored in the emulated RTC/CMOS device model.
+                 //
+                 // Many PC firmware implementations (and QEMU) set this to 0x32 so ACPI OSes
+                 // can read the full year without relying on heuristics.
     out.push(0x32); // CENTURY (CMOS century register index)
     out.extend_from_slice(&(0x0003u16).to_le_bytes()); // IAPC_BOOT_ARCH (legacy devices + 8042)
     out.push(0); // reserved
@@ -851,9 +851,7 @@ fn aml_pkg_length_for_payload(payload_len: usize) -> Vec<u8> {
     // This is self-referential: the length value determines how many bytes the
     // PkgLength encoding takes. Resolve it by iterating; it converges quickly
     // because the encoding is at most 4 bytes.
-    let mut total_len = payload_len
-        .checked_add(1)
-        .expect("AML PkgLength overflow");
+    let mut total_len = payload_len.checked_add(1).expect("AML PkgLength overflow");
     loop {
         let enc = aml_encode_pkg_length(total_len);
         let new_total_len = payload_len
@@ -906,7 +904,10 @@ fn aml_integer(value: u64) -> Vec<u8> {
 }
 
 fn aml_string(value: &str) -> Vec<u8> {
-    assert!(!value.as_bytes().contains(&0), "AML strings must not contain NULs");
+    assert!(
+        !value.as_bytes().contains(&0),
+        "AML strings must not contain NULs"
+    );
     let mut out = Vec::new();
     out.push(0x0D); // StringPrefix
     out.extend_from_slice(value.as_bytes());
@@ -1112,9 +1113,24 @@ fn sys0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     // OS resource allocators from treating these ports as free PCI I/O space
     // (avoids PCI I/O BAR collisions; important for Windows 7 compatibility).
     let mut out = Vec::new();
-    out.extend_from_slice(&io_port_descriptor(cfg.smi_cmd_port, cfg.smi_cmd_port, 1, 1));
-    out.extend_from_slice(&io_port_descriptor(cfg.pm1a_evt_blk, cfg.pm1a_evt_blk, 1, 4));
-    out.extend_from_slice(&io_port_descriptor(cfg.pm1a_cnt_blk, cfg.pm1a_cnt_blk, 1, 2));
+    out.extend_from_slice(&io_port_descriptor(
+        cfg.smi_cmd_port,
+        cfg.smi_cmd_port,
+        1,
+        1,
+    ));
+    out.extend_from_slice(&io_port_descriptor(
+        cfg.pm1a_evt_blk,
+        cfg.pm1a_evt_blk,
+        1,
+        4,
+    ));
+    out.extend_from_slice(&io_port_descriptor(
+        cfg.pm1a_cnt_blk,
+        cfg.pm1a_cnt_blk,
+        1,
+        2,
+    ));
     out.extend_from_slice(&io_port_descriptor(cfg.pm_tmr_blk, cfg.pm_tmr_blk, 1, 4));
     out.extend_from_slice(&io_port_descriptor(
         cfg.gpe0_blk,
@@ -1320,9 +1336,9 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     // Keep the exact byte values consistent with what ACPICA iasl emits so `iasl -d` round-trips
     // cleanly.
     const PCI0_CRS_GENERAL_FLAGS: u8 = 0x0C; // ResourceProducer, PosDecode, MinFixed, MaxFixed
-    // - Memory TypeSpecificFlags:
-    //     bit0: ReadWrite (1=ReadWrite, 0=ReadOnly)
-    //     bits1-2: Cacheability (00=NonCacheable, 01=Cacheable, 10=WriteCombining, 11=Prefetchable)
+                                             // - Memory TypeSpecificFlags:
+                                             //     bit0: ReadWrite (1=ReadWrite, 0=ReadOnly)
+                                             //     bits1-2: Cacheability (00=NonCacheable, 01=Cacheable, 10=WriteCombining, 11=Prefetchable)
     const PCI0_CRS_MMIO_TYPE_SPECIFIC_FLAGS: u8 = 0x03; // Cacheable, ReadWrite
 
     // Word Address Space Descriptor (Bus Number).
@@ -1907,7 +1923,10 @@ mod tests {
 
         // SDT header.
         assert_eq!(&mcfg[0..4], b"MCFG");
-        assert_eq!(u32::from_le_bytes(mcfg[4..8].try_into().unwrap()) as usize, mcfg.len());
+        assert_eq!(
+            u32::from_le_bytes(mcfg[4..8].try_into().unwrap()) as usize,
+            mcfg.len()
+        );
 
         // One allocation entry follows an 8-byte reserved region.
         assert_eq!(mcfg.len(), 36 + 8 + 16);

@@ -99,15 +99,23 @@ fn webhid_fixture_json_roundtrips_and_synthesizes_descriptor() {
         let expected_json: serde_json::Value =
             serde_json::from_str(fixture_json).expect("fixture JSON should parse");
         let actual_json = serde_json::to_value(&collections).expect("fixture should serialize");
-        assert_eq!(actual_json, expected_json, "fixture roundtrip mismatch: {fixture_name}");
+        assert_eq!(
+            actual_json, expected_json,
+            "fixture roundtrip mismatch: {fixture_name}"
+        );
 
-        let desc = synthesize_report_descriptor(&collections)
-            .unwrap_or_else(|err| panic!("report descriptor synthesis should succeed ({fixture_name}): {err}"));
-        assert!(!desc.is_empty(), "expected a non-empty report descriptor: {fixture_name}");
+        let desc = synthesize_report_descriptor(&collections).unwrap_or_else(|err| {
+            panic!("report descriptor synthesis should succeed ({fixture_name}): {err}")
+        });
+        assert!(
+            !desc.is_empty(),
+            "expected a non-empty report descriptor: {fixture_name}"
+        );
 
         // The synthesized bytes must also be parseable by our HID descriptor parser.
-        parse_report_descriptor(&desc)
-            .unwrap_or_else(|err| panic!("synthesized report descriptor should parse ({fixture_name}): {err}"));
+        parse_report_descriptor(&desc).unwrap_or_else(|err| {
+            panic!("synthesized report descriptor should parse ({fixture_name}): {err}")
+        });
     }
 }
 

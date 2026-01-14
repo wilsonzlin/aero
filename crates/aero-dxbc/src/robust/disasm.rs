@@ -153,4 +153,3 @@ fn decode_register(shader_type: ShaderType, token: u32) -> Option<String> {
 
     Some(name)
 }
-

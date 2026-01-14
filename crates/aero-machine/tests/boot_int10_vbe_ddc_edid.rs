@@ -178,4 +178,3 @@ fn boot_int10_vbe_ddc_edid() {
     }
     assert_eq!(actual, expected);
 }
-

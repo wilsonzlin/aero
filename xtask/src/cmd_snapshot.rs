@@ -2206,11 +2206,41 @@ fn cmd_diff(args: Vec<String>) -> Result<()> {
     diff_section_table(&mut out, &index_a.sections, &index_b.sections);
 
     // Optional best-effort diffs for small sections (fast; no deep restore).
-    diff_cpu_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
-    diff_cpus_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
-    diff_mmu_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
-    diff_mmus_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
-    diff_disks_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
+    diff_cpu_section(
+        &mut out,
+        &mut file_a,
+        &index_a.sections,
+        &mut file_b,
+        &index_b.sections,
+    )?;
+    diff_cpus_section(
+        &mut out,
+        &mut file_a,
+        &index_a.sections,
+        &mut file_b,
+        &index_b.sections,
+    )?;
+    diff_mmu_section(
+        &mut out,
+        &mut file_a,
+        &index_a.sections,
+        &mut file_b,
+        &index_b.sections,
+    )?;
+    diff_mmus_section(
+        &mut out,
+        &mut file_a,
+        &index_a.sections,
+        &mut file_b,
+        &index_b.sections,
+    )?;
+    diff_disks_section(
+        &mut out,
+        &mut file_a,
+        &index_a.sections,
+        &mut file_b,
+        &index_b.sections,
+    )?;
 
     // DEVICES section (device ids/versions/blob lengths + hash).
     diff_devices_section(
@@ -2368,7 +2398,11 @@ fn diff_cpu_section(
             let cpu_b = read_cpu_state(file_b, sec_b, "B")?;
 
             if cpu_a.mode != cpu_b.mode {
-                out.diff("CPU.mode", format!("{:?}", cpu_a.mode), format!("{:?}", cpu_b.mode));
+                out.diff(
+                    "CPU.mode",
+                    format!("{:?}", cpu_a.mode),
+                    format!("{:?}", cpu_b.mode),
+                );
             }
             if cpu_a.halted != cpu_b.halted {
                 out.diff("CPU.halted", cpu_a.halted, cpu_b.halted);
@@ -2407,7 +2441,11 @@ fn diff_cpu_section(
                 );
             }
             if cpu_a.irq13_pending != cpu_b.irq13_pending {
-                out.diff("CPU.irq13_pending", cpu_a.irq13_pending, cpu_b.irq13_pending);
+                out.diff(
+                    "CPU.irq13_pending",
+                    cpu_a.irq13_pending,
+                    cpu_b.irq13_pending,
+                );
             }
 
             Ok(())
@@ -2415,7 +2453,11 @@ fn diff_cpu_section(
     }
 }
 
-fn read_cpu_state(file: &mut fs::File, section: &SnapshotSectionInfo, tag: &str) -> Result<CpuState> {
+fn read_cpu_state(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    tag: &str,
+) -> Result<CpuState> {
     file.seek(SeekFrom::Start(section.offset))
         .map_err(|e| XtaskError::Message(format!("seek CPU {tag}: {e}")))?;
     let mut limited = file.take(section.len);
@@ -2578,7 +2620,9 @@ fn read_cpus_digests(
             .checked_add(entry_len)
             .ok_or_else(|| XtaskError::Message("cpu entry length overflow".to_string()))?;
         if entry_end > section_end {
-            return Err(XtaskError::Message(format!("CPUS {tag}: truncated section")));
+            return Err(XtaskError::Message(format!(
+                "CPUS {tag}: truncated section"
+            )));
         }
 
         let mut entry_reader = file.take(entry_len);
@@ -2694,7 +2738,11 @@ fn diff_mmu_section(
     }
 }
 
-fn read_mmu_state(file: &mut fs::File, section: &SnapshotSectionInfo, tag: &str) -> Result<MmuState> {
+fn read_mmu_state(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    tag: &str,
+) -> Result<MmuState> {
     file.seek(SeekFrom::Start(section.offset))
         .map_err(|e| XtaskError::Message(format!("seek MMU {tag}: {e}")))?;
     let mut limited = file.take(section.len);
@@ -2749,7 +2797,8 @@ fn diff_mmus_section(
             }
 
             if order_a != order_b
-                && map_a.keys().copied().collect::<Vec<_>>() == map_b.keys().copied().collect::<Vec<_>>()
+                && map_a.keys().copied().collect::<Vec<_>>()
+                    == map_b.keys().copied().collect::<Vec<_>>()
             {
                 out.diff_msg("MMUS.order", "same entries, different on-disk ordering");
             }
@@ -2827,7 +2876,9 @@ fn read_mmus_states(
     ensure_section_remaining(file, section_end, 4, "mmu count")?;
     let count = read_u32_le(file)?;
     if count == 0 {
-        return Err(XtaskError::Message(format!("MMUS {tag}: missing MMU entry")));
+        return Err(XtaskError::Message(format!(
+            "MMUS {tag}: missing MMU entry"
+        )));
     }
     if count > limits::MAX_CPU_COUNT {
         return Err(XtaskError::Message(format!(
@@ -2848,7 +2899,9 @@ fn read_mmus_states(
             .checked_add(entry_len)
             .ok_or_else(|| XtaskError::Message("mmu entry length overflow".to_string()))?;
         if entry_end > section_end {
-            return Err(XtaskError::Message(format!("MMUS {tag}: truncated section")));
+            return Err(XtaskError::Message(format!(
+                "MMUS {tag}: truncated section"
+            )));
         }
 
         let mut entry_reader = file.take(entry_len);
@@ -2929,7 +2982,10 @@ fn diff_disks_section(
                 map_b.insert(d.disk_id, d);
             }
 
-            if order_a != order_b && map_a.keys().copied().collect::<Vec<_>>() == map_b.keys().copied().collect::<Vec<_>>() {
+            if order_a != order_b
+                && map_a.keys().copied().collect::<Vec<_>>()
+                    == map_b.keys().copied().collect::<Vec<_>>()
+            {
                 out.diff_msg("DISKS.order", "same entries, different on-disk ordering");
             }
 
@@ -3253,18 +3309,10 @@ fn diff_ram_samples(
                 let (ua, ca) = a.chunks[idx];
                 let (ub, cb) = b.chunks[idx];
                 if ua != ub {
-                    out.diff(
-                        &format!("RAM.sample.chunk[{idx}].uncompressed_len"),
-                        ua,
-                        ub,
-                    );
+                    out.diff(&format!("RAM.sample.chunk[{idx}].uncompressed_len"), ua, ub);
                 }
                 if ca != cb {
-                    out.diff(
-                        &format!("RAM.sample.chunk[{idx}].compressed_len"),
-                        ca,
-                        cb,
-                    );
+                    out.diff(&format!("RAM.sample.chunk[{idx}].compressed_len"), ca, cb);
                 }
             }
         }
@@ -3276,18 +3324,10 @@ fn diff_ram_samples(
                     out.diff(&format!("RAM.sample.page[{idx}].page_idx"), pia, pib);
                 }
                 if ua != ub {
-                    out.diff(
-                        &format!("RAM.sample.page[{idx}].uncompressed_len"),
-                        ua,
-                        ub,
-                    );
+                    out.diff(&format!("RAM.sample.page[{idx}].uncompressed_len"), ua, ub);
                 }
                 if ca != cb {
-                    out.diff(
-                        &format!("RAM.sample.page[{idx}].compressed_len"),
-                        ca,
-                        cb,
-                    );
+                    out.diff(&format!("RAM.sample.page[{idx}].compressed_len"), ca, cb);
                 }
             }
         }
@@ -3340,15 +3380,18 @@ fn read_ram_samples(
             ensure_section_remaining(file, section_end, 4, "RAM chunk_size")?;
             let chunk_size = read_u32_le(file)?;
             if chunk_size == 0 {
-                return Err(XtaskError::Message(format!("RAM {tag}: invalid chunk_size")));
+                return Err(XtaskError::Message(format!(
+                    "RAM {tag}: invalid chunk_size"
+                )));
             }
 
             let mut chunks: Vec<(u32, u32)> = Vec::new();
             for _ in 0..max_samples {
                 // Each entry is: u32 uncompressed_len + u32 compressed_len + payload[compressed_len].
-                if file.stream_position().map_err(|e| {
-                    XtaskError::Message(format!("tell RAM {tag} chunk: {e}"))
-                })? >= section_end
+                if file
+                    .stream_position()
+                    .map_err(|e| XtaskError::Message(format!("tell RAM {tag} chunk: {e}")))?
+                    >= section_end
                 {
                     break;
                 }
@@ -3364,7 +3407,9 @@ fn read_ram_samples(
                     .checked_add(u64::from(compressed_len))
                     .ok_or_else(|| XtaskError::Message("RAM chunk length overflow".to_string()))?;
                 if payload_end > section_end {
-                    return Err(XtaskError::Message(format!("RAM {tag}: truncated chunk payload")));
+                    return Err(XtaskError::Message(format!(
+                        "RAM {tag}: truncated chunk payload"
+                    )));
                 }
                 file.seek(SeekFrom::Start(payload_end))
                     .map_err(|e| XtaskError::Message(format!("skip RAM {tag} chunk: {e}")))?;
@@ -3392,7 +3437,9 @@ fn read_ram_samples(
                     .checked_add(u64::from(compressed_len))
                     .ok_or_else(|| XtaskError::Message("RAM dirty length overflow".to_string()))?;
                 if payload_end > section_end {
-                    return Err(XtaskError::Message(format!("RAM {tag}: truncated dirty payload")));
+                    return Err(XtaskError::Message(format!(
+                        "RAM {tag}: truncated dirty payload"
+                    )));
                 }
                 file.seek(SeekFrom::Start(payload_end))
                     .map_err(|e| XtaskError::Message(format!("skip RAM {tag} page: {e}")))?;
@@ -3400,7 +3447,9 @@ fn read_ram_samples(
             let _ = page_size; // currently unused; `inspect_snapshot` validates it.
             Ok(RamSamples::Dirty(DirtyRamSamples { pages }))
         }
-        other => Err(XtaskError::Message(format!("RAM {tag}: unknown mode {other}"))),
+        other => Err(XtaskError::Message(format!(
+            "RAM {tag}: unknown mode {other}"
+        ))),
     }
 }
 

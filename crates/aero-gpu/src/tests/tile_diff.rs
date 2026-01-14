@@ -129,7 +129,10 @@ fn tile_diff_noop_second_frame_returns_no_rects() {
     let frame = vec![0xABu8; stride * height as usize];
 
     let mut diff = TileDiff::new(width, height, bpp);
-    assert_eq!(diff.diff(&frame, stride), vec![Rect::new(0, 0, width, height)]);
+    assert_eq!(
+        diff.diff(&frame, stride),
+        vec![Rect::new(0, 0, width, height)]
+    );
     assert_eq!(diff.diff(&frame, stride), Vec::<Rect>::new());
 }
 

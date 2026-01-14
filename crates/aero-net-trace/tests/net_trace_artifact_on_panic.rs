@@ -30,4 +30,3 @@ fn writes_capture_artifact_when_panicking() {
 
     let _ = std::fs::remove_file(&path);
 }
-

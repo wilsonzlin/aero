@@ -120,7 +120,7 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut expected_cb_bindings, 16); // offset_bytes
     push_u32(&mut expected_cb_bindings, 64); // size_bytes
     push_u32(&mut expected_cb_bindings, 0); // reserved0
-                                             // binding[1]
+                                            // binding[1]
     push_u32(&mut expected_cb_bindings, 0); // buffer
     push_u32(&mut expected_cb_bindings, 0); // offset_bytes
     push_u32(&mut expected_cb_bindings, 0); // size_bytes
@@ -132,7 +132,7 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut expected_srv_bindings, 8); // offset_bytes
     push_u32(&mut expected_srv_bindings, 32); // size_bytes
     push_u32(&mut expected_srv_bindings, 0); // reserved0
-                                              // binding[1]
+                                             // binding[1]
     push_u32(&mut expected_srv_bindings, 0); // buffer
     push_u32(&mut expected_srv_bindings, 0); // offset_bytes
     push_u32(&mut expected_srv_bindings, 0); // size_bytes
@@ -144,7 +144,7 @@ fn protocol_parses_all_opcodes() {
     push_u32(&mut expected_uav_bindings, 0); // offset_bytes
     push_u32(&mut expected_uav_bindings, 128); // size_bytes
     push_u32(&mut expected_uav_bindings, 7); // initial_count
-                                              // binding[1]
+                                             // binding[1]
     push_u32(&mut expected_uav_bindings, 0); // buffer
     push_u32(&mut expected_uav_bindings, 0); // offset_bytes
     push_u32(&mut expected_uav_bindings, 0); // size_bytes
@@ -399,13 +399,17 @@ fn protocol_parses_all_opcodes() {
             out.extend_from_slice(&expected_srv_bindings);
         });
 
-        emit_packet(out, AeroGpuOpcode::SetUnorderedAccessBuffers as u32, |out| {
-            push_u32(out, 2); // shader_stage (compute)
-            push_u32(out, 0); // start_slot
-            push_u32(out, 2); // uav_count
-            push_u32(out, 0); // reserved0
-            out.extend_from_slice(&expected_uav_bindings);
-        });
+        emit_packet(
+            out,
+            AeroGpuOpcode::SetUnorderedAccessBuffers as u32,
+            |out| {
+                push_u32(out, 2); // shader_stage (compute)
+                push_u32(out, 0); // start_slot
+                push_u32(out, 2); // uav_count
+                push_u32(out, 0); // reserved0
+                out.extend_from_slice(&expected_uav_bindings);
+            },
+        );
 
         emit_packet(out, AeroGpuOpcode::DestroySampler as u32, |out| {
             push_u32(out, 0x55); // sampler_handle
@@ -647,7 +651,14 @@ fn protocol_parses_all_opcodes() {
     }
 
     match cmds.next().unwrap() {
-        AeroGpuCmd::BindShaders { vs, ps, cs, gs, hs, ds } => {
+        AeroGpuCmd::BindShaders {
+            vs,
+            ps,
+            cs,
+            gs,
+            hs,
+            ds,
+        } => {
             assert_eq!(vs, 1);
             assert_eq!(ps, 2);
             assert_eq!(cs, 3);
@@ -1124,7 +1135,7 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
             push_u32(out, 0); // start_slot
             push_u32(out, 1); // buffer_count
             push_u32(out, stage_ex_set_constant_buffers); // reserved0 (stage_ex)
-                                             // binding[0]
+                                                          // binding[0]
             push_u32(out, 0x90); // buffer
             push_u32(out, 16); // offset_bytes
             push_u32(out, 64); // size_bytes
@@ -1136,24 +1147,28 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
             push_u32(out, 0); // start_slot
             push_u32(out, 1); // buffer_count
             push_u32(out, stage_ex_set_srv_buffers); // reserved0 (stage_ex)
-                                           // binding[0]
+                                                     // binding[0]
             push_u32(out, 0xA2); // buffer
             push_u32(out, 8); // offset_bytes
             push_u32(out, 32); // size_bytes
             push_u32(out, 0); // reserved0
         });
 
-        emit_packet(out, AeroGpuOpcode::SetUnorderedAccessBuffers as u32, |out| {
-            push_u32(out, stage_compute); // shader_stage
-            push_u32(out, 0); // start_slot
-            push_u32(out, 1); // uav_count
-            push_u32(out, stage_ex_set_uav_buffers); // reserved0 (stage_ex)
-                                           // binding[0]
-            push_u32(out, 0xA3); // buffer
-            push_u32(out, 0); // offset_bytes
-            push_u32(out, 128); // size_bytes
-            push_u32(out, 7); // initial_count
-        });
+        emit_packet(
+            out,
+            AeroGpuOpcode::SetUnorderedAccessBuffers as u32,
+            |out| {
+                push_u32(out, stage_compute); // shader_stage
+                push_u32(out, 0); // start_slot
+                push_u32(out, 1); // uav_count
+                push_u32(out, stage_ex_set_uav_buffers); // reserved0 (stage_ex)
+                                                         // binding[0]
+                push_u32(out, 0xA3); // buffer
+                push_u32(out, 0); // offset_bytes
+                push_u32(out, 128); // size_bytes
+                push_u32(out, 7); // initial_count
+            },
+        );
 
         emit_packet(out, AeroGpuOpcode::SetShaderConstantsF as u32, |out| {
             push_u32(out, stage_compute); // stage
@@ -1168,7 +1183,9 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     assert_eq!(parsed.cmds.len(), 7);
 
     match &parsed.cmds[0] {
-        AeroGpuCmd::CreateShaderDxbc { stage, stage_ex, .. } => {
+        AeroGpuCmd::CreateShaderDxbc {
+            stage, stage_ex, ..
+        } => {
             assert_eq!(*stage, stage_compute);
             assert_eq!(*stage_ex, stage_ex_create_shader);
         }
@@ -1236,7 +1253,9 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     }
 
     match &parsed.cmds[6] {
-        AeroGpuCmd::SetShaderConstantsF { stage, stage_ex, .. } => {
+        AeroGpuCmd::SetShaderConstantsF {
+            stage, stage_ex, ..
+        } => {
             assert_eq!(*stage, stage_compute);
             assert_eq!(*stage_ex, stage_ex_set_constants_f);
         }
@@ -1413,18 +1432,22 @@ fn protocol_rejects_truncated_set_shader_resource_buffers_payload() {
 fn protocol_rejects_truncated_set_unordered_access_buffers_payload() {
     let stream = build_stream(|out| {
         // SET_UNORDERED_ACCESS_BUFFERS with uav_count=2, but only 1 binding follows.
-        emit_packet(out, AeroGpuOpcode::SetUnorderedAccessBuffers as u32, |out| {
-            push_u32(out, 2); // shader_stage
-            push_u32(out, 0); // start_slot
-            push_u32(out, 2); // uav_count (claims 2)
-            push_u32(out, 0); // reserved0
-                              // binding[0]
-            push_u32(out, 0xA3); // buffer
-            push_u32(out, 0); // offset_bytes
-            push_u32(out, 128); // size_bytes
-            push_u32(out, 7); // initial_count
-                              // missing binding[1]
-        });
+        emit_packet(
+            out,
+            AeroGpuOpcode::SetUnorderedAccessBuffers as u32,
+            |out| {
+                push_u32(out, 2); // shader_stage
+                push_u32(out, 0); // start_slot
+                push_u32(out, 2); // uav_count (claims 2)
+                push_u32(out, 0); // reserved0
+                                  // binding[0]
+                push_u32(out, 0xA3); // buffer
+                push_u32(out, 0); // offset_bytes
+                push_u32(out, 128); // size_bytes
+                push_u32(out, 7); // initial_count
+                                  // missing binding[1]
+            },
+        );
     });
 
     let err = parse_cmd_stream(&stream).unwrap_err();
@@ -1473,11 +1496,11 @@ fn protocol_accepts_extended_bind_shaders_packet() {
             push_u32(out, 2); // ps
             push_u32(out, 3); // cs
             push_u32(out, 0xAABB_CCDD); // reserved0
-            // Extended fields: gs/hs/ds
+                                        // Extended fields: gs/hs/ds
             push_u32(out, 4); // gs
             push_u32(out, 5); // hs
             push_u32(out, 6); // ds
-            // Forward-compatible trailing extension (ignored).
+                              // Forward-compatible trailing extension (ignored).
             push_u32(out, 0xDEAD_BEEF);
         });
     });
@@ -1485,7 +1508,14 @@ fn protocol_accepts_extended_bind_shaders_packet() {
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
     assert_eq!(parsed.cmds.len(), 1);
     match &parsed.cmds[0] {
-        AeroGpuCmd::BindShaders { vs, ps, cs, gs, hs, ds } => {
+        AeroGpuCmd::BindShaders {
+            vs,
+            ps,
+            cs,
+            gs,
+            hs,
+            ds,
+        } => {
             assert_eq!((*vs, *ps, *cs, *gs, *hs, *ds), (1, 2, 3, 4, 5, 6));
         }
         other => panic!("expected BindShaders cmd, got {other:?}"),

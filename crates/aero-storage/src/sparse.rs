@@ -404,8 +404,8 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                     continue;
                 }
 
-        // Validate entries as we go so corrupt images fail fast without reading the
-        // entire allocation table first.
+                // Validate entries as we go so corrupt images fail fast without reading the
+                // entire allocation table first.
                 mapped_blocks = mapped_blocks
                     .checked_add(1)
                     .ok_or(DiskError::OffsetOverflow)?;
@@ -715,7 +715,8 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         let table_entry_off = (HEADER_SIZE as u64)
             .checked_add(block_idx.checked_mul(8).ok_or(DiskError::OffsetOverflow)?)
             .ok_or(DiskError::OffsetOverflow)?;
-        self.backend.write_at(table_entry_off, &0u64.to_le_bytes())?;
+        self.backend
+            .write_at(table_entry_off, &0u64.to_le_bytes())?;
 
         // Update the in-memory phys-used bitmap.
         let block_size = self.header.block_size_u64();
@@ -738,12 +739,12 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         }
         self.set_phys_used(phys_idx, false)?;
 
-        self.mapped_blocks = self
-            .mapped_blocks
-            .checked_sub(1)
-            .ok_or(DiskError::CorruptSparseImage(
-                "allocated_blocks out of range",
-            ))?;
+        self.mapped_blocks =
+            self.mapped_blocks
+                .checked_sub(1)
+                .ok_or(DiskError::CorruptSparseImage(
+                    "allocated_blocks out of range",
+                ))?;
 
         Ok(true)
     }

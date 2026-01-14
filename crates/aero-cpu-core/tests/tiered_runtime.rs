@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use aero_cpu_core::exec::{
     ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
@@ -10,7 +10,8 @@ use aero_cpu_core::exec::{
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
 use aero_cpu_core::jit::profile::HotnessProfile;
 use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+    DEFAULT_CODE_VERSION_MAX_PAGES,
 };
 use aero_cpu_core::jit::JitMetricsSink;
 
@@ -140,8 +141,7 @@ impl JitMetricsSink for RecordingMetricsSink {
     }
 
     fn record_stale_install_reject(&self) {
-        self.stale_install_rejects
-            .fetch_add(1, Ordering::Relaxed);
+        self.stale_install_rejects.fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_compile_request(&self) {
@@ -251,7 +251,11 @@ fn hotness_profile_is_memory_bounded() {
         cache_max_bytes: 0,
         code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
-    let mut jit = JitRuntime::new(config.clone(), TestJitBackend::default(), RecordingCompileSink::default());
+    let mut jit = JitRuntime::new(
+        config.clone(),
+        TestJitBackend::default(),
+        RecordingCompileSink::default(),
+    );
 
     let capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
     let total = capacity * 2;
@@ -266,9 +270,16 @@ fn hotness_profile_is_memory_bounded() {
         }
     }
 
-    assert!(present <= capacity, "hotness table exceeded capacity: {present} > {capacity}");
+    assert!(
+        present <= capacity,
+        "hotness table exceeded capacity: {present} > {capacity}"
+    );
     assert_eq!(present, capacity);
-    assert_eq!(jit.hotness(0), 0, "old entries should be evicted once capacity is exceeded");
+    assert_eq!(
+        jit.hotness(0),
+        0,
+        "old entries should be evicted once capacity is exceeded"
+    );
 }
 
 #[test]

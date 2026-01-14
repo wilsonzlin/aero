@@ -25,12 +25,7 @@ impl DeterministicScheduler {
     }
 
     /// Run the machine for a fixed number of scheduler ticks.
-    pub fn run_for_ticks(
-        &mut self,
-        machine: &mut Machine,
-        guest: &mut impl Guest,
-        ticks: u64,
-    ) {
+    pub fn run_for_ticks(&mut self, machine: &mut Machine, guest: &mut impl Guest, ticks: u64) {
         let cpu_count = machine.cpu_count();
         for _ in 0..ticks {
             let cpu = self.next_cpu;

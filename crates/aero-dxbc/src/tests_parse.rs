@@ -1,5 +1,5 @@
-use crate::{DxbcError, DxbcFile, FourCC};
 use crate::test_utils as dxbc_test_utils;
+use crate::{DxbcError, DxbcFile, FourCC};
 
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     dxbc_test_utils::build_container(chunks)
@@ -85,9 +85,11 @@ fn parse_allows_misaligned_chunk_offsets() {
 
     // Sanity check: ensure we actually produced a misaligned offset for the
     // second chunk.
-    let second_off =
-        u32::from_le_bytes(bytes[offset_table_pos + 4..offset_table_pos + 8].try_into().unwrap())
-            as usize;
+    let second_off = u32::from_le_bytes(
+        bytes[offset_table_pos + 4..offset_table_pos + 8]
+            .try_into()
+            .unwrap(),
+    ) as usize;
     assert!(!second_off.is_multiple_of(4));
 
     let file = DxbcFile::parse(&bytes).expect("parse should succeed");
@@ -485,7 +487,8 @@ fn malformed_second_chunk_size_out_of_bounds_mentions_index() {
             .try_into()
             .unwrap(),
     ) as usize;
-    bytes[second_chunk_offset + 4..second_chunk_offset + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+    bytes[second_chunk_offset + 4..second_chunk_offset + 8]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     // Depending on pointer width, this may be detected as integer overflow or bounds.
@@ -593,9 +596,11 @@ fn malformed_chunk_size_extends_past_file_is_error() {
     // Find the chunk header and set the size so the payload would extend 1 byte
     // past the end of the declared container.
     let offset_table_pos = 4 + 16 + 4 + 4 + 4;
-    let chunk_offset =
-        u32::from_le_bytes(bytes[offset_table_pos..offset_table_pos + 4].try_into().unwrap())
-            as usize;
+    let chunk_offset = u32::from_le_bytes(
+        bytes[offset_table_pos..offset_table_pos + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
     let data_start = chunk_offset + 8;
     let bad_size = (bytes.len() - data_start + 1) as u32;
     bytes[chunk_offset + 4..chunk_offset + 8].copy_from_slice(&bad_size.to_le_bytes());
@@ -615,9 +620,11 @@ fn malformed_chunk_size_nonzero_with_no_payload_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[])]);
 
     let offset_table_pos = 4 + 16 + 4 + 4 + 4;
-    let chunk_offset =
-        u32::from_le_bytes(bytes[offset_table_pos..offset_table_pos + 4].try_into().unwrap())
-            as usize;
+    let chunk_offset = u32::from_le_bytes(
+        bytes[offset_table_pos..offset_table_pos + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
     bytes[chunk_offset + 4..chunk_offset + 8].copy_from_slice(&1u32.to_le_bytes());
 
     let err = DxbcFile::parse(&bytes).unwrap_err();

@@ -1180,12 +1180,8 @@ mod tests {
             GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
 
         // First device-lost event: both backends fail, transitioning the machine to Failed.
-        let _outcome = machine.handle_device_lost(
-            100,
-            &stats,
-            |_e| {},
-            |_backend| Err("nope".to_string()),
-        );
+        let _outcome =
+            machine.handle_device_lost(100, &stats, |_e| {}, |_backend| Err("nope".to_string()));
         assert_eq!(machine.state(), RecoveryState::Failed);
 
         let snap = stats.snapshot();
@@ -1213,7 +1209,10 @@ mod tests {
         assert_eq!(events[0].severity, GpuErrorSeverityKind::Fatal);
         assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
         assert_eq!(events[0].backend_kind, GpuBackendKind::WebGpu);
-        assert_eq!(events[0].message, "GPU recovery requested while already failed");
+        assert_eq!(
+            events[0].message,
+            "GPU recovery requested while already failed"
+        );
     }
 
     #[test]
@@ -1311,6 +1310,9 @@ mod tests {
         assert_eq!(events[0].severity, GpuErrorSeverityKind::Fatal);
         assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
         assert_eq!(events[0].backend_kind, GpuBackendKind::WebGpu);
-        assert_eq!(events[0].message, "GPU recovery requested while already failed");
+        assert_eq!(
+            events[0].message,
+            "GPU recovery requested while already failed"
+        );
     }
 }

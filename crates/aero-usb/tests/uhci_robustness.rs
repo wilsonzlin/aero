@@ -16,7 +16,9 @@ struct TestMem {
 
 impl TestMem {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn write_u32(&mut self, addr: u32, value: u32) {

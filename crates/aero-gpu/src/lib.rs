@@ -30,9 +30,9 @@ mod shared_surface;
 mod tile_diff;
 
 pub mod frame_source;
+pub mod passthrough_vs;
 mod protocol;
 mod recovery;
-pub mod passthrough_vs;
 pub mod shader_lib;
 mod surface;
 mod time;
@@ -70,10 +70,6 @@ pub use bc_decompress::{
     decompress_bc2_rgba8_into, decompress_bc3_rgba8, decompress_bc3_rgba8_into,
     decompress_bc7_rgba8, decompress_bc7_rgba8_into,
 };
-pub use packed_16bit::{
-    expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
-    pack_rgba8_to_b5g6r5_unorm,
-};
 pub use buffer_arena::BufferArena;
 pub use command_processor::{
     AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, CommandProcessorError,
@@ -84,6 +80,10 @@ pub use error::GpuError;
 pub use error_event::{GpuErrorCategory, GpuErrorEvent, GpuErrorSeverity, GpuErrorSeverityKind};
 pub use guest_memory::{GuestMemory, GuestMemoryError, VecGuestMemory};
 pub use indirect::{DrawIndexedIndirectArgs, DrawIndirectArgs};
+pub use packed_16bit::{
+    expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
+    pack_rgba8_to_b5g6r5_unorm,
+};
 pub use present::{PresentError, PresentTelemetry, Presenter, TextureWriter};
 pub use profiler::{
     FrameTimingsReport, GpuBackendKind, GpuProfiler, GpuProfilerConfig, GpuTimestampPhase,

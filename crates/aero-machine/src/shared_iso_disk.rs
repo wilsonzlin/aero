@@ -1,8 +1,8 @@
 use std::io;
-#[cfg(target_arch = "wasm32")]
-use std::{cell::RefCell, rc::Rc};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
 
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::atapi::IsoBackend;

@@ -76,7 +76,8 @@ mod tests {
         let bytes = w.into_bytes();
 
         let mut offset = 0usize;
-        let shb_len = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let shb_len =
+            u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
         offset += shb_len;
 
         let block_type = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
@@ -111,4 +112,3 @@ mod tests {
         assert!(found, "missing if_tsresol option");
     }
 }
-

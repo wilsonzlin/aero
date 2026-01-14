@@ -69,10 +69,6 @@ fn snapshot_restore_does_not_trigger_sleep_callback() {
     let mut restored = AcpiPmIo::new_with_callbacks(cfg, callbacks);
     restored.load_state(&snap).unwrap();
 
-    assert_eq!(
-        sleep_count.get(),
-        0,
-        "load_state must be side-effect free"
-    );
+    assert_eq!(sleep_count.get(), 0, "load_state must be side-effect free");
     assert_eq!(restored.pm1_cnt(), pm1_cnt);
 }

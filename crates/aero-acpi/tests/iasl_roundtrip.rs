@@ -1,7 +1,6 @@
 use std::{
     ffi::OsStr,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     process::{Command, Output},
 };

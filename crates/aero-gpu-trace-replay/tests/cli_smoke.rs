@@ -101,9 +101,7 @@ fn cli_decode_cmd_stream_json_succeeds_by_default() {
     let records = v["records"].as_array().expect("records array");
     assert!(
         records.iter().any(|r| {
-            r["type"] == "packet"
-                && r["opcode"].is_null()
-                && r["opcode_u32"] == 0xDEAD_BEEF_u32
+            r["type"] == "packet" && r["opcode"].is_null() && r["opcode_u32"] == 0xDEAD_BEEF_u32
         }),
         "missing unknown opcode record: {v}"
     );

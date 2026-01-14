@@ -108,9 +108,7 @@ impl BlockBackend for TrackingDiscardDisk {
         let offset: usize = offset
             .try_into()
             .map_err(|_| BlockBackendError::OutOfBounds)?;
-        let len: usize = len
-            .try_into()
-            .map_err(|_| BlockBackendError::OutOfBounds)?;
+        let len: usize = len.try_into().map_err(|_| BlockBackendError::OutOfBounds)?;
         let end = offset
             .checked_add(len)
             .ok_or(BlockBackendError::OutOfBounds)?;
@@ -845,15 +843,7 @@ fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
     write_u64_le(&mut mem, header + 8, 0).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(
-        &mut mem,
-        DESC_TABLE,
-        1,
-        read_buf,
-        512,
-        0x0001 | 0x0002,
-        2,
-    );
+    write_desc(&mut mem, DESC_TABLE, 1, read_buf, 512, 0x0001 | 0x0002, 2);
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
 
     // Add to avail ring at index 2.
@@ -1824,7 +1814,10 @@ fn virtio_pci_modern_msix_enable_suppresses_intx_line_but_retains_pending() {
 
     // Disable MSI-X again; the pending legacy interrupt should reassert INTx without additional
     // queue processing.
-    dev.config_write(msix_cap_offset + 0x02, &(msg_ctl & !(1 << 15)).to_le_bytes());
+    dev.config_write(
+        msix_cap_offset + 0x02,
+        &(msg_ctl & !(1 << 15)).to_le_bytes(),
+    );
     assert!(irq.legacy_level());
     assert!(dev.irq_level());
     assert_eq!(irq.legacy_count(), 2);

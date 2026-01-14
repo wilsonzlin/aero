@@ -16,7 +16,9 @@ fn trace_with_blob(command_abi_version: u32) -> Vec<u8> {
     let meta = TraceMeta::new("test", command_abi_version);
     let mut writer = TraceWriter::new(Vec::<u8>::new(), &meta).expect("TraceWriter::new");
     writer.begin_frame(0).unwrap();
-    let _id = writer.write_blob(BlobKind::BufferData, b"blob data").unwrap();
+    let _id = writer
+        .write_blob(BlobKind::BufferData, b"blob data")
+        .unwrap();
     writer.present(0).unwrap();
     writer.finish().unwrap()
 }
@@ -107,7 +109,10 @@ fn writer_rejects_aerogpu_submission_in_container_v1() {
             memory_ranges: &[],
         })
         .unwrap_err();
-    assert!(matches!(err, TraceWriteError::UnsupportedContainerVersion(1)));
+    assert!(matches!(
+        err,
+        TraceWriteError::UnsupportedContainerVersion(1)
+    ));
 }
 
 #[test]
@@ -355,7 +360,10 @@ fn reject_trace_with_too_old_container_version() {
         Ok(_) => panic!("expected trace open to fail"),
         Err(err) => err,
     };
-    assert!(matches!(err, TraceReadError::UnsupportedContainerVersion(0)));
+    assert!(matches!(
+        err,
+        TraceReadError::UnsupportedContainerVersion(0)
+    ));
 }
 
 #[test]
@@ -373,7 +381,10 @@ fn reject_trace_with_too_old_footer_container_version() {
         Ok(_) => panic!("expected trace open to fail"),
         Err(err) => err,
     };
-    assert!(matches!(err, TraceReadError::UnsupportedContainerVersion(0)));
+    assert!(matches!(
+        err,
+        TraceReadError::UnsupportedContainerVersion(0)
+    ));
 }
 
 #[test]

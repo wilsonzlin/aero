@@ -1,12 +1,12 @@
 use std::fs;
 
+use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
+use aero_d3d11::sm4::decode_program;
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, BufferRef, DstOperand,
     DxbcFile, OperandModifier, RegFile, RegisterRef, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program,
     SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
 };
-use aero_d3d11::sm4::decode_program;
-use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

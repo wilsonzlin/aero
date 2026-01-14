@@ -29,8 +29,8 @@ use js_sys::{Array, BigInt, Object, Reflect};
 use aero_cpu_core::exec::{ExecDispatcher, ExecutedTier, StepOutcome, Tier0Interpreter, Vcpu};
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PageVersionTracker,
-    PAGE_SHIFT,
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
+    PageVersionTracker,
 };
 use aero_cpu_core::state::{
     CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
@@ -38,8 +38,8 @@ use aero_cpu_core::state::{
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
 use aero_jit_x86::jit_ctx::{
-    CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext,
-    TRACE_EXIT_REASON_OFFSET, TIER2_CTX_OFFSET, TIER2_CTX_SIZE,
+    CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext, TIER2_CTX_OFFSET,
+    TIER2_CTX_SIZE, TRACE_EXIT_REASON_OFFSET,
 };
 use aero_jit_x86::{
     BlockLimits, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, Tier1Bus, discover_block_mode,
@@ -236,11 +236,10 @@ pub fn tiered_vm_jit_abi_layout() -> TieredVmJitAbiLayout {
 fn clamped_guest_phys_page_count(guest_size: u64) -> usize {
     let guest_phys_end = guest_ram_phys_end_exclusive(guest_size);
     let page_size = 1u64 << PAGE_SHIFT;
-    let pages_u64 = guest_phys_end
-        .saturating_add(page_size.saturating_sub(1))
-        >> PAGE_SHIFT;
+    let pages_u64 = guest_phys_end.saturating_add(page_size.saturating_sub(1)) >> PAGE_SHIFT;
     let pages = usize::try_from(pages_u64).unwrap_or(usize::MAX);
-    pages.min(PageVersionTracker::MAX_TRACKED_PAGES)
+    pages
+        .min(PageVersionTracker::MAX_TRACKED_PAGES)
         .min(u32::MAX as usize)
 }
 #[derive(Debug)]
@@ -1035,8 +1034,8 @@ impl WasmTieredVm {
             // This should hold by construction (the table is an in-module allocation), but keep the
             // ABI robust against misconfiguration.
             let mem_bytes = wasm_memory_byte_len();
-            let Some(end) = u64::from(table_ptr_u32)
-                .checked_add(u64::from(table_len_u32).saturating_mul(4))
+            let Some(end) =
+                u64::from(table_ptr_u32).checked_add(u64::from(table_len_u32).saturating_mul(4))
             else {
                 jit_abi.write_code_version_table(0, 0);
                 return;
@@ -1164,8 +1163,7 @@ impl WasmTieredVm {
         let cpu_ptr = self.jit_abi.cpu_ptr();
         let jit_ctx_ptr = self.jit_abi.jit_ctx_ptr();
         let backend = WasmJitBackend::new(cpu_ptr, jit_ctx_ptr, self.guest_base, self.tlb_salt);
-        let mut jit =
-            JitRuntime::new(self.jit_config.clone(), backend, self.compile_queue.clone());
+        let mut jit = JitRuntime::new(self.jit_config.clone(), backend, self.compile_queue.clone());
         Self::init_code_version_table_fields(&mut self.jit_abi, &mut jit, self.guest_size);
         let interp = Tier0Interpreter::new(10_000);
         self.dispatcher = ExecDispatcher::new(interp, jit);
@@ -1500,7 +1498,10 @@ fn meta_to_js(meta: &CompiledBlockMeta) -> Result<JsValue, JsValue> {
     Reflect::set(
         &obj,
         &JsValue::from_str("page_versions_generation"),
-        &u64_to_js_number(meta.page_versions_generation, "meta.page_versions_generation")?,
+        &u64_to_js_number(
+            meta.page_versions_generation,
+            "meta.page_versions_generation",
+        )?,
     )
     .map_err(|_| js_error("Failed to set meta.page_versions_generation"))?;
 
@@ -1642,17 +1643,17 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 
 #[cfg(test)]
 mod tests {
-     use super::{COMMIT_FLAG_OFFSET, JIT_EXIT_SENTINEL_I64, WasmBus, WasmTieredVm, meta_from_js};
- 
-     use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
-     use aero_cpu_core::jit::cache::CompiledBlockHandle;
-     use aero_cpu_core::jit::runtime::PAGE_SHIFT;
-     use aero_cpu_core::CpuBus;
-     use aero_jit_x86::jit_ctx;
-     use crate::guest_phys::guest_ram_phys_end_exclusive;
+    use super::{COMMIT_FLAG_OFFSET, JIT_EXIT_SENTINEL_I64, WasmBus, WasmTieredVm, meta_from_js};
+
+    use crate::guest_phys::guest_ram_phys_end_exclusive;
+    use aero_cpu_core::CpuBus;
+    use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
+    use aero_cpu_core::jit::cache::CompiledBlockHandle;
+    use aero_cpu_core::jit::runtime::PAGE_SHIFT;
+    use aero_jit_x86::jit_ctx;
     use js_sys::{Array, Object, Reflect};
-    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -1748,9 +1749,8 @@ export function installAeroTieredMmioTestShims() {
 
     fn alloc_guest_region_bytes(min_bytes: u32) -> (u32, u32) {
         let page_bytes = crate::guest_layout::WASM_PAGE_BYTES as u32;
-        let reserved_pages =
-            (crate::guest_layout::RUNTIME_RESERVED_BYTES / crate::guest_layout::WASM_PAGE_BYTES)
-                as u32;
+        let reserved_pages = (crate::guest_layout::RUNTIME_RESERVED_BYTES
+            / crate::guest_layout::WASM_PAGE_BYTES) as u32;
         let current_pages = core::arch::wasm32::memory_size(0) as u32;
         if current_pages < reserved_pages {
             let delta = reserved_pages - current_pages;
@@ -2023,9 +2023,8 @@ export function installAeroTieredMmioTestShims() {
 
         let expected_phys_end = guest_ram_phys_end_exclusive(guest_size as u64);
         let page_size = 1u64 << PAGE_SHIFT;
-        let expected_pages = expected_phys_end
-            .saturating_add(page_size.saturating_sub(1))
-            >> PAGE_SHIFT;
+        let expected_pages =
+            expected_phys_end.saturating_add(page_size.saturating_sub(1)) >> PAGE_SHIFT;
 
         let table_ptr = vm
             .jit_abi
@@ -2035,12 +2034,15 @@ export function installAeroTieredMmioTestShims() {
             .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET);
 
         assert_eq!(
-            table_len,
-            expected_pages as u32,
+            table_len, expected_pages as u32,
             "CODE_VERSION_TABLE_LEN must match guest physical page count"
         );
         assert_ne!(table_ptr, 0, "CODE_VERSION_TABLE_PTR must be non-zero");
-        assert_eq!(table_ptr % 4, 0, "CODE_VERSION_TABLE_PTR must be 4-byte aligned");
+        assert_eq!(
+            table_ptr % 4,
+            0,
+            "CODE_VERSION_TABLE_PTR must be 4-byte aligned"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -2056,9 +2058,9 @@ export function installAeroTieredMmioTestShims() {
         let table_ptr_before = vm
             .jit_abi
             .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET);
-        let table_len = vm
-            .jit_abi
-            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET) as usize;
+        let table_len =
+            vm.jit_abi
+                .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET) as usize;
 
         let paddr = 0x1000u64; // page 1
         let page = (paddr >> PAGE_SHIFT) as usize;
@@ -2091,8 +2093,8 @@ export function installAeroTieredMmioTestShims() {
 
         // snapshot_meta should observe the same bumped version.
         let meta = vm.snapshot_meta(paddr, 1).expect("snapshot_meta");
-        let versions_val = Reflect::get(&meta, &JsValue::from_str("page_versions"))
-            .expect("meta.page_versions");
+        let versions_val =
+            Reflect::get(&meta, &JsValue::from_str("page_versions")).expect("meta.page_versions");
         let versions = versions_val
             .dyn_into::<Array>()
             .expect("meta.page_versions must be an Array");
@@ -2114,9 +2116,8 @@ export function installAeroTieredMmioTestShims() {
         // unchanged (no `Vec` reallocation for in-range writes).
         let expected_phys_end = guest_ram_phys_end_exclusive(guest_size as u64);
         let page_size = 1u64 << PAGE_SHIFT;
-        let expected_pages = expected_phys_end
-            .saturating_add(page_size.saturating_sub(1))
-            >> PAGE_SHIFT;
+        let expected_pages =
+            expected_phys_end.saturating_add(page_size.saturating_sub(1)) >> PAGE_SHIFT;
         let last_page_start = expected_pages.saturating_sub(1) << PAGE_SHIFT;
         vm.jit_on_guest_write(last_page_start, 1);
         let table_ptr_after = vm
@@ -2214,11 +2215,9 @@ export function installAeroTieredMmioTestShims() {
         // ---------------------------------------------------------------------
         let tsc_before = vm.vcpu.cpu.state.msr.tsc;
         let outcome = {
-            let commit_call = Closure::wrap(
-                Box::new(move |_table_index: u32, _cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
-                    0x1000
-                }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
-            );
+            let commit_call = Closure::wrap(Box::new(
+                move |_table_index: u32, _cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 { 0x1000 },
+            ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
             let _guard = GlobalThisValueGuard::set("__aero_jit_call", commit_call.as_ref());
             vm.dispatcher.step(&mut vm.vcpu)
         };
@@ -2245,8 +2244,8 @@ export function installAeroTieredMmioTestShims() {
         // ---------------------------------------------------------------------
         let tsc_before = vm.vcpu.cpu.state.msr.tsc;
         let outcome = {
-            let rollback_call = Closure::wrap(
-                Box::new(move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+            let rollback_call = Closure::wrap(Box::new(
+                move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
                     let commit_flag_ptr = cpu_ptr + COMMIT_FLAG_OFFSET;
                     // Safety: `cpu_ptr` is a wasm linear-memory pointer into the JIT ABI buffer owned by
                     // `WasmTieredVm`. The commit flag slot is a `u32` at a stable offset.
@@ -2254,8 +2253,9 @@ export function installAeroTieredMmioTestShims() {
                         core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
                     }
                     0x1000
-                }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
-            );
+                },
+            )
+                as Box<dyn FnMut(u32, u32, u32) -> i64>);
             let _guard = GlobalThisValueGuard::set("__aero_jit_call", rollback_call.as_ref());
             vm.dispatcher.step(&mut vm.vcpu)
         };
@@ -2274,10 +2274,7 @@ export function installAeroTieredMmioTestShims() {
             }
             other => panic!("expected JIT block outcome, got {other:?}"),
         }
-        assert_eq!(
-            tsc_after, tsc_before,
-            "rollback exits must not advance TSC"
-        );
+        assert_eq!(tsc_after, tsc_before, "rollback exits must not advance TSC");
     }
 
     #[wasm_bindgen_test]
@@ -2319,8 +2316,7 @@ export function installAeroTieredMmioTestShims() {
 
                 JIT_EXIT_SENTINEL_I64
             },
-        )
-            as Box<dyn FnMut(u32, u32, u32) -> i64>);
+        ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
         let _guard = GlobalThisValueGuard::set("__aero_jit_call", closure.as_ref());
 
         let outcome = vm.dispatcher.step(&mut vm.vcpu);
@@ -2373,8 +2369,7 @@ export function installAeroTieredMmioTestShims() {
                 // Leave the flag untouched to indicate a committed block.
                 JIT_EXIT_SENTINEL_I64
             },
-        )
-            as Box<dyn FnMut(u32, u32, u32) -> i64>);
+        ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
         let _guard = GlobalThisValueGuard::set("__aero_jit_call", closure.as_ref());
 
         let outcome = vm.dispatcher.step(&mut vm.vcpu);
@@ -2565,8 +2560,14 @@ export function installAeroTieredMmioTestShims() {
             .expect("table_len_addr2 overflow");
         let table_ptr2 = unsafe { core::ptr::read_unaligned(table_ptr_addr2 as *const u32) };
         let table_len2 = unsafe { core::ptr::read_unaligned(table_len_addr2 as *const u32) };
-        assert!(table_len2 > 0, "expected non-zero code version table len after reset");
-        assert!(table_ptr2 != 0, "expected non-zero code version table ptr after reset");
+        assert!(
+            table_len2 > 0,
+            "expected non-zero code version table len after reset"
+        );
+        assert!(
+            table_ptr2 != 0,
+            "expected non-zero code version table ptr after reset"
+        );
         let mem_bytes2 = super::wasm_memory_byte_len();
         let end2 = u64::from(table_ptr2).saturating_add(u64::from(table_len2).saturating_mul(4));
         assert!(

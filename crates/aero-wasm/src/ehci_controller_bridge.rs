@@ -122,7 +122,9 @@ fn reset_webusb_host_state_for_restore(dev: &mut AttachedUsbDevice) {
     }
 }
 
-fn find_webusb_passthrough_device(dev: &mut AttachedUsbDevice) -> Option<UsbWebUsbPassthroughDevice> {
+fn find_webusb_passthrough_device(
+    dev: &mut AttachedUsbDevice,
+) -> Option<UsbWebUsbPassthroughDevice> {
     let model_any = dev.model() as &dyn core::any::Any;
     if let Some(webusb) = model_any.downcast_ref::<UsbWebUsbPassthroughDevice>() {
         return Some(webusb.clone());
@@ -141,7 +143,9 @@ fn find_webusb_passthrough_device(dev: &mut AttachedUsbDevice) -> Option<UsbWebU
     None
 }
 
-fn recover_webusb_passthrough_device(ctrl: &mut EhciController) -> Option<UsbWebUsbPassthroughDevice> {
+fn recover_webusb_passthrough_device(
+    ctrl: &mut EhciController,
+) -> Option<UsbWebUsbPassthroughDevice> {
     // Prefer the reserved root port.
     let hub = ctrl.hub_mut();
     let preferred = WEBUSB_ROOT_PORT as usize;

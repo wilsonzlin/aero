@@ -17,7 +17,9 @@ fn ioapic_redirection_destination_apic1_delivers_to_lapic1() {
     let mut m = Machine::new(cfg).unwrap();
 
     // Enable APIC mode so IOAPIC routes into LAPICs (not legacy PIC).
-    let interrupts = m.platform_interrupts().expect("PC platform should be enabled");
+    let interrupts = m
+        .platform_interrupts()
+        .expect("PC platform should be enabled");
     interrupts
         .borrow_mut()
         .set_mode(PlatformInterruptMode::Apic);
@@ -61,4 +63,3 @@ fn ioapic_redirection_destination_apic1_delivers_to_lapic1() {
         "IOAPIC did not route the interrupt to LAPIC1 (APIC ID 1)"
     );
 }
-

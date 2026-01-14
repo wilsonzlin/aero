@@ -1,14 +1,14 @@
 mod common;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::{
     translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile, OperandModifier,
-    RegFile, RegisterRef, ShaderModel, ShaderStage, ShaderSignatures, Sm4Decl, Sm4Inst, Sm4Module,
+    RegFile, RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module,
     Sm4Program, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::protocol_d3d11::{
     BindingDesc, BindingType, BufferUsage, CmdWriter, PipelineKind, ShaderStageFlags,
 };
@@ -125,8 +125,10 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
 #[test]
 fn compute_translate_and_run_copy_raw_srv_to_uav() {
     pollster::block_on(async {
-        const TEST_NAME: &str =
-            concat!(module_path!(), "::compute_translate_and_run_copy_raw_srv_to_uav");
+        const TEST_NAME: &str = concat!(
+            module_path!(),
+            "::compute_translate_and_run_copy_raw_srv_to_uav"
+        );
 
         // Include values whose raw bits correspond to non-negative integer floats (e.g. 1.0). The
         // translator must preserve raw bits across `ld_raw`/`store_raw` copies, not reinterpret
@@ -223,15 +225,20 @@ fn compute_translate_and_run_copy_raw_srv_to_uav() {
 #[test]
 fn compute_translate_and_run_copy_structured_srv_to_uav() {
     pollster::block_on(async {
-        const TEST_NAME: &str =
-            concat!(module_path!(), "::compute_translate_and_run_copy_structured_srv_to_uav");
+        const TEST_NAME: &str = concat!(
+            module_path!(),
+            "::compute_translate_and_run_copy_structured_srv_to_uav"
+        );
 
         // Two 16-byte elements (8 u32s). We'll read element 1 and write it into element 0.
         //
         // Use float bit patterns for element 1 so the test covers the "preserve raw bits" behavior
         // when values look like non-negative integer floats (e.g. 1.0).
         let src_words: [u32; 8] = [
-            0, 1, 2, 3, // element 0
+            0,
+            1,
+            2,
+            3,           // element 0
             0x3f80_0000, // 1.0f32
             0x4000_0000, // 2.0f32
             0x4040_0000, // 3.0f32

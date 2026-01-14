@@ -1,11 +1,16 @@
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
-use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut};
+use aero_usb::passthrough::{
+    UsbHostAction, UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut,
+};
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice};
+use aero_usb::{
+    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult,
+    UsbWebUsbPassthroughDevice,
+};
 
 mod util;
 
@@ -79,13 +84,24 @@ fn set_dcbaap(ctrl: &mut XhciController, mem: &mut TestMemory, dcbaa: u64) {
     ctrl.mmio_write(mem, regs::REG_DCBAAP_HI, 4, (dcbaa >> 32) as u32);
 }
 
-fn ring_endpoint_doorbell(ctrl: &mut XhciController, mem: &mut TestMemory, slot_id: u8, endpoint_id: u8) {
+fn ring_endpoint_doorbell(
+    ctrl: &mut XhciController,
+    mem: &mut TestMemory,
+    slot_id: u8,
+    endpoint_id: u8,
+) {
     let dboff = ctrl.mmio_read_u32(mem, regs::REG_DBOFF) as u64;
     let doorbell = dboff + u64::from(slot_id) * 4;
     ctrl.mmio_write(mem, doorbell, 4, endpoint_id as u32);
 }
 
-fn configure_event_ring(ctrl: &mut XhciController, mem: &mut TestMemory, erstba: u64, ring_base: u64, ring_size_trbs: u32) {
+fn configure_event_ring(
+    ctrl: &mut XhciController,
+    mem: &mut TestMemory,
+    erstba: u64,
+    ring_base: u64,
+    ring_size_trbs: u32,
+) {
     // Single ERST entry.
     MemoryBus::write_u64(mem, erstba, ring_base);
     MemoryBus::write_u32(mem, erstba + 8, ring_size_trbs);
@@ -251,7 +267,11 @@ fn xhci_controller_transfer_event_sets_ed_bit_and_copies_event_data_parameter() 
     // TD: Normal (CH=1) then Event Data (IOC=1). The Transfer Event TRB should set ED=1 and copy
     // the Event Data TRB `parameter` payload.
     Trb::write_to(&make_chained_normal_trb(buf, 4, true), &mut mem, ring_base);
-    Trb::write_to(&make_event_data_trb(0xfeed_beef, true, true), &mut mem, ring_base + TRB_LEN as u64);
+    Trb::write_to(
+        &make_event_data_trb(0xfeed_beef, true, true),
+        &mut mem,
+        ring_base + TRB_LEN as u64,
+    );
 
     ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, EP_ID);
     xhci.service_event_ring(&mut mem);
@@ -306,7 +326,11 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
     mem.write(out_buf as u32, &out_payload);
 
     write_endpoint_context(&mut mem, dev_ctx, BULK_OUT_ID, 2, 512, out_ring, true);
-    Trb::write_to(&make_normal_trb(out_buf, out_payload.len() as u32, true, true), &mut mem, out_ring);
+    Trb::write_to(
+        &make_normal_trb(out_buf, out_payload.len() as u32, true, true),
+        &mut mem,
+        out_ring,
+    );
 
     ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_OUT_ID);
     let mut actions = dev.drain_actions();
@@ -350,13 +374,21 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
     let in_payload = [1u8, 2, 3, 4, 5];
 
     write_endpoint_context(&mut mem, dev_ctx, BULK_IN_ID, 6, 512, in_ring, true);
-    Trb::write_to(&make_normal_trb(in_buf, in_payload.len() as u32, true, true), &mut mem, in_ring);
+    Trb::write_to(
+        &make_normal_trb(in_buf, in_payload.len() as u32, true, true),
+        &mut mem,
+        in_ring,
+    );
 
     ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_IN_ID);
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
     let bulk_in_id = match actions.pop().unwrap() {
-        UsbHostAction::BulkIn { id, endpoint, length } => {
+        UsbHostAction::BulkIn {
+            id,
+            endpoint,
+            length,
+        } => {
             assert_eq!(endpoint, 0x81);
             assert_eq!(length as usize, in_payload.len());
             id

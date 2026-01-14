@@ -232,8 +232,14 @@ fn make_source(seed: u64) -> RandomOrderSource {
     dirty_pages.shuffle(&mut rng);
 
     let mut mmus = vec![
-        VcpuMmuSnapshot { apic_id: 0, mmu: mmu0 },
-        VcpuMmuSnapshot { apic_id: 1, mmu: mmu1 },
+        VcpuMmuSnapshot {
+            apic_id: 0,
+            mmu: mmu0,
+        },
+        VcpuMmuSnapshot {
+            apic_id: 1,
+            mmu: mmu1,
+        },
     ];
     mmus.shuffle(&mut rng);
 

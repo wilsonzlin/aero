@@ -33,4 +33,3 @@ fn machine_exposes_aerogpu_pci_identity_at_canonical_bdf() {
         }
     );
 }
-

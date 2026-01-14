@@ -722,10 +722,16 @@ fn copy_texture2d_writeback_packs_b5_formats_and_preserves_padding() {
 
         // Initialize guest memory with sentinel bytes so we can verify padding isn't clobbered.
         guest_mem
-            .write(alloc.gpa + dst_565_offset as u64, &vec![0xAAu8; dst_565_len])
+            .write(
+                alloc.gpa + dst_565_offset as u64,
+                &vec![0xAAu8; dst_565_len],
+            )
             .expect("write dst565 init");
         guest_mem
-            .write(alloc.gpa + dst_5551_offset as u64, &vec![0xBBu8; dst_5551_len])
+            .write(
+                alloc.gpa + dst_5551_offset as u64,
+                &vec![0xBBu8; dst_5551_len],
+            )
             .expect("write dst5551 init");
 
         // Source pixel patterns (row-major):

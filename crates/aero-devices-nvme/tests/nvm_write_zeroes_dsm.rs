@@ -350,7 +350,10 @@ fn dsm_without_deallocate_is_noop_success() {
     assert_eq!(status & !0x1, NVME_STATUS_SUCCESS);
 
     // Ensure the disk was not modified.
-    assert_eq!(disk_state.read_bytes(0, SECTOR_SIZE), vec![0x77u8; SECTOR_SIZE]);
+    assert_eq!(
+        disk_state.read_bytes(0, SECTOR_SIZE),
+        vec![0x77u8; SECTOR_SIZE]
+    );
 }
 
 #[test]
@@ -603,7 +606,10 @@ fn write_zeroes_out_of_range_is_rejected() {
     assert_eq!(status & !0x1, NVME_STATUS_LBA_OUT_OF_RANGE);
 
     // Ensure the disk was not modified.
-    assert_eq!(disk_state.read_bytes(15 * SECTOR_SIZE, SECTOR_SIZE), vec![0x55u8; SECTOR_SIZE]);
+    assert_eq!(
+        disk_state.read_bytes(15 * SECTOR_SIZE, SECTOR_SIZE),
+        vec![0x55u8; SECTOR_SIZE]
+    );
 }
 
 #[test]
@@ -693,5 +699,8 @@ fn dsm_deallocate_out_of_range_is_rejected() {
     assert_eq!(status & !0x1, NVME_STATUS_LBA_OUT_OF_RANGE);
 
     // Ensure the disk was not modified.
-    assert_eq!(disk_state.read_bytes(0, SECTOR_SIZE), vec![0x66u8; SECTOR_SIZE]);
+    assert_eq!(
+        disk_state.read_bytes(0, SECTOR_SIZE),
+        vec![0x66u8; SECTOR_SIZE]
+    );
 }

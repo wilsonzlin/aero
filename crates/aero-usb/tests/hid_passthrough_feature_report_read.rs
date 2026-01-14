@@ -33,8 +33,8 @@ fn get_report_feature_naks_then_completes_and_does_not_duplicate_host_requests()
     );
 
     let setup = SetupPacket {
-        bm_request_type: 0xa1, // DeviceToHost | Class | Interface
-        b_request: 0x01,       // GET_REPORT
+        bm_request_type: 0xa1,       // DeviceToHost | Class | Interface
+        b_request: 0x01,             // GET_REPORT
         w_value: (3u16 << 8) | 1u16, // Feature, report ID 1
         w_index: 0,
         w_length: 64,

@@ -433,4 +433,3 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
         "ack yiaddr did not match offer"
     );
 }
-

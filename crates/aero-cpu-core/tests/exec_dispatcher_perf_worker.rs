@@ -49,11 +49,7 @@ fn tier0_only_step_updates_perf_worker() {
         cache_max_bytes: 0,
         code_version_max_pages: 64,
     };
-    let jit = JitRuntime::new(
-        config,
-        UnusedJitBackend,
-        NoCompileSink,
-    );
+    let jit = JitRuntime::new(config, UnusedJitBackend, NoCompileSink);
     let mut dispatcher = ExecDispatcher::new(interp, jit);
 
     let shared = Arc::new(PerfCounters::new());
@@ -130,11 +126,7 @@ fn jit_rollback_does_not_advance_perf_counters() {
         code_version_max_pages: 64,
     };
 
-    let mut jit = JitRuntime::new(
-        config,
-        RollbackJitBackend,
-        NoCompileSink,
-    );
+    let mut jit = JitRuntime::new(config, RollbackJitBackend, NoCompileSink);
     jit.install_handle(CompiledBlockHandle {
         entry_rip: 0,
         table_index: 0,
@@ -262,11 +254,7 @@ fn run_blocks_with_perf_counts_across_multiple_blocks() {
         cache_max_bytes: 0,
         code_version_max_pages: 64,
     };
-    let jit = JitRuntime::new(
-        config,
-        UnusedJitBackend,
-        NoCompileSink,
-    );
+    let jit = JitRuntime::new(config, UnusedJitBackend, NoCompileSink);
     let mut dispatcher = ExecDispatcher::new(interp, jit);
 
     let shared = Arc::new(PerfCounters::new());

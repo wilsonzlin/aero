@@ -1,8 +1,8 @@
 mod util;
 
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::xhci::command_ring::{CommandRing, CommandRingProcessor, EventRing};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
-use aero_usb::hub::UsbHubDevice;
 use aero_usb::{ControlResponse, UsbDeviceModel};
 
 use util::{Alloc, TestMemory};

@@ -22,11 +22,7 @@ fn aerogpu_resources_rejects_nonzero_emit_stream_index_for_ignored_geometry_shad
 
         let mut mgr = AerogpuResourceManager::new(device, queue);
         let err = mgr
-            .create_shader_dxbc(
-                1,
-                AerogpuShaderStage::Geometry as u32,
-                DXBC_GS_EMIT_STREAM1,
-            )
+            .create_shader_dxbc(1, AerogpuShaderStage::Geometry as u32, DXBC_GS_EMIT_STREAM1)
             .expect_err("expected CreateShaderDxbc to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
@@ -35,4 +31,3 @@ fn aerogpu_resources_rejects_nonzero_emit_stream_index_for_ignored_geometry_shad
         );
     });
 }
-

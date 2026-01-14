@@ -213,14 +213,10 @@ fn set2_to_set1_translation_table_covers_all_emitted_scancodes() {
 
     let explicit_pairs = parse_explicit_set2_to_set1_pairs(I8042_RS);
 
-    let missing: Vec<(u8, bool)> = emitted_pairs
-        .difference(&explicit_pairs)
-        .copied()
-        .collect();
+    let missing: Vec<(u8, bool)> = emitted_pairs.difference(&explicit_pairs).copied().collect();
 
     assert!(
         missing.is_empty(),
         "i8042 Set-2 -> Set-1 translation table (`src/i8042.rs::set2_to_set1`) is missing explicit mappings for these emitted (byte, extended) pairs: {missing:02x?}."
     );
 }
-

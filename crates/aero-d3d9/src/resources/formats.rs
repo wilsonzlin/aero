@@ -449,9 +449,13 @@ mod tests {
     fn format_info_errors_for_invalid_usage_combinations_are_stable() {
         let features = wgpu::Features::empty();
 
-        let err = format_info(D3DFormat::A8R8G8B8, features, TextureUsageKind::DepthStencil)
-            .unwrap_err()
-            .to_string();
+        let err = format_info(
+            D3DFormat::A8R8G8B8,
+            features,
+            TextureUsageKind::DepthStencil,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("non-depth format") && err.contains("DepthStencil"),
             "unexpected error message: {err}"
@@ -684,15 +688,13 @@ mod tests {
                                 | D3DFormat::X1R5G5B5
                                 | D3DFormat::A4R4G4B4,
                             TextureUsageKind::Sampled | TextureUsageKind::RenderTarget,
+                        ) | (
+                            D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5,
+                            TextureUsageKind::Sampled,
+                        ) | (
+                            D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32,
+                            TextureUsageKind::DepthStencil,
                         )
-                            | (
-                                D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5,
-                                TextureUsageKind::Sampled,
-                            )
-                            | (
-                                D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32,
-                                TextureUsageKind::DepthStencil,
-                            )
                     );
 
                     assert_eq!(
@@ -770,54 +772,29 @@ mod tests {
             (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
         ] {
             // Feature off: always BGRA8 + CPU conversion.
-            let info = format_info_for_texture(
-                format,
-                no_bc,
-                TextureUsageKind::Sampled,
-                8,
-                8,
-                2,
-            )
-            .unwrap();
+            let info =
+                format_info_for_texture(format, no_bc, TextureUsageKind::Sampled, 8, 8, 2).unwrap();
             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
             assert!(info.cpu_convert_to_bgra8);
 
             // Feature on but dimensions incompatible: still use BGRA8.
-            let info = format_info_for_texture(
-                format,
-                bc_features,
-                TextureUsageKind::Sampled,
-                1,
-                1,
-                1,
-            )
-            .unwrap();
+            let info =
+                format_info_for_texture(format, bc_features, TextureUsageKind::Sampled, 1, 1, 1)
+                    .unwrap();
             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
             assert!(info.cpu_convert_to_bgra8);
 
             // Feature on but mips incompatible: still use BGRA8.
-            let info = format_info_for_texture(
-                format,
-                bc_features,
-                TextureUsageKind::Sampled,
-                12,
-                12,
-                2,
-            )
-            .unwrap();
+            let info =
+                format_info_for_texture(format, bc_features, TextureUsageKind::Sampled, 12, 12, 2)
+                    .unwrap();
             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
             assert!(info.cpu_convert_to_bgra8);
 
             // Feature on and dimensions compatible: use native BC texture.
-            let info = format_info_for_texture(
-                format,
-                bc_features,
-                TextureUsageKind::Sampled,
-                8,
-                8,
-                2,
-            )
-            .unwrap();
+            let info =
+                format_info_for_texture(format, bc_features, TextureUsageKind::Sampled, 8, 8, 2)
+                    .unwrap();
             assert_eq!(info.wgpu, expected_bc);
             assert!(!info.cpu_convert_to_bgra8);
             assert!(info.upload_is_compressed);

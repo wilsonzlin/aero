@@ -98,7 +98,9 @@ async fn get_image_meta_with_if_none_match_returns_304() {
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(
-        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        res.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
         "*"
     );
     assert_eq!(
@@ -145,7 +147,9 @@ async fn get_image_data_with_if_none_match_returns_304() {
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(
-        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        res.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
         "*"
     );
     assert_eq!(
@@ -204,7 +208,9 @@ async fn list_images_with_if_none_match_returns_304_and_includes_cors_headers() 
         "no-cache"
     );
     assert_eq!(
-        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        res.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
         "*"
     );
     assert_eq!(

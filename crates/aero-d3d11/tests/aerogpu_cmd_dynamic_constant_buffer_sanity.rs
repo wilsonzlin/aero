@@ -2,10 +2,10 @@ mod common;
 
 use std::fs;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::FourCC;
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,

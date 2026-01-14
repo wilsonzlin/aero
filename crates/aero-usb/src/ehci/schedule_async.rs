@@ -5,9 +5,9 @@ use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
 use crate::SetupPacket;
 
-use super::RootHub;
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
 use super::schedule::{ScheduleError, MAX_ASYNC_QH_VISITS, MAX_QTD_STEPS_PER_QH};
+use super::RootHub;
 
 // -----------------------------------------------------------------------------
 // Link pointers
@@ -94,7 +94,8 @@ const QTD_IOC: u32 = 1 << 15;
 const QTD_TOTAL_BYTES_SHIFT: u32 = 16;
 const QTD_TOTAL_BYTES_MASK: u32 = 0x7fff << QTD_TOTAL_BYTES_SHIFT;
 
-const QTD_ERROR_MASK: u32 = QTD_STS_HALT | QTD_STS_BUFERR | QTD_STS_BABBLE | QTD_STS_XACTERR | QTD_STS_MMF;
+const QTD_ERROR_MASK: u32 =
+    QTD_STS_HALT | QTD_STS_BUFERR | QTD_STS_BABBLE | QTD_STS_XACTERR | QTD_STS_MMF;
 
 // -----------------------------------------------------------------------------
 // Context / entrypoints
@@ -282,23 +283,13 @@ fn process_qh<M: MemoryBus + ?Sized>(
     // speeds are treated as a controller-side failure: we complete the current qTD with HALT.
     const SPEED_HIGH: u8 = 2;
     if speed != SPEED_HIGH {
-        complete_current_qtd_with_error(
-            ctx,
-            qh_addr,
-            QTD_STS_HALT | QTD_STS_XACTERR,
-            true,
-        );
+        complete_current_qtd_with_error(ctx, qh_addr, QTD_STS_HALT | QTD_STS_XACTERR, true);
         return Ok(());
     }
 
     // Resolve the device once per QH iteration.
     let Some(mut dev) = ctx.hub.device_mut_for_address(dev_addr) else {
-        complete_current_qtd_with_error(
-            ctx,
-            qh_addr,
-            QTD_STS_HALT | QTD_STS_XACTERR,
-            true,
-        );
+        complete_current_qtd_with_error(ctx, qh_addr, QTD_STS_HALT | QTD_STS_XACTERR, true);
         return Ok(());
     };
 
@@ -339,12 +330,14 @@ fn process_qh<M: MemoryBus + ?Sized>(
             // Advance to the next qTD if present; otherwise clear QH.CUR_QTD to indicate idle.
             let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
             if next.terminated() {
-                ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+                ctx.mem
+                    .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
                 return Ok(());
             }
             let addr = next.addr();
             if addr == 0 {
-                ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+                ctx.mem
+                    .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
                 return Ok(());
             }
             if visited_qtd.contains(&addr) {
@@ -530,10 +523,8 @@ fn process_qh<M: MemoryBus + ?Sized>(
         let mut new_bufs = cursor.bufs;
         cursor.encode_into_overlay(&mut token, &mut new_bufs);
         for (i, buf) in new_bufs.iter().enumerate() {
-            ctx.mem.write_u32(
-                qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64,
-                *buf,
-            );
+            ctx.mem
+                .write_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64, *buf);
         }
 
         // Apply NAK / completion / error handling.
@@ -569,7 +560,10 @@ fn process_qh<M: MemoryBus + ?Sized>(
         // is present, matching the EHCI early-termination semantics.
         let mut next_ptr = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
         if short_packet {
-            let alt = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_ALT_NEXT_QTD) as u64));
+            let alt = QtdLink(
+                ctx.mem
+                    .read_u32(qh_addr.wrapping_add(QH_ALT_NEXT_QTD) as u64),
+            );
             if !alt.terminated() {
                 next_ptr = alt;
             }
@@ -577,12 +571,14 @@ fn process_qh<M: MemoryBus + ?Sized>(
 
         if next_ptr.terminated() {
             // Queue is now empty.
-            ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+            ctx.mem
+                .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
             return Ok(());
         }
         let addr = next_ptr.addr();
         if addr == 0 {
-            ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+            ctx.mem
+                .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
             return Ok(());
         }
         if visited_qtd.contains(&addr) {

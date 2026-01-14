@@ -144,7 +144,11 @@ fn decode_sincos_with_relative_addressing_2_operands() {
         Operand::Src(src) => src,
         _ => panic!("expected src operand"),
     };
-    let rel = src.reg.relative.as_ref().expect("expected relative addressing");
+    let rel = src
+        .reg
+        .relative
+        .as_ref()
+        .expect("expected relative addressing");
     assert_eq!(rel.reg.file, RegisterFile::Addr);
     assert_eq!(rel.reg.index, 0);
     assert_eq!(rel.component, SwizzleComponent::X);
@@ -180,8 +184,8 @@ fn decode_mova_pixel_shader_dest_is_addr() {
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         opcode_token(46, 2),
-        dst_token(3, 0, 0x1),      // a0.x (regtype 3)
-        src_token(2, 0, 0xE4, 0),  // c0
+        dst_token(3, 0, 0x1),     // a0.x (regtype 3)
+        src_token(2, 0, 0xE4, 0), // c0
         0x0000_FFFF,
     ];
 

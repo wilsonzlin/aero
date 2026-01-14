@@ -262,7 +262,9 @@ fn snapshot_diff_detects_cpu_mmu_disks_and_ram_header_changes() {
         .stdout(predicate::str::contains("0x2000"))
         .stdout(predicate::str::contains("diff DISKS[disk_id=0].base_image"))
         .stdout(predicate::str::contains("base2.img"))
-        .stdout(predicate::str::contains("diff RAM.compression: A=none B=lz4"))
+        .stdout(predicate::str::contains(
+            "diff RAM.compression: A=none B=lz4",
+        ))
         .stdout(predicate::str::contains("diff RAM.chunk_size"))
         .stdout(predicate::str::contains("A=1024"))
         .stdout(predicate::str::contains("B=2048"));

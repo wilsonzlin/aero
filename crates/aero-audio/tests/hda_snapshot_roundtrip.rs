@@ -337,12 +337,14 @@ fn hda_capture_snapshot_restore_preserves_lpib_and_frame_accum() {
         fmt_raw as u32
     );
     assert_eq!(
-        restored.codec_mut()
+        restored
+            .codec_mut()
             .execute_verb(4, verb_4(0xB, (1 << 15) | (1 << 13))),
         0x22
     );
     assert_eq!(
-        restored.codec_mut()
+        restored
+            .codec_mut()
             .execute_verb(4, verb_4(0xB, (1 << 15) | (1 << 12))),
         (1 << 7) | 0x11
     );

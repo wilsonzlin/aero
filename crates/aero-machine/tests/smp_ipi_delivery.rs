@@ -38,11 +38,7 @@ fn smp_init_and_sipi_update_ap_cpu_state() {
 
     // Send a SIPI (STARTUP) to vector 0x08 (physical start address 0x8000).
     let sipi_vector = 0x08u32;
-    m.write_lapic_u32(
-        0,
-        ICR_LOW_OFF,
-        sipi_vector | (0b110u32 << 8) | (1u32 << 14),
-    );
+    m.write_lapic_u32(0, ICR_LOW_OFF, sipi_vector | (0b110u32 << 8) | (1u32 << 14));
 
     let ap = m.cpu_by_index(1);
     assert!(!ap.halted);
@@ -89,4 +85,3 @@ fn smp_fixed_ipi_sets_pending_vector_in_destination_lapic() {
 
     assert_eq!(interrupts.borrow().get_pending_for_apic(1), Some(vector));
 }
-

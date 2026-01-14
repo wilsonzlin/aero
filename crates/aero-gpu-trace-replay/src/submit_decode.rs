@@ -1,4 +1,6 @@
-use crate::alloc_table_dump::{decode_alloc_table_entries_le, AllocTableDumpError, DecodedAllocEntry};
+use crate::alloc_table_dump::{
+    decode_alloc_table_entries_le, AllocTableDumpError, DecodedAllocEntry,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
 };
@@ -70,7 +72,10 @@ pub struct DecodeSubmitReport {
 /// Decode a cmd stream + alloc table pair and cross-check:
 /// - any non-zero `backing_alloc_id` referenced by the cmd stream is present in the alloc table
 /// - the alloc table does not contain conflicting duplicates (`alloc_id` mapping to different `gpa`)
-pub fn decode_submit(cmd_stream_bytes: &[u8], alloc_table_bytes: &[u8]) -> Result<DecodeSubmitReport, DecodeSubmitError> {
+pub fn decode_submit(
+    cmd_stream_bytes: &[u8],
+    alloc_table_bytes: &[u8],
+) -> Result<DecodeSubmitReport, DecodeSubmitError> {
     let alloc_entries = decode_alloc_table_entries_le(alloc_table_bytes)?;
 
     let mut alloc_map: HashMap<u32, DecodedAllocEntry> = HashMap::new();
@@ -111,19 +116,16 @@ pub fn decode_submit(cmd_stream_bytes: &[u8], alloc_table_bytes: &[u8]) -> Resul
     })
 }
 
-fn collect_backing_alloc_refs(cmd_stream_bytes: &[u8]) -> Result<Vec<BackingAllocRef>, DecodeSubmitError> {
-    let iter = AerogpuCmdStreamIter::new(cmd_stream_bytes).map_err(|err| DecodeSubmitError::CmdStreamDecode {
-        offset: 0,
-        err,
-    })?;
+fn collect_backing_alloc_refs(
+    cmd_stream_bytes: &[u8],
+) -> Result<Vec<BackingAllocRef>, DecodeSubmitError> {
+    let iter = AerogpuCmdStreamIter::new(cmd_stream_bytes)
+        .map_err(|err| DecodeSubmitError::CmdStreamDecode { offset: 0, err })?;
 
     let mut out = Vec::new();
     let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
     for packet in iter {
-        let packet = packet.map_err(|err| DecodeSubmitError::CmdStreamDecode {
-            offset,
-            err,
-        })?;
+        let packet = packet.map_err(|err| DecodeSubmitError::CmdStreamDecode { offset, err })?;
 
         match packet.opcode {
             Some(AerogpuCmdOpcode::CreateBuffer) => {
@@ -240,7 +242,10 @@ mod tests {
 
         let alloc = build_alloc_table(&[(1, 0x1000, 4, 0)]);
         let err = decode_submit(&cmd, &alloc).unwrap_err();
-        assert!(matches!(err, DecodeSubmitError::MissingAllocId { alloc_id: 2, .. }));
+        assert!(matches!(
+            err,
+            DecodeSubmitError::MissingAllocId { alloc_id: 2, .. }
+        ));
         assert!(err.to_string().contains("does not contain"));
     }
 
@@ -250,12 +255,12 @@ mod tests {
         w.create_buffer(1, 0, 4, 1, 0);
         let cmd = w.finish();
 
-        let alloc = build_alloc_table(&[
-            (1, 0x1000, 4, 0),
-            (1, 0x2000, 4, 0),
-        ]);
+        let alloc = build_alloc_table(&[(1, 0x1000, 4, 0), (1, 0x2000, 4, 0)]);
         let err = decode_submit(&cmd, &alloc).unwrap_err();
-        assert!(matches!(err, DecodeSubmitError::ConflictingAllocIdGpa { alloc_id: 1, .. }));
+        assert!(matches!(
+            err,
+            DecodeSubmitError::ConflictingAllocIdGpa { alloc_id: 1, .. }
+        ));
     }
 
     #[test]
@@ -264,10 +269,7 @@ mod tests {
         w.create_buffer(1, 0, 4, 1, 0);
         let cmd = w.finish();
 
-        let alloc = build_alloc_table(&[
-            (1, 0x1000, 4, 0),
-            (1, 0x1000, 4, 0),
-        ]);
+        let alloc = build_alloc_table(&[(1, 0x1000, 4, 0), (1, 0x1000, 4, 0)]);
         decode_submit(&cmd, &alloc).unwrap();
     }
 }

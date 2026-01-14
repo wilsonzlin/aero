@@ -45,4 +45,3 @@ fn ioapic_mmio_programming_via_system_bus() {
     ioapic.lock().unwrap().set_irq_level(gsi, true);
     assert_eq!(lapic.get_pending_vector(), Some(vector as u8));
 }
-

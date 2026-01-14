@@ -690,7 +690,10 @@ mod tests {
         dev.reset();
 
         assert!(
-            !dev.config_mut().capability::<MsiCapability>().unwrap().enabled(),
+            !dev.config_mut()
+                .capability::<MsiCapability>()
+                .unwrap()
+                .enabled(),
             "MSI must be disabled after PCI device reset"
         );
     }

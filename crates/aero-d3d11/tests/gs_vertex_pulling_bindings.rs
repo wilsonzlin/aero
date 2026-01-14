@@ -18,8 +18,10 @@ async fn create_device(bool_fallback: bool) -> Result<(wgpu::Device, bool)> {
             .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir = std::env::temp_dir()
-                .join(format!("aero-d3d11-gs-vertex-pulling-xdg-runtime-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "aero-d3d11-gs-vertex-pulling-xdg-runtime-{}",
+                std::process::id()
+            ));
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -202,7 +204,8 @@ fn main() {{
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
 
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&empty_bgl, &empty_bgl, &empty_bgl, &group3_bgl];
+        let layouts: [&wgpu::BindGroupLayout; 4] =
+            [&empty_bgl, &empty_bgl, &empty_bgl, &group3_bgl];
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gs+vertex pulling pipeline layout"),
             bind_group_layouts: &layouts,

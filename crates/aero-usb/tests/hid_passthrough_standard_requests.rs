@@ -241,4 +241,3 @@ fn passthrough_endpoint_halt_stalls_interrupt_in_until_cleared() {
 
     assert_eq!(dev.handle_in(INTERRUPT_IN_EP_NUM, 64), UsbInResult::Nak);
 }
-

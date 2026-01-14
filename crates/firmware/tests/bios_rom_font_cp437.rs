@@ -22,4 +22,3 @@ fn bios_rom_font_tables_include_cp437_box_drawing_glyphs() {
         "expected non-blank 8x8 glyph for CP437 char 0x{ch:02X}, got {glyph_8x8:?}"
     );
 }
-

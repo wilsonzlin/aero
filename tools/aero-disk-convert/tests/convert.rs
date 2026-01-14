@@ -3,7 +3,9 @@
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 
-use aero_storage::{AeroSparseDisk, DiskImage, MemBackend, StorageBackend, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{
+    AeroSparseDisk, DiskImage, MemBackend, StorageBackend, VirtualDisk, SECTOR_SIZE,
+};
 use tempfile::tempdir;
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
@@ -52,7 +54,9 @@ fn make_qcow2_empty(virtual_size: u64) -> MemBackend {
         .unwrap();
 
     let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
-    backend.write_at(l1_table_offset, &l1_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+        .unwrap();
 
     // Mark metadata clusters as in-use: header, refcount table, L1 table, refcount block, L2 table.
     for cluster_index in 0u64..5 {
@@ -73,7 +77,9 @@ fn make_qcow2_with_pattern() -> MemBackend {
     backend.set_len(cluster_size * 6).unwrap();
 
     let l2_entry = data_cluster_offset | QCOW2_OFLAG_COPIED;
-    backend.write_at(l2_table_offset, &l2_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(l2_table_offset, &l2_entry.to_be_bytes())
+        .unwrap();
 
     let refcount_block_offset = cluster_size * 3;
     backend
@@ -163,7 +169,10 @@ fn raw_to_aerospar_is_smaller_when_sparse() {
 
     let in_len = fs::metadata(&in_path).unwrap().len();
     let out_len = fs::metadata(&out_path).unwrap().len();
-    assert!(out_len < in_len, "expected sparse output to be smaller (out={out_len} in={in_len})");
+    assert!(
+        out_len < in_len,
+        "expected sparse output to be smaller (out={out_len} in={in_len})"
+    );
 
     let out_bytes = fs::read(&out_path).unwrap();
     let out_disk = AeroSparseDisk::open(MemBackend::from_vec(out_bytes)).unwrap();

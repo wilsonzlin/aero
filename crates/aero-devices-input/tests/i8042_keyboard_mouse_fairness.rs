@@ -13,7 +13,11 @@ fn i8042_service_output_alternates_keyboard_and_mouse_when_both_pending() {
 
     // Drain the ACK.
     let status = c.read_port(0x64);
-    assert_ne!(status & 0x01, 0, "mouse ACK should be present in output buffer");
+    assert_ne!(
+        status & 0x01,
+        0,
+        "mouse ACK should be present in output buffer"
+    );
     assert_ne!(
         status & 0x20,
         0,
@@ -57,4 +61,3 @@ fn i8042_service_output_alternates_keyboard_and_mouse_when_both_pending() {
         "expected keyboard/mouse alternation in the first few bytes, got aux_bits={aux_bits:?} bytes={bytes:?}"
     );
 }
-

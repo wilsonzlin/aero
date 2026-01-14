@@ -13,4 +13,3 @@ fn webusb_passthrough_device_reports_configured_speed_and_snapshots_it() {
         .expect("snapshot restore should succeed");
     assert_eq!(UsbDeviceModel::speed(&restored), UsbSpeed::High);
 }
-

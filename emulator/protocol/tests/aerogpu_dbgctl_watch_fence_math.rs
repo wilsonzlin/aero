@@ -7,8 +7,10 @@ fn dbgctl_watch_fence_math_helper() {
     let repo_root = crate_dir.join("../..");
     let c_src = crate_dir.join("tests/aerogpu_dbgctl_watch_fence_math.c");
 
-    let mut out_path =
-        std::env::temp_dir().join(format!("aerogpu_dbgctl_watch_fence_math_{}", std::process::id()));
+    let mut out_path = std::env::temp_dir().join(format!(
+        "aerogpu_dbgctl_watch_fence_math_{}",
+        std::process::id()
+    ));
     if cfg!(windows) {
         out_path.set_extension("exe");
     }
@@ -34,4 +36,3 @@ fn dbgctl_watch_fence_math_helper() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
-

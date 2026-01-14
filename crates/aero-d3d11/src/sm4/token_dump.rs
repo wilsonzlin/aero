@@ -90,7 +90,9 @@ impl std::error::Error for Sm4TokenDumpError {}
 /// Split a SM4/SM5 program token stream into instruction/declaration records.
 ///
 /// The input slice must include the version token at DWORD 0 and declared length at DWORD 1.
-pub fn tokenize_instructions<'a>(tokens: &'a [u32]) -> Result<Vec<Sm4TokenInst<'a>>, Sm4TokenDumpError> {
+pub fn tokenize_instructions<'a>(
+    tokens: &'a [u32],
+) -> Result<Vec<Sm4TokenInst<'a>>, Sm4TokenDumpError> {
     if tokens.len() < 2 {
         return Err(Sm4TokenDumpError {
             at_dword: 0,
@@ -170,4 +172,3 @@ pub fn tokenize_instructions<'a>(tokens: &'a [u32]) -> Result<Vec<Sm4TokenInst<'
 
     Ok(out)
 }
-

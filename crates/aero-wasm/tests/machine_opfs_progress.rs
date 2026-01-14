@@ -97,9 +97,7 @@ async fn attach_ide_primary_master_disk_opfs_with_progress_invokes_callback() {
             if msg.contains("backend not supported") || msg.contains("backend unavailable") {
                 return;
             }
-            panic!(
-                "Machine.attach_ide_primary_master_disk_opfs_with_progress failed: {msg}"
-            );
+            panic!("Machine.attach_ide_primary_master_disk_opfs_with_progress failed: {msg}");
         }
     }
 

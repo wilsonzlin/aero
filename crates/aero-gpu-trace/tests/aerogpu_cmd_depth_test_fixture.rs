@@ -15,7 +15,8 @@ const DXBC_VS_PASSTHROUGH: &[u8] =
     include_bytes!("../../aero-d3d11/tests/fixtures/vs_passthrough.dxbc");
 const DXBC_PS_PASSTHROUGH: &[u8] =
     include_bytes!("../../aero-d3d11/tests/fixtures/ps_passthrough.dxbc");
-const ILAY_POS3_COLOR: &[u8] = include_bytes!("../../aero-d3d11/tests/fixtures/ilay_pos3_color.bin");
+const ILAY_POS3_COLOR: &[u8] =
+    include_bytes!("../../aero-d3d11/tests/fixtures/ilay_pos3_color.bin");
 
 fn fixture_path() -> PathBuf {
     // `CARGO_MANIFEST_DIR` = `.../crates/aero-gpu-trace`
@@ -89,14 +90,7 @@ fn make_cmd_stream() -> Vec<u8> {
 
     w.set_render_targets(&[RT], DS);
     w.set_viewport(0.0, 0.0, 64.0, 64.0, 0.0, 1.0);
-    w.set_depth_stencil_state(
-        true,
-        true,
-        AerogpuCompareFunc::Less,
-        false,
-        0xFF,
-        0xFF,
-    );
+    w.set_depth_stencil_state(true, true, AerogpuCompareFunc::Less, false, 0xFF, 0xFF);
     w.clear(
         AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH,
         [0.0, 0.0, 0.0, 1.0],
@@ -172,4 +166,3 @@ fn aerogpu_cmd_depth_test_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

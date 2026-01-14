@@ -28,14 +28,14 @@ pub mod regs;
 pub mod ring;
 pub mod scanout;
 
-pub use backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
-    ImmediateAeroGpuBackend, NullAeroGpuBackend,
-};
 #[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]
 pub use backend::NativeAeroGpuBackend;
 #[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]
 pub use backend::NativeAeroGpuBackend as AerogpuWgpuBackend;
+pub use backend::{
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend, ImmediateAeroGpuBackend, NullAeroGpuBackend,
+};
 pub use executor::{AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 pub use memory::MemoryBus;
 pub use pci::{
@@ -51,4 +51,3 @@ pub use ring::{
     FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 pub use scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
-

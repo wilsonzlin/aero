@@ -3,7 +3,9 @@ mod common;
 use std::sync::Arc;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_d3d11::runtime::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
+use aero_d3d11::runtime::expansion_scratch::{
+    ExpansionScratchAllocator, ExpansionScratchDescriptor,
+};
 
 #[test]
 fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
@@ -49,7 +51,10 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
         // Frame 1 allocations should be in the next segment.
         scratch.begin_frame();
         let a1 = scratch.alloc_vertex_output(device, 16).unwrap();
-        assert!(Arc::ptr_eq(&a0.buffer, &a1.buffer), "backing buffer must be reused");
+        assert!(
+            Arc::ptr_eq(&a0.buffer, &a1.buffer),
+            "backing buffer must be reused"
+        );
         assert!(
             a1.offset >= per_frame && a1.offset < per_frame * 2,
             "frame1 allocation offset must be inside segment1"
@@ -58,7 +63,10 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
         // Frame 2 allocations should be in the next segment.
         scratch.begin_frame();
         let a2 = scratch.alloc_vertex_output(device, 16).unwrap();
-        assert!(Arc::ptr_eq(&a0.buffer, &a2.buffer), "backing buffer must be reused");
+        assert!(
+            Arc::ptr_eq(&a0.buffer, &a2.buffer),
+            "backing buffer must be reused"
+        );
         assert!(
             a2.offset >= per_frame * 2 && a2.offset < per_frame * 3,
             "frame2 allocation offset must be inside segment2"
@@ -67,7 +75,10 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
         // Wrap back to segment0 and ensure offsets reset.
         scratch.begin_frame();
         let a0b = scratch.alloc_vertex_output(device, 16).unwrap();
-        assert!(Arc::ptr_eq(&a0.buffer, &a0b.buffer), "backing buffer must be reused");
+        assert!(
+            Arc::ptr_eq(&a0.buffer, &a0b.buffer),
+            "backing buffer must be reused"
+        );
         assert!(
             a0b.offset < per_frame,
             "wrapped allocation must be inside segment0"
@@ -127,7 +138,10 @@ fn expansion_scratch_grows_when_segment_is_full() {
             !Arc::ptr_eq(&first.buffer, &second.buffer),
             "growth must switch to a new backing buffer"
         );
-        assert_eq!(second.offset, 0, "allocations in a fresh buffer start at offset 0");
+        assert_eq!(
+            second.offset, 0,
+            "allocations in a fresh buffer start at offset 0"
+        );
 
         // Advancing frames should use the new buffer and the next segment.
         scratch.begin_frame();

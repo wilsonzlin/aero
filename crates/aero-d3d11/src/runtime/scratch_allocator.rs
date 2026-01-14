@@ -218,16 +218,20 @@ impl GpuScratchAllocator {
         &self.buffers[allocation.buffer_index].buffer
     }
 
-    pub fn alloc(&mut self, device: &wgpu::Device, size: u64, align: u64) -> Result<ScratchAllocation> {
+    pub fn alloc(
+        &mut self,
+        device: &wgpu::Device,
+        size: u64,
+        align: u64,
+    ) -> Result<ScratchAllocation> {
         let bump_alloc = self.bump.alloc(size, align)?;
 
         // Create any missing GPU buffers for newly-added bump arenas.
         while self.buffers.len() < self.bump.buffer_count() {
             let index = self.buffers.len();
-            let capacity = self
-                .bump
-                .buffer_capacity(index)
-                .ok_or_else(|| anyhow!("scratch allocator internal error: missing arena capacity"))?;
+            let capacity = self.bump.buffer_capacity(index).ok_or_else(|| {
+                anyhow!("scratch allocator internal error: missing arena capacity")
+            })?;
 
             let label = format!("{} buffer[{index}] ({} bytes)", self.cfg.label, capacity);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -242,10 +246,9 @@ impl GpuScratchAllocator {
             self.buffers.push(ScratchBuffer { id, buffer });
         }
 
-        let buf = self
-            .buffers
-            .get(bump_alloc.buffer_index)
-            .ok_or_else(|| anyhow!("scratch allocator internal error: allocation refers to missing buffer"))?;
+        let buf = self.buffers.get(bump_alloc.buffer_index).ok_or_else(|| {
+            anyhow!("scratch allocator internal error: allocation refers to missing buffer")
+        })?;
 
         Ok(ScratchAllocation {
             buffer_id: buf.id,

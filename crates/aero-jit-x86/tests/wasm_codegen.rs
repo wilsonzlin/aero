@@ -11,8 +11,8 @@ use aero_jit_x86::wasm::abi::{
     IMPORT_PAGE_FAULT,
 };
 
-use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 use std::collections::HashMap;
+use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 use wasmparser::{Parser, Payload, TypeRef, ValType};
 
@@ -548,10 +548,7 @@ fn wasm_codegen_reuses_helper_types() {
     );
     assert_eq!(
         tys[ty_write_u8 as usize],
-        (
-            vec![ValType::I32, ValType::I64, ValType::I32],
-            Vec::new()
-        ),
+        (vec![ValType::I32, ValType::I64, ValType::I32], Vec::new()),
         "expected shared mem_write_u8/u16/u32 type to have signature (i32, i64, i32) -> ()"
     );
     assert_eq!(

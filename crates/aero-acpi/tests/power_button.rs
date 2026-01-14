@@ -29,4 +29,3 @@ fn dsdt_contains_fixed_feature_power_button_device() {
         "expected DSDT AML to contain EISA ID encoding for PNP0C0C (power button)"
     );
 }
-

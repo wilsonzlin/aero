@@ -1,4 +1,6 @@
-use aero_storage::{AeroSparseConfig, AeroSparseDisk, MemBackend, StorageBackend as _, VirtualDisk};
+use aero_storage::{
+    AeroSparseConfig, AeroSparseDisk, MemBackend, StorageBackend as _, VirtualDisk,
+};
 
 const BLOCK_SIZE: u32 = 4096;
 
@@ -87,4 +89,3 @@ fn sparse_zero_write_into_allocated_block_overwrites_data() {
     disk.read_at(0, &mut out).unwrap();
     assert_eq!(out, [0, 0, 0, 0]);
 }
-

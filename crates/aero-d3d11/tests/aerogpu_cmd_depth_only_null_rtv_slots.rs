@@ -124,14 +124,7 @@ fn aerogpu_cmd_depth_only_with_all_null_rtv_slots_writes_depth() {
         );
         writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
         writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
-        writer.set_depth_stencil_state(
-            true,
-            true,
-            AerogpuCompareFunc::Less,
-            false,
-            0,
-            0,
-        );
+        writer.set_depth_stencil_state(true, true, AerogpuCompareFunc::Less, false, 0, 0);
 
         // Pass 1: depth-only, but expressed as 8 RTV slots all set to NULL.
         let null_rtvs = [0u32; 8];
@@ -157,8 +150,11 @@ fn aerogpu_cmd_depth_only_with_all_null_rtv_slots_writes_depth() {
             .await
             .expect("readback should succeed");
         for px in pixels.chunks_exact(4) {
-            assert_eq!(px, &[0, 0, 0, 255], "color draw should be rejected by depth");
+            assert_eq!(
+                px,
+                &[0, 0, 0, 255],
+                "color draw should be rejected by depth"
+            );
         }
     });
 }
-

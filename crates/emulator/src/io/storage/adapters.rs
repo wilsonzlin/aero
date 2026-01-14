@@ -254,16 +254,14 @@ impl<D: aero_storage::VirtualDisk> DiskBackend for EmuDiskBackendFromVirtualDisk
             });
         }
 
-        self.0
-            .read_sectors(lba, buf)
-            .map_err(|err| {
-                aero_storage_disk_error_to_emulator_with_sector_context(
-                    err,
-                    lba,
-                    sectors,
-                    capacity_sectors,
-                )
-            })
+        self.0.read_sectors(lba, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                capacity_sectors,
+            )
+        })
     }
 
     fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
@@ -289,16 +287,14 @@ impl<D: aero_storage::VirtualDisk> DiskBackend for EmuDiskBackendFromVirtualDisk
             });
         }
 
-        self.0
-            .write_sectors(lba, buf)
-            .map_err(|err| {
-                aero_storage_disk_error_to_emulator_with_sector_context(
-                    err,
-                    lba,
-                    sectors,
-                    capacity_sectors,
-                )
-            })
+        self.0.write_sectors(lba, buf).map_err(|err| {
+            aero_storage_disk_error_to_emulator_with_sector_context(
+                err,
+                lba,
+                sectors,
+                capacity_sectors,
+            )
+        })
     }
 
     fn flush(&mut self) -> DiskResult<()> {

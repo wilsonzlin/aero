@@ -75,10 +75,7 @@ fn bar0_mmio_routes_msix_table_and_pba() {
             .expect("MSI-X capability should exist");
         assert_eq!(msix.table_bir(), 0);
         assert_eq!(msix.pba_bir(), 0);
-        (
-            msix.table_offset() as u64,
-            msix.pba_offset() as u64,
-        )
+        (msix.table_offset() as u64, msix.pba_offset() as u64)
     };
 
     // MSI-X table entry 0 is 16 bytes: addr_lo, addr_hi, data, vector_control.

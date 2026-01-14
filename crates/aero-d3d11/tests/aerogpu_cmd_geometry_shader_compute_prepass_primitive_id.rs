@@ -3,8 +3,7 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -15,7 +14,10 @@ const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_primitive_id() {
     pollster::block_on(async {
-        let test_name = concat!(module_path!(), "::aerogpu_cmd_geometry_shader_compute_prepass_primitive_id");
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_compute_prepass_primitive_id"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {

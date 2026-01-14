@@ -8,7 +8,10 @@ use js_sys::Reflect;
 #[wasm_bindgen_test]
 fn storage_capabilities_exports_boolean_fields() {
     let caps = aero_wasm::storage_capabilities();
-    assert!(caps.is_object(), "storage_capabilities must return an object");
+    assert!(
+        caps.is_object(),
+        "storage_capabilities must return an object"
+    );
 
     for key in [
         "opfsSupported",

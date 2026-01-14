@@ -34,15 +34,21 @@ fn ranges_overlap(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> bool {
 }
 
 fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(bytes.get(offset..offset + 2)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        bytes.get(offset..offset + 2)?.try_into().ok()?,
+    ))
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        bytes.get(offset..offset + 4)?.try_into().ok()?,
+    ))
 }
 
 fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?))
+    Some(u64::from_le_bytes(
+        bytes.get(offset..offset + 8)?.try_into().ok()?,
+    ))
 }
 
 /// Parse ACPI AML `PkgLength` encoding.
@@ -206,8 +212,7 @@ fn parse_mmio_windows_from_crs(crs: &[u8]) -> Vec<MmioWindow> {
         }
 
         // Large item: tag + 16-bit length.
-        let len =
-            usize::from(read_u16_le(crs, i + 1).expect("ACPI large descriptor length"));
+        let len = usize::from(read_u16_le(crs, i + 1).expect("ACPI large descriptor length"));
         let body_start = i + 3;
         let body_end = body_start
             .checked_add(len)
@@ -269,8 +274,7 @@ fn parse_io_windows_from_crs(crs: &[u8]) -> Vec<IoWindow> {
         }
 
         // Large item: tag + 16-bit length.
-        let len =
-            usize::from(read_u16_le(crs, i + 1).expect("ACPI large descriptor length"));
+        let len = usize::from(read_u16_le(crs, i + 1).expect("ACPI large descriptor length"));
         let body_start = i + 3;
         let body_end = body_start
             .checked_add(len)

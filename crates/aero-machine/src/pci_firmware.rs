@@ -5,4 +5,3 @@
 //! crate-private re-export to keep internal module paths stable.
 
 pub(crate) use aero_pci_firmware_adapter::SharedPciConfigPortsBiosAdapter;
-

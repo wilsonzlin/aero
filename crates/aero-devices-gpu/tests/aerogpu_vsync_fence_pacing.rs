@@ -20,10 +20,9 @@ fn write_ring_header(
     abi_version: u32,
 ) -> u32 {
     let stride = AeroGpuSubmitDesc::SIZE_BYTES;
-    let size_bytes = u32::try_from(
-        AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride),
-    )
-    .expect("ring size fits u32");
+    let size_bytes =
+        u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride))
+            .expect("ring size fits u32");
 
     mem.write_u32(gpa, AEROGPU_RING_MAGIC);
     mem.write_u32(gpa + 4, abi_version);

@@ -71,8 +71,10 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
             .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir = std::env::temp_dir()
-                .join(format!("aero-d3d11-vertex-pulling-xdg-runtime-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "aero-d3d11-vertex-pulling-xdg-runtime-{}",
+                std::process::id()
+            ));
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -181,8 +183,7 @@ fn create_vertex_pulling_pipeline_layout(
     // The vertex pulling bind group lives at `VERTEX_PULLING_GROUP`; pad intermediate groups with
     // empty layouts so the pipeline layout is valid regardless of which group index we choose for
     // the pulling bindings.
-    let mut layouts =
-        vec![empty_bgl; (VERTEX_PULLING_GROUP as usize).saturating_add(1).max(1)];
+    let mut layouts = vec![empty_bgl; (VERTEX_PULLING_GROUP as usize).saturating_add(1).max(1)];
     layouts[0] = out_bgl;
     layouts[VERTEX_PULLING_GROUP as usize] = ia_bgl;
 
@@ -199,10 +200,7 @@ fn compute_vertex_pulling_reads_pos3_color4() {
         let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
             Err(e) => {
-                common::skip_or_panic(
-                    module_path!(),
-                    &format!("wgpu unavailable ({e:#})"),
-                );
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return Ok(());
             }
         };
@@ -429,20 +427,14 @@ fn compute_vertex_pulling_reads_unorm8x4() {
 
     fn assert_approx(a: f32, b: f32, eps: f32) {
         let d = (a - b).abs();
-        assert!(
-            d <= eps,
-            "expected {a} ~= {b} (eps={eps}), abs diff {d}"
-        );
+        assert!(d <= eps, "expected {a} ~= {b} (eps={eps}), abs diff {d}");
     }
 
     pollster::block_on(async {
         let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
             Err(e) => {
-                common::skip_or_panic(
-                    module_path!(),
-                    &format!("wgpu unavailable ({e:#})"),
-                );
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return Ok(());
             }
         };
@@ -454,8 +446,14 @@ fn compute_vertex_pulling_reads_unorm8x4() {
         // Build a tiny ILAY: COLOR0 as R8G8B8A8_UNORM at offset 0 in slot 0.
         let color_hash = aero_d3d11::input_layout::fnv1a_32(b"COLOR");
         let mut blob = Vec::new();
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+        );
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+        );
         push_u32(&mut blob, 1); // element_count
         push_u32(&mut blob, 0); // reserved0
 
@@ -617,12 +615,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         assert_eq!(got.len(), 4);
 
         // Compare with a small epsilon: the only nontrivial values come from division by 255.
-        let expected = [
-            0.0f32,
-            127.0f32 / 255.0,
-            1.0f32,
-            1.0f32 / 255.0,
-        ];
+        let expected = [0.0f32, 127.0f32 / 255.0, 1.0f32, 1.0f32 / 255.0];
         for (a, b) in got.iter().copied().zip(expected) {
             assert_approx(a, b, 1e-6);
         }
@@ -640,10 +633,7 @@ fn compute_vertex_pulling_reads_unorm10_10_10_2() {
 
     fn assert_approx(a: f32, b: f32, eps: f32) {
         let d = (a - b).abs();
-        assert!(
-            d <= eps,
-            "expected {a} ~= {b} (eps={eps}), abs diff {d}"
-        );
+        assert!(d <= eps, "expected {a} ~= {b} (eps={eps}), abs diff {d}");
     }
 
     pollster::block_on(async {
@@ -662,8 +652,14 @@ fn compute_vertex_pulling_reads_unorm10_10_10_2() {
         // Build a tiny ILAY: COLOR0 as R10G10B10A2_UNORM at offset 0 in slot 0.
         let color_hash = aero_d3d11::input_layout::fnv1a_32(b"COLOR");
         let mut blob = Vec::new();
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+        );
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+        );
         push_u32(&mut blob, 1); // element_count
         push_u32(&mut blob, 0); // reserved0
 
@@ -694,10 +690,8 @@ fn compute_vertex_pulling_reads_unorm10_10_10_2() {
         let g: u32 = 512;
         let b: u32 = 1023;
         let a: u32 = 1;
-        let packed: u32 = (r & 0x3ff)
-            | ((g & 0x3ff) << 10)
-            | ((b & 0x3ff) << 20)
-            | ((a & 0x3) << 30);
+        let packed: u32 =
+            (r & 0x3ff) | ((g & 0x3ff) << 10) | ((b & 0x3ff) << 20) | ((a & 0x3) << 30);
         let vb_bytes = packed.to_le_bytes();
 
         let vb = device.create_buffer(&wgpu::BufferDescriptor {
@@ -865,8 +859,14 @@ fn compute_vertex_pulling_handles_unaligned_base_offset() {
         // ILAY: VALUE0 as R32_FLOAT at offset 0 in slot 0.
         let value_hash = aero_d3d11::input_layout::fnv1a_32(b"VALUE");
         let mut blob = Vec::new();
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+        );
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+        );
         push_u32(&mut blob, 1); // element_count
         push_u32(&mut blob, 0); // reserved0
 
@@ -1053,8 +1053,14 @@ fn compute_vertex_pulling_oob_reads_return_zero() {
         // ILAY: VALUE0 as R32G32_FLOAT at offset 0 in slot 0.
         let value_hash = aero_d3d11::input_layout::fnv1a_32(b"VALUE");
         let mut blob = Vec::new();
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
-        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+        );
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+        );
         push_u32(&mut blob, 1); // element_count
         push_u32(&mut blob, 0); // reserved0
 

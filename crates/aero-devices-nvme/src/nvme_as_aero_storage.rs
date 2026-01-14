@@ -142,7 +142,9 @@ impl VirtualDisk for NvmeBackendAsAeroVirtualDisk {
             return Err(StorageDiskError::UnalignedLength { len, alignment });
         }
 
-        let end = offset.checked_add(len).ok_or(StorageDiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
         let len_usize = usize::try_from(len).unwrap_or(usize::MAX);
         if end > self.capacity_bytes {
             return Err(StorageDiskError::OutOfBounds {

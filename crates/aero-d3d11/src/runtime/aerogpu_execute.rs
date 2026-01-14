@@ -5,8 +5,8 @@ use aero_gpu::bindings::bind_group_cache::{BindGroupCache, BufferId, TextureView
 use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::indirect::{DrawIndexedIndirectArgs, DrawIndirectArgs};
-use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::passthrough_vs::PassthroughVertexShaderKey;
+use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
     ColorTargetKey, RenderPipelineKey, ShaderHash, ShaderStage, VertexAttributeKey,
     VertexBufferLayoutKey,
@@ -19,11 +19,11 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
+use crate::sm4::opcode as sm4_opcode;
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, Sm4Program,
 };
-use crate::sm4::opcode as sm4_opcode;
 
 use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
@@ -535,7 +535,8 @@ impl AerogpuCmdRuntime {
 
         let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
         let (wgsl, reflection, vs_input_signature) = if signature_driven {
-            let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
+            let module =
+                crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
             let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
                 .context("translate WGSL")?;
 
@@ -869,10 +870,11 @@ impl AerogpuCmdRuntime {
 
         let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl.as_str());
         if ps_link_locations != ps_declared_inputs {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &ps_link_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &ps_link_locations,
+                ));
         }
 
         // WebGPU requires that the fragment shader's `@location(N)` outputs line up with the render
@@ -886,16 +888,18 @@ impl AerogpuCmdRuntime {
             }
         }
 
-        let declared_outputs = super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+        let declared_outputs =
+            super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
         let missing_outputs: BTreeSet<u32> = declared_outputs
             .difference(&keep_output_locations)
             .copied()
             .collect();
         if !missing_outputs.is_empty() {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &keep_output_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &keep_output_locations,
+                ));
         }
 
         let linked_ps_hash = if linked_ps_wgsl.as_ref() == ps.wgsl.as_str() {
@@ -1261,7 +1265,10 @@ impl AerogpuCmdRuntime {
                         // first-instance. Fall back to direct draws to preserve semantics.
                         let end_vertex = args.first_vertex.saturating_add(args.vertex_count);
                         let end_instance = args.first_instance.saturating_add(args.instance_count);
-                        pass.draw(args.first_vertex..end_vertex, args.first_instance..end_instance);
+                        pass.draw(
+                            args.first_vertex..end_vertex,
+                            args.first_instance..end_instance,
+                        );
                         indirect_args_buffer = None;
                     } else {
                         indirect_args_buffer =
@@ -1483,10 +1490,11 @@ impl AerogpuCmdRuntime {
             .copied()
             .collect();
         if !missing_outputs.is_empty() {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &keep_output_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &keep_output_locations,
+                ));
         }
 
         let linked_ps_hash = if linked_ps_wgsl.as_ref() == ps.wgsl.as_str() {
@@ -1701,7 +1709,8 @@ impl AerogpuCmdRuntime {
                 if !skip_draw {
                     pass.draw(
                         args.first_vertex..args.first_vertex.saturating_add(args.vertex_count),
-                        args.first_instance..args.first_instance.saturating_add(args.instance_count),
+                        args.first_instance
+                            ..args.first_instance.saturating_add(args.instance_count),
                     );
                 }
             }
@@ -1909,8 +1918,8 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
     while i < toks.len() {
         let opcode_token = toks[i];
         let opcode = opcode_token & sm4_opcode::OPCODE_MASK;
-        let len = ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK)
-            as usize;
+        let len =
+            ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK) as usize;
         if len == 0 || i + len > toks.len() {
             // Malformed instruction; let downstream decode/translation surface the issue.
             return Ok(());
@@ -2420,7 +2429,10 @@ mod tests {
                 }
             };
             let Some(adapter) = adapter else {
-                skip_or_panic(module_path!(), "wgpu unavailable (no suitable adapter found)");
+                skip_or_panic(
+                    module_path!(),
+                    "wgpu unavailable (no suitable adapter found)",
+                );
                 return;
             };
 
@@ -2520,14 +2532,18 @@ mod tests {
                 }
             "#;
 
-            let vs_module = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("wgsl_link mrt trim vs"),
-                source: wgpu::ShaderSource::Wgsl(vs_wgsl.into()),
-            });
-            let fs_module = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("wgsl_link mrt trim fs"),
-                source: wgpu::ShaderSource::Wgsl(fs_wgsl.into()),
-            });
+            let vs_module = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("wgsl_link mrt trim vs"),
+                    source: wgpu::ShaderSource::Wgsl(vs_wgsl.into()),
+                });
+            let fs_module = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("wgsl_link mrt trim fs"),
+                    source: wgpu::ShaderSource::Wgsl(fs_wgsl.into()),
+                });
 
             let layout = rt
                 .device
@@ -2545,28 +2561,29 @@ mod tests {
 
             // (1) Only RT0 bound: untrimmed shader should fail pipeline creation, trimmed should succeed.
             let targets_rt0 = [Some(ct.clone())];
-            rt.device
-                .push_error_scope(wgpu::ErrorFilter::Validation);
-            let _ = rt.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("wgsl_link mrt untrimmed rt0-only"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &vs_module,
-                    entry_point: "vs_main",
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &fs_module,
-                    entry_point: "fs_main",
-                    targets: &targets_rt0,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = rt
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("wgsl_link mrt untrimmed rt0-only"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs_module,
+                        entry_point: "vs_main",
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs_module,
+                        entry_point: "fs_main",
+                        targets: &targets_rt0,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
             rt.device.poll(wgpu::Maintain::Wait);
             let err = rt.device.pop_error_scope().await;
             assert!(
@@ -2623,50 +2640,44 @@ mod tests {
 
             // (2) RT0 + RT2 bound with a gap at RT1: pipeline creation succeeds and output2 preserved.
             let targets_gap = [Some(ct.clone()), None, Some(ct)];
-            rt.device
-                .push_error_scope(wgpu::ErrorFilter::Validation);
-            let pipeline_gap = rt.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("wgsl_link mrt untrimmed rt0+rt2"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &vs_module,
-                    entry_point: "vs_main",
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &fs_module,
-                    entry_point: "fs_main",
-                    targets: &targets_gap,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let pipeline_gap = rt
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("wgsl_link mrt untrimmed rt0+rt2"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs_module,
+                        entry_point: "vs_main",
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs_module,
+                        entry_point: "fs_main",
+                        targets: &targets_gap,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
             rt.device.poll(wgpu::Maintain::Wait);
             let err = rt.device.pop_error_scope().await;
-            assert!(err.is_none(), "untrimmed pipeline must succeed when RT2 is bound");
+            assert!(
+                err.is_none(),
+                "untrimmed pipeline must succeed when RT2 is bound"
+            );
 
-            let view0 = &rt
-                .resources
-                .textures
-                .get(&RT0)
-                .expect("RT0 created")
-                .view;
-            let view2 = &rt
-                .resources
-                .textures
-                .get(&RT2)
-                .expect("RT2 created")
-                .view;
+            let view0 = &rt.resources.textures.get(&RT0).expect("RT0 created").view;
+            let view2 = &rt.resources.textures.get(&RT2).expect("RT2 created").view;
 
-            let mut encoder =
-                rt.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("wgsl_link mrt trim encoder rt0+rt2"),
-                    });
+            let mut encoder = rt
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("wgsl_link mrt trim encoder rt0+rt2"),
+                });
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("wgsl_link mrt trim pass rt0+rt2"),

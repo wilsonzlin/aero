@@ -46,9 +46,9 @@ fn wgsl_vs20_reads_v0_writes_opos_compiles() {
     let tokens = vec![
         version_token(ShaderStage::Vertex, 2, 0),
         opcode_token(1, 2),
-        dst_token(4, 0, 0xF),          // oPos
-        src_token(1, 0, 0xE4, 0),      // v0
-        0x0000_FFFF,                   // end
+        dst_token(4, 0, 0xF),     // oPos
+        src_token(1, 0, 0xE4, 0), // v0
+        0x0000_FFFF,              // end
     ];
 
     let decoded = decode_u32_tokens(&tokens).unwrap();
@@ -313,7 +313,8 @@ fn wgsl_texld_emits_texture_sample() {
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl.contains("@group(2) @binding(1) var samp0: sampler;"),
+        wgsl.wgsl
+            .contains("@group(2) @binding(1) var samp0: sampler;"),
         "{}",
         wgsl.wgsl
     );
@@ -809,7 +810,8 @@ fn wgsl_vs_texld_emits_texture_sample_level() {
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl.contains("@group(1) @binding(1) var samp0: sampler;"),
+        wgsl.wgsl
+            .contains("@group(1) @binding(1) var samp0: sampler;"),
         "{}",
         wgsl.wgsl
     );
@@ -845,7 +847,10 @@ fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
     ];
 
     let decoded = decode_u32_tokens(&tokens).unwrap();
-    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdl));
+    assert!(decoded
+        .instructions
+        .iter()
+        .any(|i| i.opcode == Opcode::TexLdl));
     let ir = build_ir(&decoded).unwrap();
     verify_ir(&ir).unwrap();
 
@@ -895,12 +900,13 @@ fn wgsl_vs_texldd_is_rejected() {
     ];
 
     let decoded = decode_u32_tokens(&tokens).unwrap();
-    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdd));
+    assert!(decoded
+        .instructions
+        .iter()
+        .any(|i| i.opcode == Opcode::TexLdd));
     let ir = build_ir(&decoded).unwrap();
     let err = verify_ir(&ir).unwrap_err();
-    assert!(err
-        .message
-        .contains("only valid in pixel shaders"), "{err}");
+    assert!(err.message.contains("only valid in pixel shaders"), "{err}");
 }
 
 #[test]
@@ -1276,7 +1282,10 @@ fn wgsl_lrp_dp2add_compiles() {
 
     let decoded = decode_u32_tokens(&tokens).unwrap();
     assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Lrp));
-    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dp2Add));
+    assert!(decoded
+        .instructions
+        .iter()
+        .any(|i| i.opcode == Opcode::Dp2Add));
 
     let ir = build_ir(&decoded).unwrap();
     verify_ir(&ir).unwrap();
@@ -1414,7 +1423,10 @@ fn wgsl_dsx_dsy_can_feed_texldd_gradients() {
     let decoded = decode_u32_tokens(&tokens).unwrap();
     assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dsx));
     assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dsy));
-    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdd));
+    assert!(decoded
+        .instructions
+        .iter()
+        .any(|i| i.opcode == Opcode::TexLdd));
 
     let ir = build_ir(&decoded).unwrap();
     verify_ir(&ir).unwrap();
@@ -1458,7 +1470,7 @@ fn wgsl_predicated_derivative_avoids_non_uniform_control_flow() {
         // dsx (p0) r0, v0
         opcode_token(86, 3) | 0x1000_0000, // predicated
         dst_token(0, 0, 0xF),
-        src_token(1, 0, 0xE4, 0), // v0
+        src_token(1, 0, 0xE4, 0),  // v0
         src_token(19, 0, 0x00, 0), // p0.x
         // mov oC0, r0
         opcode_token(1, 2),
@@ -1867,7 +1879,10 @@ fn sm3_translate_to_wgsl_wrapper_produces_bind_layout() {
     assert_eq!(out.version.stage, ShaderStage::Pixel);
     assert_eq!(out.entry_point, "fs_main");
     assert_eq!(out.bind_group_layout.sampler_group, 2);
-    assert_eq!(out.bind_group_layout.sampler_bindings.get(&0), Some(&(0, 1)));
+    assert_eq!(
+        out.bind_group_layout.sampler_bindings.get(&0),
+        Some(&(0, 1))
+    );
     assert_eq!(
         out.bind_group_layout.sampler_texture_types.get(&0),
         Some(&TextureType::Texture2D)

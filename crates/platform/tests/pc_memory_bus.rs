@@ -460,7 +460,9 @@ fn a20_disabled_bulk_reads_match_byte_wise_across_1mib_boundary() {
         *byte = i as u8;
     }
     bus.ram_mut().write_from(0, &low).unwrap();
-    bus.ram_mut().write_from(1 << 20, &vec![0xEEu8; 1 << 20]).unwrap();
+    bus.ram_mut()
+        .write_from(1 << 20, &vec![0xEEu8; 1 << 20])
+        .unwrap();
 
     // Start just below the 1MiB boundary so the access wraps when A20 is disabled.
     let start = 0x000F_FF00u64;
@@ -519,13 +521,13 @@ fn a20_disabled_wraparound_preserves_mmio_and_rom_priority() {
     // Seed low RAM so ROM reads are distinguishable from the underlying RAM contents.
     bus.ram_mut().write_from(0, &[0xAA; 0x100]).unwrap();
     // Also seed the second MiB with a different value so incorrect non-wrapping accesses show up.
-    bus.ram_mut()
-        .write_from(1 << 20, &[0xEE; 0x100])
-        .unwrap();
+    bus.ram_mut().write_from(1 << 20, &[0xEE; 0x100]).unwrap();
 
     // Map a ROM window and overlay part of it with MMIO. Priority must remain:
     // MMIO > ROM > RAM.
-    let rom = (0..0x20u8).map(|v| v.wrapping_add(0x10)).collect::<Vec<_>>();
+    let rom = (0..0x20u8)
+        .map(|v| v.wrapping_add(0x10))
+        .collect::<Vec<_>>();
     bus.map_rom(0x10, Arc::<[u8]>::from(rom)).unwrap();
 
     let (mmio, mmio_state) = RecordingMmio::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);

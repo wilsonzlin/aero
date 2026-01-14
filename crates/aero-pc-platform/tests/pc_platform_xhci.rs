@@ -1,5 +1,5 @@
-use aero_devices::pci::profile::USB_XHCI_QEMU;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
+use aero_devices::pci::profile::USB_XHCI_QEMU;
 use aero_devices::pci::{
     PciBdf, PciInterruptPin, PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
@@ -466,8 +466,7 @@ fn pc_platform_xhci_run_stop_sets_usbsts_eint_and_triggers_intx() {
     assert_ne!(bar0_base, 0, "BAR0 should be assigned by BIOS POST");
 
     // Ensure we can observe the routed IRQ via the legacy PIC.
-    let expected_irq =
-        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+    let expected_irq = u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
     {
         let mut interrupts = pc.interrupts.borrow_mut();
         interrupts.pic_mut().set_offsets(0x20, 0x28);

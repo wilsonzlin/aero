@@ -100,8 +100,8 @@ impl VirtioBlkConfig {
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
         cfg[48..52].copy_from_slice(&max_sectors.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
-        // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
-        // as long as the guest-visible read-after-write semantics remain zero.
+                                                                  // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
+                                                                  // as long as the guest-visible read-after-write semantics remain zero.
         cfg[56] = 1;
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
@@ -307,7 +307,8 @@ impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
             return Ok(());
         }
 
-        let len_usize = usize::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
+        let len_usize =
+            usize::try_from(len).map_err(|_| aero_storage::DiskError::OffsetOverflow)?;
         let capacity = self.backend.len();
         self.check_bounds(offset, len_usize, capacity)?;
         self.backend
@@ -1022,7 +1023,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         continue;
                                     }
 
-                                    let discard_result = self.backend.discard_range(byte_off, byte_len);
+                                    let discard_result =
+                                        self.backend.discard_range(byte_off, byte_len);
                                     let mut needs_zero_fallback = discard_result.is_err();
 
                                     if !needs_zero_fallback {
@@ -1039,11 +1041,14 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         while scan_remaining != 0 {
                                             let take =
                                                 scan_remaining.min(read_buf.len() as u64) as usize;
-                                            match self.backend.read_at(scan_off, &mut read_buf[..take])
+                                            match self
+                                                .backend
+                                                .read_at(scan_off, &mut read_buf[..take])
                                             {
                                                 Ok(()) => {
                                                     if read_buf[..take].iter().any(|b| *b != 0) {
-                                                        if self.backend
+                                                        if self
+                                                            .backend
                                                             .write_at(scan_off, &zero_buf[..take])
                                                             .is_err()
                                                         {
@@ -1064,7 +1069,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                                     break;
                                                 }
                                             };
-                                            scan_remaining = scan_remaining.saturating_sub(take as u64);
+                                            scan_remaining =
+                                                scan_remaining.saturating_sub(take as u64);
                                         }
                                     }
 
@@ -1074,7 +1080,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         while remaining != 0 {
                                             let take =
                                                 remaining.min(zero_buf.len() as u64) as usize;
-                                            if self.backend.write_at(cur_off, &zero_buf[..take]).is_err()
+                                            if self
+                                                .backend
+                                                .write_at(cur_off, &zero_buf[..take])
+                                                .is_err()
                                             {
                                                 status = VIRTIO_BLK_S_IOERR;
                                                 break;
@@ -1192,16 +1201,16 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         let mut scan_off = byte_off;
                                         let mut scan_remaining = byte_len;
                                         while scan_remaining != 0 {
-                                            let take = scan_remaining
-                                                .min(read_buf.len() as u64)
-                                                as usize;
+                                            let take =
+                                                scan_remaining.min(read_buf.len() as u64) as usize;
                                             match self
                                                 .backend
                                                 .read_at(scan_off, &mut read_buf[..take])
                                             {
                                                 Ok(()) => {
                                                     if read_buf[..take].iter().any(|b| *b != 0) {
-                                                        if self.backend
+                                                        if self
+                                                            .backend
                                                             .write_at(scan_off, &zero_buf[..take])
                                                             .is_err()
                                                         {
@@ -1233,7 +1242,8 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         while remaining != 0 {
                                             let take =
                                                 remaining.min(zero_buf.len() as u64) as usize;
-                                            if self.backend
+                                            if self
+                                                .backend
                                                 .write_at(cur_off, &zero_buf[..take])
                                                 .is_err()
                                             {
@@ -1252,9 +1262,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     }
                                 } else {
                                     while remaining != 0 {
-                                        let take =
-                                            remaining.min(zero_buf.len() as u64) as usize;
-                                        if self.backend.write_at(byte_off, &zero_buf[..take]).is_err()
+                                        let take = remaining.min(zero_buf.len() as u64) as usize;
+                                        if self
+                                            .backend
+                                            .write_at(byte_off, &zero_buf[..take])
+                                            .is_err()
                                         {
                                             status = VIRTIO_BLK_S_IOERR;
                                             break 'seg_loop;

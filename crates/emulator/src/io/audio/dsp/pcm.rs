@@ -396,8 +396,8 @@ mod tests {
         let err = decode_interleaved_to_f32(&[], PcmSampleFormat::I16, 0, &mut out).unwrap_err();
         assert_eq!(err, PcmError::InvalidChannels);
 
-        let err = decode_interleaved_to_f32(&[0u8; 5], PcmSampleFormat::I24In3, 2, &mut out)
-            .unwrap_err();
+        let err =
+            decode_interleaved_to_f32(&[0u8; 5], PcmSampleFormat::I24In3, 2, &mut out).unwrap_err();
         assert_eq!(
             err,
             PcmError::InputLengthNotAligned {

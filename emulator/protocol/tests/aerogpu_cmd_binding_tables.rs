@@ -2,13 +2,12 @@ use core::mem::offset_of;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_set_constant_buffers_bindings_le,
-    decode_cmd_set_shader_resource_buffers_bindings_le,
-    decode_cmd_set_samplers_handles_le, AerogpuCmdDecodeError, AerogpuCmdOpcode,
-    decode_cmd_set_unordered_access_buffers_bindings_le, AerogpuCmdSetConstantBuffers,
-    AerogpuCmdSetSamplers, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetUnorderedAccessBuffers,
-    AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuConstantBufferBinding,
-    AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderResourceBufferBinding,
-    AerogpuShaderStage, AerogpuUnorderedAccessBufferBinding,
+    decode_cmd_set_samplers_handles_le, decode_cmd_set_shader_resource_buffers_bindings_le,
+    decode_cmd_set_unordered_access_buffers_bindings_le, AerogpuCmdDecodeError, AerogpuCmdOpcode,
+    AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers, AerogpuCmdSetShaderResourceBuffers,
+    AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
+    AerogpuConstantBufferBinding, AerogpuSamplerAddressMode, AerogpuSamplerFilter,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuUnorderedAccessBufferBinding,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -339,12 +338,13 @@ fn set_shader_resource_buffers_count_overrun_is_rejected() {
 #[test]
 fn set_unordered_access_buffers_count_overrun_is_rejected() {
     let mut w = AerogpuCmdWriter::new();
-    let bindings: [AerogpuUnorderedAccessBufferBinding; 1] = [AerogpuUnorderedAccessBufferBinding {
-        buffer: 1,
-        offset_bytes: 0,
-        size_bytes: 16,
-        initial_count: 0,
-    }];
+    let bindings: [AerogpuUnorderedAccessBufferBinding; 1] =
+        [AerogpuUnorderedAccessBufferBinding {
+            buffer: 1,
+            offset_bytes: 0,
+            size_bytes: 16,
+            initial_count: 0,
+        }];
     w.set_unordered_access_buffers(AerogpuShaderStage::Compute, 0, &bindings);
     let mut bytes = w.finish();
 

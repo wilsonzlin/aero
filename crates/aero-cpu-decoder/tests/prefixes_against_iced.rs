@@ -67,7 +67,10 @@ fn expected_segment(mode: DecodeMode, iced: Register) -> Option<Segment> {
 }
 
 fn is_vex_evex_xop(encoding: EncodingKind) -> bool {
-    matches!(encoding, EncodingKind::VEX | EncodingKind::EVEX | EncodingKind::XOP)
+    matches!(
+        encoding,
+        EncodingKind::VEX | EncodingKind::EVEX | EncodingKind::XOP
+    )
 }
 
 fn op_code_bytes(op_code: &OpCodeInfo) -> Option<Vec<u8>> {
@@ -126,7 +129,10 @@ fn legacy_prefix_bytes_before_modern_prefix<'a>(
         EncodingKind::XOP => 0x8F,
         _ => return None,
     };
-    inst_bytes.iter().position(|&b| b == lead).map(|i| &inst_bytes[..i])
+    inst_bytes
+        .iter()
+        .position(|&b| b == lead)
+        .map(|i| &inst_bytes[..i])
 }
 
 fn check_one(mode: DecodeMode, bytes: &[u8]) {

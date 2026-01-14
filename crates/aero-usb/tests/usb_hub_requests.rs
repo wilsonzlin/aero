@@ -240,20 +240,30 @@ fn usb_hub_standard_get_status_interface_returns_zeroes() {
 fn usb_hub_standard_device_remote_wakeup_feature_roundtrips() {
     let mut hub = UsbHubDevice::new();
 
-    let ControlResponse::Data(st) = hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None) else {
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None)
+    else {
         panic!("expected Data response");
     };
     assert_eq!(st, [0, 0]);
 
     assert_eq!(
         hub.handle_control_request(
-            setup(0x00, USB_REQUEST_SET_FEATURE, USB_FEATURE_DEVICE_REMOTE_WAKEUP, 0, 0),
+            setup(
+                0x00,
+                USB_REQUEST_SET_FEATURE,
+                USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                0,
+                0
+            ),
             None
         ),
         ControlResponse::Ack
     );
 
-    let ControlResponse::Data(st) = hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None) else {
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None)
+    else {
         panic!("expected Data response");
     };
     assert_eq!(st, [0x02, 0x00]);
@@ -272,7 +282,9 @@ fn usb_hub_standard_device_remote_wakeup_feature_roundtrips() {
         ControlResponse::Ack
     );
 
-    let ControlResponse::Data(st) = hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None) else {
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(setup(0x80, USB_REQUEST_GET_STATUS, 0, 0, 2), None)
+    else {
         panic!("expected Data response");
     };
     assert_eq!(st, [0, 0]);
@@ -311,7 +323,10 @@ fn usb_hub_class_clear_feature_device_accepts_hub_change_selectors() {
 
     let mut hub = UsbHubDevice::new();
 
-    for feature in [HUB_FEATURE_C_HUB_LOCAL_POWER, HUB_FEATURE_C_HUB_OVER_CURRENT] {
+    for feature in [
+        HUB_FEATURE_C_HUB_LOCAL_POWER,
+        HUB_FEATURE_C_HUB_OVER_CURRENT,
+    ] {
         assert_eq!(
             hub.handle_control_request(hub_clear_feature_device(feature), None),
             ControlResponse::Ack
@@ -347,7 +362,10 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     assert_ne!(bitmap[0] & 0x02, 0); // bit1 = port1 change
 
     assert_eq!(
-        hub.handle_control_request(standard_set_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
+        hub.handle_control_request(
+            standard_set_feature_endpoint_halt(HUB_INTERRUPT_IN_EP),
+            None
+        ),
         ControlResponse::Ack
     );
 
@@ -364,7 +382,10 @@ fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
     assert_eq!(st, [1, 0]);
 
     assert_eq!(
-        hub.handle_control_request(standard_clear_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
+        hub.handle_control_request(
+            standard_clear_feature_endpoint_halt(HUB_INTERRUPT_IN_EP),
+            None
+        ),
         ControlResponse::Ack
     );
 
@@ -522,7 +543,10 @@ fn usb_hub_port_enable_set_and_clear_feature() {
 
     // Clear initial connect-change so only enable-change is observed.
     assert_eq!(
-        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_CONNECTION), None),
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_CONNECTION),
+            None
+        ),
         ControlResponse::Ack
     );
 
@@ -537,7 +561,10 @@ fn usb_hub_port_enable_set_and_clear_feature() {
 
     // Clear enable-change and then disable.
     assert_eq!(
-        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE), None),
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE),
+            None
+        ),
         ControlResponse::Ack
     );
     assert_eq!(
@@ -550,7 +577,10 @@ fn usb_hub_port_enable_set_and_clear_feature() {
 
     // Clear enable-change and then re-enable.
     assert_eq!(
-        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE), None),
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE),
+            None
+        ),
         ControlResponse::Ack
     );
     assert_eq!(
@@ -581,7 +611,10 @@ fn usb_hub_port_suspend_set_and_clear_feature() {
     );
 
     // Clear any change bits so suspend-change edges are observable.
-    for feature in [HUB_PORT_FEATURE_C_PORT_CONNECTION, HUB_PORT_FEATURE_C_PORT_ENABLE] {
+    for feature in [
+        HUB_PORT_FEATURE_C_PORT_CONNECTION,
+        HUB_PORT_FEATURE_C_PORT_ENABLE,
+    ] {
         assert_eq!(
             hub.handle_control_request(hub_clear_feature_port(1, feature), None),
             ControlResponse::Ack
@@ -599,7 +632,10 @@ fn usb_hub_port_suspend_set_and_clear_feature() {
 
     // Clear suspend-change.
     assert_eq!(
-        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_SUSPEND), None),
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_SUSPEND),
+            None
+        ),
         ControlResponse::Ack
     );
     let (status, change) = get_port_status_and_change(&mut hub, 1);

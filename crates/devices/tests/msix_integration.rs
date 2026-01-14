@@ -58,7 +58,9 @@ fn msix_table_delivers_vector_to_lapic_and_mask_sets_pba() {
         let mut pba = [0u8; 8];
         msix.pba_read(0, &mut pba);
         let bits = u64::from_le_bytes(pba);
-        assert_eq!(bits & (1u64 << u32::from(table_index)), 1u64 << u32::from(table_index));
+        assert_eq!(
+            bits & (1u64 << u32::from(table_index)),
+            1u64 << u32::from(table_index)
+        );
     }
 }
-

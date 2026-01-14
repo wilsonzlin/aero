@@ -39,4 +39,3 @@ fn cpuid_leaf1_htt_set_for_multiple_logical_processors() {
     let leaf1 = cpuid(&features, 1, 0);
     assert_ne!(leaf1.edx & bits::LEAF1_EDX_HTT, 0);
 }
-

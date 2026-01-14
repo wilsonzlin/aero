@@ -60,7 +60,9 @@ fn aerogpu_features_lo_hi_match_implemented_capabilities() {
     let features = (u64::from(features_hi) << 32) | u64::from(features_lo);
 
     // Today `aero-machine` implements scanout + vblank + fence-page writeback only.
-    let expected = pci::AEROGPU_FEATURE_SCANOUT | pci::AEROGPU_FEATURE_VBLANK | pci::AEROGPU_FEATURE_FENCE_PAGE;
+    let expected = pci::AEROGPU_FEATURE_SCANOUT
+        | pci::AEROGPU_FEATURE_VBLANK
+        | pci::AEROGPU_FEATURE_FENCE_PAGE;
 
     assert_eq!(
         features, expected,

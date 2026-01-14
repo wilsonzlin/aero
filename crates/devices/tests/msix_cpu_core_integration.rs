@@ -95,4 +95,3 @@ fn msix_interrupt_delivers_to_cpu_core_idt() -> Result<(), CpuExit> {
 
     Ok(())
 }
-

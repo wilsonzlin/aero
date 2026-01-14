@@ -1,6 +1,7 @@
 use aero_tcp_mux_protocol::{
-    decode_close_payload, decode_error_payload, decode_frame, decode_open_payload, encode_close_payload,
-    encode_error_payload, encode_frame, encode_frame_with_limits, encode_open_payload, FrameParser, Limits,
+    decode_close_payload, decode_error_payload, decode_frame, decode_open_payload,
+    encode_close_payload, encode_error_payload, encode_frame, encode_frame_with_limits,
+    encode_open_payload, FrameParser, Limits,
 };
 use base64::Engine;
 use serde::Deserialize;
@@ -112,7 +113,8 @@ fn tcp_mux_protocol_vectors() {
         let payload = decode_b64(&v.payload_b64);
         let expected_frame = decode_b64(&v.frame_b64);
 
-        let decoded = decode_frame(&expected_frame).unwrap_or_else(|e| panic!("decode frame/{}: {e}", v.name));
+        let decoded = decode_frame(&expected_frame)
+            .unwrap_or_else(|e| panic!("decode frame/{}: {e}", v.name));
         assert_eq!(decoded.msg_type, v.msg_type, "frame/{}", v.name);
         assert_eq!(decoded.stream_id, v.stream_id, "frame/{}", v.name);
         assert_eq!(decoded.payload, payload, "frame/{}", v.name);
@@ -134,7 +136,8 @@ fn tcp_mux_open_close_error_payload_vectors() {
             .unwrap_or_else(|e| panic!("encode openPayload/{}: {e}", v.name));
         assert_eq!(encoded, expected, "openPayload/{}", v.name);
 
-        let decoded = decode_open_payload(&encoded).unwrap_or_else(|e| panic!("decode openPayload/{}: {e}", v.name));
+        let decoded = decode_open_payload(&encoded)
+            .unwrap_or_else(|e| panic!("decode openPayload/{}: {e}", v.name));
         assert_eq!(decoded.host, v.host, "openPayload/{}", v.name);
         assert_eq!(decoded.port, v.port, "openPayload/{}", v.name);
         assert_eq!(decoded.metadata, v.metadata, "openPayload/{}", v.name);
@@ -145,7 +148,8 @@ fn tcp_mux_open_close_error_payload_vectors() {
         let encoded = encode_close_payload(v.flags);
         assert_eq!(encoded, expected, "closePayload/{}", v.name);
 
-        let decoded = decode_close_payload(&encoded).unwrap_or_else(|e| panic!("decode closePayload/{}: {e}", v.name));
+        let decoded = decode_close_payload(&encoded)
+            .unwrap_or_else(|e| panic!("decode closePayload/{}: {e}", v.name));
         assert_eq!(decoded, v.flags, "closePayload/{}", v.name);
     }
 
@@ -215,8 +219,14 @@ fn tcp_mux_parser_stream_vectors() {
                 assert_eq!(got.len(), expect_frames.len(), "parserStream/{name}");
                 for (i, expected) in expect_frames.iter().enumerate() {
                     let frame = &got[i];
-                    assert_eq!(frame.msg_type, expected.msg_type, "parserStream/{name}[{i}]");
-                    assert_eq!(frame.stream_id, expected.stream_id, "parserStream/{name}[{i}]");
+                    assert_eq!(
+                        frame.msg_type, expected.msg_type,
+                        "parserStream/{name}[{i}]"
+                    );
+                    assert_eq!(
+                        frame.stream_id, expected.stream_id,
+                        "parserStream/{name}[{i}]"
+                    );
                     assert_eq!(
                         frame.payload,
                         decode_b64(&expected.payload_b64),
@@ -290,7 +300,9 @@ fn parser_accepts_arbitrary_chunk_sizes() {
 #[test]
 fn enforces_max_payload_len() {
     let max = 8usize;
-    let limits = Limits { max_payload_len: max };
+    let limits = Limits {
+        max_payload_len: max,
+    };
 
     let payload = vec![0u8; max + 1];
     let err = encode_frame_with_limits(1, 1, &payload, &limits)
@@ -303,7 +315,9 @@ fn enforces_max_payload_len() {
     hdr.extend_from_slice(&1u32.to_be_bytes());
     hdr.extend_from_slice(&((max as u32) + 1).to_be_bytes());
     let mut parser = FrameParser::with_limits(limits);
-    let err = parser.push(&hdr).unwrap_err_or_else(|| panic!("expected parse error"));
+    let err = parser
+        .push(&hdr)
+        .unwrap_err_or_else(|| panic!("expected parse error"));
     assert!(err.to_string().contains("frame too large"));
 }
 

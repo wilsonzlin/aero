@@ -38,4 +38,3 @@ fn pc_platform_reset_preserves_lapic_count_and_ids_in_smp_mode() {
         assert_eq!(pc.interrupts.borrow().lapic(cpu).apic_id(), cpu as u8);
     }
 }
-

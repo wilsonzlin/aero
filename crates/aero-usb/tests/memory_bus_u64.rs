@@ -37,4 +37,3 @@ fn memory_bus_u64_is_little_endian() {
     );
     assert_eq!(bus.read_u64(8), 0x1122_3344_5566_7788);
 }
-

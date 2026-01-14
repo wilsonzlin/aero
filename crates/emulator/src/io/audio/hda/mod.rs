@@ -326,12 +326,14 @@ impl HdaController {
                 let new = (full & !mask) | (u64::from(value) << shift);
                 self.rirb.mmio_write(reg, width, new);
             }
-            HdaMmioReg::Stream0(reg) => self
-                .out_stream0
-                .mmio_write_byte(reg, decoded.byte, value, &mut self.intsts),
-            HdaMmioReg::Stream1(reg) => self
-                .in_stream0
-                .mmio_write_byte(reg, decoded.byte, value, &mut self.intsts),
+            HdaMmioReg::Stream0(reg) => {
+                self.out_stream0
+                    .mmio_write_byte(reg, decoded.byte, value, &mut self.intsts)
+            }
+            HdaMmioReg::Stream1(reg) => {
+                self.in_stream0
+                    .mmio_write_byte(reg, decoded.byte, value, &mut self.intsts)
+            }
         }
     }
 

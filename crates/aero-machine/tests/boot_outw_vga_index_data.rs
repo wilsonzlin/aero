@@ -56,4 +56,3 @@ fn boot_outw_vga_index_data() {
     let v = m.io_read(0x3C5, 1) as u8;
     assert_eq!(v, 0x0F);
 }
-

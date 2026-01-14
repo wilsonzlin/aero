@@ -724,8 +724,7 @@ impl Tier0DecodeCache {
         // Direct-mapped cache: hash `rip` + `bitness` into a small fixed-size
         // table. This avoids the O(N) linear probe of a fully associative cache
         // while still covering typical hot loops.
-        let mut x = rip
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        let mut x = rip.wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ (bitness as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
         x ^= x >> 33;
         x as usize & (TIER0_DECODE_CACHE_SIZE - 1)
@@ -748,11 +747,11 @@ impl Tier0DecodeCache {
                 // Self-modifying code safety: verify the instruction bytes still match.
                 && hit.bytes[..len] == bytes[..len]
             {
-            #[cfg(any(test, debug_assertions))]
-            {
-                self.hits += 1;
-            }
-            return Ok(hit.decoded.clone());
+                #[cfg(any(test, debug_assertions))]
+                {
+                    self.hits += 1;
+                }
+                return Ok(hit.decoded.clone());
             }
         }
 

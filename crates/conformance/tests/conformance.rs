@@ -307,8 +307,10 @@ fn aero_vectors_v2_l2_tunnel() {
             L2_TUNNEL_TYPE_FRAME => encode_l2_frame(&payload).expect("encode frame"),
             L2_TUNNEL_TYPE_PING => encode_l2_ping(Some(&payload)).expect("encode ping"),
             L2_TUNNEL_TYPE_PONG => encode_l2_pong(Some(&payload)).expect("encode pong"),
-            L2_TUNNEL_TYPE_ERROR => encode_with_limits(v.msg_type, v.flags, &payload, &Limits::default())
-                .expect("encode error"),
+            L2_TUNNEL_TYPE_ERROR => {
+                encode_with_limits(v.msg_type, v.flags, &payload, &Limits::default())
+                    .expect("encode error")
+            }
             other => panic!("{}: unsupported l2 msgType {}", v.name, other),
         };
         assert_eq!(encoded, wire, "{}", v.name);
@@ -448,7 +450,10 @@ fn aero_vectors_v2_tcp_mux() {
                     let exp_payload = decode_hex(&expected.payload_hex);
                     let got_frame = &got[idx];
                     assert_eq!(got_frame.msg_type, expected.msg_type, "{name} frame {idx}");
-                    assert_eq!(got_frame.stream_id, expected.stream_id, "{name} frame {idx}");
+                    assert_eq!(
+                        got_frame.stream_id, expected.stream_id,
+                        "{name} frame {idx}"
+                    );
                     assert_eq!(got_frame.payload, exp_payload, "{name} frame {idx}");
                 }
             }
@@ -508,14 +513,20 @@ fn aero_vectors_v2_udp_relay() {
 
         let version = v.version.expect("valid vectors must include version");
         let guest_port = v.guest_port.expect("valid vectors must include guestPort");
-        let remote_port = v.remote_port.expect("valid vectors must include remotePort");
+        let remote_port = v
+            .remote_port
+            .expect("valid vectors must include remotePort");
         let remote_ip: std::net::IpAddr = v
             .remote_ip
             .as_ref()
             .expect("valid vectors must include remoteIp")
             .parse()
             .expect("parse remoteIp");
-        let payload = decode_hex(v.payload_hex.as_ref().expect("valid vectors must include payloadHex"));
+        let payload = decode_hex(
+            v.payload_hex
+                .as_ref()
+                .expect("valid vectors must include payloadHex"),
+        );
 
         let expected_transport = match version {
             1 => {
@@ -573,13 +584,22 @@ fn aero_vectors_v2_auth_tokens() {
 
     let session_secret = vectors.aero_session.secret.as_bytes();
     let now_ms = vectors.aero_session.now_ms;
-    let valid = verify_gateway_session_token(&vectors.aero_session.tokens.valid.token, session_secret, now_ms)
-        .expect("expected valid session token to verify");
+    let valid = verify_gateway_session_token(
+        &vectors.aero_session.tokens.valid.token,
+        session_secret,
+        now_ms,
+    )
+    .expect("expected valid session token to verify");
     assert_eq!(valid.sid, vectors.aero_session.tokens.valid.claims.sid);
     assert_eq!(valid.exp_unix, vectors.aero_session.tokens.valid.claims.exp);
 
     assert!(
-        verify_gateway_session_token(&vectors.aero_session.tokens.expired.token, session_secret, now_ms).is_none(),
+        verify_gateway_session_token(
+            &vectors.aero_session.tokens.expired.token,
+            session_secret,
+            now_ms
+        )
+        .is_none(),
         "expected expired session token to be rejected"
     );
     assert!(
@@ -594,9 +614,12 @@ fn aero_vectors_v2_auth_tokens() {
 
     let jwt_secret = vectors.udp_relay_jwt.secret.as_bytes();
     let now_unix = vectors.udp_relay_jwt.now_unix;
-    let got =
-        verify_hs256_jwt(&vectors.udp_relay_jwt.tokens.valid.token, jwt_secret, now_unix)
-            .expect("expected valid jwt to verify");
+    let got = verify_hs256_jwt(
+        &vectors.udp_relay_jwt.tokens.valid.token,
+        jwt_secret,
+        now_unix,
+    )
+    .expect("expected valid jwt to verify");
     assert_eq!(got.sid, vectors.udp_relay_jwt.tokens.valid.claims.sid);
     assert_eq!(got.exp, vectors.udp_relay_jwt.tokens.valid.claims.exp);
     assert_eq!(got.iat, vectors.udp_relay_jwt.tokens.valid.claims.iat);
@@ -605,7 +628,12 @@ fn aero_vectors_v2_auth_tokens() {
     assert_eq!(got.iss, vectors.udp_relay_jwt.tokens.valid.claims.iss);
 
     assert!(
-        verify_hs256_jwt(&vectors.udp_relay_jwt.tokens.expired.token, jwt_secret, now_unix).is_none(),
+        verify_hs256_jwt(
+            &vectors.udp_relay_jwt.tokens.expired.token,
+            jwt_secret,
+            now_unix
+        )
+        .is_none(),
         "expected expired jwt to be rejected"
     );
     assert!(

@@ -332,6 +332,9 @@ fn virtio_input_pci_device_core_snapshot_restore_preserves_pending_irq() {
     restored.load_state(&snap).unwrap();
     assert!(restored.irq_asserted());
     let isr = mmio_read_u8(&mut restored, ISR);
-    assert_eq!(isr & VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_PCI_LEGACY_ISR_QUEUE);
+    assert_eq!(
+        isr & VIRTIO_PCI_LEGACY_ISR_QUEUE,
+        VIRTIO_PCI_LEGACY_ISR_QUEUE
+    );
     assert!(!restored.irq_asserted());
 }

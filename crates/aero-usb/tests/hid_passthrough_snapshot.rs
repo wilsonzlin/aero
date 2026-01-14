@@ -145,8 +145,8 @@ fn hid_passthrough_snapshot_preserves_pending_output_reports() {
     control_out_data(
         &mut dev,
         SetupPacket {
-            bm_request_type: 0x21, // HostToDevice | Class | Interface
-            b_request: 0x09,       // SET_REPORT
+            bm_request_type: 0x21,       // HostToDevice | Class | Interface
+            b_request: 0x09,             // SET_REPORT
             w_value: (2u16 << 8) | 2u16, // Output report, ID 2
             w_index: 0,
             w_length: 3, // report ID + payload
@@ -274,4 +274,3 @@ fn hid_passthrough_unconfigured_restore_drops_pending_reports_on_set_configurati
 
     assert!(matches!(restored.handle_in(1, 64), UsbInResult::Nak));
 }
-

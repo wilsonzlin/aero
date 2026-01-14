@@ -5,9 +5,9 @@ use aero_protocol::aerogpu::aerogpu_ring as protocol_ring;
 use memory::MemoryBus;
 
 pub use protocol_ring::{
-    AEROGPU_ALLOC_FLAG_NONE, AEROGPU_ALLOC_FLAG_READONLY, AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_ENGINE_0,
-    AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, AEROGPU_SUBMIT_FLAG_NONE, AEROGPU_SUBMIT_FLAG_NO_IRQ,
-    AEROGPU_SUBMIT_FLAG_PRESENT,
+    AEROGPU_ALLOC_FLAG_NONE, AEROGPU_ALLOC_FLAG_READONLY, AEROGPU_ALLOC_TABLE_MAGIC,
+    AEROGPU_ENGINE_0, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, AEROGPU_SUBMIT_FLAG_NONE,
+    AEROGPU_SUBMIT_FLAG_NO_IRQ, AEROGPU_SUBMIT_FLAG_PRESENT,
 };
 
 pub const AEROGPU_RING_HEADER_SIZE_BYTES: u64 = protocol_ring::AerogpuRingHeader::SIZE_BYTES as u64;
@@ -75,7 +75,8 @@ pub const ALLOC_TABLE_RESERVED0_OFFSET: u64 =
 
 pub const ALLOC_ENTRY_ALLOC_ID_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocEntry, alloc_id) as u64;
-pub const ALLOC_ENTRY_FLAGS_OFFSET: u64 = offset_of!(protocol_ring::AerogpuAllocEntry, flags) as u64;
+pub const ALLOC_ENTRY_FLAGS_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuAllocEntry, flags) as u64;
 pub const ALLOC_ENTRY_GPA_OFFSET: u64 = offset_of!(protocol_ring::AerogpuAllocEntry, gpa) as u64;
 pub const ALLOC_ENTRY_SIZE_BYTES_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocEntry, size_bytes) as u64;
@@ -396,8 +397,14 @@ mod tests {
         AeroGpuRingHeader::write_head(&mut mem, ring_gpa, 0xDEAD_BEEF);
         AeroGpuRingHeader::write_tail(&mut mem, ring_gpa, 0xCAFE_BABE);
 
-        assert_eq!(AeroGpuRingHeader::read_head(&mut mem, ring_gpa), 0xDEAD_BEEF);
-        assert_eq!(AeroGpuRingHeader::read_tail(&mut mem, ring_gpa), 0xCAFE_BABE);
+        assert_eq!(
+            AeroGpuRingHeader::read_head(&mut mem, ring_gpa),
+            0xDEAD_BEEF
+        );
+        assert_eq!(
+            AeroGpuRingHeader::read_tail(&mut mem, ring_gpa),
+            0xCAFE_BABE
+        );
         assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0xDEAD_BEEF);
         assert_eq!(mem.read_u32(ring_gpa + RING_TAIL_OFFSET), 0xCAFE_BABE);
     }
@@ -530,13 +537,16 @@ mod tests {
         let hdr = make_valid_header_with_abi(((AEROGPU_ABI_MAJOR + 1) << 16) | AEROGPU_ABI_MINOR);
         assert!(matches!(
             hdr.validate_prefix(),
-            Err(protocol_ring::AerogpuRingDecodeError::Abi(AerogpuAbiError::UnsupportedMajor { .. }))
+            Err(protocol_ring::AerogpuRingDecodeError::Abi(
+                AerogpuAbiError::UnsupportedMajor { .. }
+            ))
         ));
 
         let mut hdr = make_valid_header_with_abi(abi_version);
         hdr.entry_count = 3;
         hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
-            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64)
+            as u32;
         assert!(matches!(
             hdr.validate_prefix(),
             Err(protocol_ring::AerogpuRingDecodeError::BadEntryCount { found: 3 })
@@ -545,7 +555,8 @@ mod tests {
         let mut hdr = make_valid_header_with_abi(abi_version);
         hdr.entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES - 1;
         hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
-            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64)
+            as u32;
         assert!(matches!(
             hdr.validate_prefix(),
             Err(protocol_ring::AerogpuRingDecodeError::BadStrideField { .. })
@@ -625,8 +636,8 @@ mod tests {
         let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
         let entry_count = 8u32;
         let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
-        let ring_size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
-            + entry_count as u64 * entry_stride as u64) as u32;
+        let ring_size_bytes =
+            (AEROGPU_RING_HEADER_SIZE_BYTES + entry_count as u64 * entry_stride as u64) as u32;
 
         mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
         mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, abi_version);
@@ -649,15 +660,27 @@ mod tests {
 
         // Submit descriptor.
         let desc_gpa = 0x200u64;
-        mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
-        mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT);
+        mem.write_u32(
+            desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+            AeroGpuSubmitDesc::SIZE_BYTES,
+        );
+        mem.write_u32(
+            desc_gpa + SUBMIT_DESC_FLAGS_OFFSET,
+            AeroGpuSubmitDesc::FLAG_PRESENT,
+        );
         mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 123);
         mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 456);
         mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, 0xDEAD_BEEFu64);
         mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 0x1000);
-        mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0xCAFE_BABEu64);
+        mem.write_u64(
+            desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET,
+            0xCAFE_BABEu64,
+        );
         mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0x2000);
-        mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 0x1122_3344_5566_7788u64);
+        mem.write_u64(
+            desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET,
+            0x1122_3344_5566_7788u64,
+        );
 
         let desc = AeroGpuSubmitDesc::read_from(&mut mem, desc_gpa);
         assert_eq!(desc.desc_size_bytes, AeroGpuSubmitDesc::SIZE_BYTES);
@@ -674,13 +697,25 @@ mod tests {
         let alloc_hdr_gpa = 0x300u64;
         let alloc_entry_count = 1u32;
         let alloc_stride = AeroGpuAllocEntry::SIZE_BYTES;
-        let alloc_size_bytes =
-            (protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32) + alloc_entry_count * alloc_stride;
-        mem.write_u32(alloc_hdr_gpa + ALLOC_TABLE_MAGIC_OFFSET, AEROGPU_ALLOC_TABLE_MAGIC);
+        let alloc_size_bytes = (protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32)
+            + alloc_entry_count * alloc_stride;
+        mem.write_u32(
+            alloc_hdr_gpa + ALLOC_TABLE_MAGIC_OFFSET,
+            AEROGPU_ALLOC_TABLE_MAGIC,
+        );
         mem.write_u32(alloc_hdr_gpa + ALLOC_TABLE_ABI_VERSION_OFFSET, abi_version);
-        mem.write_u32(alloc_hdr_gpa + ALLOC_TABLE_SIZE_BYTES_OFFSET, alloc_size_bytes);
-        mem.write_u32(alloc_hdr_gpa + ALLOC_TABLE_ENTRY_COUNT_OFFSET, alloc_entry_count);
-        mem.write_u32(alloc_hdr_gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET, alloc_stride);
+        mem.write_u32(
+            alloc_hdr_gpa + ALLOC_TABLE_SIZE_BYTES_OFFSET,
+            alloc_size_bytes,
+        );
+        mem.write_u32(
+            alloc_hdr_gpa + ALLOC_TABLE_ENTRY_COUNT_OFFSET,
+            alloc_entry_count,
+        );
+        mem.write_u32(
+            alloc_hdr_gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET,
+            alloc_stride,
+        );
         mem.write_u32(alloc_hdr_gpa + 20, 0);
 
         let alloc_hdr = AeroGpuAllocTableHeader::read_from(&mut mem, alloc_hdr_gpa);
@@ -712,7 +747,8 @@ mod tests {
 
         // Duplicate alloc_id case (2 entries with the same alloc_id).
         let entry_count = 2u32;
-        let size_bytes = AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * AeroGpuAllocEntry::SIZE_BYTES;
+        let size_bytes =
+            AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * AeroGpuAllocEntry::SIZE_BYTES;
         mem.write_u32(table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
         mem.write_u32(table_gpa + 4, abi_version);
         mem.write_u32(table_gpa + 8, size_bytes);
@@ -744,7 +780,8 @@ mod tests {
 
         // Overflow case: gpa + size_bytes must not overflow.
         let entry_count = 1u32;
-        let size_bytes = AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * AeroGpuAllocEntry::SIZE_BYTES;
+        let size_bytes =
+            AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * AeroGpuAllocEntry::SIZE_BYTES;
         mem.write_u32(table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
         mem.write_u32(table_gpa + 4, abi_version);
         mem.write_u32(table_gpa + 8, size_bytes);
@@ -762,7 +799,10 @@ mod tests {
         let err = AeroGpuAllocTable::read_from_mem(&mut mem, table_gpa, size_bytes)
             .err()
             .unwrap();
-        assert!(matches!(err, AeroGpuAllocTableError::RangeOverflow { alloc_id: 2, .. }));
+        assert!(matches!(
+            err,
+            AeroGpuAllocTableError::RangeOverflow { alloc_id: 2, .. }
+        ));
     }
 
     #[test]
@@ -788,10 +828,7 @@ mod tests {
         mem.write_u64(e0 + 16, 0x1000);
         mem.write_u64(e0 + 24, 0);
         // Fill trailing bytes with a non-zero pattern to ensure we ignore unknown extensions.
-        mem.write_physical(
-            e0 + u64::from(AeroGpuAllocEntry::SIZE_BYTES),
-            &[0xAA; 16],
-        );
+        mem.write_physical(e0 + u64::from(AeroGpuAllocEntry::SIZE_BYTES), &[0xAA; 16]);
 
         let table = AeroGpuAllocTable::read_from_mem(&mut mem, table_gpa, size_bytes).unwrap();
         assert_eq!(table.header.entry_stride_bytes, entry_stride);
@@ -816,8 +853,14 @@ pub struct AeroGpuSubmitDesc {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AeroGpuSubmitDescError {
     Decode(protocol_ring::AerogpuRingDecodeError),
-    CmdFieldsMismatch { cmd_gpa: u64, cmd_size_bytes: u32 },
-    CmdRangeOverflow { cmd_gpa: u64, cmd_size_bytes: u32 },
+    CmdFieldsMismatch {
+        cmd_gpa: u64,
+        cmd_size_bytes: u32,
+    },
+    CmdRangeOverflow {
+        cmd_gpa: u64,
+        cmd_size_bytes: u32,
+    },
     AllocTableFieldsMismatch {
         alloc_table_gpa: u64,
         alloc_table_size_bytes: u32,
@@ -1018,15 +1061,24 @@ pub struct AeroGpuAllocTable {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AeroGpuAllocTableError {
     Decode(protocol_ring::AerogpuAllocTableDecodeError),
-    DuplicateAllocId { alloc_id: u32 },
-    InvalidAllocId { alloc_id: u32 },
-    InvalidSize { alloc_id: u32, size_bytes: u64 },
+    DuplicateAllocId {
+        alloc_id: u32,
+    },
+    InvalidAllocId {
+        alloc_id: u32,
+    },
+    InvalidSize {
+        alloc_id: u32,
+        size_bytes: u64,
+    },
     RangeOverflow {
         alloc_id: u32,
         gpa: u64,
         size_bytes: u64,
     },
-    AllocationTooLarge { size_bytes: u32 },
+    AllocationTooLarge {
+        size_bytes: u32,
+    },
 }
 
 impl From<protocol_ring::AerogpuAllocTableDecodeError> for AeroGpuAllocTableError {
@@ -1090,10 +1142,11 @@ impl AeroGpuAllocTable {
         alloc_table_gpa: u64,
         alloc_table_size_bytes: u32,
     ) -> Result<Self, AeroGpuAllocTableError> {
-        let size = usize::try_from(alloc_table_size_bytes)
-            .map_err(|_| AeroGpuAllocTableError::AllocationTooLarge {
+        let size = usize::try_from(alloc_table_size_bytes).map_err(|_| {
+            AeroGpuAllocTableError::AllocationTooLarge {
                 size_bytes: alloc_table_size_bytes,
-            })?;
+            }
+        })?;
 
         let mut buf = Vec::new();
         buf.try_reserve_exact(size)
@@ -1111,12 +1164,7 @@ impl AeroGpuAllocTable {
     }
 }
 
-pub fn write_fence_page(
-    mem: &mut dyn MemoryBus,
-    gpa: u64,
-    abi_version: u32,
-    completed_fence: u64,
-) {
+pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
     debug_assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
     debug_assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
     debug_assert!(FENCE_PAGE_COMPLETED_FENCE_OFFSET + 8 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);

@@ -1,8 +1,8 @@
+use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::profile::{
     AHCI_ABAR_BAR_INDEX, AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE, SATA_AHCI_ICH9,
 };
 use aero_devices::pci::{PciDevice, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
@@ -37,8 +37,11 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
     );
     // PCI config mechanism #1 exposes `0xCFC..=0xCFF` as the data window; the low 2 bits of the
     // config-space offset are encoded in the I/O port number.
-    pc.io
-        .write(PCI_CFG_DATA_PORT + u16::from(offset & 3), 2, u32::from(value));
+    pc.io.write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 3),
+        2,
+        u32::from(value),
+    );
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
@@ -931,9 +934,23 @@ fn pc_platform_ahci_delivers_msi_when_enabled_and_suppresses_intx() {
 
     // Program MSI address/data (single-vector, fixed delivery).
     let vector: u16 = 0x0066;
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x04, 0xFEE0_0000);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap + 0x04,
+        0xFEE0_0000,
+    );
     write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x08, 0);
-    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x0c, vector);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap + 0x0c,
+        vector,
+    );
 
     // Enable MSI (bit 0 of Message Control).
     let ctrl = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x02);
@@ -970,7 +987,8 @@ fn pc_platform_ahci_delivers_msi_when_enabled_and_suppresses_intx() {
         .write_u32(abar + PORT_BASE + PORT_REG_CLB, clb as u32);
     pc.memory
         .write_u32(abar + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
-    pc.memory.write_u32(abar + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(abar + PORT_BASE + PORT_REG_FB, fb as u32);
     pc.memory
         .write_u32(abar + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
 

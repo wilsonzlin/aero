@@ -531,9 +531,7 @@ impl HdaCodec {
     }
 
     fn capture_enabled(&self) -> bool {
-        self.afg_power_state == 0
-            && self.mic_pin.power_state == 0
-            && self.mic_pin.pin_ctl != 0
+        self.afg_power_state == 0 && self.mic_pin.power_state == 0 && self.mic_pin.pin_ctl != 0
     }
 
     pub fn input_stream_id(&self) -> u8 {
@@ -2816,13 +2814,7 @@ mod tests {
         let payload = [1u8; 8];
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            dma_write_stream_bytes(
-                &mut mem,
-                &mut sd,
-                &mut bdl_index,
-                &mut bdl_offset,
-                &payload,
-            );
+            dma_write_stream_bytes(&mut mem, &mut sd, &mut bdl_index, &mut bdl_offset, &payload);
         }));
         assert!(
             result.is_ok(),

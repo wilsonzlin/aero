@@ -24,10 +24,22 @@ async fn cors_preflight_max_age_is_configurable_for_bytes_and_metadata() {
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
-        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
-        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
-        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
-        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
+        (
+            "chunked-manifest",
+            "/v1/images/test.img/chunked/manifest.json",
+        ),
+        (
+            "chunked-chunk",
+            "/v1/images/test.img/chunked/chunks/00000000.bin",
+        ),
+        (
+            "chunked-manifest-v1",
+            "/v1/images/test.img/chunked/v1/manifest.json",
+        ),
+        (
+            "chunked-chunk-v1",
+            "/v1/images/test.img/chunked/v1/chunks/00000000.bin",
+        ),
     ] {
         let res = app
             .clone()
@@ -99,10 +111,22 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
-        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
-        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
-        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
-        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
+        (
+            "chunked-manifest",
+            "/v1/images/test.img/chunked/manifest.json",
+        ),
+        (
+            "chunked-chunk",
+            "/v1/images/test.img/chunked/chunks/00000000.bin",
+        ),
+        (
+            "chunked-manifest-v1",
+            "/v1/images/test.img/chunked/v1/manifest.json",
+        ),
+        (
+            "chunked-chunk-v1",
+            "/v1/images/test.img/chunked/v1/chunks/00000000.bin",
+        ),
         ("metrics", "/metrics"),
     ] {
         let res = app
@@ -130,10 +154,22 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
-        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
-        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
-        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
-        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
+        (
+            "chunked-manifest",
+            "/v1/images/test.img/chunked/manifest.json",
+        ),
+        (
+            "chunked-chunk",
+            "/v1/images/test.img/chunked/chunks/00000000.bin",
+        ),
+        (
+            "chunked-manifest-v1",
+            "/v1/images/test.img/chunked/v1/manifest.json",
+        ),
+        (
+            "chunked-chunk-v1",
+            "/v1/images/test.img/chunked/v1/chunks/00000000.bin",
+        ),
         ("metrics", "/metrics"),
     ] {
         let res = app
@@ -194,17 +230,29 @@ async fn cross_origin_resource_policy_is_configurable_for_bytes_and_chunked_endp
         .expect("write chunk (v1)");
 
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
-    let state = AppState::new(store)
-        .with_cross_origin_resource_policy("cross-origin".parse().unwrap());
+    let state =
+        AppState::new(store).with_cross_origin_resource_policy("cross-origin".parse().unwrap());
     let app = aero_storage_server::app(state);
 
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("data", "/v1/images/test.img/data"),
-        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
-        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
-        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
-        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
+        (
+            "chunked-manifest",
+            "/v1/images/test.img/chunked/manifest.json",
+        ),
+        (
+            "chunked-chunk",
+            "/v1/images/test.img/chunked/chunks/00000000.bin",
+        ),
+        (
+            "chunked-manifest-v1",
+            "/v1/images/test.img/chunked/v1/manifest.json",
+        ),
+        (
+            "chunked-chunk-v1",
+            "/v1/images/test.img/chunked/v1/chunks/00000000.bin",
+        ),
     ] {
         let res = app
             .clone()

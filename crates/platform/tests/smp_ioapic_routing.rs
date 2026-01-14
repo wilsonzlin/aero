@@ -38,4 +38,3 @@ fn ioapic_redirection_destination_ff_broadcasts_to_all_lapics() {
     assert_eq!(ints.lapic(0).get_pending_vector(), Some(vector as u8));
     assert_eq!(ints.lapic(1).get_pending_vector(), Some(vector as u8));
 }
-

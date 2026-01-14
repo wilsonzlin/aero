@@ -548,7 +548,9 @@ fn decode_control_state(buf: &[u8]) -> SnapshotResult<ControlState> {
         0 => {
             let len = d.u32()? as usize;
             if len > MAX_CONTROL_DATA_LEN {
-                return Err(SnapshotError::InvalidFieldEncoding("control in_data length"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "control in_data length",
+                ));
             }
             let data = d.bytes_vec(len)?;
             let offset = d.u32()? as usize;
@@ -1110,7 +1112,8 @@ mod tests {
 
     #[test]
     fn snapshot_restore_errors_on_usb_device_model_mismatch() {
-        let kb_snapshot = AttachedUsbDevice::new(Box::new(UsbHidKeyboardHandle::new())).save_state();
+        let kb_snapshot =
+            AttachedUsbDevice::new(Box::new(UsbHidKeyboardHandle::new())).save_state();
         let mut mouse = AttachedUsbDevice::new(Box::new(UsbHidMouseHandle::new()));
 
         match mouse.load_state(&kb_snapshot) {

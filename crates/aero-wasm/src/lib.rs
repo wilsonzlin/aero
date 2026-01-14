@@ -140,8 +140,8 @@ use aero_shared::shared_framebuffer::{
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
 use aero_shared::scanout_state::{
-    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
-    SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM, SCANOUT_STATE_BYTE_LEN,
+    SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB,
+    SCANOUT_SOURCE_WDDM, SCANOUT_STATE_BYTE_LEN, ScanoutState, ScanoutStateUpdate,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -316,8 +316,8 @@ pub fn jit_abi_constants() -> JsValue {
             CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
         };
         use aero_jit_x86::jit_ctx::{
-            CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext, TIER2_CTX_OFFSET,
-            TIER2_CTX_SIZE, TRACE_EXIT_REASON_OFFSET,
+            CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext,
+            TIER2_CTX_OFFSET, TIER2_CTX_SIZE, TRACE_EXIT_REASON_OFFSET,
         };
         use aero_jit_x86::{
             JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
@@ -810,9 +810,8 @@ mod shared_guest_ram_layout_validation_tests {
     }
 
     fn ensure_reserved_pages() {
-        let reserved_pages =
-            (super::guest_layout::RUNTIME_RESERVED_BYTES / super::guest_layout::WASM_PAGE_BYTES)
-                as usize;
+        let reserved_pages = (super::guest_layout::RUNTIME_RESERVED_BYTES
+            / super::guest_layout::WASM_PAGE_BYTES) as usize;
         let cur = core::arch::wasm32::memory_size(0);
         if cur < reserved_pages {
             let delta = reserved_pages - cur;
@@ -837,9 +836,12 @@ mod shared_guest_ram_layout_validation_tests {
     fn rejects_unaligned_guest_base() {
         ensure_reserved_pages();
         let base = super::guest_layout::RUNTIME_RESERVED_BYTES as u32 + 1;
-        let err =
-            validate_shared_guest_ram_layout("test", base, super::guest_layout::WASM_PAGE_BYTES as u32)
-                .expect_err("expected validation error");
+        let err = validate_shared_guest_ram_layout(
+            "test",
+            base,
+            super::guest_layout::WASM_PAGE_BYTES as u32,
+        )
+        .expect_err("expected validation error");
         let msg = js_err_message(err);
         assert!(msg.contains("64KiB-aligned"), "unexpected message: {msg}");
     }
@@ -852,7 +854,10 @@ mod shared_guest_ram_layout_validation_tests {
         let err = validate_shared_guest_ram_layout("test", base, too_big)
             .expect_err("expected validation error");
         let msg = js_err_message(err);
-        assert!(msg.contains("GUEST_PCI_MMIO_BASE"), "unexpected message: {msg}");
+        assert!(
+            msg.contains("GUEST_PCI_MMIO_BASE"),
+            "unexpected message: {msg}"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1643,8 +1648,8 @@ mod webhid_passthrough_bridge_tests {
 
     #[wasm_bindgen_test]
     fn webhid_passthrough_bridge_omits_interrupt_out_for_large_output_reports() {
-        let collections_json =
-            serde_wasm_bindgen::to_value(&large_output_collections()).expect("collections to JsValue");
+        let collections_json = serde_wasm_bindgen::to_value(&large_output_collections())
+            .expect("collections to JsValue");
         let bridge = WebHidPassthroughBridge::new(
             0x1234,
             0x5678,
@@ -2825,9 +2830,9 @@ mod legacy_demo_vm {
                 crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e)
             })?;
 
-            self.inner
-                .save_snapshot_full_to(&mut file)
-                .map_err(|e| crate::opfs_snapshot_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e))?;
+            self.inner.save_snapshot_full_to(&mut file).map_err(|e| {
+                crate::opfs_snapshot_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e)
+            })?;
 
             file.close().map_err(|e| {
                 crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e)
@@ -2841,9 +2846,9 @@ mod legacy_demo_vm {
                 crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e)
             })?;
 
-            self.inner
-                .save_snapshot_dirty_to(&mut file)
-                .map_err(|e| crate::opfs_snapshot_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e))?;
+            self.inner.save_snapshot_dirty_to(&mut file).map_err(|e| {
+                crate::opfs_snapshot_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e)
+            })?;
 
             file.close().map_err(|e| {
                 crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e)
@@ -3401,12 +3406,11 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
 }
 
 #[cfg(target_arch = "wasm32")]
-fn opfs_context_error_to_js(
-    operation: &str,
-    path: &str,
-    err: impl core::fmt::Display,
-) -> JsValue {
-    Error::new(&format!("{operation} failed for OPFS path \"{path}\": {err}")).into()
+fn opfs_context_error_to_js(operation: &str, path: &str, err: impl core::fmt::Display) -> JsValue {
+    Error::new(&format!(
+        "{operation} failed for OPFS path \"{path}\": {err}"
+    ))
+    .into()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -3674,7 +3678,9 @@ impl Machine {
         let cfg = aero_machine::MachineConfig::browser_defaults(guest_size_u64);
 
         let mem = memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
-            js_error(format!("Machine.new_shared: failed to init shared guest RAM backend: {e}"))
+            js_error(format!(
+                "Machine.new_shared: failed to init shared guest RAM backend: {e}"
+            ))
         })?;
         let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -3766,7 +3772,9 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
-            .map_err(|e| opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e))
+            .map_err(|e| {
+                opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
+            })
     }
 
     /// Open an existing OPFS-backed ISO image (using the file's current size), attach it as the
@@ -3925,7 +3933,13 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
-            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_secondary_master_iso_opfs_existing", &path, e))
+            .map_err(|e| {
+                opfs_context_error_to_js(
+                    "Machine.attach_ide_secondary_master_iso_opfs_existing",
+                    &path,
+                    e,
+                )
+            })
     }
 
     /// Open an existing OPFS-backed ISO image, attach it as the IDE secondary channel master ATAPI
@@ -3973,7 +3987,9 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
-            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs", &path, e))
+            .map_err(|e| {
+                opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs", &path, e)
+            })
     }
 
     /// Open (or create) an OPFS-backed disk image and attach it as the IDE primary channel master
@@ -4000,7 +4016,13 @@ impl Machine {
                 })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
-            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs_with_progress", &path, e))
+            .map_err(|e| {
+                opfs_context_error_to_js(
+                    "Machine.attach_ide_primary_master_disk_opfs_with_progress",
+                    &path,
+                    e,
+                )
+            })
     }
 
     /// Open (or create) an OPFS-backed disk image, attach it as the IDE primary channel master ATA
@@ -4072,7 +4094,13 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
-            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs_existing", &path, e))
+            .map_err(|e| {
+                opfs_context_error_to_js(
+                    "Machine.attach_ide_primary_master_disk_opfs_existing",
+                    &path,
+                    e,
+                )
+            })
     }
 
     /// Open an existing OPFS-backed disk image, attach it as the IDE primary channel master ATA
@@ -4150,9 +4178,9 @@ impl Machine {
                 "Machine.set_disk_aerospar_opfs_create failed for OPFS path \"{path}\": {e}"
             ))
         })?;
-        self.inner
-            .set_disk_backend(Box::new(disk))
-            .map_err(|e| opfs_context_error_to_js("Machine.set_disk_aerospar_opfs_create", &path, e))
+        self.inner.set_disk_backend(Box::new(disk)).map_err(|e| {
+            opfs_context_error_to_js("Machine.set_disk_aerospar_opfs_create", &path, e)
+        })
     }
 
     /// Create a new OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
@@ -4364,11 +4392,15 @@ impl Machine {
     pub async fn attach_install_media_iso_opfs(&mut self, path: String) -> Result<(), JsValue> {
         let disk = aero_opfs::OpfsBackend::open_existing(&path)
             .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs", &path, e))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs", &path, e)
+            })?;
 
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
-            .map_err(|e| opfs_context_error_to_js("Machine.attach_install_media_iso_opfs", &path, e))
+            .map_err(|e| {
+                opfs_context_error_to_js("Machine.attach_install_media_iso_opfs", &path, e)
+            })
     }
 
     /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM and set the
@@ -4404,13 +4436,21 @@ impl Machine {
         let disk = aero_opfs::OpfsBackend::open_existing(&path)
             .await
             .map_err(|e| {
-                opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_for_restore", &path, e)
+                opfs_disk_error_to_js(
+                    "Machine.attach_install_media_iso_opfs_for_restore",
+                    &path,
+                    e,
+                )
             })?;
 
         self.inner
             .attach_ide_secondary_master_iso_for_restore(Box::new(disk))
             .map_err(|e| {
-                opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_for_restore", &path, e)
+                opfs_context_error_to_js(
+                    "Machine.attach_install_media_iso_opfs_for_restore",
+                    &path,
+                    e,
+                )
             })
     }
 
@@ -4473,8 +4513,10 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_cow(overlay)", &paths, e)
             })?;
 
-        let cow_disk = open_or_create_cow_disk(base_disk, overlay_storage, overlay_block_size_bytes)
-            .map_err(|e| opfs_context_error_to_js("Machine.set_primary_hdd_opfs_cow", &paths, e))?;
+        let cow_disk =
+            open_or_create_cow_disk(base_disk, overlay_storage, overlay_block_size_bytes).map_err(
+                |e| opfs_context_error_to_js("Machine.set_primary_hdd_opfs_cow", &paths, e),
+            )?;
 
         self.inner
             .set_disk_backend(Box::new(cow_disk))
@@ -4505,7 +4547,9 @@ impl Machine {
         let overlay_path = path.clone();
         let backend = aero_opfs::OpfsBackend::open_existing(&path)
             .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_existing", &path, e))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_existing", &path, e)
+            })?;
         self.inner
             .set_disk_backend(Box::new(backend))
             .map_err(|e| {
@@ -4754,9 +4798,7 @@ impl Machine {
 
     /// Return the current DebugCon output length without copying the bytes into JS.
     pub fn debugcon_output_len(&mut self) -> u32 {
-        self.inner
-            .debugcon_output_len()
-            .min(u64::from(u32::MAX)) as u32
+        self.inner.debugcon_output_len().min(u64::from(u32::MAX)) as u32
     }
 
     // -------------------------------------------------------------------------
@@ -5567,13 +5609,16 @@ impl Machine {
             return Ok(());
         };
 
-        let opfs_error =
-            |disk_id: u32, which: &str, path: &str, err: aero_opfs::DiskError| -> JsValue {
-                let op = format!(
-                    "Machine.reattach_restored_disks_from_opfs: open OPFS {which} for disk_id={disk_id}"
-                );
-                opfs_disk_error_to_js(&op, path, err)
-            };
+        let opfs_error = |disk_id: u32,
+                          which: &str,
+                          path: &str,
+                          err: aero_opfs::DiskError|
+         -> JsValue {
+            let op = format!(
+                "Machine.reattach_restored_disks_from_opfs: open OPFS {which} for disk_id={disk_id}"
+            );
+            opfs_disk_error_to_js(&op, path, err)
+        };
 
         for disk in overlays.disks {
             let disk_id = disk.disk_id;
@@ -5774,7 +5819,9 @@ impl Machine {
 
         self.inner
             .restore_snapshot_from_checked(&mut file)
-            .map_err(|e| opfs_snapshot_error_to_js("Machine.restore_snapshot_from_opfs", &path, e))?;
+            .map_err(|e| {
+                opfs_snapshot_error_to_js("Machine.restore_snapshot_from_opfs", &path, e)
+            })?;
 
         file.close()
             .map_err(|e| opfs_io_error_to_js("Machine.restore_snapshot_from_opfs", &path, e))?;
@@ -6075,7 +6122,7 @@ mod machine_opfs_disk_tests {
 mod machine_primary_hdd_cow_disk_tests {
     use super::*;
 
-    use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
 
     #[test]
     fn creates_overlay_then_reopens_without_mutating_base() {
@@ -6084,7 +6131,8 @@ mod machine_primary_hdd_cow_disk_tests {
         let mut base_bytes = vec![0u8; base_size as usize];
         base_bytes[..SECTOR_SIZE].fill(0xAA);
 
-        let base_disk = RawDisk::open(MemBackend::from_vec(base_bytes)).expect("RawDisk::open base");
+        let base_disk =
+            RawDisk::open(MemBackend::from_vec(base_bytes)).expect("RawDisk::open base");
         let overlay_backend = MemBackend::new();
 
         let mut cow =

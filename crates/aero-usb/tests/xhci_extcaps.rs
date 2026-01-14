@@ -98,7 +98,10 @@ fn supported_protocol_capability_usb2_matches_port_count() {
     let dword3 = xhci.mmio_read_u32(&mut mem, xecp + 12);
     let psic = (dword3 & 0xf) as u8;
     let psio = ((dword3 >> 16) & 0xffff) as u16;
-    assert_eq!(psio, 4, "PSI descriptor table should start at DWORD4 (PSIO=4)");
+    assert_eq!(
+        psio, 4,
+        "PSI descriptor table should start at DWORD4 (PSIO=4)"
+    );
     assert!(
         psic >= 2,
         "USB2 Supported Protocol should expose at least LS+FS PSI descriptors"

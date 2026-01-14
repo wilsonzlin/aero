@@ -395,4 +395,3 @@ fn tcp_proxy_echo_end_to_end() {
 
     server_handle.join().unwrap();
 }
-

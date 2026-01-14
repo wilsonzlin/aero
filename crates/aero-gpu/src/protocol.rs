@@ -1040,12 +1040,13 @@ pub fn parse_cmd_stream(
                 }
             }
             Some(AeroGpuOpcode::SetUnorderedAccessBuffers) => {
-                let cmd: protocol::AerogpuCmdSetUnorderedAccessBuffers = read_packed_prefix(packet)?;
+                let cmd: protocol::AerogpuCmdSetUnorderedAccessBuffers =
+                    read_packed_prefix(packet)?;
                 let bindings_start = size_of::<protocol::AerogpuCmdSetUnorderedAccessBuffers>();
                 let uav_count = u32::from_le(cmd.uav_count);
                 let stage_ex = u32::from_le(cmd.reserved0);
-                let count =
-                    usize::try_from(uav_count).map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let count = usize::try_from(uav_count)
+                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let bindings_len = count
                     .checked_mul(size_of::<protocol::AerogpuUnorderedAccessBufferBinding>())
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;

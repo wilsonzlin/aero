@@ -154,11 +154,7 @@ fn sgl_descriptor_count_is_capped() {
     let cqe = read_cqe(&mut mem, io_cq);
     assert_eq!(cqe.cid, 0x10);
     // INVALID_FIELD: SCT=0, SC=0x2, DNR=1 -> 0x4004 (phase bit masked out).
-    assert_eq!(
-        cqe.status & !0x1,
-        0x4004,
-        "expected INVALID_FIELD status"
-    );
+    assert_eq!(cqe.status & !0x1, 0x4004, "expected INVALID_FIELD status");
 }
 
 #[test]

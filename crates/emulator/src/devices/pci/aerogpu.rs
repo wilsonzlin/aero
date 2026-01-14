@@ -269,9 +269,7 @@ impl AeroGpuPciDevice {
         }
         let mut out = 0u64;
         for i in 0..size {
-            let b = self
-                .vga
-                .mem_read_u8(paddr.wrapping_add(i as u32)) as u64;
+            let b = self.vga.mem_read_u8(paddr.wrapping_add(i as u32)) as u64;
             out |= b << (i * 8);
         }
         out
@@ -502,7 +500,11 @@ impl AeroGpuPciDevice {
             return;
         }
 
-        state.publish(self.regs.scanout0.to_scanout_state_update(SCANOUT_SOURCE_WDDM));
+        state.publish(
+            self.regs
+                .scanout0
+                .to_scanout_state_update(SCANOUT_SOURCE_WDDM),
+        );
         self.last_published_scanout0 = Some(desc);
     }
 
@@ -851,15 +853,15 @@ mod tests {
 
     use super::*;
 
+    use crate::devices::aerogpu_regs::{AerogpuErrorCode, FEATURE_ERROR_INFO};
+    use crate::gpu_worker::aerogpu_backend::{
+        AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    };
     use aero_protocol::aerogpu::aerogpu_cmd::{
         AerogpuCmdHdr, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdStreamHeader,
         AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
     };
     use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
-    use crate::devices::aerogpu_regs::{AerogpuErrorCode, FEATURE_ERROR_INFO};
-    use crate::gpu_worker::aerogpu_backend::{
-        AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
-    };
     use memory::bus::PhysicalMemoryBus;
     use memory::phys::DenseMemory;
 
@@ -944,7 +946,12 @@ mod tests {
         dev.config_write(0x04, 2, (1u32 << 1) | (1u32 << 2));
 
         // Program IRQ mask (fence + error).
-        dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE | irq_bits::ERROR);
+        dev.mmio_write(
+            &mut mem,
+            mmio::IRQ_ENABLE,
+            4,
+            irq_bits::FENCE | irq_bits::ERROR,
+        );
 
         // Ring + fence page.
         let ring_gpa: u64 = 0x1000;
@@ -980,11 +987,13 @@ mod tests {
         let entry_count: u32 = 8;
         let entry_stride: u32 = crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES;
         let ring_size_bytes: u32 = (crate::devices::aerogpu_ring::AEROGPU_RING_HEADER_SIZE_BYTES
-            + u64::from(entry_count) * u64::from(entry_stride)) as u32;
+            + u64::from(entry_count) * u64::from(entry_stride))
+            as u32;
 
         let mut ring_hdr =
             [0u8; crate::devices::aerogpu_ring::AeroGpuRingHeader::SIZE_BYTES as usize];
-        ring_hdr[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC.to_le_bytes());
+        ring_hdr[0..4]
+            .copy_from_slice(&crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC.to_le_bytes());
         ring_hdr[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
         ring_hdr[8..12].copy_from_slice(&ring_size_bytes.to_le_bytes());
         ring_hdr[12..16].copy_from_slice(&entry_count.to_le_bytes());
@@ -992,13 +1001,14 @@ mod tests {
         ring_hdr[20..24].copy_from_slice(&0u32.to_le_bytes()); // flags
         ring_hdr[24..28].copy_from_slice(&0u32.to_le_bytes()); // head
         ring_hdr[28..32].copy_from_slice(&1u32.to_le_bytes()); // tail (1 pending)
-        // reserved fields already zero.
+                                                               // reserved fields already zero.
         mem.write_physical(ring_gpa, &ring_hdr);
 
         // Submission descriptor at slot 0.
-        let mut desc =
-            [0u8; crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES as usize];
-        desc[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES.to_le_bytes());
+        let mut desc = [0u8; crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES as usize];
+        desc[0..4].copy_from_slice(
+            &crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES.to_le_bytes(),
+        );
         desc[4..8].copy_from_slice(&0u32.to_le_bytes()); // flags
         desc[8..12].copy_from_slice(&0u32.to_le_bytes()); // context_id
         desc[12..16].copy_from_slice(&0u32.to_le_bytes()); // engine_id
@@ -1047,7 +1057,8 @@ mod tests {
     }
 
     #[test]
-    fn backend_exec_error_with_vsync_present_sets_error_before_fence_and_fence_advances_on_vblank() {
+    fn backend_exec_error_with_vsync_present_sets_error_before_fence_and_fence_advances_on_vblank()
+    {
         let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
 
         let mut cfg = AeroGpuDeviceConfig::default();
@@ -1059,7 +1070,12 @@ mod tests {
         dev.config_write(0x04, 2, (1u32 << 1) | (1u32 << 2));
 
         // Program IRQ mask (fence + error).
-        dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE | irq_bits::ERROR);
+        dev.mmio_write(
+            &mut mem,
+            mmio::IRQ_ENABLE,
+            4,
+            irq_bits::FENCE | irq_bits::ERROR,
+        );
 
         // Enable scanout0 so vblank pacing is active (needed for VSYNC presents).
         dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
@@ -1105,10 +1121,13 @@ mod tests {
         let entry_count: u32 = 8;
         let entry_stride: u32 = crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES;
         let ring_size_bytes: u32 = (crate::devices::aerogpu_ring::AEROGPU_RING_HEADER_SIZE_BYTES
-            + u64::from(entry_count) * u64::from(entry_stride)) as u32;
+            + u64::from(entry_count) * u64::from(entry_stride))
+            as u32;
 
-        let mut ring_hdr = [0u8; crate::devices::aerogpu_ring::AeroGpuRingHeader::SIZE_BYTES as usize];
-        ring_hdr[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC.to_le_bytes());
+        let mut ring_hdr =
+            [0u8; crate::devices::aerogpu_ring::AeroGpuRingHeader::SIZE_BYTES as usize];
+        ring_hdr[0..4]
+            .copy_from_slice(&crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC.to_le_bytes());
         ring_hdr[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
         ring_hdr[8..12].copy_from_slice(&ring_size_bytes.to_le_bytes());
         ring_hdr[12..16].copy_from_slice(&entry_count.to_le_bytes());
@@ -1116,12 +1135,14 @@ mod tests {
         ring_hdr[20..24].copy_from_slice(&0u32.to_le_bytes()); // flags
         ring_hdr[24..28].copy_from_slice(&0u32.to_le_bytes()); // head
         ring_hdr[28..32].copy_from_slice(&1u32.to_le_bytes()); // tail (1 pending)
-        // reserved fields already zero.
+                                                               // reserved fields already zero.
         mem.write_physical(ring_gpa, &ring_hdr);
 
         // Submission descriptor at slot 0.
         let mut desc = [0u8; crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES as usize];
-        desc[0..4].copy_from_slice(&crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES.to_le_bytes());
+        desc[0..4].copy_from_slice(
+            &crate::devices::aerogpu_ring::AeroGpuSubmitDesc::SIZE_BYTES.to_le_bytes(),
+        );
         desc[4..8].copy_from_slice(
             &crate::devices::aerogpu_ring::AeroGpuSubmitDesc::FLAG_PRESENT.to_le_bytes(),
         );

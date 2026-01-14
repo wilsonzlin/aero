@@ -2,13 +2,13 @@
 fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
+use aero_devices::irq::NoIrq;
+#[cfg(not(target_arch = "wasm32"))]
 use aero_devices_nvme::{DiskBackend, DiskError, DiskResult, NvmeController};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_devices_storage::ahci::AhciController;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_devices_storage::ata::AtaDrive;
-#[cfg(not(target_arch = "wasm32"))]
-use aero_devices::irq::NoIrq;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_storage::{MemBackend, RawDisk};
 #[cfg(not(target_arch = "wasm32"))]

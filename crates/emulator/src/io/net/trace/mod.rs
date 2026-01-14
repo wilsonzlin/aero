@@ -5,4 +5,3 @@
 //! used by networking tooling (and tests) without pulling in the emulator crate.
 
 pub use aero_net_trace::*;
-

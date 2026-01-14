@@ -69,7 +69,12 @@ fn udp_relay_vectors() {
 
         let version = v.version.expect("version");
         let guest_port = v.guest_port.expect("guestPort");
-        let remote_ip: IpAddr = v.remote_ip.as_deref().expect("remoteIp").parse().expect("ip");
+        let remote_ip: IpAddr = v
+            .remote_ip
+            .as_deref()
+            .expect("remoteIp")
+            .parse()
+            .expect("ip");
         let remote_port = v.remote_port.expect("remotePort");
         let payload = decode_b64(v.payload_b64.as_deref().expect("payload_b64"));
 
@@ -109,8 +114,8 @@ fn udp_relay_vectors() {
                 address_family: want_af,
             },
         };
-        let encoded =
-            encode_datagram(datagram).unwrap_or_else(|err| panic!("vector {} encode: {err}", v.name));
+        let encoded = encode_datagram(datagram)
+            .unwrap_or_else(|err| panic!("vector {} encode: {err}", v.name));
         assert_eq!(encoded, frame, "vector {}", v.name);
     }
 }
@@ -143,4 +148,3 @@ fn rejects_oversized_payloads() {
         Err(aero_udp_relay_protocol::DecodeError::PayloadTooLarge { .. })
     ));
 }
-

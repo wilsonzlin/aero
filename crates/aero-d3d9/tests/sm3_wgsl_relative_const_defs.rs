@@ -1,10 +1,9 @@
 use aero_d3d9::sm3::decode::{SrcModifier, Swizzle, SwizzleComponent, WriteMask};
+use aero_d3d9::sm3::generate_wgsl;
 use aero_d3d9::sm3::ir::{
-    Block, ConstDefF32, Dst, InstModifiers, IrOp, RegFile, RegRef, RelativeRef, ShaderIr, Src,
-    Stmt,
+    Block, ConstDefF32, Dst, InstModifiers, IrOp, RegFile, RegRef, RelativeRef, ShaderIr, Src, Stmt,
 };
 use aero_d3d9::sm3::types::{ShaderStage, ShaderVersion};
-use aero_d3d9::sm3::generate_wgsl;
 
 #[test]
 fn relative_constant_def_overrides_do_not_blow_up_wgsl_size() {

@@ -43,32 +43,32 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
+use crate::sm4::opcode as sm4_opcode;
 use crate::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, ShaderTranslation,
     Sm4Program,
 };
-use crate::sm4::opcode as sm4_opcode;
 
 use super::bindings::{BindingState, BoundBuffer, BoundConstantBuffer, BoundSampler, ShaderStage};
 use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
-use super::indirect_args::DrawIndexedIndirectArgs;
 use super::index_pulling::{
     IndexPullingParams, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
 };
+use super::indirect_args::DrawIndexedIndirectArgs;
+use super::pipeline_layout_cache::PipelineLayoutCache;
+use super::reflection_bindings;
+use super::scratch_allocator::GpuScratchAllocator;
 #[cfg(target_arch = "wasm32")]
 use super::shader_cache::{
     PersistedBinding, PersistedShaderArtifact, PersistedShaderStage,
     PersistedVsInputSignatureElement, ShaderCache as PersistentShaderCache, ShaderCacheSource,
     ShaderCacheStats, ShaderTranslationFlags as PersistentShaderTranslationFlags,
 };
-use super::pipeline_layout_cache::PipelineLayoutCache;
-use super::reflection_bindings;
+use super::tessellation::TessellationRuntime;
 use super::vertex_pulling::{
     VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
     VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
-use super::scratch_allocator::GpuScratchAllocator;
-use super::tessellation::TessellationRuntime;
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
@@ -176,7 +176,7 @@ const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 = 32;
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 =
     core::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
 const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
-// `vec4<f32>` color + `vec4<u32>` counts.
+                                                    // `vec4<f32>` color + `vec4<u32>` counts.
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
 
 fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
@@ -1448,9 +1448,8 @@ impl AerogpuD3d11Executor {
 
         let gpu_scratch = GpuScratchAllocator::new(&device);
         #[cfg(target_arch = "wasm32")]
-        let persistent_shader_cache_flags = PersistentShaderTranslationFlags::new(Some(
-            compute_wgpu_caps_hash(&device, backend),
-        ));
+        let persistent_shader_cache_flags =
+            PersistentShaderTranslationFlags::new(Some(compute_wgpu_caps_hash(&device, backend)));
         #[cfg(target_arch = "wasm32")]
         let persistent_shader_cache = PersistentShaderCache::new();
 
@@ -2287,7 +2286,12 @@ impl AerogpuD3d11Executor {
         let mut pending_writebacks = Vec::new();
         #[cfg(target_arch = "wasm32")]
         let report = self
-            .execute_cmd_stream_inner_async(stream_bytes, allocs, guest_mem, &mut pending_writebacks)
+            .execute_cmd_stream_inner_async(
+                stream_bytes,
+                allocs,
+                guest_mem,
+                &mut pending_writebacks,
+            )
             .await?;
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -2904,7 +2908,9 @@ impl AerogpuD3d11Executor {
             OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes),
             OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes),
             OPCODE_SET_SHADER_RESOURCE_BUFFERS => self.exec_set_shader_resource_buffers(cmd_bytes),
-            OPCODE_SET_UNORDERED_ACCESS_BUFFERS => self.exec_set_unordered_access_buffers(cmd_bytes),
+            OPCODE_SET_UNORDERED_ACCESS_BUFFERS => {
+                self.exec_set_unordered_access_buffers(cmd_bytes)
+            }
             OPCODE_CLEAR => self.exec_clear(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_DISPATCH => self.exec_dispatch(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_PRESENT => self.exec_present(encoder, cmd_bytes, report),
@@ -2992,10 +2998,7 @@ impl AerogpuD3d11Executor {
             OPCODE_DRAW => {
                 // struct aerogpu_cmd_draw (24 bytes)
                 if cmd_bytes.len() < 24 {
-                    bail!(
-                        "DRAW: expected at least 24 bytes, got {}",
-                        cmd_bytes.len()
-                    );
+                    bail!("DRAW: expected at least 24 bytes, got {}", cmd_bytes.len());
                 }
                 VertexPullingDrawParams {
                     first_vertex: read_u32_le(cmd_bytes, 16)?,
@@ -3036,7 +3039,9 @@ impl AerogpuD3d11Executor {
                         )
                     })?;
                     first_index = first_index.checked_add(offset_indices).ok_or_else(|| {
-                        anyhow!("DRAW_INDEXED first_index overflows after applying index buffer offset")
+                        anyhow!(
+                            "DRAW_INDEXED first_index overflows after applying index buffer offset"
+                        )
                     })?;
                 }
                 VertexPullingDrawParams {
@@ -3263,7 +3268,8 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
-        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
+        let uniform_align =
+            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
         let expanded_vertex_count = u64::from(primitive_count)
             .checked_mul(3)
             .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
@@ -3305,7 +3311,11 @@ impl AerogpuD3d11Executor {
         params_bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
         let params_alloc = self
             .expansion_scratch
-            .alloc_metadata(&self.device, GEOMETRY_PREPASS_PARAMS_SIZE_BYTES, uniform_align)
+            .alloc_metadata(
+                &self.device,
+                GEOMETRY_PREPASS_PARAMS_SIZE_BYTES,
+                uniform_align,
+            )
             .map_err(|e| anyhow!("geometry prepass: alloc params buffer: {e}"))?;
         self.queue.write_buffer(
             params_alloc.buffer.as_ref(),
@@ -3326,8 +3336,9 @@ impl AerogpuD3d11Executor {
         //   input layout is bound.
         // - Indexed draws can still bind index pulling even without an input layout (useful for
         //   future VS-as-compute shaders that use only `SV_VertexID`).
-        let mut vertex_pulling_bgl: Option<aero_gpu::bindings::layout_cache::CachedBindGroupLayout> =
-            None;
+        let mut vertex_pulling_bgl: Option<
+            aero_gpu::bindings::layout_cache::CachedBindGroupLayout,
+        > = None;
         let mut vertex_pulling_bg: Option<wgpu::BindGroup> = None;
         let mut vertex_pulling_cs_wgsl: Option<String> = None;
         if let Some(layout_handle) = self.state.input_layout {
@@ -3372,7 +3383,10 @@ impl AerogpuD3d11Executor {
                     .and_then(|v| *v)
                     .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
                 let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
-                    anyhow!("vertex buffer slot {d3d_slot} offset {} out of range", vb.offset_bytes)
+                    anyhow!(
+                        "vertex buffer slot {d3d_slot} offset {} out of range",
+                        vb.offset_bytes
+                    )
                 })?;
 
                 let buf = self
@@ -3399,8 +3413,7 @@ impl AerogpuD3d11Executor {
             );
 
             let mut vp_bgl_entries = pulling.bind_group_layout_entries();
-            let vp_bindings =
-                compute_prepass_vertex_pulling_binding_numbers(buffers.len() as u32);
+            let vp_bindings = compute_prepass_vertex_pulling_binding_numbers(buffers.len() as u32);
             let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
                 Vec::with_capacity(buffers.len() + 3);
             for (slot, buf) in buffers.iter().enumerate() {
@@ -3679,47 +3692,47 @@ impl AerogpuD3d11Executor {
         let empty_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &[]);
-        let (compute_layout_key, compute_pipeline_layout) = if let Some(vp_bgl) = &vertex_pulling_bgl
-        {
-            // Vertex pulling WGSL is written to `@group(VERTEX_PULLING_GROUP)`. This compute prepass
-            // uses `@group(0)` for its output buffers, so we must insert empty bind-group layouts for
-            // any intermediate groups so the pipeline layout has a compatible layout at
-            // `VERTEX_PULLING_GROUP`.
-            let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
-            let mut layouts: Vec<&wgpu::BindGroupLayout> =
-                Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
-            hashes.push(compute_bgl.hash);
-            layouts.push(compute_bgl.layout.as_ref());
-            for _ in 1..VERTEX_PULLING_GROUP {
-                hashes.push(empty_bgl.hash);
-                layouts.push(empty_bgl.layout.as_ref());
-            }
-            hashes.push(vp_bgl.hash);
-            layouts.push(vp_bgl.layout.as_ref());
+        let (compute_layout_key, compute_pipeline_layout) =
+            if let Some(vp_bgl) = &vertex_pulling_bgl {
+                // Vertex pulling WGSL is written to `@group(VERTEX_PULLING_GROUP)`. This compute prepass
+                // uses `@group(0)` for its output buffers, so we must insert empty bind-group layouts for
+                // any intermediate groups so the pipeline layout has a compatible layout at
+                // `VERTEX_PULLING_GROUP`.
+                let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+                let mut layouts: Vec<&wgpu::BindGroupLayout> =
+                    Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+                hashes.push(compute_bgl.hash);
+                layouts.push(compute_bgl.layout.as_ref());
+                for _ in 1..VERTEX_PULLING_GROUP {
+                    hashes.push(empty_bgl.hash);
+                    layouts.push(empty_bgl.layout.as_ref());
+                }
+                hashes.push(vp_bgl.hash);
+                layouts.push(vp_bgl.layout.as_ref());
 
-            let key = PipelineLayoutKey {
-                bind_group_layout_hashes: hashes,
+                let key = PipelineLayoutKey {
+                    bind_group_layout_hashes: hashes,
+                };
+                let layout = self.pipeline_layout_cache.get_or_create(
+                    &self.device,
+                    &key,
+                    &layouts,
+                    Some("aerogpu_cmd geometry prepass pipeline layout (vertex pulling)"),
+                );
+                (key, layout)
+            } else {
+                let key = PipelineLayoutKey {
+                    bind_group_layout_hashes: vec![compute_bgl.hash],
+                };
+                let layouts = [compute_bgl.layout.as_ref()];
+                let layout = self.pipeline_layout_cache.get_or_create(
+                    &self.device,
+                    &key,
+                    &layouts,
+                    Some("aerogpu_cmd geometry prepass pipeline layout"),
+                );
+                (key, layout)
             };
-            let layout = self.pipeline_layout_cache.get_or_create(
-                &self.device,
-                &key,
-                &layouts,
-                Some("aerogpu_cmd geometry prepass pipeline layout (vertex pulling)"),
-            );
-            (key, layout)
-        } else {
-            let key = PipelineLayoutKey {
-                bind_group_layout_hashes: vec![compute_bgl.hash],
-            };
-            let layouts = [compute_bgl.layout.as_ref()];
-            let layout = self.pipeline_layout_cache.get_or_create(
-                &self.device,
-                &key,
-                &layouts,
-                Some("aerogpu_cmd geometry prepass pipeline layout"),
-            );
-            (key, layout)
-        };
 
         let compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu_cmd geometry prepass bind group"),
@@ -4068,7 +4081,9 @@ impl AerogpuD3d11Executor {
                     let ib_end = expanded_index_alloc
                         .offset
                         .checked_add(expanded_index_alloc.size)
-                        .ok_or_else(|| anyhow!("geometry prepass expanded index slice overflows u64"))?;
+                        .ok_or_else(|| {
+                            anyhow!("geometry prepass expanded index slice overflows u64")
+                        })?;
                     pass.set_index_buffer(
                         expanded_index_alloc
                             .buffer
@@ -4402,7 +4417,10 @@ impl AerogpuD3d11Executor {
                 continue;
             };
             let (load, store) = if depth_only_pass {
-                (wgpu::LoadOp::Clear(wgpu::Color::BLACK), wgpu::StoreOp::Discard)
+                (
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    wgpu::StoreOp::Discard,
+                )
             } else {
                 (wgpu::LoadOp::Load, wgpu::StoreOp::Store)
             };
@@ -4630,7 +4648,8 @@ impl AerogpuD3d11Executor {
                             *entry = true;
                         }
                     }
-                    crate::BindingKind::Texture2D { slot } | crate::BindingKind::SrvBuffer { slot } => {
+                    crate::BindingKind::Texture2D { slot }
+                    | crate::BindingKind::SrvBuffer { slot } => {
                         let slot_usize = *slot as usize;
                         let used = match stage {
                             ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
@@ -4667,19 +4686,25 @@ impl AerogpuD3d11Executor {
                                 ShaderStage::Vertex => used_uavs_vs.get_mut(slot_usize),
                                 ShaderStage::Pixel => used_uavs_ps.get_mut(slot_usize),
                                 ShaderStage::Compute => used_uavs_cs.get_mut(slot_usize),
-                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                    None
+                                }
                             };
                             if let Some(entry) = used {
                                 *entry = true;
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE && binding_num < BINDING_BASE_SAMPLER {
+                        } else if binding_num >= BINDING_BASE_TEXTURE
+                            && binding_num < BINDING_BASE_SAMPLER
+                        {
                             let slot_usize =
                                 binding_num.saturating_sub(BINDING_BASE_TEXTURE) as usize;
                             let used = match stage {
                                 ShaderStage::Vertex => used_textures_vs.get_mut(slot_usize),
                                 ShaderStage::Pixel => used_textures_ps.get_mut(slot_usize),
                                 ShaderStage::Compute => used_textures_cs.get_mut(slot_usize),
-                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                    None
+                                }
                             };
                             if let Some(entry) = used {
                                 *entry = true;
@@ -4690,7 +4715,9 @@ impl AerogpuD3d11Executor {
                                 ShaderStage::Vertex => used_cb_vs.get_mut(slot_usize),
                                 ShaderStage::Pixel => used_cb_ps.get_mut(slot_usize),
                                 ShaderStage::Compute => used_cb_cs.get_mut(slot_usize),
-                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => None,
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                    None
+                                }
                             };
                             if let Some(entry) = used {
                                 *entry = true;
@@ -5303,22 +5330,22 @@ impl AerogpuD3d11Executor {
                             (ShaderStage::Compute, &used_uavs_cs),
                         ] {
                             let stage_bindings = self.bindings.stage(stage);
-                                for (slot, used) in used_slots.iter().copied().enumerate() {
-                                    if !used {
-                                        continue;
-                                    }
-                                    let slot_u32 = slot as u32;
-                                    if stage_bindings
-                                        .uav_buffer(slot_u32)
-                                        .is_some_and(|buf| buf.buffer == handle)
-                                        || stage_bindings
-                                            .uav_texture(slot_u32)
-                                            .is_some_and(|tex| tex.texture == handle)
-                                    {
-                                        needs_break = true;
-                                        break;
-                                    }
+                            for (slot, used) in used_slots.iter().copied().enumerate() {
+                                if !used {
+                                    continue;
                                 }
+                                let slot_u32 = slot as u32;
+                                if stage_bindings
+                                    .uav_buffer(slot_u32)
+                                    .is_some_and(|buf| buf.buffer == handle)
+                                    || stage_bindings
+                                        .uav_texture(slot_u32)
+                                        .is_some_and(|tex| tex.texture == handle)
+                                {
+                                    needs_break = true;
+                                    break;
+                                }
+                            }
                             if needs_break {
                                 break;
                             }
@@ -5338,8 +5365,7 @@ impl AerogpuD3d11Executor {
                 }
                 let stage_raw = read_u32_le(cmd_bytes, 8)?;
                 let stage_ex = read_u32_le(cmd_bytes, 20)?;
-                let Some(stage) =
-                    ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
+                let Some(stage) = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
                 else {
                     break;
                 };
@@ -5722,7 +5748,9 @@ impl AerogpuD3d11Executor {
                             ShaderStage::Vertex => &used_cb_vs,
                             ShaderStage::Pixel => &used_cb_ps,
                             ShaderStage::Compute => &used_cb_cs,
-                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => &used_cb_gs,
+                            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                &used_cb_gs
+                            }
                         };
                         let mut needs_break = false;
                         for i in 0..buffer_count {
@@ -5924,8 +5952,7 @@ impl AerogpuD3d11Executor {
                                     _ => {
                                         let binding_num = binding.binding;
                                         if binding_num >= BINDING_BASE_UAV {
-                                            let slot =
-                                                binding_num.saturating_sub(BINDING_BASE_UAV);
+                                            let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
                                             if let Some(buf) = stage_bindings.uav_buffer(slot) {
                                                 self.encoder_used_buffers.insert(buf.buffer);
                                             }
@@ -6106,8 +6133,7 @@ impl AerogpuD3d11Executor {
                                     _ => {
                                         let binding_num = binding.binding;
                                         if binding_num >= BINDING_BASE_UAV {
-                                            let slot =
-                                                binding_num.saturating_sub(BINDING_BASE_UAV);
+                                            let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
                                             if let Some(buf) = stage_bindings.uav_buffer(slot) {
                                                 self.encoder_used_buffers.insert(buf.buffer);
                                             }
@@ -6215,7 +6241,9 @@ impl AerogpuD3d11Executor {
                             if min_depth > max_depth {
                                 std::mem::swap(&mut min_depth, &mut max_depth);
                             }
-                            pass.set_viewport(vp.x, vp.y, vp.width, vp.height, min_depth, max_depth);
+                            pass.set_viewport(
+                                vp.x, vp.y, vp.width, vp.height, min_depth, max_depth,
+                            );
                             viewport_empty = false;
                         } else {
                             // Cannot apply; clear empty state to avoid spuriously skipping draws.
@@ -6346,7 +6374,9 @@ impl AerogpuD3d11Executor {
                 OPCODE_CREATE_BUFFER => self.exec_create_buffer(cmd_bytes, allocs)?,
                 OPCODE_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, allocs)?,
                 OPCODE_DESTROY_RESOURCE => {
-                    unreachable!("DESTROY_RESOURCE cannot be processed inside an active render pass")
+                    unreachable!(
+                        "DESTROY_RESOURCE cannot be processed inside an active render pass"
+                    )
                 }
                 OPCODE_CREATE_SHADER_DXBC => self.exec_create_shader_dxbc(cmd_bytes)?,
                 OPCODE_DESTROY_SHADER => self.exec_destroy_shader(cmd_bytes)?,
@@ -6519,7 +6549,8 @@ impl AerogpuD3d11Executor {
                                         .textures
                                         .get(&texture)
                                         .is_some_and(|tex| tex.dirty && tex.backing.is_some());
-                                    if needs_upload && !self.encoder_used_textures.contains(&texture)
+                                    if needs_upload
+                                        && !self.encoder_used_textures.contains(&texture)
                                     {
                                         self.upload_texture_from_guest_memory(
                                             texture, allocs, guest_mem,
@@ -6563,7 +6594,9 @@ impl AerogpuD3d11Executor {
                                     ShaderStage::Vertex => &used_cb_vs,
                                     ShaderStage::Pixel => &used_cb_ps,
                                     ShaderStage::Compute => &used_cb_cs,
-                                    ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => &used_cb_gs,
+                                    ShaderStage::Geometry
+                                    | ShaderStage::Hull
+                                    | ShaderStage::Domain => &used_cb_gs,
                                 };
                                 for i in 0..buffer_count {
                                     let slot =
@@ -6611,14 +6644,11 @@ impl AerogpuD3d11Executor {
                         let buffer_count: usize = buffer_count_u32.try_into().map_err(|_| {
                             anyhow!("SET_SHADER_RESOURCE_BUFFERS: buffer_count out of range")
                         })?;
-                        let expected =
-                            24usize
-                                .checked_add(buffer_count.checked_mul(16).ok_or_else(|| {
-                                    anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow")
-                                })?)
-                                .ok_or_else(|| {
-                                    anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow")
-                                })?;
+                        let expected = 24usize
+                            .checked_add(buffer_count.checked_mul(16).ok_or_else(|| {
+                                anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow")
+                            })?)
+                            .ok_or_else(|| anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow"))?;
                         if cmd_bytes.len() >= expected {
                             let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
                                 stage_raw, stage_ex,
@@ -6679,14 +6709,13 @@ impl AerogpuD3d11Executor {
                         let uav_count: usize = uav_count_u32.try_into().map_err(|_| {
                             anyhow!("SET_UNORDERED_ACCESS_BUFFERS: uav_count out of range")
                         })?;
-                        let expected =
-                            24usize
-                                .checked_add(uav_count.checked_mul(16).ok_or_else(|| {
-                                    anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
-                                })?)
-                                .ok_or_else(|| {
-                                    anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
-                                })?;
+                        let expected = 24usize
+                            .checked_add(uav_count.checked_mul(16).ok_or_else(|| {
+                                anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
+                            })?)
+                            .ok_or_else(|| {
+                                anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
+                            })?;
                         if cmd_bytes.len() >= expected {
                             let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
                                 stage_raw, stage_ex,
@@ -7408,8 +7437,8 @@ impl AerogpuD3d11Executor {
                     .and_then(|v| v.checked_add(mip_level as usize))
                     .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: subresource index overflow"))?;
 
-                let has_valid_shadow =
-                    tex.host_shadow.is_some() && tex.host_shadow_valid.get(idx).copied() == Some(true);
+                let has_valid_shadow = tex.host_shadow.is_some()
+                    && tex.host_shadow_valid.get(idx).copied() == Some(true);
                 if !has_valid_shadow {
                     bail!("UPLOAD_RESOURCE: partial texture uploads require a prior full upload");
                 }
@@ -7596,13 +7625,8 @@ impl AerogpuD3d11Executor {
                 } else if let Some(b5_format) = b5_format {
                     let mip_w = mip_extent(desc.width, mip_level);
                     let mip_h = mip_extent(desc.height, mip_level);
-                    let rgba = expand_b5_texture_to_rgba8(
-                        b5_format,
-                        mip_w,
-                        mip_h,
-                        row_pitch,
-                        sub_bytes,
-                    )?;
+                    let rgba =
+                        expand_b5_texture_to_rgba8(b5_format, mip_w, mip_h, row_pitch, sub_bytes)?;
                     let rgba_bpr = mip_w.checked_mul(4).ok_or_else(|| {
                         anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow")
                     })?;
@@ -8618,12 +8642,20 @@ impl AerogpuD3d11Executor {
                             let backing_offset = backing
                                 .offset_bytes
                                 .checked_add(dst_shadow_base)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing offset overflow"))?;
-                            allocs.validate_range(backing.alloc_id, backing_offset, shadow_len_u64)?;
+                                .ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst backing offset overflow")
+                                })?;
+                            allocs.validate_range(
+                                backing.alloc_id,
+                                backing_offset,
+                                shadow_len_u64,
+                            )?;
                             let base_gpa = allocs
                                 .gpa(backing.alloc_id)?
                                 .checked_add(backing_offset)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing GPA overflow"))?;
+                                .ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst backing GPA overflow")
+                                })?;
 
                             let mut shadow = vec![0u8; total_shadow_len_usize];
                             for row in 0..dst_rows_u32 {
@@ -8671,7 +8703,9 @@ impl AerogpuD3d11Executor {
                             let dst_block_y = dst_y / 4;
                             let dst_x_bytes: usize = (dst_block_x as usize)
                                 .checked_mul(block_bytes as usize)
-                                .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow"))?;
+                                .ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst_x byte offset overflow")
+                                })?;
                             if dst_x_bytes.checked_add(row_bytes_usize).ok_or_else(|| {
                                 anyhow!("COPY_TEXTURE2D: dst shadow row range overflow")
                             })? > dst_bpr_usize
@@ -8683,12 +8717,16 @@ impl AerogpuD3d11Executor {
                                     let src_start = (block_row as usize)
                                         .checked_mul(row_bytes_usize)
                                         .ok_or_else(|| {
-                                            anyhow!("COPY_TEXTURE2D: BC shadow src row offset overflow")
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow src row offset overflow"
+                                            )
                                         })?;
                                     let src_end = src_start
                                         .checked_add(row_bytes_usize)
                                         .ok_or_else(|| {
-                                            anyhow!("COPY_TEXTURE2D: BC shadow src row end overflow")
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow src row end overflow"
+                                            )
                                         })?;
 
                                     let dst_row_index: usize = dst_block_y
@@ -8714,7 +8752,11 @@ impl AerogpuD3d11Executor {
                                         .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow dst row offset overflow"))?;
                                     let dst_end = dst_start
                                         .checked_add(row_bytes_usize)
-                                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: BC shadow dst row end overflow"))?;
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "COPY_TEXTURE2D: BC shadow dst row end overflow"
+                                            )
+                                        })?;
 
                                     shadow
                                         .get_mut(dst_start..dst_end)
@@ -8726,9 +8768,11 @@ impl AerogpuD3d11Executor {
                                         );
                                 }
 
-                                let can_mark_valid = full_copy || dst_shadow_was_valid || seeded_shadow;
+                                let can_mark_valid =
+                                    full_copy || dst_shadow_was_valid || seeded_shadow;
                                 if can_mark_valid {
-                                    if let Some(v) = dst_res.host_shadow_valid.get_mut(dst_sub_idx) {
+                                    if let Some(v) = dst_res.host_shadow_valid.get_mut(dst_sub_idx)
+                                    {
                                         *v = true;
                                     }
                                 }
@@ -8884,7 +8928,9 @@ impl AerogpuD3d11Executor {
 
         let stage =
             ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+                anyhow!(
+                    "CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
+                )
             })?;
         if parsed_stage != stage {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
@@ -8926,8 +8972,8 @@ impl AerogpuD3d11Executor {
 
         // Compute-stage DXBC frequently omits signature chunks entirely. The signature-driven
         // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
-        let signature_driven =
-            stage == ShaderStage::Compute || (signatures.isgn.is_some() && signatures.osgn.is_some());
+        let signature_driven = stage == ShaderStage::Compute
+            || (signatures.isgn.is_some() && signatures.osgn.is_some());
 
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
@@ -10491,7 +10537,8 @@ impl AerogpuD3d11Executor {
                             if let Some(tex) = stage_bindings.uav_texture(slot) {
                                 self.encoder_used_textures.insert(tex.texture);
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE && binding_num < BINDING_BASE_SAMPLER
+                        } else if binding_num >= BINDING_BASE_TEXTURE
+                            && binding_num < BINDING_BASE_SAMPLER
                         {
                             let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
                             if let Some(tex) = stage_bindings.texture(slot) {
@@ -10637,23 +10684,43 @@ impl AerogpuD3d11Executor {
                         if binding_num >= BINDING_BASE_UAV {
                             let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
                             if let Some(buf) = self.bindings.stage(stage).uav_buffer(slot) {
-                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                                self.ensure_buffer_uploaded(
+                                    encoder, buf.buffer, allocs, guest_mem,
+                                )?;
                             }
                             if let Some(tex) = self.bindings.stage(stage).uav_texture(slot) {
-                                self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                                self.ensure_texture_uploaded(
+                                    encoder,
+                                    tex.texture,
+                                    allocs,
+                                    guest_mem,
+                                )?;
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE && binding_num < BINDING_BASE_SAMPLER {
+                        } else if binding_num >= BINDING_BASE_TEXTURE
+                            && binding_num < BINDING_BASE_SAMPLER
+                        {
                             let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
                             if let Some(tex) = self.bindings.stage(stage).texture(slot) {
-                                self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                                self.ensure_texture_uploaded(
+                                    encoder,
+                                    tex.texture,
+                                    allocs,
+                                    guest_mem,
+                                )?;
                             }
                             if let Some(buf) = self.bindings.stage(stage).srv_buffer(slot) {
-                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                                self.ensure_buffer_uploaded(
+                                    encoder, buf.buffer, allocs, guest_mem,
+                                )?;
                             }
                         } else if binding_num < BINDING_BASE_TEXTURE {
-                            if let Some(cb) = self.bindings.stage(stage).constant_buffer(binding_num) {
+                            if let Some(cb) =
+                                self.bindings.stage(stage).constant_buffer(binding_num)
+                            {
                                 if cb.buffer != legacy_constants_buffer_id(stage) {
-                                    self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
+                                    self.ensure_buffer_uploaded(
+                                        encoder, cb.buffer, allocs, guest_mem,
+                                    )?;
                                 }
                             }
                         }
@@ -11759,9 +11826,7 @@ fn wgsl_gs_passthrough_vertex_shader(varying_locations: &BTreeSet<u32>) -> Resul
     let mut out = String::new();
 
     out.push_str("struct VsIn {\n");
-    out.push_str(&format!(
-        "    @location({pos_location}) pos: vec4<f32>,\n"
-    ));
+    out.push_str(&format!("    @location({pos_location}) pos: vec4<f32>,\n"));
     for &loc in varying_locations {
         out.push_str(&format!("    @location({loc}) v{loc}: vec4<f32>,\n"));
     }
@@ -11957,7 +12022,14 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let (vertex_shader, ps_wgsl_hash, vs_dxbc_hash_fnv1a64, vs_entry_point, vs_input_signature, fs_entry_point) = {
+    let (
+        vertex_shader,
+        ps_wgsl_hash,
+        vs_dxbc_hash_fnv1a64,
+        vs_entry_point,
+        vs_input_signature,
+        fs_entry_point,
+    ) = {
         let vs = resources
             .shaders
             .get(&vs_handle)
@@ -12359,10 +12431,11 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
             .copied()
             .collect();
         if ps_link_locations != ps_declared_inputs {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &ps_link_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &ps_link_locations,
+                ));
         }
     }
 
@@ -12375,8 +12448,7 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         .enumerate()
         .filter_map(|(idx, rt)| rt.is_some().then_some(idx as u32))
         .collect();
-    let declared_outputs =
-        super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+    let declared_outputs = super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
     let missing_outputs: BTreeSet<u32> = declared_outputs
         .difference(&keep_output_locations)
         .copied()
@@ -13643,8 +13715,8 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
     while i < toks.len() {
         let opcode_token = toks[i];
         let opcode = opcode_token & sm4_opcode::OPCODE_MASK;
-        let len = ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK)
-            as usize;
+        let len =
+            ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK) as usize;
         if len == 0 || i + len > toks.len() {
             // Malformed instruction; let downstream decode/translation surface the issue.
             return Ok(());
@@ -13685,7 +13757,8 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
             };
             operand_pos += 1;
 
-            let ty = (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT) & sm4_opcode::OPERAND_TYPE_MASK;
+            let ty =
+                (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT) & sm4_opcode::OPERAND_TYPE_MASK;
             if ty != sm4_opcode::OPERAND_TYPE_IMMEDIATE32 {
                 // Malformed stream operand; the decoder will surface a better error later.
                 return Ok(());
@@ -14018,8 +14091,7 @@ mod tests {
             .into_iter()
             .map(|e| e.binding)
             .collect();
-        let wiring_bindings =
-            compute_prepass_vertex_pulling_binding_numbers(pulling.slot_count());
+        let wiring_bindings = compute_prepass_vertex_pulling_binding_numbers(pulling.slot_count());
 
         assert_eq!(
             wiring_bindings, layout_bindings,
@@ -14401,7 +14473,10 @@ mod tests {
                 .expect("readback should succeed");
             assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
 
-            assert_eq!(exec.state.primitive_topology, CmdPrimitiveTopology::TriangleListAdj);
+            assert_eq!(
+                exec.state.primitive_topology,
+                CmdPrimitiveTopology::TriangleListAdj
+            );
         });
     }
 
@@ -14453,13 +14528,13 @@ mod tests {
                     format_u32: aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat::R8G8B8A8Unorm
                         as u32,
                     backing: None,
-                     row_pitch_bytes: 0,
-                     dirty: false,
-                     guest_backing_is_current: true,
-                     host_shadow: None,
-                     host_shadow_valid: Vec::new(),
-                 },
-             );
+                    row_pitch_bytes: 0,
+                    dirty: false,
+                    guest_backing_is_current: true,
+                    host_shadow: None,
+                    host_shadow_valid: Vec::new(),
+                },
+            );
 
             // Pixel shader writes to @location(0) and @location(2), but only RT0 is bound.
             const PS: u32 = 2;
@@ -14503,13 +14578,13 @@ mod tests {
             exec.state.depth_stencil = None;
 
             let layout_key = PipelineLayoutKey::empty();
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("expanded_draw mrt trim pipeline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout =
+                exec.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("expanded_draw mrt trim pipeline layout"),
+                        bind_group_layouts: &[],
+                        push_constant_ranges: &[],
+                    });
 
             exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let res = super::get_or_create_render_pipeline_for_expanded_draw(
@@ -14587,7 +14662,7 @@ mod tests {
                          host_shadow_valid: Vec::new(),
                      },
                  );
-             }
+            }
 
             // Minimal input layout so pipeline creation succeeds. This VS uses only builtins, so we
             // don't need any actual vertex attributes.
@@ -14691,13 +14766,13 @@ mod tests {
             exec.state.depth_stencil = None;
 
             let layout_key = PipelineLayoutKey::empty();
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("gap mrt trim pipeline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout =
+                exec.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("gap mrt trim pipeline layout"),
+                        bind_group_layouts: &[],
+                        push_constant_ranges: &[],
+                    });
 
             exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let res = super::get_or_create_render_pipeline_for_state(
@@ -14878,13 +14953,13 @@ mod tests {
             exec.state.depth_stencil = Some(DS);
 
             let layout_key = PipelineLayoutKey::empty();
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("depth only mrt trim pipeline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout =
+                exec.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("depth only mrt trim pipeline layout"),
+                        bind_group_layouts: &[],
+                        push_constant_ranges: &[],
+                    });
 
             exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let res = super::get_or_create_render_pipeline_for_state(
@@ -15281,7 +15356,8 @@ mod tests {
                 backend,
                 ..
             } = exec;
-            let mut exec = AerogpuD3d11Executor::new_with_supports_compute(device, queue, backend, false);
+            let mut exec =
+                AerogpuD3d11Executor::new_with_supports_compute(device, queue, backend, false);
 
             const BUF: u32 = 1;
             let allocs = AllocTable::new(None).unwrap();
@@ -15350,7 +15426,10 @@ mod tests {
             );
             assert!(msg.contains("COMPUTE_SHADERS"), "unexpected error: {err:#}");
             if !exec.caps.supports_indirect_execution {
-                assert!(msg.contains("INDIRECT_EXECUTION"), "unexpected error: {err:#}");
+                assert!(
+                    msg.contains("INDIRECT_EXECUTION"),
+                    "unexpected error: {err:#}"
+                );
             }
         });
     }
@@ -15685,14 +15764,16 @@ fn cs_main() {
             );
             exec.resources.samplers.insert(GS_SAMPLER, sampler);
 
-            exec.bindings.stage_mut(ShaderStage::Geometry).set_constant_buffer(
-                0,
-                Some(BoundConstantBuffer {
-                    buffer: GS_CB,
-                    offset: 0,
-                    size: None,
-                }),
-            );
+            exec.bindings
+                .stage_mut(ShaderStage::Geometry)
+                .set_constant_buffer(
+                    0,
+                    Some(BoundConstantBuffer {
+                        buffer: GS_CB,
+                        offset: 0,
+                        size: None,
+                    }),
+                );
             exec.bindings
                 .stage_mut(ShaderStage::Geometry)
                 .set_texture(0, Some(GS_TEX));
@@ -15740,7 +15821,9 @@ fn cs_main() {
             let info = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    bindings.as_slice(),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("should build pipeline bindings info for groups 0..3");
@@ -15755,13 +15838,13 @@ fn cs_main() {
                 .iter()
                 .map(|l| l.layout.as_ref())
                 .collect();
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aerogpu_cmd test gs emulation pipeline layout"),
-                    bind_group_layouts: &layout_refs,
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout =
+                exec.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aerogpu_cmd test gs emulation pipeline layout"),
+                        bind_group_layouts: &layout_refs,
+                        push_constant_ranges: &[],
+                    });
 
             let provider_vs = CmdExecutorBindGroupProvider {
                 resources: &exec.resources,
@@ -15784,12 +15867,12 @@ fn cs_main() {
             .expect("VS bind group should build");
 
             let entries: [BindGroupCacheEntry<'_>; 0] = [];
-            let bg1 = exec
-                .bind_group_cache
-                .get_or_create(&exec.device, &info.group_layouts[1], &entries);
-            let bg2 = exec
-                .bind_group_cache
-                .get_or_create(&exec.device, &info.group_layouts[2], &entries);
+            let bg1 =
+                exec.bind_group_cache
+                    .get_or_create(&exec.device, &info.group_layouts[1], &entries);
+            let bg2 =
+                exec.bind_group_cache
+                    .get_or_create(&exec.device, &info.group_layouts[2], &entries);
 
             let provider_gs = CmdExecutorBindGroupProvider {
                 resources: &exec.resources,
@@ -15833,17 +15916,21 @@ fn cs_main() {
 "#;
 
             exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let module = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("aerogpu_cmd test gs emulation cs"),
-                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-            });
-            let pipeline = exec.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("aerogpu_cmd test gs emulation pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &module,
-                entry_point: "cs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            });
+            let module = exec
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("aerogpu_cmd test gs emulation cs"),
+                    source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+                });
+            let pipeline = exec
+                .device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("aerogpu_cmd test gs emulation pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &module,
+                    entry_point: "cs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
 
             let mut encoder = exec
                 .device
@@ -15934,10 +16021,7 @@ fn cs_main() {
                 cap_c > cap_a,
                 "scratch capacity must grow to satisfy large request (cap_a={cap_a} cap_c={cap_c})"
             );
-            assert_ne!(
-                ptr_a, ptr_c,
-                "growth should reallocate the backing buffer"
-            );
+            assert_ne!(ptr_a, ptr_c, "growth should reallocate the backing buffer");
         });
     }
 
@@ -16241,8 +16325,7 @@ fn cs_main() {
 
             // Ensure buffer creation doesn't trigger a wgpu validation error (e.g. requesting
             // STORAGE usage on a backend that doesn't support storage buffers).
-            exec.device
-                .push_error_scope(wgpu::ErrorFilter::Validation);
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
             exec.exec_create_buffer(&create, &allocs)
                 .expect("CREATE_BUFFER should succeed");
             exec.poll_wait();
@@ -16512,8 +16595,9 @@ fn cs_main() {
         let out_len = (unpadded_bytes_per_row as u64)
             .checked_mul(height as u64)
             .ok_or_else(|| anyhow!("b5 sample: output size overflow"))?;
-        let out_len_usize: usize =
-            out_len.try_into().map_err(|_| anyhow!("b5 sample: output size out of range"))?;
+        let out_len_usize: usize = out_len
+            .try_into()
+            .map_err(|_| anyhow!("b5 sample: output size out of range"))?;
         let mut out = Vec::with_capacity(out_len_usize);
         for row in 0..height as usize {
             let start = row
@@ -16547,7 +16631,12 @@ fn cs_main() {
             let allocs = AllocTable::new(None).unwrap();
 
             // Helper to create a 2x2 host-owned texture of the given format.
-            fn create_texture_cmd(handle: u32, format_u32: u32, width: u32, height: u32) -> Vec<u8> {
+            fn create_texture_cmd(
+                handle: u32,
+                format_u32: u32,
+                width: u32,
+                height: u32,
+            ) -> Vec<u8> {
                 let mut create = Vec::new();
                 create.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
                 create.extend_from_slice(&56u32.to_le_bytes());
@@ -16610,8 +16699,7 @@ fn cs_main() {
 
             // B5G5R5A1: [red(a=1), green(a=1); blue(a=0), white(a=1)]
             const TEX_5551: u32 = 2;
-            let create =
-                create_texture_cmd(TEX_5551, AEROGPU_FORMAT_B5G5R5A1_UNORM, width, height);
+            let create = create_texture_cmd(TEX_5551, AEROGPU_FORMAT_B5G5R5A1_UNORM, width, height);
             exec.exec_create_texture2d(&create, &allocs)
                 .expect("CREATE_TEXTURE2D(B5G5R5A1) should succeed");
 
@@ -16625,13 +16713,8 @@ fn cs_main() {
             for v in b5g5r5a1_pixels {
                 b5g5r5a1_bytes.extend_from_slice(&v.to_le_bytes());
             }
-            exec.upload_resource_payload(
-                TEX_5551,
-                0,
-                b5g5r5a1_bytes.len() as u64,
-                &b5g5r5a1_bytes,
-            )
-            .expect("UPLOAD_RESOURCE(B5G5R5A1) should succeed");
+            exec.upload_resource_payload(TEX_5551, 0, b5g5r5a1_bytes.len() as u64, &b5g5r5a1_bytes)
+                .expect("UPLOAD_RESOURCE(B5G5R5A1) should succeed");
 
             let src_view = &exec
                 .resources

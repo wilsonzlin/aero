@@ -1,5 +1,5 @@
-use firmware::bda::BiosDataArea;
 use aero_gpu_vga::FONT8X8_CP437;
+use firmware::bda::BiosDataArea;
 use memory::MemoryBus;
 
 // VGA text modes use a 9x16 cell on the standard VGA timing (720x400).

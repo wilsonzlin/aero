@@ -363,15 +363,7 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
 
     // Post a single 8-byte writable event buffer (virtio-snd events are 8 bytes).
     guest[buf as usize..buf as usize + 8].fill(0xAA);
-    write_desc(
-        guest,
-        desc_table,
-        0,
-        buf as u64,
-        8,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
     write_u16(guest, avail, 0);
     write_u16(guest, avail + 2, 1);
     write_u16(guest, avail + 4, 0);
@@ -387,7 +379,11 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
 
     // Notify queue 1. notify_mult is 4 in `VirtioPciDevice`.
     let notify_off = bridge.mmio_read(COMMON + 0x1e, 2) as u32;
-    bridge.mmio_write(NOTIFY + notify_off * 4, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
 
     assert_eq!(read_u16(guest, used + 2), 1);
     assert_eq!(read_u32(guest, used + 8), 8);
@@ -397,10 +393,7 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
         evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
         evt
     };
-    assert_eq!(
-        &guest[buf as usize..buf as usize + 8],
-        &expected_connected
-    );
+    assert_eq!(&guest[buf as usize..buf as usize + 8], &expected_connected);
 
     // Detach the audio ring: should queue a speaker JACK_DISCONNECTED event and deliver it into a
     // subsequent event buffer.
@@ -412,7 +405,11 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
     // Re-post the same descriptor (index 0).
     write_u16(guest, avail + 6, 0); // avail.ring[1] = desc 0
     write_u16(guest, avail + 2, 2); // avail.idx = 2
-    bridge.mmio_write(NOTIFY + notify_off * 4, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
 
     assert_eq!(read_u16(guest, used + 2), 2);
     assert_eq!(read_u32(guest, used + 16), 8);
@@ -724,7 +721,10 @@ fn virtio_snd_pci_bridge_clamps_host_sample_rates_to_avoid_oom() {
     let mut decoded = VirtioSndPciState::default();
     decoded.load_state(&snap).unwrap();
 
-    assert_eq!(decoded.snd.host_sample_rate_hz, aero_audio::MAX_HOST_SAMPLE_RATE_HZ);
+    assert_eq!(
+        decoded.snd.host_sample_rate_hz,
+        aero_audio::MAX_HOST_SAMPLE_RATE_HZ
+    );
     assert_eq!(
         decoded.snd.capture_sample_rate_hz,
         aero_audio::MAX_HOST_SAMPLE_RATE_HZ

@@ -30,9 +30,7 @@ fn read_edid_returns_none_for_extension_blocks() {
 }
 
 fn checksum_ok(edid: &[u8; aero_edid::EDID_BLOCK_SIZE]) -> bool {
-    edid.iter()
-        .fold(0u8, |acc, &b| acc.wrapping_add(b))
-        == 0
+    edid.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) == 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

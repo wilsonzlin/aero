@@ -107,7 +107,7 @@ fn int10_vbe_controller_and_mode_info() {
         assert_eq!(read_u16(&info, 20), height); // YResolution
         assert_eq!(read_u16(&info, 16), width * 4); // BytesPerScanLine
         assert_eq!(info[25], 32); // BitsPerPixel
-        // Banked window parameters: 64KiB window and correct bank count for the mode.
+                                  // Banked window parameters: 64KiB window and correct bank count for the mode.
         assert_eq!(read_u16(&info, 4), 64); // WinGranularity (KB)
         assert_eq!(read_u16(&info, 6), 64); // WinSize (KB)
         let fb_bytes = u32::from(width) * u32::from(height) * 4;
@@ -268,7 +268,11 @@ fn int10_vbe_set_mode_oem_1280x720_updates_scanline_and_clears_framebuffer() {
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
     let mut cpu = CpuState::default();
 
-    let mode = bios.video.vbe.find_mode(0x160).expect("missing VBE mode 0x160");
+    let mode = bios
+        .video
+        .vbe
+        .find_mode(0x160)
+        .expect("missing VBE mode 0x160");
     let fb_base = VbeDevice::LFB_BASE_DEFAULT as u64;
     let fb_size = mode.framebuffer_size_bytes() as u64;
 

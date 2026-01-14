@@ -87,4 +87,3 @@ fn boot_int10_vbe_4f00_mode_list_contains_required_modes() {
     assert!(modes.contains(&0x118));
     assert!(modes.contains(&0x160));
 }
-

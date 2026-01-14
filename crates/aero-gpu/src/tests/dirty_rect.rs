@@ -48,7 +48,10 @@ impl Rng {
 }
 
 fn assert_rect_within_bounds(rect: Rect, width: u32, height: u32) {
-    assert!(rect.w > 0 && rect.h > 0, "rect should be non-empty: {rect:?}");
+    assert!(
+        rect.w > 0 && rect.h > 0,
+        "rect should be non-empty: {rect:?}"
+    );
     assert!(
         rect.x < width && rect.y < height,
         "rect origin out of bounds (width={width}, height={height}): {rect:?}"
@@ -91,7 +94,10 @@ fn merge_and_cap_rects_clamps_to_framebuffer_bounds() {
     ];
 
     let out = merge_and_cap_rects(&rects, bounds, 128);
-    assert_eq!(out.rects, vec![Rect::new(0, 0, 1, 1), Rect::new(8, 8, 2, 2)]);
+    assert_eq!(
+        out.rects,
+        vec![Rect::new(0, 0, 1, 1), Rect::new(8, 8, 2, 2)]
+    );
     for r in &out.rects {
         assert_rect_within_bounds(*r, bounds.0, bounds.1);
     }

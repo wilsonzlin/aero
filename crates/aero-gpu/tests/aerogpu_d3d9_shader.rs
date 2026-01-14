@@ -1,7 +1,7 @@
 mod common;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 use aero_d3d9::sm3::ShaderStage;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, D3d9ShaderCacheError, ShaderPayloadFormat};
 use aero_gpu::{readback_rgba8, TextureRegion};
 

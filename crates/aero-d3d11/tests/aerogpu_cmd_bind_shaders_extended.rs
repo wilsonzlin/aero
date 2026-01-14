@@ -51,4 +51,3 @@ fn aerogpu_cmd_tracks_extended_bind_shaders_payload() {
         assert_eq!(bound.ds, Some(60));
     });
 }
-

@@ -139,8 +139,11 @@ impl PciIntxRouter {
     ) {
         match pin {
             Some(pin) => {
-                let line =
-                    pci_routing::irq_line_for_intx(self.cfg.pirq_to_gsi, bdf.device, pin.to_config_u8());
+                let line = pci_routing::irq_line_for_intx(
+                    self.cfg.pirq_to_gsi,
+                    bdf.device,
+                    pin.to_config_u8(),
+                );
                 config.set_interrupt_pin(pin.to_config_u8());
                 config.set_interrupt_line(line);
             }
@@ -443,11 +446,7 @@ mod tests {
         off += 1;
 
         // aero-acpi emits a static mapping for devices 1..=31, pins 0..=3.
-        assert_eq!(
-            entry_count,
-            (31 * 4) as u8,
-            "unexpected _PRT entry count"
-        );
+        assert_eq!(entry_count, (31 * 4) as u8, "unexpected _PRT entry count");
 
         let mut entries = Vec::new();
         for _ in 0..entry_count {
@@ -619,7 +618,10 @@ mod tests {
         restored.sync_levels_to_sink(&mut restored_sink);
 
         // Levels should be driven once per unique GSI (42, 7, 9), in PIRQ order.
-        assert_eq!(restored_sink.events, vec![(42, true), (7, true), (9, false)]);
+        assert_eq!(
+            restored_sink.events,
+            vec![(42, true), (7, true), (9, false)]
+        );
     }
 
     #[test]
@@ -658,10 +660,9 @@ mod tests {
             let addr = (u32::from(dev) << 16) | 0xFFFF;
             for (pin_enum, pin_idx) in pins {
                 let expected = router.gsi_for_intx(PciBdf::new(0, dev, 0), pin_enum);
-                let actual = map
-                    .get(&(addr, pin_idx))
-                    .copied()
-                    .unwrap_or_else(|| panic!("missing _PRT entry: addr=0x{addr:08x} pin={pin_idx}"));
+                let actual = map.get(&(addr, pin_idx)).copied().unwrap_or_else(|| {
+                    panic!("missing _PRT entry: addr=0x{addr:08x} pin={pin_idx}")
+                });
                 assert_eq!(
                     actual, expected,
                     "_PRT GSI mismatch for device {dev} pin {pin_enum:?}: expected {expected}, got {actual}",

@@ -1231,9 +1231,7 @@ mod tests {
                 SnapshotWriter::new(UsbHidKeyboard::DEVICE_ID, UsbHidKeyboard::DEVICE_VERSION);
             w.field_bytes(
                 TAG_PRESSED_KEYS,
-                Encoder::new()
-                    .u32(MAX_PRESSED_KEYS as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PRESSED_KEYS as u32 + 1).finish(),
             );
             w.finish()
         };
@@ -1254,9 +1252,7 @@ mod tests {
                 SnapshotWriter::new(UsbHidKeyboard::DEVICE_ID, UsbHidKeyboard::DEVICE_VERSION);
             w.field_bytes(
                 TAG_PENDING_REPORTS,
-                Encoder::new()
-                    .u32(MAX_PENDING_REPORTS as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PENDING_REPORTS as u32 + 1).finish(),
             );
             w.finish()
         };

@@ -31,4 +31,3 @@ fn e1000_pci_config_matches_canonical_profile_identity_fields() {
         .unwrap_or(0);
     assert_eq!(read_u8(&dev, 0x3d), expected_pin);
 }
-

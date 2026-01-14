@@ -43,7 +43,8 @@ fn gs_cut_restartstrip_resets_triangle_strip_assembly_semantics() -> Result<()> 
         // actually contains the `cut` opcode token. This helps catch accidental fixture
         // corruption, even though the test below uses WGSL to emulate the expected behavior.
         let dxbc = DxbcFile::parse(GS_CUT_DXBC).context("parse gs_emit_cut.dxbc as DXBC")?;
-        let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse gs_emit_cut.dxbc as SM4")?;
+        let program =
+            Sm4Program::parse_from_dxbc(&dxbc).context("parse gs_emit_cut.dxbc as SM4")?;
         assert_eq!(
             program.stage,
             ShaderStage::Geometry,
@@ -53,12 +54,15 @@ fn gs_cut_restartstrip_resets_triangle_strip_assembly_semantics() -> Result<()> 
             program
                 .tokens
                 .iter()
-                .any(|t| (*t & aero_d3d11::sm4::opcode::OPCODE_MASK) == aero_d3d11::sm4::opcode::OPCODE_CUT),
+                .any(|t| (*t & aero_d3d11::sm4::opcode::OPCODE_MASK)
+                    == aero_d3d11::sm4::opcode::OPCODE_CUT),
             "gs_emit_cut.dxbc must contain a cut opcode (RestartStrip)"
         );
 
-        let test_name =
-            concat!(module_path!(), "::gs_cut_restartstrip_resets_triangle_strip_assembly_semantics");
+        let test_name = concat!(
+            module_path!(),
+            "::gs_cut_restartstrip_resets_triangle_strip_assembly_semantics"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
@@ -200,8 +204,16 @@ fn gs_cut_restartstrip_resets_triangle_strip_assembly_semantics() -> Result<()> 
         let bg = [0u8, 0u8, 0u8, 255u8];
         let fg = [255u8, 255u8, 255u8, 255u8];
 
-        assert_eq!(pixel_rgba8(&pixels, 16, 32), fg, "left triangle should render");
-        assert_eq!(pixel_rgba8(&pixels, 48, 32), fg, "right triangle should render");
+        assert_eq!(
+            pixel_rgba8(&pixels, 16, 32),
+            fg,
+            "left triangle should render"
+        );
+        assert_eq!(
+            pixel_rgba8(&pixels, 48, 32),
+            fg,
+            "right triangle should render"
+        );
         assert_eq!(
             pixel_rgba8(&pixels, 32, 32),
             bg,

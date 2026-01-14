@@ -90,7 +90,10 @@ fn aerogpu_text_mode_scanout_renders_b8000_cell() {
     // If the implementation matches the canonical VGA text renderer (9x16 cells), lock in the
     // full framebuffer hash as a regression check.
     if (w, h) == (720, 400) {
-        assert_eq!(framebuffer_hash(m.display_framebuffer()), 0x5cfe440e33546065);
+        assert_eq!(
+            framebuffer_hash(m.display_framebuffer()),
+            0x5cfe440e33546065
+        );
     } else {
         // Otherwise, at least validate expected foreground/background colors are present in the
         // top-left cell.
@@ -103,8 +106,8 @@ fn aerogpu_text_mode_scanout_renders_b8000_cell() {
             let row = y * w as usize;
             for x in 0..cell_w.min(w as usize) {
                 match fb[row + x] {
-                    0xFFFF_FFFF => fg += 1,     // white
-                    0xFFAA_0000 => bg += 1,     // blue
+                    0xFFFF_FFFF => fg += 1, // white
+                    0xFFAA_0000 => bg += 1, // blue
                     other => panic!("unexpected pixel color in cell (0,0): 0x{other:08x}"),
                 }
             }
@@ -177,11 +180,13 @@ fn aerogpu_text_mode_scanout_renders_cursor_overlay() {
     assert_ne!((w, h), (0, 0), "expected non-zero scanout resolution");
 
     let fb = m.display_framebuffer();
-    assert!(fb.len() >= w as usize, "expected at least one full scanline");
+    assert!(
+        fb.len() >= w as usize,
+        "expected at least one full scanline"
+    );
 
     // First scanline of cell (0,0) should be cursor-inverted to the foreground color (white).
     assert_eq!(fb[0], 0xFFFF_FFFF);
     // Second scanline should remain the background color (EGA blue).
     assert_eq!(fb[w as usize], 0xFFAA_0000);
 }
-

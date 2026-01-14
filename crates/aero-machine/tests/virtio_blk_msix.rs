@@ -1,8 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::{
-    profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
-};
+use aero_devices::pci::{profile, PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
@@ -78,13 +76,7 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
 
     // Enable PCI memory decoding so BAR0 MMIO is reachable.
     let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        0x04,
-        2,
-        u32::from(cmd | (1 << 1) | (1 << 2)),
-    );
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
 
     // Discover BAR0.
     let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;

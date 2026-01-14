@@ -409,7 +409,10 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     // RTC century register.
     //
     // This must match the emulated RTC/CMOS device model (see `devices::rtc_cmos::REG_CENTURY`).
-    assert_eq!(fadt[108], 0x32, "FADT CENTURY must be set to CMOS index 0x32");
+    assert_eq!(
+        fadt[108], 0x32,
+        "FADT CENTURY must be set to CMOS index 0x32"
+    );
 
     // FADT flags should advertise the fixed-feature PWRBTN/SLPBTN events (PM1_STS/PM1_EN),
     // matching the `AcpiPmIo` device model, along with FIX_RTC + RESET_REG_SUP.

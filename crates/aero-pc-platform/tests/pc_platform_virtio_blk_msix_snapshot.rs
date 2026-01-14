@@ -23,26 +23,38 @@ fn cfg_data_port(offset: u8) -> u16 {
 }
 
 fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(cfg_data_port(offset), 1) as u8
 }
 
 fn read_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u16 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(cfg_data_port(offset), 2) as u16
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.read(cfg_data_port(offset), 4)
 }
 
 fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u16) {
-    pc.io
-        .write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bus, device, function, offset));
+    pc.io.write(
+        PCI_CFG_ADDR_PORT,
+        4,
+        cfg_addr(bus, device, function, offset),
+    );
     pc.io.write(cfg_data_port(offset), 2, u32::from(value));
 }
 
@@ -219,14 +231,27 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     // manual snapshots).
     restored.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
     restored.io.write_u8(IMCR_DATA_PORT, 0x01);
-    assert_eq!(restored.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+    assert_eq!(
+        restored.interrupts.borrow().mode(),
+        PlatformInterruptMode::Apic
+    );
 
     // Verify MSI-X enable bit is preserved in guest-visible PCI config space.
-    let msix_cap2 =
-        find_capability(&mut restored, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSIX)
-            .expect("restored virtio-blk should still expose MSI-X");
-    let ctrl_restored =
-        read_cfg_u16(&mut restored, bdf.bus, bdf.device, bdf.function, msix_cap2 + 0x02);
+    let msix_cap2 = find_capability(
+        &mut restored,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        PCI_CAP_ID_MSIX,
+    )
+    .expect("restored virtio-blk should still expose MSI-X");
+    let ctrl_restored = read_cfg_u16(
+        &mut restored,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msix_cap2 + 0x02,
+    );
     assert_ne!(
         ctrl_restored & (1 << 15),
         0,
@@ -235,7 +260,13 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
 
     // Verify MSI-X table contents are preserved.
     let bar0_base2 = read_bar0_base(&mut restored);
-    let table2 = read_cfg_u32(&mut restored, bdf.bus, bdf.device, bdf.function, msix_cap2 + 0x04);
+    let table2 = read_cfg_u32(
+        &mut restored,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msix_cap2 + 0x04,
+    );
     let table_offset2 = u64::from(table2 & !0x7);
     let entry0_2 = bar0_base2 + table_offset2;
     assert_eq!(restored.memory.read_u32(entry0_2 + 0x0), 0xfee0_0000);
@@ -244,13 +275,8 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     assert_eq!(restored.memory.read_u32(entry0_2 + 0xc) & 1, 0);
 
     // Ensure the queue MSI-X vector is still assigned.
-    restored
-        .memory
-        .write_u16(bar0_base2 + COMMON + 0x16, 0); // queue_select
-    assert_eq!(
-        restored.memory.read_u16(bar0_base2 + COMMON + 0x1a),
-        0
-    );
+    restored.memory.write_u16(bar0_base2 + COMMON + 0x16, 0); // queue_select
+    assert_eq!(restored.memory.read_u16(bar0_base2 + COMMON + 0x1a), 0);
 
     assert_eq!(restored.interrupts.borrow().get_pending(), None);
 

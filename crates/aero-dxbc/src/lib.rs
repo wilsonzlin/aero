@@ -15,6 +15,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// Parsers for legacy Direct3D constant table chunks (`CTAB`).
+pub mod ctab;
 mod dxbc;
 mod error;
 mod fourcc;
@@ -24,16 +26,7 @@ pub mod rdef;
 pub mod signature;
 /// Parsers for SM4/SM5 shader bytecode chunks (`SHDR`/`SHEX`).
 pub mod sm4;
-/// Parsers for legacy Direct3D constant table chunks (`CTAB`).
-pub mod ctab;
 
-/// Helpers for building synthetic DXBC blobs in tests.
-///
-/// This module is only available when compiling this crate's own tests, or when
-/// the `test-utils` feature is enabled. It is **not** considered part of the
-/// stable parsing API.
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
 /// Advanced DXBC parsing helpers (reflection, disassembly, shader model extraction).
 ///
 /// This module is gated behind the `robust` feature because it provides
@@ -41,10 +34,18 @@ pub mod test_utils;
 /// consumers.
 #[cfg(feature = "robust")]
 pub mod robust;
+/// Helpers for building synthetic DXBC blobs in tests.
+///
+/// This module is only available when compiling this crate's own tests, or when
+/// the `test-utils` feature is enabled. It is **not** considered part of the
+/// stable parsing API.
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 #[cfg(test)]
 mod tests;
 
+pub use crate::ctab::{parse_ctab_chunk, ConstantTable, CtabConstant};
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;
 pub use crate::fourcc::FourCC;
@@ -58,4 +59,3 @@ pub use crate::signature::{
 pub use crate::sm4::{
     decode_version_token, ShaderModel, ShaderStage, Sm4Error, Sm4Program, Sm5Program,
 };
-pub use crate::ctab::{parse_ctab_chunk, ConstantTable, CtabConstant};

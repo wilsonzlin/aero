@@ -1,11 +1,11 @@
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_io_snapshot::io::state::{SnapshotError, SnapshotReader, SnapshotWriter};
-use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::regs::{
-    PORTSC_CCS, PORTSC_PED, PORTSC_PP, PORTSC_PR, REG_ASYNCLISTADDR, REG_CONFIGFLAG, REG_FRINDEX,
-    PORTSC_PO, REG_PERIODICLISTBASE, REG_PORTSC_BASE, REG_USBCMD, REG_USBLEGCTLSTS, REG_USBLEGSUP,
-    USBLEGSUP_OS_SEM, USBCMD_RS,
+    PORTSC_CCS, PORTSC_PED, PORTSC_PO, PORTSC_PP, PORTSC_PR, REG_ASYNCLISTADDR, REG_CONFIGFLAG,
+    REG_FRINDEX, REG_PERIODICLISTBASE, REG_PORTSC_BASE, REG_USBCMD, REG_USBLEGCTLSTS,
+    REG_USBLEGSUP, USBCMD_RS, USBLEGSUP_OS_SEM,
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::UsbHidKeyboardHandle;
@@ -100,7 +100,10 @@ fn ehci_snapshot_roundtrip_preserves_regs_port_timer_and_topology() {
     assert_eq!(restored.mmio_read(REG_FRINDEX, 4), expected_frindex);
     assert_eq!(restored.mmio_read(REG_PORTSC_BASE, 4), expected_portsc1);
     assert_eq!(restored.mmio_read(REG_USBLEGSUP, 4), expected_usblegsup);
-    assert_eq!(restored.mmio_read(REG_USBLEGCTLSTS, 4), expected_usblegctlsts);
+    assert_eq!(
+        restored.mmio_read(REG_USBLEGCTLSTS, 4),
+        expected_usblegctlsts
+    );
 
     // Root port connection must be preserved (CCS bit).
     let portsc1 = restored.mmio_read(REG_PORTSC_BASE, 4);
@@ -231,7 +234,10 @@ fn ehci_snapshot_restore_rejects_oversized_nested_usb_device_snapshots() {
     let mut d = Decoder::new(root_ports_bytes);
     let mut port_records = d.vec_bytes().unwrap();
     d.finish().unwrap();
-    assert!(!port_records.is_empty(), "expected at least one root port record");
+    assert!(
+        !port_records.is_empty(),
+        "expected at least one root port record"
+    );
 
     // Replace port 0 record with one that declares an oversized device snapshot length.
     let oversize_len = MAX_USB_DEVICE_SNAPSHOT_BYTES + 1;

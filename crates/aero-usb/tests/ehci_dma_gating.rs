@@ -49,4 +49,3 @@ fn ehci_tick_does_not_process_schedules_without_dma() {
     );
     assert!(!ctrl.irq_level());
 }
-

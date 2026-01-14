@@ -126,7 +126,9 @@ fn vhd_differencing_unallocated_reads_from_parent() {
     let block_size = 4 * 1024u32;
 
     let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
-    let pattern: Vec<u8> = (0..virtual_size as usize).map(|i| (i & 0xFF) as u8).collect();
+    let pattern: Vec<u8> = (0..virtual_size as usize)
+        .map(|i| (i & 0xFF) as u8)
+        .collect();
     base.write_at(0, &pattern).unwrap();
 
     let backend = make_vhd_differencing_empty(virtual_size, block_size);
@@ -145,7 +147,9 @@ fn vhd_differencing_partial_write_allocates_and_preserves_parent_bytes() {
     let block_size = 4 * 1024u32;
 
     let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
-    let pattern: Vec<u8> = (0..virtual_size as usize).map(|i| (i & 0xFF) as u8).collect();
+    let pattern: Vec<u8> = (0..virtual_size as usize)
+        .map(|i| (i & 0xFF) as u8)
+        .collect();
     base.write_at(0, &pattern).unwrap();
 
     let mut backend = make_vhd_differencing_empty(virtual_size, block_size);
@@ -165,7 +169,8 @@ fn vhd_differencing_partial_write_allocates_and_preserves_parent_bytes() {
     // Another sector in the same newly-allocated block that was not written should still read
     // from the parent.
     let mut sector1_prefix = [0u8; 16];
-    disk.read_at(SECTOR_SIZE as u64, &mut sector1_prefix).unwrap();
+    disk.read_at(SECTOR_SIZE as u64, &mut sector1_prefix)
+        .unwrap();
     assert_eq!(
         &sector1_prefix,
         &pattern[SECTOR_SIZE..SECTOR_SIZE + sector1_prefix.len()]
@@ -183,7 +188,8 @@ fn vhd_differencing_full_block_write_does_not_read_parent() {
     let block_size = 4 * 1024u32;
 
     let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
-    base.write_at(0, &vec![0x55u8; virtual_size as usize]).unwrap();
+    base.write_at(0, &vec![0x55u8; virtual_size as usize])
+        .unwrap();
 
     let reads = Arc::new(AtomicU64::new(0));
     let parent = CountingDisk::new(base, reads.clone());
@@ -209,12 +215,13 @@ fn disk_image_open_with_parent_supports_vhd_differencing() {
     let block_size = 4 * 1024u32;
 
     let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
-    let pattern: Vec<u8> = (0..virtual_size as usize).map(|i| (i & 0xFF) as u8).collect();
+    let pattern: Vec<u8> = (0..virtual_size as usize)
+        .map(|i| (i & 0xFF) as u8)
+        .collect();
     base.write_at(0, &pattern).unwrap();
 
     let backend = make_vhd_differencing_empty(virtual_size, block_size);
-    let mut disk =
-        DiskImage::open_with_parent(DiskFormat::Vhd, backend, Box::new(base)).unwrap();
+    let mut disk = DiskImage::open_with_parent(DiskFormat::Vhd, backend, Box::new(base)).unwrap();
 
     // Read across a VHD block boundary to ensure parent fallback works through `DiskImage`.
     let start = (block_size as usize) - 100;
@@ -229,7 +236,9 @@ fn disk_image_open_auto_with_parent_supports_vhd_differencing() {
     let block_size = 4 * 1024u32;
 
     let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
-    let pattern: Vec<u8> = (0..virtual_size as usize).map(|i| (i & 0xFF) as u8).collect();
+    let pattern: Vec<u8> = (0..virtual_size as usize)
+        .map(|i| (i & 0xFF) as u8)
+        .collect();
     base.write_at(0, &pattern).unwrap();
 
     let backend = make_vhd_differencing_empty(virtual_size, block_size);

@@ -331,7 +331,11 @@ fn aerogpu_cmd_depth_only_render_pass_writes_depth() {
             .await
             .expect("readback should succeed");
         for px in pixels.chunks_exact(4) {
-            assert_eq!(px, &[0, 0, 0, 255], "color draw should be rejected by depth");
+            assert_eq!(
+                px,
+                &[0, 0, 0, 255],
+                "color draw should be rejected by depth"
+            );
         }
     });
 }

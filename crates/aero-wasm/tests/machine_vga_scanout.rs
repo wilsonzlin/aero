@@ -279,7 +279,10 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
     m.display_present();
     let disp_w = m.display_width();
     let disp_h = m.display_height();
-    assert!(disp_w > 0, "display_width must be non-zero when VGA is present");
+    assert!(
+        disp_w > 0,
+        "display_width must be non-zero when VGA is present"
+    );
     assert!(
         disp_h > 0,
         "display_height must be non-zero when VGA is present"
@@ -300,7 +303,10 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
     );
 
     let disp_copy = m.display_framebuffer_copy_rgba8888();
-    assert!(!disp_copy.is_empty(), "copied display framebuffer should be non-empty");
+    assert!(
+        !disp_copy.is_empty(),
+        "copied display framebuffer should be non-empty"
+    );
     assert_eq!(disp_copy.len() as u32, disp_len_bytes);
 
     let disp_blank = fnv1a_blank_rgba8(disp_copy.len());

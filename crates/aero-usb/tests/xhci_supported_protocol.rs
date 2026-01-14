@@ -57,9 +57,12 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     let xecp_dwords = (hccparams1 >> 16) & 0xffff;
     assert_ne!(xecp_dwords, 0, "HCCPARAMS1.xECP must be non-zero");
     let xecp = (xecp_dwords as u64) * 4;
-    let Some(xecp) =
-        find_ext_cap(&mut xhci, &mut mem, xecp, regs::EXT_CAP_ID_SUPPORTED_PROTOCOL)
-    else {
+    let Some(xecp) = find_ext_cap(
+        &mut xhci,
+        &mut mem,
+        xecp,
+        regs::EXT_CAP_ID_SUPPORTED_PROTOCOL,
+    ) else {
         panic!("missing Supported Protocol extended capability");
     };
 
@@ -74,7 +77,10 @@ fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     let dword3 = xhci.mmio_read_u32(&mut mem, xecp + 12);
     let psic = (dword3 & 0xf) as u8;
     let psio = ((dword3 >> 16) & 0xffff) as u16;
-    assert!(psic >= 1, "Supported Protocol should expose at least one speed ID");
+    assert!(
+        psic >= 1,
+        "Supported Protocol should expose at least one speed ID"
+    );
     assert_eq!(
         psio, 4,
         "PSI descriptor table should begin immediately after DWORD3 (PSIO=4)"

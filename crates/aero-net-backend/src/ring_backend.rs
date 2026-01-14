@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex, RwLock};
 
-use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 use aero_ipc::ring::{PopError, PushError};
+use aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD;
 
 use crate::NetworkBackend;
 

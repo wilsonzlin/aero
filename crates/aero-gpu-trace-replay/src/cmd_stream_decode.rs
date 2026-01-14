@@ -255,7 +255,9 @@ fn fourcc_le(v: u32) -> String {
     s
 }
 
-fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPacket<'_>) -> BTreeMap<String, Value> {
+fn decode_known_fields(
+    pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPacket<'_>,
+) -> BTreeMap<String, Value> {
     let mut out: BTreeMap<String, Value> = BTreeMap::new();
 
     let Some(op) = pkt.opcode else {
@@ -342,10 +344,7 @@ fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPack
                 out.insert("data_len".into(), json!(data.len()));
             }
             Err(err) => {
-                out.insert(
-                    "decode_error".into(),
-                    json!(format!("{:?}", err)),
-                );
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
         AerogpuCmdOpcode::CopyBuffer => {
@@ -379,10 +378,7 @@ fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPack
                 out.insert("dxbc_len".into(), json!(dxbc.len()));
             }
             Err(err) => {
-                out.insert(
-                    "decode_error".into(),
-                    json!(format!("{:?}", err)),
-                );
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
         AerogpuCmdOpcode::CreateInputLayout => match pkt.decode_create_input_layout_payload_le() {
@@ -394,10 +390,7 @@ fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPack
                 out.insert("blob_len".into(), json!(blob.len()));
             }
             Err(err) => {
-                out.insert(
-                    "decode_error".into(),
-                    json!(format!("{:?}", err)),
-                );
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
         AerogpuCmdOpcode::SetRenderTargets => {
@@ -454,10 +447,7 @@ fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPack
                 }
             }
             Err(err) => {
-                out.insert(
-                    "decode_error".into(),
-                    json!(format!("{:?}", err)),
-                );
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
         AerogpuCmdOpcode::SetPrimitiveTopology => {
@@ -513,10 +503,7 @@ fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPack
                         out.insert("uav0_buffer".into(), json!(uav0_buffer));
                         out.insert("uav0_offset_bytes".into(), json!(uav0_offset_bytes));
                         out.insert("uav0_size_bytes".into(), json!(uav0_size_bytes));
-                        out.insert(
-                            "uav0_initial_count".into(),
-                            json!(uav0_initial_count),
-                        );
+                        out.insert("uav0_initial_count".into(), json!(uav0_initial_count));
                     }
                 }
                 Err(err) => {

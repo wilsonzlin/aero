@@ -4,8 +4,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use aero_d3d11::runtime::{
-    PersistedBinding, PersistedShaderArtifact, PersistedShaderStage, ShaderCache, ShaderCacheSource,
-    ShaderTranslationFlags, D3D11_TRANSLATOR_CACHE_VERSION,
+    PersistedBinding, PersistedShaderArtifact, PersistedShaderStage, ShaderCache,
+    ShaderCacheSource, ShaderTranslationFlags, D3D11_TRANSLATOR_CACHE_VERSION,
 };
 use js_sys::{Map, Object, Reflect};
 use wasm_bindgen::closure::Closure;
@@ -81,9 +81,24 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
     let store = Object::new();
     let map = Map::new();
     Reflect::set(&store, &JsValue::from_str("map"), &map).unwrap();
-    Reflect::set(&store, &JsValue::from_str("openCalls"), &JsValue::from_f64(0.0)).unwrap();
-    Reflect::set(&store, &JsValue::from_str("getCalls"), &JsValue::from_f64(0.0)).unwrap();
-    Reflect::set(&store, &JsValue::from_str("putCalls"), &JsValue::from_f64(0.0)).unwrap();
+    Reflect::set(
+        &store,
+        &JsValue::from_str("openCalls"),
+        &JsValue::from_f64(0.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &store,
+        &JsValue::from_str("getCalls"),
+        &JsValue::from_f64(0.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &store,
+        &JsValue::from_str("putCalls"),
+        &JsValue::from_f64(0.0),
+    )
+    .unwrap();
     Reflect::set(
         &store,
         &JsValue::from_str("deleteCalls"),
@@ -142,8 +157,12 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
             inc_counter(&get_store, "getCalls");
             get_map.get(&JsValue::from_str(&key))
         }));
-        Reflect::set(&inner, &JsValue::from_str("getShader"), get_fn.as_ref().unchecked_ref())
-            .unwrap();
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("getShader"),
+            get_fn.as_ref().unchecked_ref(),
+        )
+        .unwrap();
         get_fn.forget();
 
         let put_store = open_store.clone();
@@ -154,8 +173,12 @@ fn make_persistent_cache_stub() -> (JsValue, JsValue) {
                 put_map.set(&JsValue::from_str(&key), &value);
                 JsValue::undefined()
             }));
-        Reflect::set(&inner, &JsValue::from_str("putShader"), put_fn.as_ref().unchecked_ref())
-            .unwrap();
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("putShader"),
+            put_fn.as_ref().unchecked_ref(),
+        )
+        .unwrap();
         put_fn.forget();
 
         let del_store = open_store.clone();
@@ -290,8 +313,12 @@ async fn cache_invalidates_when_translator_version_changes() {
         let get_fn = Closure::<dyn FnMut(String) -> JsValue>::wrap(Box::new(move |key: String| {
             get_map.get(&JsValue::from_str(&key))
         }));
-        Reflect::set(&inner, &JsValue::from_str("getShader"), get_fn.as_ref().unchecked_ref())
-            .unwrap();
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("getShader"),
+            get_fn.as_ref().unchecked_ref(),
+        )
+        .unwrap();
         get_fn.forget();
 
         let put_map = open_map.clone();
@@ -300,8 +327,12 @@ async fn cache_invalidates_when_translator_version_changes() {
                 put_map.set(&JsValue::from_str(&key), &value);
                 JsValue::undefined()
             }));
-        Reflect::set(&inner, &JsValue::from_str("putShader"), put_fn.as_ref().unchecked_ref())
-            .unwrap();
+        Reflect::set(
+            &inner,
+            &JsValue::from_str("putShader"),
+            put_fn.as_ref().unchecked_ref(),
+        )
+        .unwrap();
         put_fn.forget();
 
         let del_map = open_map.clone();

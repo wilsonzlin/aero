@@ -67,8 +67,7 @@ fn synthesize_webhid_normalized_keyboard_descriptor_matches_expected_bytes() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/fixtures/hid/webhid_normalized_keyboard.json"
     ));
-    let collections =
-        JSON::parse(fixture).expect("parse webhid_normalized_keyboard.json fixture");
+    let collections = JSON::parse(fixture).expect("parse webhid_normalized_keyboard.json fixture");
 
     let descriptor = aero_wasm::synthesize_webhid_report_descriptor(collections)
         .expect("synthesize descriptor from JS value");
@@ -155,8 +154,7 @@ fn synthesize_webhid_normalized_gamepad_descriptor_matches_expected_bytes() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/fixtures/hid/webhid_normalized_gamepad.json"
     ));
-    let collections =
-        JSON::parse(fixture).expect("parse webhid_normalized_gamepad.json fixture");
+    let collections = JSON::parse(fixture).expect("parse webhid_normalized_gamepad.json fixture");
 
     let descriptor = aero_wasm::synthesize_webhid_report_descriptor(collections)
         .expect("synthesize descriptor from JS value");
@@ -223,7 +221,10 @@ fn synthesize_webhid_report_descriptor_error_includes_field_path() {
         .expect_err("expected schema error");
     let msg = err
         .as_string()
-        .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
+        .or_else(|| {
+            err.dyn_ref::<js_sys::Error>()
+                .and_then(|e| e.message().as_string())
+        })
         .unwrap_or_else(|| format!("{err:?}"));
 
     assert!(

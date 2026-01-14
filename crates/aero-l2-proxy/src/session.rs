@@ -939,21 +939,18 @@ async fn process_actions(
                         .map(|f| (f.host, f.port))
                         .unwrap_or_else(|| (dst_ip.to_string(), dst_port));
                     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
-                    let remote_addr = match resolve_host_port(
-                        &remote.0,
-                        remote.1,
-                        state.cfg.dns_lookup_timeout,
-                    )
-                    .await
-                    {
-                        Ok(addr) => addr,
-                        Err(err) => {
-                            if err.kind() == std::io::ErrorKind::TimedOut {
-                                state.metrics.dns_fail();
+                    let remote_addr =
+                        match resolve_host_port(&remote.0, remote.1, state.cfg.dns_lookup_timeout)
+                            .await
+                        {
+                            Ok(addr) => addr,
+                            Err(err) => {
+                                if err.kind() == std::io::ErrorKind::TimedOut {
+                                    state.metrics.dns_fail();
+                                }
+                                return Err(err.into());
                             }
-                            return Err(err.into());
-                        }
-                    };
+                        };
                     socket.connect(remote_addr).await?;
                     let socket = std::sync::Arc::new(socket);
                     let socket_task = socket.clone();
@@ -1224,8 +1221,7 @@ async fn resolve_host_port(
         return Ok(SocketAddr::new(ip, port));
     }
 
-    let addrs = match timeout_opt(dns_lookup_timeout, tokio::net::lookup_host((host, port))).await
-    {
+    let addrs = match timeout_opt(dns_lookup_timeout, tokio::net::lookup_host((host, port))).await {
         Ok(res) => res?,
         Err(_) => {
             return Err(std::io::Error::new(

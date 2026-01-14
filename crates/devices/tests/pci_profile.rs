@@ -4,8 +4,8 @@ use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
-use aero_devices::usb::xhci::XhciPciDevice;
 use aero_devices::pci::{MsiCapability, PciBarDefinition, PciBdf, PciInterruptPin};
+use aero_devices::usb::xhci::XhciPciDevice;
 use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 
 #[test]
@@ -122,7 +122,10 @@ fn aerogpu_profile_matches_protocol_constants() {
     // Keep the canonical PCI profile in sync with the driver-visible ABI constants
     // (`drivers/aerogpu/protocol/aerogpu_pci.h`, mirrored via `aero-protocol`).
     assert_eq!(PCI_VENDOR_ID_AERO, protocol_pci::AEROGPU_PCI_VENDOR_ID);
-    assert_eq!(PCI_DEVICE_ID_AERO_AEROGPU, protocol_pci::AEROGPU_PCI_DEVICE_ID);
+    assert_eq!(
+        PCI_DEVICE_ID_AERO_AEROGPU,
+        protocol_pci::AEROGPU_PCI_DEVICE_ID
+    );
     assert_eq!(
         AEROGPU.subsystem_vendor_id,
         protocol_pci::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID
@@ -138,7 +141,10 @@ fn aerogpu_profile_matches_protocol_constants() {
     );
     assert_eq!(AEROGPU.class.prog_if, protocol_pci::AEROGPU_PCI_PROG_IF);
 
-    assert_eq!(u32::from(AEROGPU_BAR0_INDEX), protocol_pci::AEROGPU_PCI_BAR0_INDEX);
+    assert_eq!(
+        u32::from(AEROGPU_BAR0_INDEX),
+        protocol_pci::AEROGPU_PCI_BAR0_INDEX
+    );
     assert_eq!(
         AEROGPU_BAR0_SIZE,
         u64::from(protocol_pci::AEROGPU_PCI_BAR0_SIZE_BYTES)
@@ -330,8 +336,7 @@ fn virtio_msix_capability_table_size_and_offsets_are_stable() {
 
         let table = cfg.read(msix_off + 0x04, 4);
         assert_eq!(
-            table,
-            VIRTIO_MSIX_TABLE_BAR0_OFFSET,
+            table, VIRTIO_MSIX_TABLE_BAR0_OFFSET,
             "unexpected MSI-X table offset for {}",
             profile.name
         );
@@ -382,7 +387,9 @@ fn ahci_msi_registers_are_read_write_and_update_capability_state() {
     let ctrl = cfg.read(msi_off + 0x02, 2) as u16;
     cfg.write(msi_off + 0x02, 2, u32::from(ctrl | 0x0001));
 
-    let msi = cfg.capability::<MsiCapability>().expect("missing MSI capability");
+    let msi = cfg
+        .capability::<MsiCapability>()
+        .expect("missing MSI capability");
     assert!(msi.enabled());
     assert_eq!(msi.message_address(), 0xfee0_0000);
     assert_eq!(msi.message_data(), 0x0045);

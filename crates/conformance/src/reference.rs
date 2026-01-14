@@ -58,10 +58,7 @@ impl ReferenceBackend {
         }
 
         // On non-x86_64/unix hosts, fall back to QEMU if compiled in and available.
-        #[cfg(all(
-            feature = "qemu-reference",
-            not(all(target_arch = "x86_64", unix))
-        ))]
+        #[cfg(all(feature = "qemu-reference", not(all(target_arch = "x86_64", unix))))]
         {
             if qemu_available {
                 return Ok(Self {
@@ -87,7 +84,10 @@ impl ReferenceBackend {
             BackendKind::Host => {
                 #[cfg(all(target_arch = "x86_64", unix))]
                 {
-                    self.host.as_ref().expect("host backend present").memory_base()
+                    self.host
+                        .as_ref()
+                        .expect("host backend present")
+                        .memory_base()
                 }
                 #[cfg(not(all(target_arch = "x86_64", unix)))]
                 {
@@ -95,7 +95,11 @@ impl ReferenceBackend {
                 }
             }
             #[cfg(feature = "qemu-reference")]
-            BackendKind::Qemu => self.qemu.as_ref().expect("qemu backend present").memory_base(),
+            BackendKind::Qemu => self
+                .qemu
+                .as_ref()
+                .expect("qemu backend present")
+                .memory_base(),
         }
     }
 
@@ -104,7 +108,10 @@ impl ReferenceBackend {
             BackendKind::Host => {
                 #[cfg(all(target_arch = "x86_64", unix))]
                 {
-                    self.host.as_mut().expect("host backend present").execute(case)
+                    self.host
+                        .as_mut()
+                        .expect("host backend present")
+                        .execute(case)
                 }
                 #[cfg(not(all(target_arch = "x86_64", unix)))]
                 {
@@ -116,7 +123,11 @@ impl ReferenceBackend {
                 }
             }
             #[cfg(feature = "qemu-reference")]
-            BackendKind::Qemu => self.qemu.as_mut().expect("qemu backend present").execute(case),
+            BackendKind::Qemu => self
+                .qemu
+                .as_mut()
+                .expect("qemu backend present")
+                .execute(case),
         }
     }
 }

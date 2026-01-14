@@ -147,4 +147,3 @@ fn vbe_framebuffer_does_not_clobber_legacy_text_memory() {
     };
     assert_eq!(fg_px, 0xFFFF_FFFF);
 }
-

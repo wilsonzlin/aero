@@ -7,11 +7,7 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 #[test]
 fn create_shader_dxbc_ex_encodes_stage_ex_in_reserved0() {
     let mut w = AerogpuCmdWriter::new();
-    w.create_shader_dxbc_ex(
-        123,
-        AerogpuShaderStageEx::Geometry,
-        &[0xAA, 0xBB, 0xCC],
-    );
+    w.create_shader_dxbc_ex(123, AerogpuShaderStageEx::Geometry, &[0xAA, 0xBB, 0xCC]);
     let bytes = w.finish();
 
     let pkt_off = AerogpuCmdStreamHeader::SIZE_BYTES;

@@ -107,7 +107,9 @@ impl Sm4Program {
         let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let declared_len = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
         if declared_len < 2 {
-            return Err(Sm4Error::DeclaredLengthTooSmall { declared: declared_len });
+            return Err(Sm4Error::DeclaredLengthTooSmall {
+                declared: declared_len,
+            });
         }
         if declared_len > available {
             return Err(Sm4Error::DeclaredLengthOutOfBounds {
@@ -125,7 +127,9 @@ impl Sm4Program {
         let mut tokens = Vec::new();
         tokens
             .try_reserve_exact(declared_len)
-            .map_err(|_| Sm4Error::TokenStreamTooLarge { dwords: declared_len })?;
+            .map_err(|_| Sm4Error::TokenStreamTooLarge {
+                dwords: declared_len,
+            })?;
         for chunk in bytes.chunks_exact(4).take(declared_len) {
             tokens.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
@@ -218,7 +222,10 @@ impl fmt::Display for Sm4Error {
                 write!(f, "shader bytecode too short ({dwords} dwords)")
             }
             Sm4Error::DeclaredLengthTooSmall { declared } => {
-                write!(f, "shader bytecode declares invalid length {declared} (< 2)")
+                write!(
+                    f,
+                    "shader bytecode declares invalid length {declared} (< 2)"
+                )
             }
             Sm4Error::DeclaredLengthOutOfBounds {
                 declared,
@@ -228,7 +235,10 @@ impl fmt::Display for Sm4Error {
                 "shader bytecode declares {declared} dwords but only {available} provided"
             ),
             Sm4Error::TokenStreamTooLarge { dwords } => {
-                write!(f, "shader bytecode token stream {dwords} dwords is too large to allocate")
+                write!(
+                    f,
+                    "shader bytecode token stream {dwords} dwords is too large to allocate"
+                )
             }
         }
     }

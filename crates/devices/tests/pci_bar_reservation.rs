@@ -68,16 +68,8 @@ fn pci_bus_reset_reserves_fixed_bar_assignments() {
     bus.reset(&mut allocator)
         .expect("PciBus::reset should allocate BARs without overlap");
 
-    let dev_a_range = bus
-        .device_config(dev_a_bdf)
-        .unwrap()
-        .bar_range(0)
-        .unwrap();
-    let dev_b_range = bus
-        .device_config(dev_b_bdf)
-        .unwrap()
-        .bar_range(0)
-        .unwrap();
+    let dev_a_range = bus.device_config(dev_a_bdf).unwrap().bar_range(0).unwrap();
+    let dev_b_range = bus.device_config(dev_b_bdf).unwrap().bar_range(0).unwrap();
 
     assert_eq!(dev_a_range.base, 0xE000_0000);
 
@@ -86,7 +78,10 @@ fn pci_bus_reset_reserves_fixed_bar_assignments() {
     assert_eq!(dev_b_range.base, 0xE000_2000);
     let overlap = dev_a_range.base < dev_b_range.end_exclusive()
         && dev_b_range.base < dev_a_range.end_exclusive();
-    assert!(!overlap, "ranges overlap: {dev_a_range:?} vs {dev_b_range:?}");
+    assert!(
+        !overlap,
+        "ranges overlap: {dev_a_range:?} vs {dev_b_range:?}"
+    );
 
     // BAR bases are required to be aligned to their size.
     assert_eq!(dev_a_range.base % dev_a_range.size, 0);

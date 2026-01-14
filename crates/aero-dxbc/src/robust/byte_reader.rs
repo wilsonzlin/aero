@@ -7,9 +7,16 @@ pub enum ByteReaderError {
         needed: usize,
         remaining: usize,
     },
-    OffsetOutOfBounds { offset: usize, len: usize },
-    InvalidUtf8 { offset: usize },
-    UnterminatedCString { offset: usize },
+    OffsetOutOfBounds {
+        offset: usize,
+        len: usize,
+    },
+    InvalidUtf8 {
+        offset: usize,
+    },
+    UnterminatedCString {
+        offset: usize,
+    },
 }
 
 impl fmt::Display for ByteReaderError {
@@ -159,4 +166,3 @@ impl fmt::Debug for ByteReader<'_> {
             .finish()
     }
 }
-

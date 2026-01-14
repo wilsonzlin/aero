@@ -1,8 +1,8 @@
 mod util;
 
+use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::context::{EndpointContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::MemoryBus;
 
@@ -383,4 +383,4 @@ fn stop_endpoint_gates_transfer_execution_until_reset() {
         .expect("expected resumed transfer event");
     assert_eq!(ev3.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev3.completion_code_raw(), CompletionCode::Success.as_u8());
- }
+}

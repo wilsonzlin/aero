@@ -111,7 +111,11 @@ fn xhci_controller_dboff_rtsoff_are_plausible() {
 
     let dboff = ctrl.mmio_read(&mut mem, regs::REG_DBOFF, 4);
     assert_ne!(dboff, 0, "DBOFF should be non-zero");
-    assert_eq!(dboff & 0x3, 0, "DBOFF must be 4-byte aligned (bits 1:0 reserved)");
+    assert_eq!(
+        dboff & 0x3,
+        0,
+        "DBOFF must be 4-byte aligned (bits 1:0 reserved)"
+    );
     assert!(
         dboff < XhciController::MMIO_SIZE,
         "DBOFF must point within the MMIO window"
@@ -233,7 +237,10 @@ fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
 fn xhci_controller_run_does_not_dma_when_dma_disabled() {
     let mut ctrl = XhciController::new();
     let mut mem = NoDmaCountingMem::default();
-    assert!(!ctrl.irq_level(), "controller should not assert IRQ by default");
+    assert!(
+        !ctrl.irq_level(),
+        "controller should not assert IRQ by default"
+    );
 
     // Program CRCR and start the controller. The dma-on-RUN probe should be skipped when DMA is
     // disabled, leaving the memory bus untouched.
@@ -243,7 +250,10 @@ fn xhci_controller_run_does_not_dma_when_dma_disabled() {
 
     assert_eq!(mem.reads, 0);
     assert_eq!(mem.writes, 0);
-    assert!(!ctrl.irq_level(), "dma-on-RUN interrupt must be gated by dma_enabled()");
+    assert!(
+        !ctrl.irq_level(),
+        "dma-on-RUN interrupt must be gated by dma_enabled()"
+    );
 }
 
 #[test]
@@ -333,7 +343,10 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     let mut restored = XhciController::new();
     restored.load_state(&bytes).expect("load snapshot");
 
-    assert_eq!(restored.mmio_read(&mut mem, regs::REG_USBCMD, 4), regs::USBCMD_RUN);
+    assert_eq!(
+        restored.mmio_read(&mut mem, regs::REG_USBCMD, 4),
+        regs::USBCMD_RUN
+    );
     // CRCR stores a 64-byte-aligned ring pointer; low bits hold flags/cycle state.
     assert_eq!(
         restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4),

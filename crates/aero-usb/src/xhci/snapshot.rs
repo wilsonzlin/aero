@@ -6,8 +6,8 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
-use super::regs;
 use super::context::{EndpointContext, SlotContext};
+use super::regs;
 use super::ring::RingCursor;
 use super::trb::{CompletionCode, Trb, TRB_LEN};
 use super::{
@@ -237,10 +237,7 @@ fn encode_active_endpoints(endpoints: &[ActiveEndpoint]) -> Vec<u8> {
     enc.finish()
 }
 
-fn decode_active_endpoints(
-    slots_len: usize,
-    buf: &[u8],
-) -> SnapshotResult<Vec<ActiveEndpoint>> {
+fn decode_active_endpoints(slots_len: usize, buf: &[u8]) -> SnapshotResult<Vec<ActiveEndpoint>> {
     let mut d = Decoder::new(buf);
     let count = d.u32()? as usize;
     // At most 31 endpoints per slot; slot 0 is reserved.
@@ -353,11 +350,7 @@ fn decode_ep0_control_td(dst: &mut [ControlTdState], buf: &[u8]) -> SnapshotResu
             13 => CompletionCode::ShortPacket,
             17 => CompletionCode::ParameterError,
             19 => CompletionCode::ContextStateError,
-            _ => {
-                return Err(SnapshotError::InvalidFieldEncoding(
-                    "xhci completion code",
-                ))
-            }
+            _ => return Err(SnapshotError::InvalidFieldEncoding("xhci completion code")),
         };
 
         *st = ControlTdState {
@@ -535,12 +528,18 @@ impl IoSnapshot for XhciController {
             TAG_ACTIVE_ENDPOINTS,
             encode_active_endpoints(&self.active_endpoints),
         );
-        w.field_bytes(TAG_EP0_CONTROL_TD, encode_ep0_control_td(&self.ep0_control_td));
+        w.field_bytes(
+            TAG_EP0_CONTROL_TD,
+            encode_ep0_control_td(&self.ep0_control_td),
+        );
         w.field_bytes(
             TAG_EP0_CONTROL_TD_FULL,
             encode_ep0_control_td_full(&self.ep0_control_td),
         );
-        w.field_bytes(TAG_PENDING_EVENTS, encode_pending_events(&self.pending_events));
+        w.field_bytes(
+            TAG_PENDING_EVENTS,
+            encode_pending_events(&self.pending_events),
+        );
         w.field_u64(TAG_DROPPED_EVENT_TRBS, self.dropped_event_trbs);
 
         w.finish()

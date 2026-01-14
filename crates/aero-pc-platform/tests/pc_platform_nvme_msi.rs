@@ -112,9 +112,23 @@ fn pc_platform_nvme_msi_fires_when_intx_disabled() {
 
     let vector: u8 = 0x45;
     // Standard xAPIC physical destination MSI address for destination APIC ID 0.
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, msi_off + 0x04, 0xfee0_0000);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msi_off + 0x04,
+        0xfee0_0000,
+    );
     if is_64bit {
-        write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, msi_off + 0x08, 0);
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x08,
+            0,
+        );
         write_cfg_u16(
             &mut pc,
             bdf.bus,

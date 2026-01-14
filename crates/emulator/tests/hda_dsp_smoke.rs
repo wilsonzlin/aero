@@ -100,4 +100,3 @@ fn hda_stream_dma_to_dsp_stream_processor_checksum() {
     // This checksum is the contract: changes here should be intentional and justified.
     assert_eq!(hash_f32(&out), 0xadf6_a4ce_b91e_6b2f);
 }
-

@@ -342,7 +342,10 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
     let disp_ptr = machine.display_framebuffer_ptr();
     let disp_len = machine.display_framebuffer_len_bytes();
     assert!(disp_ptr != 0, "expected non-zero display_framebuffer_ptr");
-    assert!(disp_len != 0, "expected non-zero display_framebuffer_len_bytes");
+    assert!(
+        disp_len != 0,
+        "expected non-zero display_framebuffer_len_bytes"
+    );
 
     // Safety: ptr/len is a view into the module's own linear memory.
     let disp_fb = unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
@@ -438,8 +441,7 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     let disp_len = machine.display_framebuffer_len_bytes();
     assert!(disp_ptr != 0, "expected non-zero display_framebuffer_ptr");
     assert_eq!(disp_len, 64 * 64 * 4);
-    let disp_fb =
-        unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
+    let disp_fb = unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
     assert_eq!(&disp_fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }
 
@@ -479,8 +481,14 @@ fn wasm_machine_aerogpu_config_disables_vga_by_default_and_displays_text_mode() 
     machine.display_present();
     let w = machine.display_width();
     let h = machine.display_height();
-    assert!(w > 0, "expected non-zero display_width in AeroGPU text mode");
-    assert!(h > 0, "expected non-zero display_height in AeroGPU text mode");
+    assert!(
+        w > 0,
+        "expected non-zero display_width in AeroGPU text mode"
+    );
+    assert!(
+        h > 0,
+        "expected non-zero display_height in AeroGPU text mode"
+    );
     assert_eq!(machine.display_stride_bytes(), w * 4);
 
     let ptr = machine.display_framebuffer_ptr();

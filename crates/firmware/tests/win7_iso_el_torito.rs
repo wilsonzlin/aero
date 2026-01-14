@@ -33,7 +33,11 @@ impl FileCdrom {
 }
 
 impl CdromDevice for FileCdrom {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; CDROM_SECTOR_SIZE]) -> Result<(), DiskError> {
+    fn read_sector(
+        &mut self,
+        lba: u64,
+        buf: &mut [u8; CDROM_SECTOR_SIZE],
+    ) -> Result<(), DiskError> {
         if lba >= self.sector_count {
             return Err(DiskError::OutOfRange);
         }
@@ -43,7 +47,9 @@ impl CdromDevice for FileCdrom {
         self.file
             .seek(SeekFrom::Start(off))
             .map_err(|_| DiskError::OutOfRange)?;
-        self.file.read_exact(buf).map_err(|_| DiskError::OutOfRange)?;
+        self.file
+            .read_exact(buf)
+            .map_err(|_| DiskError::OutOfRange)?;
         Ok(())
     }
 
@@ -153,11 +159,16 @@ fn parse_el_torito(cdrom: &mut dyn CdromDevice) -> ElToritoInfo {
     for lba in 16u64..64 {
         let mut sec = [0u8; CDROM_SECTOR_SIZE];
         cdrom.read_sector(lba, &mut sec).unwrap();
-        assert_eq!(&sec[1..6], b"CD001", "invalid ISO9660 signature at LBA {lba}");
+        assert_eq!(
+            &sec[1..6],
+            b"CD001",
+            "invalid ISO9660 signature at LBA {lba}"
+        );
         match sec[0] {
             0 => {
                 if sec[7..39].starts_with(b"EL TORITO SPECIFICATION") {
-                    boot_catalog_lba = Some(u32::from_le_bytes(sec[71..75].try_into().unwrap()) as u64);
+                    boot_catalog_lba =
+                        Some(u32::from_le_bytes(sec[71..75].try_into().unwrap()) as u64);
                     break;
                 }
             }
@@ -169,8 +180,15 @@ fn parse_el_torito(cdrom: &mut dyn CdromDevice) -> ElToritoInfo {
 
     let mut catalog = [0u8; CDROM_SECTOR_SIZE];
     cdrom.read_sector(boot_catalog_lba, &mut catalog).unwrap();
-    assert_eq!(catalog[0], 0x01, "invalid El Torito validation entry header");
-    assert_eq!(&catalog[30..32], &[0x55, 0xAA], "invalid El Torito validation key");
+    assert_eq!(
+        catalog[0], 0x01,
+        "invalid El Torito validation entry header"
+    );
+    assert_eq!(
+        &catalog[30..32],
+        &[0x55, 0xAA],
+        "invalid El Torito validation key"
+    );
 
     let entry = &catalog[0x20..0x40];
     assert_eq!(entry[0], 0x88, "El Torito initial entry is not bootable");

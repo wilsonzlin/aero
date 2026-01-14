@@ -110,12 +110,16 @@ impl CodeCache {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
                 self.current_bytes = self.current_bytes.saturating_add(byte_len);
-                let idx = Self::alloc_node_inner(&mut self.nodes, &mut self.free_list, LruNode {
-                    entry_rip,
-                    handle,
-                    prev: None,
-                    next: None,
-                });
+                let idx = Self::alloc_node_inner(
+                    &mut self.nodes,
+                    &mut self.free_list,
+                    LruNode {
+                        entry_rip,
+                        handle,
+                        prev: None,
+                        next: None,
+                    },
+                );
                 let _ = entry.insert(idx);
                 self.link_front(idx);
                 return self.evict_if_needed();
@@ -291,7 +295,10 @@ impl CodeCache {
                 "all nodes should be free when the cache is empty"
             );
             for node in &self.nodes {
-                debug_assert!(node.is_none(), "node slot should be free when cache is empty");
+                debug_assert!(
+                    node.is_none(),
+                    "node slot should be free when cache is empty"
+                );
             }
             return;
         }
@@ -338,11 +345,7 @@ impl CodeCache {
             self.map.len(),
             "LRU list length mismatch with map"
         );
-        debug_assert_eq!(
-            prev,
-            Some(tail),
-            "LRU traversal did not end at tail"
-        );
+        debug_assert_eq!(prev, Some(tail), "LRU traversal did not end at tail");
         debug_assert_eq!(
             bytes, self.current_bytes,
             "byte accounting mismatch: list sums to {bytes}, current_bytes is {}",
@@ -352,7 +355,10 @@ impl CodeCache {
         // Validate free_list: no duplicates, all indices are in-bounds and refer to `None` slots.
         let mut in_free = vec![false; self.nodes.len()];
         for &idx in &self.free_list {
-            debug_assert!(idx < self.nodes.len(), "free_list index out of bounds: {idx}");
+            debug_assert!(
+                idx < self.nodes.len(),
+                "free_list index out of bounds: {idx}"
+            );
             debug_assert!(!in_free[idx], "duplicate index in free_list: {idx}");
             in_free[idx] = true;
             debug_assert!(

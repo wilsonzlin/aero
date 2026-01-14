@@ -4,8 +4,8 @@
 //! the standalone device crates cannot drift.
 
 pub use aero_devices_gpu::backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
-    ImmediateAeroGpuBackend, NullAeroGpuBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend, ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
 
 #[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]

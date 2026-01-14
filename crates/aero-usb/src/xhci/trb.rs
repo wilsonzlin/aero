@@ -269,8 +269,8 @@ impl Trb {
 
     #[inline]
     pub fn set_configure_endpoint_deconfigure(&mut self, on: bool) {
-        self.control = (self.control & !Self::CONTROL_CONFIGURE_ENDPOINT_DECONFIGURE_BIT)
-            | ((on as u32) << 9);
+        self.control =
+            (self.control & !Self::CONTROL_CONFIGURE_ENDPOINT_DECONFIGURE_BIT) | ((on as u32) << 9);
     }
 
     /// Interpret the parameter field as a pointer and mask it to 16-byte alignment.

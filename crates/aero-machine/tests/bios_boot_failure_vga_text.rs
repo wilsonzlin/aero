@@ -34,4 +34,3 @@ fn bios_boot_failure_renders_message_to_vga_text_memory() {
         assert_eq!(attr, 0x07);
     }
 }
-

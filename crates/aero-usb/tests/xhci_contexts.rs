@@ -1,5 +1,6 @@
 use aero_usb::xhci::context::{
-    DeviceContext32, EndpointContext, InputContext32, InputControlContext, SlotContext, CONTEXT_SIZE,
+    DeviceContext32, EndpointContext, InputContext32, InputControlContext, SlotContext,
+    CONTEXT_SIZE,
 };
 
 mod util;
@@ -71,7 +72,10 @@ fn context_offsets_match_spec_layout() {
     ep0.write_to(&mut mem, base + CONTEXT_SIZE as u64);
 
     // Read back via DeviceContext to ensure consistent indexing.
-    assert_eq!(dc.endpoint_context(&mut mem, 1).unwrap().dword(0), 0xaabb_ccdd);
+    assert_eq!(
+        dc.endpoint_context(&mut mem, 1).unwrap().dword(0),
+        0xaabb_ccdd
+    );
 
     // Input Context layout: SlotContext starts at +0x20 (after ICC).
     let ic = InputContext32::new(base);

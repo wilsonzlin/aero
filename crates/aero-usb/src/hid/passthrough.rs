@@ -500,12 +500,12 @@ impl UsbHidPassthrough {
                     //
                     // Only strip the prefix when the provided bytes match the descriptor-derived
                     // total report length, mirroring the SET_REPORT double-prefix protection.
-                    let payload =
-                        if expected_len == data.len() && data.first() == Some(&report_id) {
-                            &data[1..]
-                        } else {
-                            data
-                        };
+                    let payload = if expected_len == data.len() && data.first() == Some(&report_id)
+                    {
+                        &data[1..]
+                    } else {
+                        data
+                    };
 
                     let payload_len = expected_len.saturating_sub(1);
                     let copy_len = payload.len().min(payload_len);
@@ -610,19 +610,21 @@ impl UsbHidPassthrough {
 
     fn alloc_feature_report_request_id(&mut self) -> u32 {
         let id = self.next_feature_report_request_id;
-        self.next_feature_report_request_id = self
-            .next_feature_report_request_id
-            .wrapping_add(1)
-            .max(1);
+        self.next_feature_report_request_id =
+            self.next_feature_report_request_id.wrapping_add(1).max(1);
         id
     }
 
     fn enqueue_feature_report_request(&mut self, report_id: u8) {
-        if self.feature_report_requests_pending.contains_key(&report_id) {
+        if self
+            .feature_report_requests_pending
+            .contains_key(&report_id)
+        {
             return;
         }
         let request_id = self.alloc_feature_report_request_id();
-        self.feature_report_requests_pending.insert(report_id, request_id);
+        self.feature_report_requests_pending
+            .insert(report_id, request_id);
         self.feature_report_request_queue
             .push_back(UsbHidPassthroughFeatureReportRequest {
                 request_id,
@@ -661,7 +663,8 @@ impl UsbHidPassthrough {
         if pending_id != request_id {
             return false;
         }
-        self.feature_report_requests_failed.insert(report_id, request_id);
+        self.feature_report_requests_failed
+            .insert(report_id, request_id);
         self.feature_report_request_queue
             .retain(|req| req.request_id != request_id);
         true
@@ -719,8 +722,7 @@ impl UsbHidPassthrough {
             return payload[..capped].to_vec();
         };
 
-        let expected_payload_len =
-            expected_total_len.saturating_sub(usize::from(report_id != 0));
+        let expected_payload_len = expected_total_len.saturating_sub(usize::from(report_id != 0));
         if expected_payload_len == 0 {
             return Vec::new();
         }
@@ -759,8 +761,7 @@ impl UsbHidPassthrough {
             return payload[..capped].to_vec();
         };
 
-        let expected_payload_len =
-            expected_total_len.saturating_sub(usize::from(report_id != 0));
+        let expected_payload_len = expected_total_len.saturating_sub(usize::from(report_id != 0));
         if expected_payload_len == 0 {
             return Vec::new();
         }
@@ -1078,7 +1079,8 @@ impl UsbDeviceModel for UsbHidPassthrough {
                                 self.default_report(report_type, report_id, setup.w_length)
                             }),
                         3 => {
-                            if let Some(data) = self.cached_feature_reports.get(&report_id).cloned() {
+                            if let Some(data) = self.cached_feature_reports.get(&report_id).cloned()
+                            {
                                 data
                             } else {
                                 // If the host previously failed this request, surface the failure
@@ -1117,20 +1119,23 @@ impl UsbDeviceModel for UsbHidPassthrough {
                     let report_id = (setup.w_value & 0x00ff) as u8;
                     match (report_type, data_stage) {
                         (2 | 3, Some(data)) => {
-                            if self.pending_output_reports.len() >= self.max_pending_output_reports {
+                            if self.pending_output_reports.len() >= self.max_pending_output_reports
+                            {
                                 // Backpressure: NAK the STATUS stage until the host drains queued
                                 // output/feature reports.
                                 return ControlResponse::Nak;
                             }
-                            let payload = self.normalize_report_payload(report_type, report_id, data);
+                            let payload =
+                                self.normalize_report_payload(report_type, report_id, data);
                             // Idempotence: only enqueue when returning ACK. If we returned NAK
                             // above, the control pipe will retry the STATUS stage without having
                             // enqueued anything yet.
-                            let pushed = self.try_push_output_report(UsbHidPassthroughOutputReport {
-                                report_type,
-                                report_id,
-                                data: payload,
-                            });
+                            let pushed =
+                                self.try_push_output_report(UsbHidPassthroughOutputReport {
+                                    report_type,
+                                    report_id,
+                                    data: payload,
+                                });
                             debug_assert!(pushed);
                             if !pushed {
                                 return ControlResponse::Nak;
@@ -1410,7 +1415,10 @@ type ReportDescriptorReportLengths = (
     BTreeMap<u8, usize>,
 );
 
-fn bits_to_report_lengths_input(bits: &BTreeMap<u8, u64>, max_packet_size: usize) -> BTreeMap<u8, usize> {
+fn bits_to_report_lengths_input(
+    bits: &BTreeMap<u8, u64>,
+    max_packet_size: usize,
+) -> BTreeMap<u8, usize> {
     let mut out = BTreeMap::new();
     for (&report_id, &total_bits) in bits {
         let mut bytes = usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
@@ -1451,8 +1459,7 @@ fn bits_to_report_lengths_payload_capped(
 ) -> BTreeMap<u8, usize> {
     let mut out = BTreeMap::new();
     for (&report_id, &total_bits) in bits {
-        let payload_bytes =
-            usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
+        let payload_bytes = usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
         let payload_bytes = payload_bytes.min(max_payload_bytes);
         let total_bytes = payload_bytes.saturating_add(usize::from(report_id != 0));
         out.insert(report_id, total_bytes);
@@ -1875,8 +1882,7 @@ impl IoSnapshot for UsbHidPassthrough {
             self.next_feature_report_request_id,
         );
 
-        let mut feature_queue =
-            Encoder::new().u32(self.feature_report_request_queue.len() as u32);
+        let mut feature_queue = Encoder::new().u32(self.feature_report_request_queue.len() as u32);
         for req in &self.feature_report_request_queue {
             feature_queue = feature_queue.u32(req.request_id).u8(req.report_id);
         }
@@ -1887,7 +1893,10 @@ impl IoSnapshot for UsbHidPassthrough {
         for (&report_id, &request_id) in &self.feature_report_requests_pending {
             feature_pending = feature_pending.u8(report_id).u32(request_id);
         }
-        w.field_bytes(TAG_FEATURE_REPORT_REQUESTS_PENDING, feature_pending.finish());
+        w.field_bytes(
+            TAG_FEATURE_REPORT_REQUESTS_PENDING,
+            feature_pending.finish(),
+        );
 
         let mut feature_failed =
             Encoder::new().u32(self.feature_report_requests_failed.len() as u32);
@@ -2127,11 +2136,12 @@ impl IoSnapshot for UsbHidPassthrough {
             for _ in 0..count {
                 let request_id = d.u32()?;
                 let report_id = d.u8()?;
-                self.feature_report_request_queue
-                    .push_back(UsbHidPassthroughFeatureReportRequest {
+                self.feature_report_request_queue.push_back(
+                    UsbHidPassthroughFeatureReportRequest {
                         request_id,
                         report_id,
-                    });
+                    },
+                );
             }
             d.finish()?;
         }
@@ -2175,7 +2185,8 @@ impl IoSnapshot for UsbHidPassthrough {
             for _ in 0..count {
                 let report_id = d.u8()?;
                 let request_id = d.u32()?;
-                self.feature_report_requests_failed.insert(report_id, request_id);
+                self.feature_report_requests_failed
+                    .insert(report_id, request_id);
             }
             d.finish()?;
         }
@@ -2201,10 +2212,7 @@ impl IoSnapshot for UsbHidPassthrough {
 
         self.feature_report_request_queue.retain(|req| {
             self.feature_report_requests_pending.get(&req.report_id) == Some(&req.request_id)
-                && self
-                    .feature_report_requests_failed
-                    .get(&req.report_id)
-                    != Some(&req.request_id)
+                && self.feature_report_requests_failed.get(&req.report_id) != Some(&req.request_id)
         });
 
         let mut queued = BTreeSet::<u32>::new();
@@ -2431,10 +2439,16 @@ mod tests {
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
         assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
 
-        let (subclass, protocol) =
-            parse_interface_descriptor_fields(&cfg).expect("config descriptor should contain interface descriptor");
-        assert_eq!(subclass, 1, "interface subclass should match constructor parameter");
-        assert_eq!(protocol, 1, "interface protocol should match constructor parameter");
+        let (subclass, protocol) = parse_interface_descriptor_fields(&cfg)
+            .expect("config descriptor should contain interface descriptor");
+        assert_eq!(
+            subclass, 1,
+            "interface subclass should match constructor parameter"
+        );
+        assert_eq!(
+            protocol, 1,
+            "interface protocol should match constructor parameter"
+        );
 
         // HID descriptor starts at offset 18 (9 config + 9 interface).
         let hid = &cfg[18..27];
@@ -2619,7 +2633,10 @@ mod tests {
         };
         assert_eq!(data.len(), super::MAX_UNKNOWN_INPUT_REPORT_BYTES);
         assert_eq!(data[0], report_id);
-        assert_eq!(&data[1..], &[0xaa; super::MAX_UNKNOWN_INPUT_REPORT_BYTES - 1]);
+        assert_eq!(
+            &data[1..],
+            &[0xaa; super::MAX_UNKNOWN_INPUT_REPORT_BYTES - 1]
+        );
     }
 
     #[test]
@@ -2661,7 +2678,9 @@ mod tests {
             ),
             ControlResponse::Ack
         );
-        let out = dev.pop_output_report().expect("expected queued output report");
+        let out = dev
+            .pop_output_report()
+            .expect("expected queued output report");
         assert_eq!(out.report_type, 2);
         assert_eq!(out.report_id, 1);
         assert_eq!(out.data.len(), MAX_HID_SET_REPORT_BYTES);
@@ -2674,7 +2693,10 @@ mod tests {
             w_index: 0,
             w_length: u16::MAX,
         };
-        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        assert_eq!(
+            dev.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
         let req = dev
             .pop_feature_report_request()
             .expect("expected host feature report request");
@@ -3303,10 +3325,7 @@ mod tests {
         assert_eq!(dev.handle_in(0, 0), UsbInResult::Data(Vec::new()));
 
         // Fill the output report queue to capacity (1).
-        assert_eq!(
-            dev.handle_out(1, &[2, 0x10, 0x20]),
-            UsbOutResult::Ack
-        );
+        assert_eq!(dev.handle_out(1, &[2, 0x10, 0x20]), UsbOutResult::Ack);
 
         // Begin a control-OUT SET_REPORT transfer while the queue is full.
         assert_eq!(
@@ -3441,7 +3460,10 @@ mod tests {
             w_length: 64,
         };
 
-        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        assert_eq!(
+            dev.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
         let req = dev
             .pop_feature_report_request()
             .expect("expected host feature report request");
@@ -3483,7 +3505,10 @@ mod tests {
             w_length: 64,
         };
 
-        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        assert_eq!(
+            dev.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
         let req = dev
             .pop_feature_report_request()
             .expect("expected host feature report request");
@@ -3529,7 +3554,10 @@ mod tests {
             w_length: 6000,
         };
 
-        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        assert_eq!(
+            dev.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
         let req = dev
             .pop_feature_report_request()
             .expect("expected host feature report request");
@@ -3572,10 +3600,7 @@ mod tests {
             w_length,
         };
 
-        let resp = dev.handle_control_request(
-            setup,
-            None,
-        );
+        let resp = dev.handle_control_request(setup, None);
         assert_eq!(resp, ControlResponse::Nak);
 
         let req = dev
@@ -3816,10 +3841,7 @@ mod tests {
             let payload = vec![0u8; 1024 * 1024];
             let mut enc = Encoder::new().u32(9);
             for report_id in 1u8..=8 {
-                enc = enc
-                    .u8(report_id)
-                    .u32(payload.len() as u32)
-                    .bytes(&payload);
+                enc = enc.u8(report_id).u32(payload.len() as u32).bytes(&payload);
             }
             // Exceed the total budget; omit payload bytes so the loader must fail before reading.
             enc.u8(9).u32(1).finish()

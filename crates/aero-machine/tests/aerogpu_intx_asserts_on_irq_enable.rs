@@ -28,7 +28,9 @@ fn aerogpu_intx_asserts_on_irq_enable() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    let pci_intx = m.pci_intx_router().expect("pc platform should provide PCI INTx router");
+    let pci_intx = m
+        .pci_intx_router()
+        .expect("pc platform should provide PCI INTx router");
     let interrupts = m
         .platform_interrupts()
         .expect("pc platform should provide PlatformInterrupts");
@@ -40,7 +42,11 @@ fn aerogpu_intx_asserts_on_irq_enable() {
         "expected AeroGPU INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
     );
     let irq = u8::try_from(gsi).unwrap();
-    let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    let vector = if irq < 8 {
+        0x20 + irq
+    } else {
+        0x28 + (irq - 8)
+    };
 
     // Configure the PIC for deterministic vectors and unmask only the routed IRQ (and cascade).
     {
@@ -57,7 +63,9 @@ fn aerogpu_intx_asserts_on_irq_enable() {
 
     // Enable PCI MMIO decode + bus mastering on the canonical AeroGPU function and resolve BAR0.
     let bar0_base = {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should provide PCI config ports");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should provide PCI config ports");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()

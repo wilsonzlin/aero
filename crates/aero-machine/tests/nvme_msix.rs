@@ -60,26 +60,25 @@ fn nvme_msix_delivers_to_lapic_in_apic_mode() {
     m.io_write(A20_GATE_PORT, 1, 0x02);
 
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
-    interrupts.borrow_mut().set_mode(PlatformInterruptMode::Apic);
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
     assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
     let bdf = profile::NVME_CONTROLLER.bdf;
 
     // Enable PCI memory decoding + bus mastering (required for MMIO + DMA).
     let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        0x04,
-        2,
-        u32::from(cmd | (1 << 1) | (1 << 2)),
-    );
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
 
     // Read BAR0 base (64-bit MMIO BAR).
     let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
     let bar0_hi = cfg_read(&mut m, bdf, 0x14, 4) as u64;
     let bar0_base = (bar0_hi << 32) | (bar0_lo & !0xFu64);
-    assert_ne!(bar0_base, 0, "expected NVMe BAR0 to be assigned during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "expected NVMe BAR0 to be assigned during BIOS POST"
+    );
 
     // Enable MSI-X (capability control bit 15).
     let msix_cap = find_capability(&mut m, bdf, aero_devices::pci::msix::PCI_CAP_ID_MSIX)
@@ -129,4 +128,3 @@ fn nvme_msix_delivers_to_lapic_in_apic_mode() {
         Some(vector)
     );
 }
-

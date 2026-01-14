@@ -496,16 +496,16 @@ impl VgaDevice {
             // `ScanoutState` has no explicit panning fields, so `(x_offset, y_offset)` must be
             // encoded by adjusting the base.
             let lfb_base = u64::from(self.svga_lfb_base);
-            let x_off_bytes = match u64::from(self.vbe.x_offset).checked_mul(u64::from(bytes_per_pixel))
+            let x_off_bytes =
+                match u64::from(self.vbe.x_offset).checked_mul(u64::from(bytes_per_pixel)) {
+                    Some(v) => v,
+                    None => return disabled,
+                };
+            let y_off_bytes = match u64::from(self.vbe.y_offset).checked_mul(u64::from(pitch_bytes))
             {
                 Some(v) => v,
                 None => return disabled,
             };
-            let y_off_bytes =
-                match u64::from(self.vbe.y_offset).checked_mul(u64::from(pitch_bytes)) {
-                    Some(v) => v,
-                    None => return disabled,
-                };
             let base_paddr = match lfb_base
                 .checked_add(y_off_bytes)
                 .and_then(|v| v.checked_add(x_off_bytes))
@@ -1449,7 +1449,8 @@ impl VgaDevice {
             0x0009 => self.vbe.y_offset,
             0x000A => {
                 let fb_base = usize::try_from(self.config.lfb_offset).unwrap_or(0);
-                u16::try_from(self.vram.len().saturating_sub(fb_base) / (64 * 1024)).unwrap_or(u16::MAX)
+                u16::try_from(self.vram.len().saturating_sub(fb_base) / (64 * 1024))
+                    .unwrap_or(u16::MAX)
             }
             _ => 0,
         }

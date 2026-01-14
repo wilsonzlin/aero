@@ -89,7 +89,7 @@ fn write_qh(mem: &mut TestMemory, addr: u32, horiz: u32, ep_char: u32, first_qtd
     mem.write_u32(addr + 0x10, first_qtd);
     mem.write_u32(addr + 0x14, LINK_TERMINATE); // alt-next terminate
     mem.write_u32(addr + 0x18, 0); // overlay token
-    // overlay buffer pointers (5 dwords)
+                                   // overlay buffer pointers (5 dwords)
     for i in 0..5u32 {
         mem.write_u32(addr + 0x1c + i * 4, 0);
     }
@@ -406,7 +406,11 @@ fn ehci_hcreset_resets_operational_regs_but_preserves_port_connection() {
     );
 
     let portsc = c.mmio_read(regs::reg_portsc(0), 4);
-    assert_ne!(portsc & regs::PORTSC_CCS, 0, "device should remain connected");
+    assert_ne!(
+        portsc & regs::PORTSC_CCS,
+        0,
+        "device should remain connected"
+    );
 }
 
 #[test]
@@ -577,7 +581,13 @@ fn ehci_async_control_get_descriptor_device_completes_and_sets_usbint() {
     );
 
     let ep_char = qh_epchar(0, 0, 64);
-    write_qh(&mut mem, ASYNC_QH, qh_link_ptr_qh(ASYNC_QH), ep_char, QTD_SETUP);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        QTD_SETUP,
+    );
 
     c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
     c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
@@ -586,8 +596,8 @@ fn ehci_async_control_get_descriptor_device_completes_and_sets_usbint() {
     c.tick_1ms(&mut mem);
 
     let expected = [
-        0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01,
-        0x01, 0x02, 0x00, 0x01,
+        0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01, 0x01,
+        0x02, 0x00, 0x01,
     ];
     assert_eq!(
         &mem.data[BUF_DATA as usize..BUF_DATA as usize + expected.len()],
@@ -735,14 +745,8 @@ fn ehci_async_in_dma_crosses_page_boundary() {
 
     c.tick_1ms(&mut mem);
 
-    assert_eq!(
-        &mem.data[buf0 as usize..buf0 as usize + 16],
-        &payload[..16]
-    );
-    assert_eq!(
-        &mem.data[buf1 as usize..buf1 as usize + 16],
-        &payload[16..]
-    );
+    assert_eq!(&mem.data[buf0 as usize..buf0 as usize + 16], &payload[..16]);
+    assert_eq!(&mem.data[buf1 as usize..buf1 as usize + 16], &payload[16..]);
 
     let token = mem.read_u32(QTD_BULK_IN + 0x08);
     assert_eq!(token & QTD_TOKEN_ACTIVE, 0);
@@ -987,7 +991,13 @@ fn ehci_async_qtd_self_loop_sets_hse_and_halts() {
     );
 
     let ep_char = qh_epchar(0, 0, 64);
-    write_qh(&mut mem, ASYNC_QH, qh_link_ptr_qh(ASYNC_QH), ep_char, QTD_SETUP);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        QTD_SETUP,
+    );
 
     c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
     c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
@@ -1057,7 +1067,10 @@ fn ehci_periodic_qtd_self_loop_sets_hse_and_halts() {
     let out_received = Rc::new(RefCell::new(Vec::new()));
     c.hub_mut().attach(
         0,
-        Box::new(BulkEndpointDevice::new(in_queue.clone(), out_received.clone())),
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
     );
     reset_port(&mut c, &mut mem, 0);
 
@@ -1339,7 +1352,11 @@ fn ehci_async_qtd_budget_exceeded_sets_hse_and_halts() {
     let first_qtd: u32 = 0x2000;
     for i in 0..QTD_COUNT {
         let addr = first_qtd + (i as u32) * 0x20;
-        let next = if i + 1 == QTD_COUNT { LINK_TERMINATE } else { addr + 0x20 };
+        let next = if i + 1 == QTD_COUNT {
+            LINK_TERMINATE
+        } else {
+            addr + 0x20
+        };
         write_qtd(
             &mut mem,
             addr,
@@ -1350,7 +1367,13 @@ fn ehci_async_qtd_budget_exceeded_sets_hse_and_halts() {
     }
 
     let ep_char = qh_epchar(0, 0, 64);
-    write_qh(&mut mem, ASYNC_QH, qh_link_ptr_qh(ASYNC_QH), ep_char, first_qtd);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        first_qtd,
+    );
 
     c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
     c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
@@ -1488,10 +1511,17 @@ fn ehci_schedule_fault_raises_irq_when_enabled_and_clears_on_w1c() {
     assert_ne!(sts & regs::USBSTS_HSE, 0);
     assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
     assert_eq!(sts & regs::USBSTS_USBINT, 0);
-    assert!(c.irq_level(), "expected IRQ to assert when USBERRINT is enabled");
+    assert!(
+        c.irq_level(),
+        "expected IRQ to assert when USBERRINT is enabled"
+    );
 
     // USBSTS is write-1-to-clear; acknowledging the error should also drop the IRQ.
-    c.mmio_write(regs::REG_USBSTS, 4, regs::USBSTS_HSE | regs::USBSTS_USBERRINT);
+    c.mmio_write(
+        regs::REG_USBSTS,
+        4,
+        regs::USBSTS_HSE | regs::USBSTS_USBERRINT,
+    );
     let sts2 = c.mmio_read(regs::REG_USBSTS, 4);
     assert_eq!(sts2 & (regs::USBSTS_HSE | regs::USBSTS_USBERRINT), 0);
     assert!(!c.irq_level(), "expected IRQ to deassert after W1C ack");

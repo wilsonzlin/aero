@@ -184,7 +184,11 @@ impl<Base: VirtualDisk, OverlayBackend: StorageBackend + crate::disk::VirtualDis
     }
 
     fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
-        checked_range(offset, usize::try_from(len).unwrap_or(usize::MAX), self.capacity_bytes())?;
+        checked_range(
+            offset,
+            usize::try_from(len).unwrap_or(usize::MAX),
+            self.capacity_bytes(),
+        )?;
 
         // Discard is advisory and best-effort. Since the base disk is conceptually read-only, we
         // only discard from the overlay: this can reclaim sparse blocks and ensure subsequent reads

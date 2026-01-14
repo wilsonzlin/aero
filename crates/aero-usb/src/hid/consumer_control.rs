@@ -16,13 +16,14 @@ use crate::{
 
 use super::{
     build_string_descriptor_utf16le, clamp_response, HidProtocol, HID_REQUEST_GET_IDLE,
-    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE, HID_REQUEST_SET_PROTOCOL,
-    USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_ENDPOINT,
-    USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_INTERFACE,
-    USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP, USB_FEATURE_ENDPOINT_HALT,
-    USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION, USB_REQUEST_GET_DESCRIPTOR,
-    USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS, USB_REQUEST_SET_ADDRESS,
-    USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE, USB_REQUEST_SET_INTERFACE,
+    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
+    HID_REQUEST_SET_PROTOCOL, USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE,
+    USB_DESCRIPTOR_TYPE_ENDPOINT, USB_DESCRIPTOR_TYPE_HID, USB_DESCRIPTOR_TYPE_HID_REPORT,
+    USB_DESCRIPTOR_TYPE_INTERFACE, USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+    USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION,
+    USB_REQUEST_GET_DESCRIPTOR, USB_REQUEST_GET_INTERFACE, USB_REQUEST_GET_STATUS,
+    USB_REQUEST_SET_ADDRESS, USB_REQUEST_SET_CONFIGURATION, USB_REQUEST_SET_FEATURE,
+    USB_REQUEST_SET_INTERFACE,
 };
 
 const INTERRUPT_IN_EP: u8 = 0x81;
@@ -199,7 +200,9 @@ impl IoSnapshot for UsbHidConsumerControl {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > MAX_PRESSED_USAGES {
-                return Err(SnapshotError::InvalidFieldEncoding("consumer pressed usages"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "consumer pressed usages",
+                ));
             }
             self.pressed_usages.clear();
             self.pressed_usages
@@ -473,7 +476,8 @@ impl UsbDeviceModel for UsbHidConsumerControl {
                     ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
                 }
                 USB_REQUEST_GET_INTERFACE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
                     {
                         return ControlResponse::Stall;
                     }
@@ -512,7 +516,9 @@ impl UsbDeviceModel for UsbHidConsumerControl {
             },
             (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
                 USB_REQUEST_GET_STATUS => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_value != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_index != INTERRUPT_IN_EP as u16 {
@@ -525,7 +531,9 @@ impl UsbDeviceModel for UsbHidConsumerControl {
                     ))
                 }
                 USB_REQUEST_CLEAR_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_value == USB_FEATURE_ENDPOINT_HALT
@@ -538,7 +546,9 @@ impl UsbDeviceModel for UsbHidConsumerControl {
                     }
                 }
                 USB_REQUEST_SET_FEATURE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_length != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if setup.w_value == USB_FEATURE_ENDPOINT_HALT
@@ -554,7 +564,9 @@ impl UsbDeviceModel for UsbHidConsumerControl {
             },
             (RequestType::Class, RequestRecipient::Interface) => match setup.b_request {
                 HID_REQUEST_GET_REPORT => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     let report_type = (setup.w_value >> 8) as u8;
@@ -567,26 +579,34 @@ impl UsbDeviceModel for UsbHidConsumerControl {
                     }
                 }
                 HID_REQUEST_GET_IDLE => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.idle_rate], setup.w_length))
                 }
                 HID_REQUEST_SET_IDLE => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     self.idle_rate = (setup.w_value >> 8) as u8;
                     ControlResponse::Ack
                 }
                 HID_REQUEST_GET_PROTOCOL => {
-                    if setup.request_direction() != RequestDirection::DeviceToHost || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     ControlResponse::Data(clamp_response(vec![self.protocol as u8], setup.w_length))
                 }
                 HID_REQUEST_SET_PROTOCOL => {
-                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_index != 0 {
+                    if setup.request_direction() != RequestDirection::HostToDevice
+                        || setup.w_index != 0
+                    {
                         return ControlResponse::Stall;
                     }
                     if let Some(proto) = HidProtocol::from_u16(setup.w_value) {
@@ -731,9 +751,7 @@ mod tests {
             );
             w.field_bytes(
                 TAG_PRESSED_USAGES,
-                Encoder::new()
-                    .u32(MAX_PRESSED_USAGES as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PRESSED_USAGES as u32 + 1).finish(),
             );
             w.finish()
         };
@@ -756,9 +774,7 @@ mod tests {
             );
             w.field_bytes(
                 TAG_PENDING_REPORTS,
-                Encoder::new()
-                    .u32(MAX_PENDING_REPORTS as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PENDING_REPORTS as u32 + 1).finish(),
             );
             w.finish()
         };

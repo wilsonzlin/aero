@@ -11,12 +11,7 @@ pub fn snapshot_from_cpu_core(core: &CoreCpuState) -> (CpuState, MmuState) {
 pub fn cpu_internal_state_from_cpu_core(core: &aero_cpu_core::CpuCore) -> CpuInternalState {
     CpuInternalState {
         interrupt_inhibit: core.pending.interrupt_inhibit(),
-        pending_external_interrupts: core
-            .pending
-            .external_interrupts()
-            .iter()
-            .copied()
-            .collect(),
+        pending_external_interrupts: core.pending.external_interrupts().iter().copied().collect(),
     }
 }
 

@@ -53,7 +53,11 @@ fn int10_vbe_32bpp_write_and_read_pixel_roundtrip() {
     // BGRX bytes: [0x11, 0x22, 0x33, 0x44] in memory.
     let color: u32 = 0x4433_2211;
 
-    for (mode, (w, h)) in [(0x115u16, (800u64, 600u64)), (0x118u16, (1024, 768)), (0x160u16, (1280, 720))] {
+    for (mode, (w, h)) in [
+        (0x115u16, (800u64, 600u64)),
+        (0x118u16, (1024, 768)),
+        (0x160u16, (1280, 720)),
+    ] {
         // Enter a 32bpp VBE mode.
         cpu.set_ax(0x4F02);
         cpu.set_bx(mode | 0x4000);
@@ -71,7 +75,11 @@ fn int10_vbe_32bpp_write_and_read_pixel_roundtrip() {
         let base = VbeDevice::LFB_BASE_DEFAULT as u64;
         let pitch = w * 4;
         let addr = base + u64::from(y) * pitch + u64::from(x) * 4;
-        assert_eq!(mem.read_u32(addr), color, "pixel value should be written for mode 0x{mode:04X}");
+        assert_eq!(
+            mem.read_u32(addr),
+            color,
+            "pixel value should be written for mode 0x{mode:04X}"
+        );
 
         // AH=0Dh read pixel.
         cpu.set_ax(0x0D00);

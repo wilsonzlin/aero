@@ -14,8 +14,7 @@ use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
-    pack_rgba8_to_b5g6r5_unorm,
-    TextureUploadTransform,
+    pack_rgba8_to_b5g6r5_unorm, TextureUploadTransform,
 };
 
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
@@ -4882,10 +4881,12 @@ fn main() {
     let _x: u32 = data.values[0];
 }
 "#;
-            let shader = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("aerogpu.executor ia storage bind test shader"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
-            });
+            let shader = exec
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("aerogpu.executor ia storage bind test shader"),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
+                });
             let bgl = exec
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4901,13 +4902,13 @@ fn main() {
                         count: None,
                     }],
                 });
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aerogpu.executor ia storage bind test pipeline layout"),
-                    bind_group_layouts: &[&bgl],
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout =
+                exec.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aerogpu.executor ia storage bind test pipeline layout"),
+                        bind_group_layouts: &[&bgl],
+                        push_constant_ranges: &[],
+                    });
 
             exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
             exec.device

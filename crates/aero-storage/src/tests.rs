@@ -306,9 +306,7 @@ fn disk_image_discard_range_forwards_to_sparse_variant() {
     image.write_at(0, &[0x5A; SECTOR_SIZE]).unwrap();
 
     // Discard the entire first block; AeroSparse should deallocate and read as zeros.
-    image
-        .discard_range(0, u64::from(block_size_bytes))
-        .unwrap();
+    image.discard_range(0, u64::from(block_size_bytes)).unwrap();
 
     let mut out = [0u8; SECTOR_SIZE];
     image.read_at(0, &mut out).unwrap();

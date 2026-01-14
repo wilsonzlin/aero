@@ -238,7 +238,8 @@ fn ring_backend_poll_receive_drops_oversize_frames_with_bounded_work() {
             rx_popped_frames: 0,
             rx_popped_bytes: 0,
             rx_dropped_oversize: aero_net_backend::ring_backend::MAX_RX_POPS_PER_POLL as u64,
-            rx_dropped_oversize_bytes: (aero_net_backend::ring_backend::MAX_RX_POPS_PER_POLL as u64)
+            rx_dropped_oversize_bytes: (aero_net_backend::ring_backend::MAX_RX_POPS_PER_POLL
+                as u64)
                 * 10,
             rx_corrupt: 0,
             rx_broken: false,

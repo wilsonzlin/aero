@@ -83,4 +83,3 @@ fn hda_capture_does_not_consume_capture_source_when_stream_inactive() {
     assert!(capture.read_calls > 0);
     assert!(capture.samples_read > 0);
 }
-

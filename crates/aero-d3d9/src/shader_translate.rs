@@ -174,7 +174,9 @@ pub fn translate_d3d9_shader_to_wgsl(
                 shader::ShaderError::TokenStreamTooSmall
                 | shader::ShaderError::TokenCountTooLarge { .. }
                 | shader::ShaderError::BytecodeTooLarge { .. }
-                | shader::ShaderError::UnexpectedEof => ShaderTranslateError::Malformed(e.to_string()),
+                | shader::ShaderError::UnexpectedEof => {
+                    ShaderTranslateError::Malformed(e.to_string())
+                }
                 other => ShaderTranslateError::Translation(other.to_string()),
             })?;
             let ir = shader::to_ir(&program);
@@ -223,7 +225,10 @@ impl Sm3TranslateFailure {
             // Most decode errors indicate malformed/untrusted bytecode. The one exception we
             // intentionally fall back on is an unknown opcode: the legacy translator skips unknown
             // opcodes so we can keep games running while the strict pipeline gains coverage.
-            Sm3TranslateFailure::Decode(e) => e.message.to_ascii_lowercase().contains("unsupported opcode"),
+            Sm3TranslateFailure::Decode(e) => e
+                .message
+                .to_ascii_lowercase()
+                .contains("unsupported opcode"),
 
             // IR build errors are generally higher-level semantic issues. We treat explicit
             // "unsupported"/"not supported" messages as fallbackable feature gaps.
@@ -288,9 +293,8 @@ fn try_translate_sm3(
 
     let mut wgsl_str = wgsl.wgsl;
     if stage == shader::ShaderStage::Vertex && options.half_pixel_center {
-        inject_half_pixel_center_sm3_vertex_wgsl(&mut wgsl_str).map_err(|message| {
-            Sm3TranslateFailure::Wgsl(sm3::wgsl::WgslError { message })
-        })?;
+        inject_half_pixel_center_sm3_vertex_wgsl(&mut wgsl_str)
+            .map_err(|message| Sm3TranslateFailure::Wgsl(sm3::wgsl::WgslError { message }))?;
     }
 
     Ok(ShaderTranslation {
@@ -434,7 +438,9 @@ fn inject_half_pixel_center_sm3_vertex_wgsl(wgsl: &mut String) -> Result<(), Str
         let insert_at = wgsl
             .find("struct VsInput")
             .or_else(|| wgsl.find("struct VsOut"))
-            .ok_or_else(|| "half-pixel injection failed: could not find vertex interface structs".to_owned())?;
+            .ok_or_else(|| {
+                "half-pixel injection failed: could not find vertex interface structs".to_owned()
+            })?;
         wgsl.insert_str(insert_at, DECL);
     }
 

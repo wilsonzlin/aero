@@ -81,9 +81,19 @@ fn xhci_ports_attach_reset_and_events() {
 
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (ring_base >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     let reset_count = Rc::new(Cell::new(0));
@@ -194,9 +204,19 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
 
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (ring_base >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     xhci.tick_1ms(&mut mem);

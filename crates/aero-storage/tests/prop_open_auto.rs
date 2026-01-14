@@ -73,8 +73,8 @@ fn aerosparse_magic_invalid_sizes() -> Vec<u8> {
     header[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
     header[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
     header[32..40].copy_from_slice(&64u64.to_le_bytes()); // table_offset
-    // Leave the rest zero (block_size_bytes=0, disk_size_bytes=0, etc) so `open_auto` reports a
-    // structured error.
+                                                          // Leave the rest zero (block_size_bytes=0, disk_size_bytes=0, etc) so `open_auto` reports a
+                                                          // structured error.
     header
 }
 

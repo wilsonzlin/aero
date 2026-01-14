@@ -489,7 +489,10 @@ mod tests {
         id_disabled.copy_from_slice(drive.identify_sector());
         assert_ne!(word(&id_disabled, 82) & (1 << 5), 0);
         assert_eq!(word(&id_disabled, 85) & (1 << 5), 0);
-        assert_ne!(id_enabled, id_disabled, "IDENTIFY data should change when cache toggles");
+        assert_ne!(
+            id_enabled, id_disabled,
+            "IDENTIFY data should change when cache toggles"
+        );
 
         drive.set_write_cache_enabled(true);
         let mut id_enabled_again = [0u8; SECTOR_SIZE];

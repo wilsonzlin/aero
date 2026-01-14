@@ -1354,7 +1354,8 @@ impl D3D11Runtime {
                     let Some(PipelineBinding::Render(pipeline_id)) = state.current_pipeline else {
                         bail!("SetPipeline inside render pass did not select a render pipeline");
                     };
-                    let pipeline_changed = bound_pipeline.as_ref().map(|b| b.id) != Some(pipeline_id);
+                    let pipeline_changed =
+                        bound_pipeline.as_ref().map(|b| b.id) != Some(pipeline_id);
                     sync_render_pipeline(
                         &mut render_pass,
                         resources,

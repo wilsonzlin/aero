@@ -6,6 +6,6 @@
 //! publish protocols used by the display pipeline (shared framebuffer and
 //! scanout selection).
 
-pub mod scanout_state;
 pub mod cursor_state;
+pub mod scanout_state;
 pub mod shared_framebuffer;

@@ -1333,7 +1333,10 @@ impl NvmeController {
                 (u32::from(self.feature_num_io_sqs) << 16) | u32::from(self.feature_num_io_cqs),
             ),
             // Interrupt Coalescing: return the raw 16-bit value in DW0.
-            0x08 if sel <= 2 => (NvmeStatus::SUCCESS, u32::from(self.feature_interrupt_coalescing)),
+            0x08 if sel <= 2 => (
+                NvmeStatus::SUCCESS,
+                u32::from(self.feature_interrupt_coalescing),
+            ),
             // Volatile Write Cache: bit 0.
             0x06 if sel <= 2 => (
                 NvmeStatus::SUCCESS,
@@ -1622,10 +1625,7 @@ impl NvmeController {
             let Some(sectors) = (nlb as u64).checked_add(1) else {
                 return (NvmeStatus::INVALID_FIELD, 0);
             };
-            if slba
-                .checked_add(sectors)
-                .is_none_or(|end| end > capacity)
-            {
+            if slba.checked_add(sectors).is_none_or(|end| end > capacity) {
                 return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
             }
 
@@ -1851,7 +1851,9 @@ impl IoSnapshot for NvmeController {
         }
 
         let max_io_queues_0based = (NVME_MAX_IO_QUEUES as u16).saturating_sub(1);
-        if state.feature_num_io_sqs > max_io_queues_0based || state.feature_num_io_cqs > max_io_queues_0based {
+        if state.feature_num_io_sqs > max_io_queues_0based
+            || state.feature_num_io_cqs > max_io_queues_0based
+        {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "nvme feature num queues",
             ));
@@ -2010,14 +2012,10 @@ impl IoSnapshot for NvmeController {
         // feature state (or may include values that pre-date later queue creation); bump the
         // reported limits so all restored queues remain representable.
         if let Some(max_sq_qid) = self.io_sqs.keys().copied().max() {
-            self.feature_num_io_sqs = self
-                .feature_num_io_sqs
-                .max(max_sq_qid.saturating_sub(1));
+            self.feature_num_io_sqs = self.feature_num_io_sqs.max(max_sq_qid.saturating_sub(1));
         }
         if let Some(max_cq_qid) = self.io_cqs.keys().copied().max() {
-            self.feature_num_io_cqs = self
-                .feature_num_io_cqs
-                .max(max_cq_qid.saturating_sub(1));
+            self.feature_num_io_cqs = self.feature_num_io_cqs.max(max_cq_qid.saturating_sub(1));
         }
         self.feature_num_io_sqs = self.feature_num_io_sqs.min(max_io_queues_0based);
         self.feature_num_io_cqs = self.feature_num_io_cqs.min(max_io_queues_0based);
@@ -2719,7 +2717,10 @@ impl IoSnapshot for NvmePciDevice {
         w.field_bytes(TAG_PCI, pci_enc.finish());
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
 
-        if let Some(msix) = self.config.capability::<aero_devices::pci::MsixCapability>() {
+        if let Some(msix) = self
+            .config
+            .capability::<aero_devices::pci::MsixCapability>()
+        {
             w.field_bytes(TAG_MSIX_TABLE, msix.snapshot_table().to_vec());
 
             let mut pba = Vec::with_capacity(msix.snapshot_pba().len().saturating_mul(8));
@@ -2883,11 +2884,7 @@ mod tests {
         {
             let cfg = dev.config_mut();
             let ctrl = cfg.read(msix_off + 0x02, 2) as u16;
-            cfg.write(
-                msix_off + 0x02,
-                2,
-                u32::from(ctrl | (1 << 15) | (1 << 14)),
-            );
+            cfg.write(msix_off + 0x02, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
             let msix = cfg.capability::<MsixCapability>().unwrap();
             assert!(msix.enabled());
             assert!(msix.function_masked());
@@ -2896,11 +2893,19 @@ mod tests {
         // PCI bus/device reset should clear MSI/MSI-X enable bits.
         <NvmePciDevice as PciDevice>::reset(&mut dev);
 
-        assert!(!dev.config_mut().capability::<MsiCapability>().unwrap().enabled());
+        assert!(!dev
+            .config_mut()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .enabled());
         let msix = dev.config_mut().capability::<MsixCapability>().unwrap();
         assert!(!msix.enabled());
         assert!(!msix.function_masked());
-        assert_eq!(msix.snapshot_pba()[0], 0, "reset should clear MSI-X PBA pending bits");
+        assert_eq!(
+            msix.snapshot_pba()[0],
+            0,
+            "reset should clear MSI-X PBA pending bits"
+        );
     }
 
     #[derive(Clone)]
@@ -3307,7 +3312,11 @@ mod tests {
 
         let data = ctrl.identify_controller();
         let oncs = u16::from_le_bytes(data[520..522].try_into().unwrap());
-        assert_ne!(oncs & (1 << 2), 0, "DSM (bit 2) should be advertised in ONCS");
+        assert_ne!(
+            oncs & (1 << 2),
+            0,
+            "DSM (bit 2) should be advertised in ONCS"
+        );
         assert_ne!(
             oncs & (1 << 3),
             0,

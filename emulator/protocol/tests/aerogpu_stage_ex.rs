@@ -43,10 +43,7 @@ fn stage_ex_encode_decode_roundtrip_nonzero() {
 fn stage_ex_legacy_compute_reserved0_zero_does_not_decode_as_pixel() {
     // Legacy compute bindings use (shader_stage=COMPUTE, reserved0=0); this must not decode as
     // `stage_ex = Pixel` (DXBC program-type 0).
-    assert_eq!(
-        decode_stage_ex(AerogpuShaderStage::Compute as u32, 0),
-        None
-    );
+    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, 0), None);
 }
 
 #[test]
@@ -362,7 +359,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
     let opcode = hdr.opcode;
     let size_bytes = hdr.size_bytes;
     assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsF as u32);
-    assert_eq!(size_bytes as usize, size_of::<AerogpuCmdSetShaderConstantsF>() + 16);
+    assert_eq!(
+        size_bytes as usize,
+        size_of::<AerogpuCmdSetShaderConstantsF>() + 16
+    );
     let stage = u32::from_le_bytes(
         buf[cursor + offset_of!(AerogpuCmdSetShaderConstantsF, stage)
             ..cursor + offset_of!(AerogpuCmdSetShaderConstantsF, stage) + 4]

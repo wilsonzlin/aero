@@ -69,7 +69,9 @@ impl<D: VirtualDisk + Send> DiskBackend for NvmeDiskFromAeroStorage<D> {
         }
 
         let offset = lba.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
-        let len_u64 = sectors.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
+        let len_u64 = sectors
+            .checked_mul(SECTOR_SIZE as u64)
+            .ok_or(DiskError::Io)?;
         let len_usize = usize::try_from(len_u64).unwrap_or(usize::MAX);
         self.disk
             .discard_range(offset, len_u64)
@@ -109,7 +111,9 @@ impl<D: VirtualDisk> DiskBackend for NvmeDiskFromAeroStorage<D> {
         }
 
         let offset = lba.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
-        let len_u64 = sectors.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
+        let len_u64 = sectors
+            .checked_mul(SECTOR_SIZE as u64)
+            .ok_or(DiskError::Io)?;
         let len_usize = usize::try_from(len_u64).unwrap_or(usize::MAX);
         self.disk
             .discard_range(offset, len_u64)

@@ -67,8 +67,8 @@ fn d3d9_upload_resource_supports_deep_mip_and_array_layer_offsets() {
         mip_levels,
         array_layers,
         mip0_row_pitch,
-        0,          // backing_alloc_id (host-owned)
-        0,          // backing_offset_bytes
+        0, // backing_alloc_id (host-owned)
+        0, // backing_offset_bytes
     );
     stream.create_texture2d(
         DST_TEX,

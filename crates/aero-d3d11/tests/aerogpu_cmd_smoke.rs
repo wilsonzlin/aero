@@ -102,10 +102,13 @@ fn insert_viewport_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             last_draw = Some((cursor, size));
         }
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
             present_offset = Some(cursor);
             break;
         }
@@ -155,10 +158,13 @@ fn insert_viewport_nan_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             last_draw = Some((cursor, size));
         }
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
             present_offset = Some(cursor);
             break;
         }
@@ -218,7 +224,8 @@ fn insert_scissor_enable_and_rect_before_first_draw_xy(
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             first_draw = Some(cursor);
             break;
         }
@@ -269,10 +276,13 @@ fn insert_scissor_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             last_draw = Some((cursor, size));
         }
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
             present_offset = Some(cursor);
             break;
         }
@@ -316,10 +326,13 @@ fn insert_scissor_disable_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             last_draw = Some((cursor, size));
         }
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
             present_offset = Some(cursor);
             break;
         }

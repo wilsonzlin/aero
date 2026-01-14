@@ -1,7 +1,5 @@
-use aero_devices::pci::{
-    PciBarDefinition, PciDevice, PciIntxRouter, PciIntxRouterConfig,
-};
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
+use aero_devices::pci::{PciBarDefinition, PciDevice, PciIntxRouter, PciIntxRouterConfig};
 use aero_devices::usb::uhci::{register_uhci_io_ports, regs, SharedUhciPciDevice, UhciPciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::address_filter::AddressFilter;
@@ -31,10 +29,7 @@ fn uhci_pci_config_and_bar_io() {
         assert_eq!(class.subclass, USB_UHCI_PIIX3.class.sub_class);
         assert_eq!(class.prog_if, USB_UHCI_PIIX3.class.prog_if);
         assert_eq!(cfg.read(0x0e, 1) as u8, USB_UHCI_PIIX3.header_type);
-        assert_eq!(
-            cfg.read(0x2c, 2) as u16,
-            USB_UHCI_PIIX3.subsystem_vendor_id
-        );
+        assert_eq!(cfg.read(0x2c, 2) as u16, USB_UHCI_PIIX3.subsystem_vendor_id);
         assert_eq!(cfg.read(0x2e, 2) as u16, USB_UHCI_PIIX3.subsystem_id);
 
         assert_eq!(
@@ -50,10 +45,7 @@ fn uhci_pci_config_and_bar_io() {
             .interrupt_pin
             .expect("UHCI profile should provide interrupt pin");
         let expected_gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, expected_pin);
-        assert_eq!(
-            cfg.read(0x3d, 1) as u8,
-            expected_pin.to_config_u8()
-        );
+        assert_eq!(cfg.read(0x3d, 1) as u8, expected_pin.to_config_u8());
         assert_eq!(cfg.read(0x3c, 1) as u8, u8::try_from(expected_gsi).unwrap());
 
         // UHCI uses BAR4 (I/O) at 0x20. Probe should report size 0x20 and programmed bases should be
@@ -63,8 +55,7 @@ fn uhci_pci_config_and_bar_io() {
 
         cfg.write(bar_offset, 4, 0xffff_ffff);
         let mask = cfg.read(bar_offset, 4);
-        let expected_mask =
-            (!(u32::from(UhciPciDevice::IO_BAR_SIZE) - 1) & 0xffff_fffc) | 0x1;
+        let expected_mask = (!(u32::from(UhciPciDevice::IO_BAR_SIZE) - 1) & 0xffff_fffc) | 0x1;
         assert_eq!(mask, expected_mask);
 
         cfg.write(bar_offset, 4, 0x1235);

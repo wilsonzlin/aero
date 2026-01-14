@@ -158,7 +158,8 @@ impl XhciEndpointManager {
         if endpoint_id == 0 || endpoint_id as usize >= slot.endpoints.len() {
             return Err(CompletionCode::ParameterError);
         }
-        slot.endpoints[endpoint_id as usize] = Some(Endpoint::new(RingCursor::new(tr_dequeue_ptr, dcs)));
+        slot.endpoints[endpoint_id as usize] =
+            Some(Endpoint::new(RingCursor::new(tr_dequeue_ptr, dcs)));
         Ok(())
     }
 
@@ -167,7 +168,11 @@ impl XhciEndpointManager {
     }
 
     /// Poll and execute all available command TRBs from the command ring.
-    pub fn process_command_ring<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ring: &mut RingCursor) {
+    pub fn process_command_ring<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        ring: &mut RingCursor,
+    ) {
         loop {
             match ring.poll(mem, DEFAULT_RING_STEP_BUDGET) {
                 RingPoll::Ready(item) => self.execute_command_trb(item.trb, item.paddr),
@@ -206,7 +211,12 @@ impl XhciEndpointManager {
     /// MVP semantics:
     /// - Running endpoints consume TRBs and emit Transfer Events.
     /// - Stopped/Halted endpoints ignore doorbells (no progress/events).
-    pub fn ring_doorbell<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, slot_id: u8, endpoint_id: u8) {
+    pub fn ring_doorbell<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) {
         let mut new_events = Vec::new();
         {
             let Ok(ep) = self.endpoint_mut(slot_id, endpoint_id) else {
@@ -263,7 +273,11 @@ impl XhciEndpointManager {
             .ok_or(CompletionCode::SlotNotEnabled)
     }
 
-    fn endpoint_mut(&mut self, slot_id: u8, endpoint_id: u8) -> Result<&mut Endpoint, CompletionCode> {
+    fn endpoint_mut(
+        &mut self,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> Result<&mut Endpoint, CompletionCode> {
         let slot = self.slot_mut(slot_id)?;
         if endpoint_id == 0 || endpoint_id as usize >= slot.endpoints.len() {
             return Err(CompletionCode::ParameterError);
@@ -327,7 +341,9 @@ mod tests {
 
     impl TestMemory {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
     }
 
@@ -503,6 +519,5 @@ mod tests {
                 trb_pointer: ring_base,
             }]
         );
-
     }
 }

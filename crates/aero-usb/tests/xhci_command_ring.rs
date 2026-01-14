@@ -1,5 +1,5 @@
-use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::interrupter::IMAN_IE;
+use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, XhciController};
 use aero_usb::MemoryBus;
 
@@ -48,9 +48,19 @@ fn command_ring_noop_then_enable_slot_emits_completion_events() {
     // Configure interrupter 0 event ring.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (ERST_BASE >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (ERST_BASE >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (EVENT_RING_BASE >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (EVENT_RING_BASE >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // Program the command ring dequeue pointer + cycle state.
@@ -119,9 +129,19 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
     // Configure interrupter 0 event ring.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (ERST_BASE >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (ERST_BASE >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (EVENT_RING_BASE >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (EVENT_RING_BASE >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // Program the command ring dequeue pointer + cycle state.
@@ -150,7 +170,10 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
             break;
         }
     }
-    assert_eq!(remaining, 0, "expected all command completions to be delivered");
+    assert_eq!(
+        remaining, 0,
+        "expected all command completions to be delivered"
+    );
 
     for i in 0..CMD_COUNT {
         let ev = Trb::read_from(&mut mem, EVENT_RING_BASE + (i as u64) * (TRB_LEN as u64));
@@ -164,8 +187,10 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
         let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
         xhci.service_event_ring(&mut mem);
     }
-    let ev_before_new_command =
-        Trb::read_from(&mut mem, EVENT_RING_BASE + (CMD_COUNT as u64) * (TRB_LEN as u64));
+    let ev_before_new_command = Trb::read_from(
+        &mut mem,
+        EVENT_RING_BASE + (CMD_COUNT as u64) * (TRB_LEN as u64),
+    );
     assert_eq!(ev_before_new_command.trb_type(), TrbType::Unknown(0));
 
     // Once the ring appears empty, the controller should stop polling it until doorbell0 is rung
@@ -183,8 +208,10 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
         let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
         xhci.service_event_ring(&mut mem);
     }
-    let ev_without_doorbell =
-        Trb::read_from(&mut mem, EVENT_RING_BASE + (CMD_COUNT as u64) * (TRB_LEN as u64));
+    let ev_without_doorbell = Trb::read_from(
+        &mut mem,
+        EVENT_RING_BASE + (CMD_COUNT as u64) * (TRB_LEN as u64),
+    );
     assert_eq!(ev_without_doorbell.trb_type(), TrbType::Unknown(0));
 
     // Ring doorbell0 again to kick command processing.
@@ -194,9 +221,14 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
         xhci.service_event_ring(&mut mem);
     }
 
-    let ev_after_doorbell =
-        Trb::read_from(&mut mem, EVENT_RING_BASE + (CMD_COUNT as u64) * (TRB_LEN as u64));
-    assert_eq!(ev_after_doorbell.trb_type(), TrbType::CommandCompletionEvent);
+    let ev_after_doorbell = Trb::read_from(
+        &mut mem,
+        EVENT_RING_BASE + (CMD_COUNT as u64) * (TRB_LEN as u64),
+    );
+    assert_eq!(
+        ev_after_doorbell.trb_type(),
+        TrbType::CommandCompletionEvent
+    );
     assert_eq!(ev_after_doorbell.parameter, next_cmd_addr);
     assert_eq!(ev_after_doorbell.completion_code_raw(), 1);
 }

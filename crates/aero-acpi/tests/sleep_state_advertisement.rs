@@ -13,8 +13,8 @@ fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
 
 fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
     match *bytes.get(offset)? {
-        0x00 => Some((0, 1)), // ZeroOp
-        0x01 => Some((1, 1)), // OneOp
+        0x00 => Some((0, 1)),                              // ZeroOp
+        0x01 => Some((1, 1)),                              // OneOp
         0x0A => Some((*bytes.get(offset + 1)? as u64, 2)), // BytePrefix
         0x0B => Some((
             u16::from_le_bytes(bytes.get(offset + 1..offset + 3)?.try_into().ok()?) as u64,
@@ -113,4 +113,3 @@ fn dsdt_advertises_sleep_states_s1_s3_s4_s5_with_expected_slp_typ_values() {
         );
     }
 }
-

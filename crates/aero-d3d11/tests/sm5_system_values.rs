@@ -428,9 +428,7 @@ fn translates_primitive_id_builtin() {
     assert!(translated
         .wgsl
         .contains("@builtin(primitive_index) primitive_id: u32"));
-    assert!(translated
-        .wgsl
-        .contains("bitcast<f32>(input.primitive_id)"));
+    assert!(translated.wgsl.contains("bitcast<f32>(input.primitive_id)"));
 
     assert!(translated.reflection.inputs.iter().any(|p| {
         p.semantic_name == "PID"

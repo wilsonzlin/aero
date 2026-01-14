@@ -1,8 +1,8 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::{
-    UsbCompositeHidInputHandle, UsbHidKeyboardHandle, KEYBOARD_LED_MASK, KEYBOARD_LED_CAPS_LOCK,
-    KEYBOARD_LED_COMPOSE, KEYBOARD_LED_KANA, KEYBOARD_LED_NUM_LOCK, KEYBOARD_LED_SCROLL_LOCK,
+    UsbCompositeHidInputHandle, UsbHidKeyboardHandle, KEYBOARD_LED_CAPS_LOCK, KEYBOARD_LED_COMPOSE,
+    KEYBOARD_LED_KANA, KEYBOARD_LED_MASK, KEYBOARD_LED_NUM_LOCK, KEYBOARD_LED_SCROLL_LOCK,
 };
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
@@ -35,7 +35,9 @@ fn control_out_data(dev: &mut AttachedUsbDevice, setup: SetupPacket, data: &[u8]
             }
             UsbInResult::Nak => continue,
             UsbInResult::Stall => panic!("unexpected STALL during control transfer status stage"),
-            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control transfer status stage"),
+            UsbInResult::Timeout => {
+                panic!("unexpected TIMEOUT during control transfer status stage")
+            }
         }
     }
     panic!("timed out waiting for control transfer status stage");
@@ -74,8 +76,11 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
     // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
     // usages defined by the report descriptor.
     let leds = 0xff;
-    let expected_leds =
-        KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK | KEYBOARD_LED_SCROLL_LOCK | KEYBOARD_LED_COMPOSE | KEYBOARD_LED_KANA;
+    let expected_leds = KEYBOARD_LED_NUM_LOCK
+        | KEYBOARD_LED_CAPS_LOCK
+        | KEYBOARD_LED_SCROLL_LOCK
+        | KEYBOARD_LED_COMPOSE
+        | KEYBOARD_LED_KANA;
     control_out_data(
         &mut dev,
         SetupPacket {

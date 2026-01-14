@@ -80,4 +80,3 @@ fn boots_bootsector_fixture_and_validates_vga_mode13_and_serial_output() {
     assert_eq!(bottom_right, expected_bottom);
     assert_ne!(top_left, bottom_left);
 }
-

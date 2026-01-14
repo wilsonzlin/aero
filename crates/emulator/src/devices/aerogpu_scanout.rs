@@ -675,7 +675,10 @@ mod tests {
         };
         let update0 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
         let update1 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
-        assert_eq!(update0, update1, "disabled descriptor must be deterministic");
+        assert_eq!(
+            update0, update1,
+            "disabled descriptor must be deterministic"
+        );
         assert_eq!(update0.source, SCANOUT_SOURCE_WDDM);
         assert_eq!(update0.width, 0);
         assert_eq!(update0.height, 0);

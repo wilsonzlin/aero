@@ -99,4 +99,3 @@ pub fn pack_rgba8_to_b5g5r5a1_unorm(src: &[u8], dst: &mut [u8]) {
         dst_px[1] = out[1];
     }
 }
-

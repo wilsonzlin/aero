@@ -6,4 +6,3 @@
 #[cfg(target_arch = "wasm32")]
 #[path = "wasm/d3d11_shader_cache_persistent.rs"]
 mod d3d11_shader_cache_persistent;
-

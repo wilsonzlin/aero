@@ -68,10 +68,7 @@ fn frame_source_from_shared_memory_rejects_bad_version() {
     shared.header().init(layout);
 
     let bad_version = SHARED_FRAMEBUFFER_VERSION + 1;
-    shared
-        .header()
-        .version
-        .store(bad_version, Ordering::SeqCst);
+    shared.header().version.store(bad_version, Ordering::SeqCst);
 
     let err = unsafe { FrameSource::from_shared_memory(words.as_mut_ptr() as *mut u8, 0) }
         .err()
@@ -90,10 +87,7 @@ fn frame_source_from_shared_memory_rejects_unsupported_format() {
     shared.header().init(layout);
 
     let bad_format = 999u32;
-    shared
-        .header()
-        .format
-        .store(bad_format, Ordering::SeqCst);
+    shared.header().format.store(bad_format, Ordering::SeqCst);
 
     let err = unsafe { FrameSource::from_shared_memory(words.as_mut_ptr() as *mut u8, 0) }
         .err()
@@ -138,10 +132,7 @@ fn frame_source_from_shared_memory_rejects_tile_grid_mismatch() {
     shared.header().init(layout);
 
     let bad_tiles_x = layout.tiles_x + 1;
-    shared
-        .header()
-        .tiles_x
-        .store(bad_tiles_x, Ordering::SeqCst);
+    shared.header().tiles_x.store(bad_tiles_x, Ordering::SeqCst);
 
     let err = unsafe { FrameSource::from_shared_memory(words.as_mut_ptr() as *mut u8, 0) }
         .err()

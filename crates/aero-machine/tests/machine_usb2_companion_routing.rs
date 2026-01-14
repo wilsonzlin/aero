@@ -39,8 +39,7 @@ fn machine_usb2_companion_routing_moves_devices_between_uhci_and_ehci() {
             .bar_range(4)
             .map(|range| range.base)
             .unwrap_or(0);
-        let uhci_io_base =
-            u16::try_from(uhci_bar4_base).expect("UHCI BAR4 base should fit in u16");
+        let uhci_io_base = u16::try_from(uhci_bar4_base).expect("UHCI BAR4 base should fit in u16");
 
         let ehci_mmio_base = bus
             .device_config(USB_EHCI_ICH9.bdf)
@@ -60,11 +59,7 @@ fn machine_usb2_companion_routing_moves_devices_between_uhci_and_ehci() {
 
     // Reset the UHCI view of port 0 so the device becomes enabled/routable.
     const UHCI_PORTSC_PR: u32 = 1 << 9;
-    m.io_write(
-        uhci_io_base + uhci_regs::REG_PORTSC1,
-        2,
-        UHCI_PORTSC_PR,
-    );
+    m.io_write(uhci_io_base + uhci_regs::REG_PORTSC1, 2, UHCI_PORTSC_PR);
     for _ in 0..50 {
         m.tick_platform(1_000_000);
     }
@@ -127,4 +122,3 @@ fn machine_usb2_companion_routing_moves_devices_between_uhci_and_ehci() {
         );
     }
 }
-

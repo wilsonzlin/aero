@@ -392,7 +392,8 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
             .get_downlevel_capabilities()
             .flags
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
-        let prefer_srgb_view = matches!(context.kind(), BackendKind::WebGpu) && supports_view_formats;
+        let prefer_srgb_view =
+            matches!(context.kind(), BackendKind::WebGpu) && supports_view_formats;
         let (surface_format, mut surface_view_format, view_formats) =
             preferred_surface_config(&surface_caps.formats, prefer_srgb_view);
         let alpha_mode = preferred_composite_alpha_mode(&surface_caps.alpha_modes);
@@ -956,9 +957,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
-fn preferred_composite_alpha_mode(
-    modes: &[wgpu::CompositeAlphaMode],
-) -> wgpu::CompositeAlphaMode {
+fn preferred_composite_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlphaMode {
     if modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
         return wgpu::CompositeAlphaMode::Opaque;
     }
@@ -1000,7 +999,10 @@ mod tests {
             wgpu::CompositeAlphaMode::PreMultiplied,
             wgpu::CompositeAlphaMode::Opaque,
         ];
-        assert_eq!(preferred_composite_alpha_mode(&modes), wgpu::CompositeAlphaMode::Opaque);
+        assert_eq!(
+            preferred_composite_alpha_mode(&modes),
+            wgpu::CompositeAlphaMode::Opaque
+        );
 
         let modes = [wgpu::CompositeAlphaMode::PostMultiplied];
         assert_eq!(
@@ -1311,11 +1313,8 @@ mod tests {
                         srgb_encode: if srgb_encode { 1 } else { 0 },
                         _pad: [0; 2],
                     };
-                    self.queue.write_buffer(
-                        self.uniform_buffer,
-                        0,
-                        bytemuck::bytes_of(&uniforms),
-                    );
+                    self.queue
+                        .write_buffer(self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
                     let mut encoder =
                         self.device
@@ -1366,8 +1365,7 @@ mod tests {
                     self.queue.submit(Some(encoder.finish()));
 
                     let slice = self.readback.slice(..);
-                    let (sender, receiver) =
-                        futures_intrusive::channel::shared::oneshot_channel();
+                    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
                     slice.map_async(wgpu::MapMode::Read, move |res| {
                         sender.send(res).ok();
                     });

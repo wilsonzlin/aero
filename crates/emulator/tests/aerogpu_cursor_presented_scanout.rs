@@ -2,7 +2,8 @@ use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::gpu_worker::aerogpu_backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend,
 };
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::Bus;
@@ -59,12 +60,7 @@ fn presented_scanout_includes_cursor_overlay() {
     mem.write_physical(cursor_fb_gpa, &[0, 0, 255, 128]);
 
     // Program cursor registers.
-    dev.mmio_write(
-        &mut mem,
-        mmio::CURSOR_FB_GPA_LO,
-        4,
-        cursor_fb_gpa as u32,
-    );
+    dev.mmio_write(&mut mem, mmio::CURSOR_FB_GPA_LO, 4, cursor_fb_gpa as u32);
     dev.mmio_write(
         &mut mem,
         mmio::CURSOR_FB_GPA_HI,

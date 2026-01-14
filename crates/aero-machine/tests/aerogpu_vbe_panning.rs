@@ -136,8 +136,11 @@ fn int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     let x_off = 1u16;
     let y_off = 4u16; // ensure stride mismatch changes base by >=4 bytes (no overlap between pixels)
 
-    let boot =
-        build_vbe_mode_118_with_stride_and_display_start_boot_sector(bytes_per_scan_line, x_off, y_off);
+    let boot = build_vbe_mode_118_with_stride_and_display_start_boot_sector(
+        bytes_per_scan_line,
+        x_off,
+        y_off,
+    );
 
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 64 * 1024 * 1024,

@@ -460,7 +460,10 @@ fn decode_b64(ctx: &str, b64: &str) -> Vec<u8> {
             }
 
             vals[i] = b64_digit(c).unwrap_or_else(|| {
-                panic!("{ctx}: invalid base64 character 0x{c:02x} ('{}')", c as char)
+                panic!(
+                    "{ctx}: invalid base64 character 0x{c:02x} ('{}')",
+                    c as char
+                )
             });
         }
 
@@ -632,9 +635,11 @@ fn assert_l2_tunnel_vectors_match(
 ) {
     let mut legacy_by_name: BTreeMap<&str, &LegacyVector> = BTreeMap::new();
     for v in &legacy.vectors {
-        if let (Some(wire_b64), Some(frame_b64)) = (v.wire_b64.as_deref(), v.frame_b64.as_deref())
-        {
-            let ctx = format!("legacy l2-tunnel vector {:?}: wire_b64 vs frame_b64", v.name);
+        if let (Some(wire_b64), Some(frame_b64)) = (v.wire_b64.as_deref(), v.frame_b64.as_deref()) {
+            let ctx = format!(
+                "legacy l2-tunnel vector {:?}: wire_b64 vs frame_b64",
+                v.name
+            );
             let wire = decode_b64(&format!("{ctx}.wire_b64"), wire_b64);
             let frame = decode_b64(&format!("{ctx}.frame_b64"), frame_b64);
             assert_bytes_eq(&ctx, &wire, &frame);
@@ -653,11 +658,14 @@ fn assert_l2_tunnel_vectors_match(
             "l2-tunnel valid vector {:?} (protocol-vectors vs {conf_label})",
             v.name
         );
-        let legacy = legacy_by_name.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!(
+        let legacy = legacy_by_name
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
                 "{ctx}: missing legacy vector. Expected to find a matching entry in {legacy_path:?}"
             )
-        });
+            });
         assert!(
             !legacy.expect_error.unwrap_or(false),
             "{ctx}: expected legacy vector to be valid (expectError=false)"
@@ -687,7 +695,11 @@ fn assert_l2_tunnel_vectors_match(
                 .as_deref()
                 .unwrap_or_else(|| panic!("{ctx}: legacy vector missing field `payload_b64`")),
         );
-        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &legacy_payload);
+        assert_bytes_eq(
+            &format!("{ctx}: payload bytes"),
+            &conf_payload,
+            &legacy_payload,
+        );
 
         let conf_wire = decode_hex(&format!("{ctx}: wireHex"), &v.wire_hex);
         let legacy_wire_b64 = legacy
@@ -704,11 +716,14 @@ fn assert_l2_tunnel_vectors_match(
             "l2-tunnel invalid vector {:?} (protocol-vectors vs {conf_label})",
             v.name
         );
-        let legacy = legacy_by_name.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!(
+        let legacy = legacy_by_name
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| {
+                panic!(
                 "{ctx}: missing legacy vector. Expected to find a matching entry in {legacy_path:?}"
             )
-        });
+            });
         assert!(
             legacy.expect_error.unwrap_or(false),
             "{ctx}: expected legacy vector to be invalid (expectError=true)"
@@ -766,7 +781,11 @@ fn assert_auth_token_vectors_match(
             assert_eq!(now_ms, conf_session.now_ms, "{ctx}: nowMs drift");
         }
 
-        assert_ascii_eq(&format!("{ctx}: token drift"), &conf_token.token, &proto_v.token);
+        assert_ascii_eq(
+            &format!("{ctx}: token drift"),
+            &conf_token.token,
+            &proto_v.token,
+        );
 
         if name == "valid" {
             assert_eq!(
@@ -821,7 +840,11 @@ fn assert_auth_token_vectors_match(
             assert_eq!(now_sec, conf_jwt.now_unix, "{ctx}: nowUnix drift");
         }
 
-        assert_ascii_eq(&format!("{ctx}: token drift"), &conf_token.token, &proto_v.token);
+        assert_ascii_eq(
+            &format!("{ctx}: token drift"),
+            &conf_token.token,
+            &proto_v.token,
+        );
 
         if name == "valid" {
             let claims = &conf_token.claims;
@@ -870,7 +893,10 @@ fn l2_tunnel_vectors_do_not_drift() {
     assert_eq!(legacy.flags, 0, "unexpected legacy l2 tunnel flags");
 
     let conf: ConformanceVectorsFile = read_json(&conf_path);
-    assert_eq!(conf.version, 1, "unexpected conformance vector schema version");
+    assert_eq!(
+        conf.version, 1,
+        "unexpected conformance vector schema version"
+    );
     assert_l2_tunnel_vectors_match(
         &legacy_path,
         &legacy,
@@ -885,10 +911,16 @@ fn auth_token_vectors_do_not_drift() {
     let conf_path = conformance_vectors_path();
 
     let proto: ProtocolAuthTokensFile = read_json(&proto_path);
-    assert_eq!(proto.schema, 1, "unexpected protocol auth token vector schema");
+    assert_eq!(
+        proto.schema, 1,
+        "unexpected protocol auth token vector schema"
+    );
 
     let conf: ConformanceVectorsFile = read_json(&conf_path);
-    assert_eq!(conf.version, 1, "unexpected conformance vector schema version");
+    assert_eq!(
+        conf.version, 1,
+        "unexpected conformance vector schema version"
+    );
     assert_auth_token_vectors_match(
         &proto_path,
         &proto,
@@ -910,7 +942,10 @@ fn l2_tunnel_vectors_do_not_drift_v2() {
     assert_eq!(legacy.flags, 0, "unexpected legacy l2 tunnel flags");
 
     let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
-    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_eq!(
+        conf.version, 2,
+        "unexpected conformance vector schema version"
+    );
     assert_l2_tunnel_vectors_match(
         &legacy_path,
         &legacy,
@@ -925,10 +960,16 @@ fn auth_token_vectors_do_not_drift_v2() {
     let conf_path = conformance_vectors_v2_path();
 
     let proto: ProtocolAuthTokensFile = read_json(&proto_path);
-    assert_eq!(proto.schema, 1, "unexpected protocol auth token vector schema");
+    assert_eq!(
+        proto.schema, 1,
+        "unexpected protocol auth token vector schema"
+    );
 
     let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
-    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_eq!(
+        conf.version, 2,
+        "unexpected conformance vector schema version"
+    );
     assert_auth_token_vectors_match(
         &proto_path,
         &proto,
@@ -947,8 +988,14 @@ fn tcp_mux_vectors_do_not_drift() {
     assert_eq!(proto.schema, 1, "unexpected protocol tcp-mux vector schema");
 
     let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
-    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
-    assert_eq!(conf.aero_tcp_mux_v1.schema, 1, "unexpected conformance tcp-mux schema");
+    assert_eq!(
+        conf.version, 2,
+        "unexpected conformance vector schema version"
+    );
+    assert_eq!(
+        conf.aero_tcp_mux_v1.schema, 1,
+        "unexpected conformance tcp-mux schema"
+    );
 
     let mut proto_frames: BTreeMap<&str, &ProtocolTcpMuxFrameVector> = BTreeMap::new();
     for v in &proto.frames {
@@ -959,17 +1006,25 @@ fn tcp_mux_vectors_do_not_drift() {
     }
 
     for v in &conf.aero_tcp_mux_v1.frames {
-        let ctx = format!("tcp-mux frame {:?} (protocol-vectors vs conformance)", v.name);
-        let proto_v = proto_frames.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!("{ctx}: missing entry in {proto_path:?} (frames)")
-        });
+        let ctx = format!(
+            "tcp-mux frame {:?} (protocol-vectors vs conformance)",
+            v.name
+        );
+        let proto_v = proto_frames
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| panic!("{ctx}: missing entry in {proto_path:?} (frames)"));
 
         assert_eq!(proto_v.msg_type, v.msg_type, "{ctx}: msgType drift");
         assert_eq!(proto_v.stream_id, v.stream_id, "{ctx}: streamId drift");
 
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
-        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+        assert_bytes_eq(
+            &format!("{ctx}: payload bytes"),
+            &conf_payload,
+            &proto_payload,
+        );
 
         let conf_frame = decode_hex(&format!("{ctx}: frameHex"), &v.frame_hex);
         let proto_frame = decode_b64(&format!("{ctx}: frame_b64"), &proto_v.frame_b64);
@@ -984,16 +1039,24 @@ fn tcp_mux_vectors_do_not_drift() {
         }
     }
     for v in &conf.aero_tcp_mux_v1.open_payloads {
-        let ctx = format!("tcp-mux open payload {:?} (protocol-vectors vs conformance)", v.name);
-        let proto_v = proto_open.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!("{ctx}: missing entry in {proto_path:?} (openPayloads)")
-        });
+        let ctx = format!(
+            "tcp-mux open payload {:?} (protocol-vectors vs conformance)",
+            v.name
+        );
+        let proto_v = proto_open
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| panic!("{ctx}: missing entry in {proto_path:?} (openPayloads)"));
         assert_eq!(proto_v.host, v.host, "{ctx}: host drift");
         assert_eq!(proto_v.port, v.port, "{ctx}: port drift");
         assert_eq!(proto_v.metadata, v.metadata, "{ctx}: metadata drift");
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
-        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+        assert_bytes_eq(
+            &format!("{ctx}: payload bytes"),
+            &conf_payload,
+            &proto_payload,
+        );
     }
 
     let mut proto_close: BTreeMap<&str, &ProtocolTcpMuxClosePayloadVector> = BTreeMap::new();
@@ -1004,14 +1067,22 @@ fn tcp_mux_vectors_do_not_drift() {
         }
     }
     for v in &conf.aero_tcp_mux_v1.close_payloads {
-        let ctx = format!("tcp-mux close payload {:?} (protocol-vectors vs conformance)", v.name);
-        let proto_v = proto_close.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!("{ctx}: missing entry in {proto_path:?} (closePayloads)")
-        });
+        let ctx = format!(
+            "tcp-mux close payload {:?} (protocol-vectors vs conformance)",
+            v.name
+        );
+        let proto_v = proto_close
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| panic!("{ctx}: missing entry in {proto_path:?} (closePayloads)"));
         assert_eq!(proto_v.flags, v.flags, "{ctx}: flags drift");
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
-        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+        assert_bytes_eq(
+            &format!("{ctx}: payload bytes"),
+            &conf_payload,
+            &proto_payload,
+        );
     }
 
     let mut proto_error: BTreeMap<&str, &ProtocolTcpMuxErrorPayloadVector> = BTreeMap::new();
@@ -1022,10 +1093,14 @@ fn tcp_mux_vectors_do_not_drift() {
         }
     }
     for v in &conf.aero_tcp_mux_v1.error_payloads {
-        let ctx = format!("tcp-mux error payload {:?} (protocol-vectors vs conformance)", v.name);
-        let proto_v = proto_error.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!("{ctx}: missing entry in {proto_path:?} (errorPayloads)")
-        });
+        let ctx = format!(
+            "tcp-mux error payload {:?} (protocol-vectors vs conformance)",
+            v.name
+        );
+        let proto_v = proto_error
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| panic!("{ctx}: missing entry in {proto_path:?} (errorPayloads)"));
         let proto_is_error = proto_v.expect_error.unwrap_or(false);
         let conf_is_error = v.expect_error.unwrap_or(false);
         assert_eq!(proto_is_error, conf_is_error, "{ctx}: expectError drift");
@@ -1041,7 +1116,11 @@ fn tcp_mux_vectors_do_not_drift() {
         }
         let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), &v.payload_hex);
         let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), &proto_v.payload_b64);
-        assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+        assert_bytes_eq(
+            &format!("{ctx}: payload bytes"),
+            &conf_payload,
+            &proto_payload,
+        );
     }
 
     let mut proto_streams: BTreeMap<&str, &ProtocolTcpMuxParserStreamVector> = BTreeMap::new();
@@ -1052,10 +1131,14 @@ fn tcp_mux_vectors_do_not_drift() {
         }
     }
     for v in &conf.aero_tcp_mux_v1.parser_streams {
-        let ctx = format!("tcp-mux parser stream {:?} (protocol-vectors vs conformance)", v.name);
-        let proto_v = proto_streams.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!("{ctx}: missing entry in {proto_path:?} (parserStreams)")
-        });
+        let ctx = format!(
+            "tcp-mux parser stream {:?} (protocol-vectors vs conformance)",
+            v.name
+        );
+        let proto_v = proto_streams
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| panic!("{ctx}: missing entry in {proto_path:?} (parserStreams)"));
 
         assert_eq!(
             proto_v.chunks_b64.len(),
@@ -1067,7 +1150,11 @@ fn tcp_mux_vectors_do_not_drift() {
         {
             let conf_chunk = decode_hex(&format!("{ctx}: chunksHex[{i}]"), conf_chunk_hex);
             let proto_chunk = decode_b64(&format!("{ctx}: chunks_b64[{i}]"), proto_chunk_b64);
-            assert_bytes_eq(&format!("{ctx}: chunk {i} bytes"), &conf_chunk, &proto_chunk);
+            assert_bytes_eq(
+                &format!("{ctx}: chunk {i} bytes"),
+                &conf_chunk,
+                &proto_chunk,
+            );
         }
 
         let conf_is_error = v.expect_error.unwrap_or(false);
@@ -1100,11 +1187,18 @@ fn tcp_mux_vectors_do_not_drift() {
         for (i, (proto_f, conf_f)) in proto_frames.iter().zip(conf_frames).enumerate() {
             let fctx = format!("{ctx}: expectFrames[{i}]");
             assert_eq!(proto_f.msg_type, conf_f.msg_type, "{fctx}: msgType drift");
-            assert_eq!(proto_f.stream_id, conf_f.stream_id, "{fctx}: streamId drift");
+            assert_eq!(
+                proto_f.stream_id, conf_f.stream_id,
+                "{fctx}: streamId drift"
+            );
 
             let conf_payload = decode_hex(&format!("{fctx}: payloadHex"), &conf_f.payload_hex);
             let proto_payload = decode_b64(&format!("{fctx}: payload_b64"), &proto_f.payload_b64);
-            assert_bytes_eq(&format!("{fctx}: payload bytes"), &conf_payload, &proto_payload);
+            assert_bytes_eq(
+                &format!("{fctx}: payload bytes"),
+                &conf_payload,
+                &proto_payload,
+            );
         }
     }
 }
@@ -1115,10 +1209,16 @@ fn udp_relay_vectors_do_not_drift() {
     let conf_path = conformance_vectors_v2_path();
 
     let proto: ProtocolUdpRelayVectorsFile = read_json(&proto_path);
-    assert_eq!(proto.schema, 1, "unexpected protocol udp-relay vector schema");
+    assert_eq!(
+        proto.schema, 1,
+        "unexpected protocol udp-relay vector schema"
+    );
 
     let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
-    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_eq!(
+        conf.version, 2,
+        "unexpected conformance vector schema version"
+    );
     assert_eq!(
         conf.aero_udp_relay_v1v2.schema, 1,
         "unexpected conformance udp-relay schema"
@@ -1133,10 +1233,14 @@ fn udp_relay_vectors_do_not_drift() {
     }
 
     for v in &conf.aero_udp_relay_v1v2.vectors {
-        let ctx = format!("udp-relay vector {:?} (protocol-vectors vs conformance)", v.name);
-        let proto_v = proto_vectors.get(v.name.as_str()).copied().unwrap_or_else(|| {
-            panic!("{ctx}: missing entry in {proto_path:?} (vectors)")
-        });
+        let ctx = format!(
+            "udp-relay vector {:?} (protocol-vectors vs conformance)",
+            v.name
+        );
+        let proto_v = proto_vectors
+            .get(v.name.as_str())
+            .copied()
+            .unwrap_or_else(|| panic!("{ctx}: missing entry in {proto_path:?} (vectors)"));
 
         let proto_is_error = proto_v.expect_error.unwrap_or(false);
         let conf_is_error = v.expect_error.unwrap_or(false);
@@ -1150,8 +1254,15 @@ fn udp_relay_vectors_do_not_drift() {
         }
         assert_eq!(proto_v.version, v.version, "{ctx}: version drift");
         assert_eq!(proto_v.guest_port, v.guest_port, "{ctx}: guestPort drift");
-        assert_eq!(proto_v.remote_ip.as_deref(), v.remote_ip.as_deref(), "{ctx}: remoteIp drift");
-        assert_eq!(proto_v.remote_port, v.remote_port, "{ctx}: remotePort drift");
+        assert_eq!(
+            proto_v.remote_ip.as_deref(),
+            v.remote_ip.as_deref(),
+            "{ctx}: remoteIp drift"
+        );
+        assert_eq!(
+            proto_v.remote_port, v.remote_port,
+            "{ctx}: remotePort drift"
+        );
 
         let conf_frame = decode_hex(&format!("{ctx}: frameHex"), &v.frame_hex);
         let proto_frame = decode_b64(&format!("{ctx}: frame_b64"), &proto_v.frame_b64);
@@ -1164,7 +1275,11 @@ fn udp_relay_vectors_do_not_drift() {
             (Some(conf_payload_hex), Some(proto_payload_b64)) => {
                 let conf_payload = decode_hex(&format!("{ctx}: payloadHex"), conf_payload_hex);
                 let proto_payload = decode_b64(&format!("{ctx}: payload_b64"), proto_payload_b64);
-                assert_bytes_eq(&format!("{ctx}: payload bytes"), &conf_payload, &proto_payload);
+                assert_bytes_eq(
+                    &format!("{ctx}: payload bytes"),
+                    &conf_payload,
+                    &proto_payload,
+                );
             }
         }
     }

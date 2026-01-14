@@ -94,7 +94,11 @@ fn bench_tier0_throughput(c: &mut Criterion) {
     group.bench_function("tier0_nop_stream", |b| {
         b.iter(|| {
             nop_state.set_rip(0);
-            let res = run_batch(black_box(&mut nop_state), black_box(&mut nop_bus), INSTS_PER_ITER);
+            let res = run_batch(
+                black_box(&mut nop_state),
+                black_box(&mut nop_bus),
+                INSTS_PER_ITER,
+            );
             debug_assert!(matches!(res.exit, BatchExit::Completed));
             black_box(res.executed);
         })

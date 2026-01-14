@@ -1,16 +1,17 @@
+use aero_devices::pci::PciDevice;
+use aero_devices_gpu::ring::{
+    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
+    AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
+    RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET,
+    RING_FLAGS_OFFSET, RING_HEAD_OFFSET, RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET,
+    RING_TAIL_OFFSET, SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET,
+    SUBMIT_DESC_SIZE_BYTES_OFFSET,
+};
 use aero_devices_gpu::{
     irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
     AeroGpuFenceCompletionMode, AeroGpuPciDevice, ImmediateAeroGpuBackend,
 };
-use aero_devices_gpu::ring::{
-    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
-    FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET, RING_ABI_VERSION_OFFSET,
-    RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET, RING_HEAD_OFFSET,
-    RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET, SUBMIT_DESC_FLAGS_OFFSET,
-    SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
-};
 use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_VERSION_U32, AEROGPU_MMIO_MAGIC};
-use aero_devices::pci::PciDevice;
 use memory::MemoryBus;
 use memory::MmioHandler;
 
@@ -33,7 +34,10 @@ fn id_registers_read_correctly() {
     dev.config_mut().set_command(1 << 1);
 
     assert_eq!(dev.read(mmio::MAGIC, 4) as u32, AEROGPU_MMIO_MAGIC);
-    assert_eq!(dev.read(mmio::ABI_VERSION, 4) as u32, AEROGPU_ABI_VERSION_U32);
+    assert_eq!(
+        dev.read(mmio::ABI_VERSION, 4) as u32,
+        AEROGPU_ABI_VERSION_U32
+    );
 }
 
 #[test]
@@ -62,7 +66,10 @@ fn doorbell_advances_completed_fence_with_immediate_backend_in_deferred_mode() {
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
 
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
@@ -87,7 +94,10 @@ fn doorbell_advances_completed_fence_with_immediate_backend_in_deferred_mode() {
     assert!(dev.irq_level());
 
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
-    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
     assert_eq!(
         mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
         42
@@ -120,17 +130,26 @@ fn irq_status_enable_and_ack_semantics() {
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
 
     let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(desc0_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 1);
 
     let desc1_gpa = desc0_gpa + u64::from(entry_stride);
-    mem.write_u32(desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(desc1_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 2);
 
     let desc2_gpa = desc1_gpa + u64::from(entry_stride);
-    mem.write_u32(desc2_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc2_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(desc2_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc2_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 3);
 

@@ -7,11 +7,11 @@ use core::fmt;
 
 const DXBC_MAGIC: FourCC = FourCC(*b"DXBC");
 const DXBC_HEADER_LEN: usize = 4 + 16 + 4 + 4 + 4; // magic + checksum + reserved + total_size + chunk_count
-// Hard cap on chunk count to avoid O(n) parsing work and pathological offset tables on hostile input.
-//
-// Real-world DXBC containers contain a small handful of chunks (single digits). This value is
-// intentionally generous while still preventing multi-megabyte offset tables and extremely large
-// validation loops.
+                                                   // Hard cap on chunk count to avoid O(n) parsing work and pathological offset tables on hostile input.
+                                                   //
+                                                   // Real-world DXBC containers contain a small handful of chunks (single digits). This value is
+                                                   // intentionally generous while still preventing multi-megabyte offset tables and extremely large
+                                                   // validation loops.
 const MAX_DXBC_CHUNK_COUNT: u32 = 4096;
 
 /// The fixed header of a `DXBC` container.
@@ -330,11 +330,7 @@ impl<'a> DxbcFile<'a> {
             let mut first_err = None;
             for chunk in dxbc.get_chunks(kind) {
                 match parse_rdef_chunk_for_fourcc(chunk.fourcc, chunk.data).map_err(|e| {
-                    DxbcError::invalid_chunk(format!(
-                        "{} chunk: {}",
-                        chunk.fourcc,
-                        e.context()
-                    ))
+                    DxbcError::invalid_chunk(format!("{} chunk: {}", chunk.fourcc, e.context()))
                 }) {
                     Ok(rdef) => return Some(Ok(rdef)),
                     Err(err) => {

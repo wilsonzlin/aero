@@ -417,7 +417,10 @@ fn drive_address_master_present_is_stable_and_nonzero() {
     let v1 = io.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
 
     assert_ne!(v0, 0);
-    assert_ne!(v0, 0xFF, "DADR should not float high when a device is present");
+    assert_ne!(
+        v0, 0xFF,
+        "DADR should not float high when a device is present"
+    );
     assert_eq!(v0, v1, "DADR reads should be stable");
 }
 
@@ -1696,7 +1699,11 @@ fn atapi_read_10_dma_via_bus_master() {
 
     // Bus master status should indicate interrupt and no error.
     let st = ioports.read(bm_base + 8 + 2, 1) as u8;
-    assert_eq!(st & 0x01, 0, "BMIDE active bit should be clear after completion");
+    assert_eq!(
+        st & 0x01,
+        0,
+        "BMIDE active bit should be clear after completion"
+    );
     assert_ne!(st & 0x04, 0, "BMIDE IRQ bit should be set on completion");
     assert_eq!(st & 0x02, 0, "BMIDE ERR bit should be clear");
 

@@ -905,14 +905,21 @@ mod tests {
 
         assert!(cfg.capability::<MsiCapability>().unwrap().enabled());
         assert!(cfg.capability::<MsixCapability>().unwrap().enabled());
-        assert!(cfg.capability::<MsixCapability>().unwrap().function_masked());
+        assert!(cfg
+            .capability::<MsixCapability>()
+            .unwrap()
+            .function_masked());
 
         let mut dev = Dev { cfg };
         dev.reset();
 
         assert!(!dev.cfg.capability::<MsiCapability>().unwrap().enabled());
         assert!(!dev.cfg.capability::<MsixCapability>().unwrap().enabled());
-        assert!(!dev.cfg.capability::<MsixCapability>().unwrap().function_masked());
+        assert!(!dev
+            .cfg
+            .capability::<MsixCapability>()
+            .unwrap()
+            .function_masked());
 
         // BAR base programming is preserved across reset.
         assert_eq!(dev.cfg.bar_range(0).unwrap().base, 0x1234_5000);

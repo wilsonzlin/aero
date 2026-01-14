@@ -123,4 +123,3 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
     assert_eq!(snap1.pitch_bytes, 0);
     assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
 }
-

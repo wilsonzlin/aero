@@ -313,8 +313,7 @@ impl EhciController {
             let shift = (offset - REG_USBSTS) * 8;
             // USBSTS.PSS/ASS are read-only schedule status bits. Keep them fully derived from
             // USBCMD so they cannot be latched by internal state (e.g. snapshots/tests).
-            let mut v =
-                self.regs.usbsts & (USBSTS_READ_MASK & !(USBSTS_PSS | USBSTS_ASS));
+            let mut v = self.regs.usbsts & (USBSTS_READ_MASK & !(USBSTS_PSS | USBSTS_ASS));
             // Derive schedule-status bits (EHCI USBSTS.PSS/ASS) from the command register. These
             // are read-only in hardware and allow drivers to observe whether schedules are active.
             if self.regs.usbcmd & USBCMD_RS != 0 {
@@ -527,7 +526,10 @@ impl EhciController {
         self.update_irq();
     }
 
-    fn process_schedules(&mut self, mem: &mut dyn MemoryBus) -> Result<(), schedule::ScheduleError> {
+    fn process_schedules(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+    ) -> Result<(), schedule::ScheduleError> {
         if self.regs.usbcmd & USBCMD_ASE != 0 && self.regs.asynclistaddr != 0 {
             let mut ctx = AsyncScheduleContext {
                 mem,

@@ -1,7 +1,9 @@
 use std::{env, fs, path::PathBuf};
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
-use aero_pc_constants::{PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS};
+use aero_pc_constants::{
+    PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
+};
 
 const UPDATE_ENV: &str = "AERO_UPDATE_ACPI_FIXTURES";
 

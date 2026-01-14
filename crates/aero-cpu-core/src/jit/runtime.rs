@@ -396,9 +396,7 @@ impl PageVersionTracker {
         let end = code_paddr.saturating_add(u64::from(byte_len).saturating_sub(1));
         let end_page = end >> PAGE_SHIFT;
 
-        let page_count = end_page
-            .saturating_sub(start_page)
-            .saturating_add(1);
+        let page_count = end_page.saturating_sub(start_page).saturating_add(1);
         let clamped_pages = page_count.min(Self::MAX_SNAPSHOT_PAGES as u64);
         // `byte_len != 0` implies at least one spanned page, but keep the logic robust.
         if clamped_pages == 0 {
@@ -434,8 +432,7 @@ impl PageVersionTracker {
     /// the pointer returned by [`Self::table_ptr_len`] will continue to observe a valid table
     /// after reset, with all entries set to 0.
     pub fn reset(&self) {
-        self.generation
-            .set(self.generation.get().wrapping_add(1));
+        self.generation.set(self.generation.get().wrapping_add(1));
         for v in self.versions.iter() {
             v.set(0);
         }
@@ -462,8 +459,9 @@ where
         let mut config = config;
         // Clamp the configured table size to the hard safety cap so `JitRuntime::config()` always
         // reflects the actual JIT-visible table length.
-        config.code_version_max_pages =
-            config.code_version_max_pages.min(PageVersionTracker::MAX_TRACKED_PAGES);
+        config.code_version_max_pages = config
+            .code_version_max_pages
+            .min(PageVersionTracker::MAX_TRACKED_PAGES);
 
         let page_versions = PageVersionTracker::new(config.code_version_max_pages);
         let cache = CodeCache::new(config.cache_max_blocks, config.cache_max_bytes);
@@ -491,10 +489,7 @@ where
         }
     }
 
-    pub fn with_metrics_sink(
-        mut self,
-        sink: Arc<dyn JitMetricsSink + Send + Sync>,
-    ) -> Self {
+    pub fn with_metrics_sink(mut self, sink: Arc<dyn JitMetricsSink + Send + Sync>) -> Self {
         self.set_metrics_sink(Some(sink));
         self
     }
@@ -551,7 +546,10 @@ where
     /// `ptr` points to `len` contiguous `u32` entries, indexed by 4KiB physical page number. The
     /// pointer remains valid until the table is resized or reset.
     pub fn page_version_table_ptr_len(&self) -> (*const u32, usize) {
-        (self.page_versions.table_ptr(), self.page_versions.versions_len())
+        (
+            self.page_versions.table_ptr(),
+            self.page_versions.versions_len(),
+        )
     }
 
     pub fn on_guest_write(&mut self, paddr: u64, len: usize) {
@@ -619,8 +617,7 @@ where
     pub fn install_handle(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
         let metrics = self.metrics_sink.as_deref();
         if !self.is_block_valid(&handle) {
-            self.stats.install_rejected_stale =
-                self.stats.install_rejected_stale.saturating_add(1);
+            self.stats.install_rejected_stale = self.stats.install_rejected_stale.saturating_add(1);
             // A background compilation result can arrive after the guest has modified the code.
             // Installing such a block would be incorrect; reject it and request recompilation.
             if let Some(metrics) = metrics {
@@ -788,9 +785,7 @@ where
                 .code_paddr
                 .saturating_add(handle.meta.byte_len as u64 - 1);
             let end_page = end >> PAGE_SHIFT;
-            end_page
-                .saturating_sub(start_page)
-                .saturating_add(1)
+            end_page.saturating_sub(start_page).saturating_add(1)
         };
         if expected_pages > handle.meta.page_versions.len() as u64 {
             return false;

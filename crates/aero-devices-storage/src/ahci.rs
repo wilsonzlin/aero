@@ -2218,8 +2218,14 @@ mod tests {
         let mut mem = TestMemory::new(0x40_000);
 
         // Attach drives to a subset of ports. PI must still report all implemented ports.
-        ctl.attach_drive(0, make_drive_with_sector_marker([0xAA, 0xBB, 0xCC, 0xDD], 4));
-        ctl.attach_drive(2, make_drive_with_sector_marker([0x11, 0x22, 0x33, 0x44], 4));
+        ctl.attach_drive(
+            0,
+            make_drive_with_sector_marker([0xAA, 0xBB, 0xCC, 0xDD], 4),
+        );
+        ctl.attach_drive(
+            2,
+            make_drive_with_sector_marker([0x11, 0x22, 0x33, 0x44], 4),
+        );
         assert_eq!(ctl.read_u32(HBA_REG_PI), 0b1111);
 
         // Program HBA and ports.
@@ -2454,7 +2460,10 @@ mod tests {
 
         // Issue COMRESET (DET=1) then release it back to DET=0.
         ctl.write_u32(PORT_BASE + PORT_REG_SCTL, SCTL_DET_COMRESET);
-        assert_ne!(ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32), 0);
+        assert_ne!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32),
+            0
+        );
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
         // While reset is asserted, report device present but PHY not established.
         assert_eq!(

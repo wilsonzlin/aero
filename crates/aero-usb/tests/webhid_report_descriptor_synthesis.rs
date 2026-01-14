@@ -224,4 +224,3 @@ fn webhid_report_item_deserializes_without_is_relative_field() {
 
     assert!(!collection.input_reports[0].items[0].is_absolute);
 }
-

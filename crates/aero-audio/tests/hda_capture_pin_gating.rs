@@ -4,7 +4,11 @@ use aero_audio::mem::{GuestMemory, MemoryAccess};
 
 const REG_GCTL: u64 = 0x08;
 
-fn setup_basic_capture(hda: &mut HdaController, mem: &mut GuestMemory, frames: usize) -> (u64, usize) {
+fn setup_basic_capture(
+    hda: &mut HdaController,
+    mem: &mut GuestMemory,
+    frames: usize,
+) -> (u64, usize) {
     // Bring controller out of reset.
     hda.mmio_write(REG_GCTL, 4, 0x1); // GCTL.CRST
 

@@ -71,7 +71,11 @@ pub(crate) fn init_ap_vcpu_from_sipi(cpu: &mut CpuCore, vector: u8) {
     reset_ap_vcpu_to_init_state(cpu);
 
     let cs_selector = (vector as u16) << 8;
-    set_real_mode_segment(&mut cpu.state.segments.cs, cs_selector, REAL_MODE_CODE_ACCESS);
+    set_real_mode_segment(
+        &mut cpu.state.segments.cs,
+        cs_selector,
+        REAL_MODE_CODE_ACCESS,
+    );
 
     // IP is 0 (linear execution begins at CS.base).
     cpu.state.set_ip(0);
@@ -102,7 +106,11 @@ mod tests {
         assert_eq!(cpu.state.segments.cs.base, 0x8000);
         assert_eq!(cpu.state.segments.cs.selector, 0x0800);
 
-        for seg in [&cpu.state.segments.ds, &cpu.state.segments.es, &cpu.state.segments.ss] {
+        for seg in [
+            &cpu.state.segments.ds,
+            &cpu.state.segments.es,
+            &cpu.state.segments.ss,
+        ] {
             assert_eq!(seg.base, 0);
             assert_eq!(seg.limit, 0xFFFF);
         }

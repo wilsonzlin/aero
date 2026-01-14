@@ -11,7 +11,8 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-const DXBC_VS_PASSTHROUGH: &[u8] = include_bytes!("../../aero-d3d11/tests/fixtures/vs_passthrough.dxbc");
+const DXBC_VS_PASSTHROUGH: &[u8] =
+    include_bytes!("../../aero-d3d11/tests/fixtures/vs_passthrough.dxbc");
 const DXBC_PS_PASSTHROUGH: &[u8] =
     include_bytes!("../../aero-d3d11/tests/fixtures/ps_passthrough.dxbc");
 const ILAY_POS3_COLOR: &[u8] =
@@ -19,7 +20,8 @@ const ILAY_POS3_COLOR: &[u8] =
 
 fn fixture_path() -> PathBuf {
     // `CARGO_MANIFEST_DIR` = `.../crates/aero-gpu-trace`
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/aerogpu_cmd_blend_add.aerogputrace")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_cmd_blend_add.aerogputrace")
 }
 
 fn make_cmd_stream() -> Vec<u8> {
@@ -149,4 +151,3 @@ fn aerogpu_cmd_blend_add_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

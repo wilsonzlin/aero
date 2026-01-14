@@ -17,9 +17,6 @@ impl PortIoDevice for VgaPortIoDevice {
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
-        self.dev
-            .borrow_mut()
-            .port_write(port, size as usize, value);
+        self.dev.borrow_mut().port_write(port, size as usize, value);
     }
 }
-

@@ -215,11 +215,13 @@ pub fn build_vertex_pull_plan(
                 alignment: fmt.align,
             });
         }
-        let end = offset.checked_add(fmt.size).ok_or(VertexPullPlanError::OffsetOverflow {
-            slot: elem.input_slot,
-            offset,
-            size: fmt.size,
-        })?;
+        let end = offset
+            .checked_add(fmt.size)
+            .ok_or(VertexPullPlanError::OffsetOverflow {
+                slot: elem.input_slot,
+                offset,
+                size: fmt.size,
+            })?;
         *slot_next = end;
         required_strides[elem.input_slot as usize] =
             required_strides[elem.input_slot as usize].max(end);
@@ -232,13 +234,14 @@ pub fn build_vertex_pull_plan(
             semantic_name_hash: elem.semantic_name_hash,
             semantic_index: elem.semantic_index,
         };
-        let (input_register, mask) = sig_map
-            .get(&key)
-            .copied()
-            .ok_or(VertexPullPlanError::MissingSemantic {
-                semantic_name_hash: elem.semantic_name_hash,
-                semantic_index: elem.semantic_index,
-            })?;
+        let (input_register, mask) =
+            sig_map
+                .get(&key)
+                .copied()
+                .ok_or(VertexPullPlanError::MissingSemantic {
+                    semantic_name_hash: elem.semantic_name_hash,
+                    semantic_index: elem.semantic_index,
+                })?;
 
         pulls.push(VertexPull {
             semantic_name_hash: elem.semantic_name_hash,

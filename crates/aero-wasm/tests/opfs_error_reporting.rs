@@ -312,7 +312,9 @@ async fn primary_hdd_opfs_cow_unavailable_error_includes_operation_and_both_path
     let err = m
         .set_primary_hdd_opfs_cow(base_path.clone(), overlay_path.clone(), 32 * 1024)
         .await
-        .expect_err("expected OPFS-backed primary HDD COW attach to fail when OPFS sync access unavailable");
+        .expect_err(
+            "expected OPFS-backed primary HDD COW attach to fail when OPFS sync access unavailable",
+        );
 
     let msg = js_error_message(err);
     if !is_opfs_unavailable_message(&msg) {

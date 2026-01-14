@@ -81,7 +81,9 @@ fn aerogpu_bios_vbe_reports_lfb_base_inside_bar1_for_0x115_and_0x160() {
         run_until_halt(&mut m);
 
         // Resolve the AeroGPU BAR1 base assigned by PCI BIOS POST.
-        let bdf = m.aerogpu().expect("AeroGPU should be present when enable_aerogpu=true");
+        let bdf = m
+            .aerogpu()
+            .expect("AeroGPU should be present when enable_aerogpu=true");
         let bar1_base = m
             .pci_bar_base(bdf, profile::AEROGPU_BAR1_VRAM_INDEX)
             .filter(|&base| base != 0)

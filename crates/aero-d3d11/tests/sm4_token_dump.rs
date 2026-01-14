@@ -7,7 +7,8 @@ const PS_ADD_DXBC: &[u8] = include_bytes!("fixtures/ps_add.dxbc");
 #[test]
 fn token_dump_scans_fixture_without_panicking() {
     let program = Sm4Program::parse_from_dxbc_bytes(PS_ADD_DXBC).expect("fixture should parse");
-    let insts = tokenize_instructions(&program.tokens).expect("tokenize_instructions should succeed");
+    let insts =
+        tokenize_instructions(&program.tokens).expect("tokenize_instructions should succeed");
 
     assert!(!insts.is_empty(), "expected at least one instruction");
     assert!(
@@ -20,4 +21,3 @@ fn token_dump_scans_fixture_without_panicking() {
         "expected final instruction to be ret"
     );
 }
-

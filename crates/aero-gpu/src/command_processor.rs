@@ -832,7 +832,9 @@ impl AeroGpuCommandProcessor {
                             | SharedSurfaceError::HandleIsAlias { handle, .. } => {
                                 CommandProcessorError::SharedSurfaceHandleInUse(handle)
                             }
-                            _ => CommandProcessorError::SharedSurfaceHandleInUse(out_resource_handle),
+                            _ => {
+                                CommandProcessorError::SharedSurfaceHandleInUse(out_resource_handle)
+                            }
                         })?;
                 }
                 AeroGpuCmd::ReleaseSharedSurface { share_token } => {

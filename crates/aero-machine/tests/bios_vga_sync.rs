@@ -215,7 +215,8 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         (0x118u16, (1024, 768)),
         (0x160u16, (1280, 720)),
     ] {
-        m.set_disk_image(build_vbe_boot_sector(mode).to_vec()).unwrap();
+        m.set_disk_image(build_vbe_boot_sector(mode).to_vec())
+            .unwrap();
         m.reset();
         run_until_halt(&mut m);
 
@@ -326,7 +327,12 @@ fn bios_vbe_palette_sync_updates_vga_dac() {
     run_until_halt(&mut m);
 
     // Write palette index 1 to the first pixel in the 8bpp framebuffer.
-    let lfb_base = u64::from(m.vga().expect("machine should include VGA").borrow().lfb_base());
+    let lfb_base = u64::from(
+        m.vga()
+            .expect("machine should include VGA")
+            .borrow()
+            .lfb_base(),
+    );
     m.write_physical_u8(lfb_base, 1);
 
     let vga = m.vga().expect("machine should include VGA");

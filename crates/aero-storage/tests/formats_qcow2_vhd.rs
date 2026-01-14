@@ -1,6 +1,6 @@
 use aero_storage::{
-    detect_format, DiskError, DiskFormat, DiskImage, MemBackend, Qcow2Disk, RawDisk, StorageBackend,
-    VhdDisk, VirtualDisk, SECTOR_SIZE,
+    detect_format, DiskError, DiskFormat, DiskImage, MemBackend, Qcow2Disk, RawDisk,
+    StorageBackend, VhdDisk, VirtualDisk, SECTOR_SIZE,
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -301,7 +301,9 @@ fn make_qcow2_shared_data_cluster(pattern: u8) -> MemBackend {
 
     let l2_entry = data_cluster_offset | QCOW2_OFLAG_COPIED;
     // Two guest clusters point at the same physical data cluster.
-    backend.write_at(l2_table_offset, &l2_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(l2_table_offset, &l2_entry.to_be_bytes())
+        .unwrap();
     backend
         .write_at(l2_table_offset + 8, &l2_entry.to_be_bytes())
         .unwrap();
@@ -1173,15 +1175,21 @@ fn qcow2_shared_data_cluster_partial_write_is_copied_before_write() {
 
     // Write a small slice inside cluster A.
     let offset_in_cluster: usize = 123;
-    disk.write_at(offset_in_cluster as u64, &[1, 2, 3, 4]).unwrap();
+    disk.write_at(offset_in_cluster as u64, &[1, 2, 3, 4])
+        .unwrap();
     disk.flush().unwrap();
 
     // Cluster A should contain the original bytes except for the written slice.
     let mut cluster_a = vec![0u8; cluster_size as usize];
     disk.read_at(0, &mut cluster_a).unwrap();
     assert!(cluster_a[..offset_in_cluster].iter().all(|b| *b == 0xEE));
-    assert_eq!(&cluster_a[offset_in_cluster..offset_in_cluster + 4], &[1, 2, 3, 4]);
-    assert!(cluster_a[offset_in_cluster + 4..].iter().all(|b| *b == 0xEE));
+    assert_eq!(
+        &cluster_a[offset_in_cluster..offset_in_cluster + 4],
+        &[1, 2, 3, 4]
+    );
+    assert!(cluster_a[offset_in_cluster + 4..]
+        .iter()
+        .all(|b| *b == 0xEE));
 
     // Cluster B should still read the original bytes.
     let mut cluster_b = vec![0u8; cluster_size as usize];
@@ -1190,7 +1198,8 @@ fn qcow2_shared_data_cluster_partial_write_is_copied_before_write() {
 
     // Sanity check: the LBA-based read path should also still see the original pattern for B.
     let mut sector_b0 = vec![0u8; SECTOR_SIZE];
-    disk.read_sectors(sectors_per_cluster, &mut sector_b0).unwrap();
+    disk.read_sectors(sectors_per_cluster, &mut sector_b0)
+        .unwrap();
     assert_eq!(sector_b0, vec![0xEEu8; SECTOR_SIZE]);
 }
 
@@ -2332,8 +2341,7 @@ fn vhd_differencing_reads_fall_back_to_parent_and_writes_overlay() {
     let parent_view = SharedReadOnlyDisk {
         inner: parent.clone(),
     };
-    let mut disk =
-        VhdDisk::open_differencing(child_backend, Box::new(parent_view)).unwrap();
+    let mut disk = VhdDisk::open_differencing(child_backend, Box::new(parent_view)).unwrap();
 
     // Before any allocations, all reads come from the parent.
     let mut sector0 = [0u8; SECTOR_SIZE];
@@ -2457,10 +2465,9 @@ fn vhd_differencing_rejects_bat_entry_pointing_into_metadata() {
 
     let parent_backend = make_vhd_fixed_with_pattern();
     let parent_disk = VhdDisk::open(parent_backend).unwrap();
-    let err =
-        VhdDisk::open_differencing(backend, Box::new(parent_disk))
-            .err()
-            .expect("expected error");
+    let err = VhdDisk::open_differencing(backend, Box::new(parent_disk))
+        .err()
+        .expect("expected error");
     assert!(matches!(
         err,
         DiskError::CorruptImage("vhd block overlaps metadata")

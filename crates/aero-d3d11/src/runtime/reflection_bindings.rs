@@ -1132,10 +1132,7 @@ mod tests {
             .unwrap();
 
             let internal_group_idx = INTERNAL_GROUP as usize;
-            assert_eq!(
-                info.group_bindings.len(),
-                internal_group_idx + 1
-            );
+            assert_eq!(info.group_bindings.len(), internal_group_idx + 1);
             assert_eq!(info.group_bindings[0].len(), 1);
             for g in 1..internal_group_idx {
                 assert!(info.group_bindings[g].is_empty());
@@ -1147,7 +1144,10 @@ mod tests {
             );
 
             assert_eq!(info.group_layouts.len(), internal_group_idx + 1);
-            assert_eq!(info.layout_key.bind_group_layout_hashes.len(), internal_group_idx + 1);
+            assert_eq!(
+                info.layout_key.bind_group_layout_hashes.len(),
+                internal_group_idx + 1
+            );
             for (hash, layout) in info
                 .layout_key
                 .bind_group_layout_hashes
@@ -1396,20 +1396,23 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
   _ = vs_cb0.regs[0].x;
  }
  "#;
-            let compute_wgsl =
-                compute_wgsl.replace("__OUT_VERTICES_BINDING__", &out_vertices_binding.to_string());
+            let compute_wgsl = compute_wgsl.replace(
+                "__OUT_VERTICES_BINDING__",
+                &out_vertices_binding.to_string(),
+            );
 
             let compute_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("gs emulation compute module"),
                 source: wgpu::ShaderSource::Wgsl(compute_wgsl.into()),
             });
-            let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("gs emulation compute pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &compute_module,
-                entry_point: "cs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            });
+            let compute_pipeline =
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("gs emulation compute pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &compute_module,
+                    entry_point: "cs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
 
             let render_wgsl = r#"
 struct VsIn {
@@ -1529,7 +1532,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut sampler_cache = SamplerCache::new();
             let default_sampler = sampler_cache.get_or_create(
                 device,
@@ -1678,10 +1682,9 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     mapped_at_creation: false,
                 });
 
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("gs emulation readback encoder"),
-                    });
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gs emulation readback encoder"),
+                });
                 encoder.copy_texture_to_buffer(
                     wgpu::ImageCopyTexture {
                         texture,
@@ -1741,17 +1744,15 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 bytes[4..8].copy_from_slice(&0f32.to_bits().to_le_bytes());
                 queue.write_buffer(gs_cb0_buffer, 0, &bytes);
 
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("gs emulation encoder"),
-                    });
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gs emulation encoder"),
+                });
 
                 {
-                    let mut pass =
-                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("gs emulation compute pass"),
-                            timestamp_writes: None,
-                        });
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("gs emulation compute pass"),
+                        timestamp_writes: None,
+                    });
                     pass.set_pipeline(compute_pipeline);
                     pass.set_bind_group(0, bg0, &[]);
                     pass.set_bind_group(1, empty_bg, &[]);
@@ -2002,7 +2003,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
             let device = rt.device();
             if device.limits().max_storage_buffers_per_shader_stage == 0 {
-                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                skip_or_panic(
+                    module_path!(),
+                    "storage buffers are not supported by this adapter",
+                );
                 return;
             }
 
@@ -2033,7 +2037,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =

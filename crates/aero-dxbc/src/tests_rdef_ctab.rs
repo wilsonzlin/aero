@@ -1,6 +1,4 @@
-use crate::{
-    parse_ctab_chunk, parse_rdef_chunk, test_utils as dxbc_test_utils, DxbcFile, FourCC,
-};
+use crate::{parse_ctab_chunk, parse_rdef_chunk, test_utils as dxbc_test_utils, DxbcFile, FourCC};
 
 const VS_2_0_SIMPLE_DXBC: &[u8] =
     include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc");

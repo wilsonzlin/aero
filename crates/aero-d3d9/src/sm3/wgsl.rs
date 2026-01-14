@@ -1370,7 +1370,9 @@ fn emit_op_line(
         } => {
             let (v, vty) = src_expr(src0, f32_defs)?;
             if vty != ScalarTy::F32 {
-                return Err(err("matrix multiply only supports float vectors in WGSL lowering"));
+                return Err(err(
+                    "matrix multiply only supports float vectors in WGSL lowering",
+                ));
             }
             let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
             if dst_ty != ScalarTy::F32 {
@@ -1420,7 +1422,11 @@ fn emit_op_line(
                 1 => format!(
                     "vec4<f32>(({modded}).x, ({dst_name}).y, ({dst_name}).z, ({dst_name}).w)"
                 ),
-                other => return Err(err(format!("unsupported matrix multiply output size n={other}"))),
+                other => {
+                    return Err(err(format!(
+                        "unsupported matrix multiply output size n={other}"
+                    )))
+                }
             };
             emit_assign(dst, final_vec)
         }
@@ -1744,8 +1750,7 @@ fn emit_stmt(
                         if dst_ty != ScalarTy::F32 {
                             return Err(err("dsx destination must be float"));
                         }
-                        let e =
-                            apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
+                        let e = apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
                         let dst_name = reg_var_name(&dst.reg)?;
                         let line =
                             emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
@@ -1769,8 +1774,7 @@ fn emit_stmt(
                         if dst_ty != ScalarTy::F32 {
                             return Err(err("dsy destination must be float"));
                         }
-                        let e =
-                            apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
+                        let e = apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
                         let dst_name = reg_var_name(&dst.reg)?;
                         let line =
                             emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
@@ -2242,7 +2246,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 }
             }
             for (file, index) in &usage.outputs_written {
-                if matches!(*file, RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output) {
+                if matches!(
+                    *file,
+                    RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output
+                ) {
                     vs_varyings.insert((*file, *index));
                 }
             }
@@ -2396,7 +2403,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     continue;
                 }
                 let semantic = input_semantics.get(&(*file, *index));
-                if matches!(semantic, Some(Semantic::Position(_)) | Some(Semantic::PositionT(_))) {
+                if matches!(
+                    semantic,
+                    Some(Semantic::Position(_)) | Some(Semantic::PositionT(_))
+                ) {
                     ps_position_inputs.insert(*index);
                 }
             }
@@ -2430,7 +2440,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             for (file, index) in &ps_inputs {
                 let semantic = input_semantics.get(&(*file, *index));
                 if *file == RegFile::Input
-                    && matches!(semantic, Some(Semantic::Position(_)) | Some(Semantic::PositionT(_)))
+                    && matches!(
+                        semantic,
+                        Some(Semantic::Position(_)) | Some(Semantic::PositionT(_))
+                    )
                 {
                     // POSITION input is mapped via `@builtin(position)`, not a location.
                     continue;
@@ -2524,10 +2537,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             if has_inputs {
                 for (file, index) in &ps_inputs {
                     if *file == RegFile::Input && ps_position_inputs.contains(index) {
-                        let _ = writeln!(
-                            wgsl,
-                            "  let v{index}: vec4<f32> = input.frag_pos;"
-                        );
+                        let _ = writeln!(wgsl, "  let v{index}: vec4<f32> = input.frag_pos;");
                         continue;
                     }
                     let reg = RegRef {

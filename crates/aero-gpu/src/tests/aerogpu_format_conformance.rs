@@ -88,7 +88,9 @@ fn expected_d3d9_wgpu_format(format: AerogpuFormat) -> Option<wgpu::TextureForma
         | AerogpuFormat::R8G8B8X8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
 
         // Packed 16-bit formats are converted to RGBA8 in the D3D9 executor.
-        AerogpuFormat::B5G6R5Unorm | AerogpuFormat::B5G5R5A1Unorm => wgpu::TextureFormat::Rgba8Unorm,
+        AerogpuFormat::B5G6R5Unorm | AerogpuFormat::B5G5R5A1Unorm => {
+            wgpu::TextureFormat::Rgba8Unorm
+        }
 
         AerogpuFormat::D24UnormS8Uint => wgpu::TextureFormat::Depth24PlusStencil8,
         AerogpuFormat::D32Float => wgpu::TextureFormat::Depth32Float,
@@ -177,7 +179,8 @@ fn command_processor_create_texture2d_accepts_all_protocol_formats() {
         let bytes = w.finish();
 
         let mut proc = crate::AeroGpuCommandProcessor::new();
-        let result = proc.process_submission_with_allocations(&bytes, None, /*signal_fence=*/ 1);
+        let result =
+            proc.process_submission_with_allocations(&bytes, None, /*signal_fence=*/ 1);
 
         match expected_protocol_support(format) {
             ExpectedSupport::Supported => {
@@ -190,7 +193,10 @@ fn command_processor_create_texture2d_accepts_all_protocol_formats() {
             }
             ExpectedSupport::Unsupported => {
                 assert!(
-                    matches!(result, Err(crate::CommandProcessorError::InvalidCreateTexture2d)),
+                    matches!(
+                        result,
+                        Err(crate::CommandProcessorError::InvalidCreateTexture2d)
+                    ),
                     "expected unsupported format {format:?} to be rejected, got {result:?}"
                 );
             }
@@ -240,8 +246,11 @@ fn command_processor_guest_backed_texture_layout_matches_protocol_formats() {
         let bytes = w.finish();
 
         let mut proc = crate::AeroGpuCommandProcessor::new();
-        let result =
-            proc.process_submission_with_allocations(&bytes, Some(&allocs), /*signal_fence=*/ 1);
+        let result = proc.process_submission_with_allocations(
+            &bytes,
+            Some(&allocs),
+            /*signal_fence=*/ 1,
+        );
 
         match expected_protocol_support(format) {
             ExpectedSupport::Supported => {
@@ -254,7 +263,10 @@ fn command_processor_guest_backed_texture_layout_matches_protocol_formats() {
             }
             ExpectedSupport::Unsupported => {
                 assert!(
-                    matches!(result, Err(crate::CommandProcessorError::InvalidCreateTexture2d)),
+                    matches!(
+                        result,
+                        Err(crate::CommandProcessorError::InvalidCreateTexture2d)
+                    ),
                     "expected unsupported format {format:?} to be rejected, got {result:?}"
                 );
             }

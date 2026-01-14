@@ -59,7 +59,8 @@ fn xhci_attach_rejects_paths_deeper_than_5_hub_tiers() {
 
     let dev = make_dummy_hid();
     // Root port + 6 downstream hubs (Route String only supports 5).
-    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32, 1u32, 1u32, 1u32, 1u32, 1u32]).expect("path");
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 1u32, 1u32, 1u32, 1u32, 1u32, 1u32])
+        .expect("path");
     let err = xhci
         .attach_usb_hid_passthrough_device(path, &dev)
         .expect_err("expected too-deep path to error");

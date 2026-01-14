@@ -291,7 +291,8 @@ mod simd_x86 {
     use core::arch::x86_64::*;
 
     use super::{
-        decode_bc1_palette, decode_bc3_alpha_palette, decode_bc3_color_palette, BC_ROW_SHUFFLE_MASKS,
+        decode_bc1_palette, decode_bc3_alpha_palette, decode_bc3_color_palette,
+        BC_ROW_SHUFFLE_MASKS,
     };
 
     #[target_feature(enable = "sse2,ssse3")]
@@ -396,7 +397,8 @@ mod simd_wasm {
     use core::arch::wasm32::*;
 
     use super::{
-        decode_bc1_palette, decode_bc3_alpha_palette, decode_bc3_color_palette, BC_ROW_SHUFFLE_MASKS,
+        decode_bc1_palette, decode_bc3_alpha_palette, decode_bc3_color_palette,
+        BC_ROW_SHUFFLE_MASKS,
     };
 
     pub unsafe fn decompress_bc1_block_full(block: &[u8; 8], dst: *mut u8, dst_stride: usize) {

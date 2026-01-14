@@ -34,11 +34,11 @@ fn range_to_offset_agrees_with_chunk_classification_for_random_ranges() {
         // Generate RAM sizes with a bias around the interesting PC/Q35 boundaries, but also include
         // some "pathological" large values to ensure we never panic on overflow.
         let ram_bytes = match rng.next_u64() % 5 {
-            0 => rng.next_u64() % 0x10000,                           // tiny
-            1 => rng.next_u64() % (LOW_RAM_END + 0x10000),            // around ECAM base
-            2 => LOW_RAM_END + (rng.next_u64() % 0x20000),            // slightly above ECAM base
+            0 => rng.next_u64() % 0x10000,                             // tiny
+            1 => rng.next_u64() % (LOW_RAM_END + 0x10000),             // around ECAM base
+            2 => LOW_RAM_END + (rng.next_u64() % 0x20000),             // slightly above ECAM base
             3 => LOW_RAM_END.saturating_sub(rng.next_u64() % 0x20000), // slightly below ECAM base
-            _ => rng.next_u64(),                                     // full range
+            _ => rng.next_u64(),                                       // full range
         };
 
         // Generate addresses biased toward region boundaries.
@@ -66,10 +66,7 @@ fn range_to_offset_agrees_with_chunk_classification_for_random_ranges() {
             Some(ram_offset) => {
                 assert_eq!(
                     chunk,
-                    GuestRamChunk::Ram {
-                        ram_offset,
-                        len
-                    },
+                    GuestRamChunk::Ram { ram_offset, len },
                     "offset=Some implies a full-length RAM chunk: ram_bytes={ram_bytes:#x} paddr={paddr:#x} len={len}"
                 );
             }

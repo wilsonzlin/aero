@@ -67,10 +67,7 @@ fn aero_mem_bus_typed_reads_past_end_of_ram_preserve_partial_bytes() {
     // Also exercise a wider read spanning the boundary.
     bus.write_u8(0x0FFE, 0x34);
     bus.write_u8(0x0FFF, 0x56);
-    assert_eq!(
-        aero_mmu::MemoryBus::read_u32(&mut bus, 0x0FFE),
-        0xFF12_5634
-    );
+    assert_eq!(aero_mmu::MemoryBus::read_u32(&mut bus, 0x0FFE), 0xFF12_5634);
 }
 
 #[test]

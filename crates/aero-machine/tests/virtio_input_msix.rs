@@ -90,13 +90,7 @@ fn virtio_input_msix_delivers_to_lapic_in_apic_mode() {
 
     // Enable PCI memory decoding + bus mastering so BAR0 is reachable and DMA works.
     let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        0x04,
-        2,
-        u32::from(cmd | (1 << 1) | (1 << 2)),
-    );
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
 
     // Discover BAR0.
     let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
@@ -174,7 +168,7 @@ fn virtio_input_msix_delivers_to_lapic_in_apic_mode() {
     m.write_physical(event_buf1, &[0u8; 8]);
 
     m.write_physical_u16(bar0_base + COMMON + 0x16, 0); // queue_select
-    // Assign MSI-X vector 0 to queue 0.
+                                                        // Assign MSI-X vector 0 to queue 0.
     m.write_physical_u16(bar0_base + COMMON + 0x1a, 0);
     m.write_physical_u64(bar0_base + COMMON + 0x20, desc);
     m.write_physical_u64(bar0_base + COMMON + 0x28, avail);
@@ -233,7 +227,13 @@ fn virtio_input_msix_delivers_to_lapic_in_apic_mode() {
     // should mirror the MSI-X enable state into the transport during polling so the device falls
     // back to legacy INTx rather than continuing to deliver MSI-X.
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 15)));
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !(1 << 15)),
+    );
 
     virtio_kb
         .borrow_mut()

@@ -343,5 +343,9 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         "expected rx_popped_bytes to match RX payload length"
     );
     let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get");
-    assert_eq!(rx_broken.as_bool(), Some(false), "rx_broken should be false");
+    assert_eq!(
+        rx_broken.as_bool(),
+        Some(false),
+        "rx_broken should be false"
+    );
 }

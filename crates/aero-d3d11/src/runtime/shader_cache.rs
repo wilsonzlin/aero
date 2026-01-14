@@ -108,12 +108,10 @@ pub enum PersistedBindingKind {
 impl PersistedBindingKind {
     pub fn from_kind(kind: &crate::BindingKind) -> Self {
         match kind {
-            crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-                Self::ConstantBuffer {
-                    slot: *slot,
-                    reg_count: *reg_count,
-                }
-            }
+            crate::BindingKind::ConstantBuffer { slot, reg_count } => Self::ConstantBuffer {
+                slot: *slot,
+                reg_count: *reg_count,
+            },
             crate::BindingKind::Texture2D { slot } => Self::Texture2D { slot: *slot },
             crate::BindingKind::SrvBuffer { slot } => Self::SrvBuffer { slot: *slot },
             crate::BindingKind::Sampler { slot } => Self::Sampler { slot: *slot },

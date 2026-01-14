@@ -5,8 +5,8 @@ use aero_d3d11::{
     OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, WriteMask,
 };
-use anyhow::{anyhow, Context, Result};
 use aero_dxbc::test_utils as dxbc_test_utils;
+use anyhow::{anyhow, Context, Result};
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
@@ -376,7 +376,9 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
             usage: wgpu::BufferUsages::VERTEX,
             mapped_at_creation: true,
         });
-        vb.slice(..).get_mapped_range_mut().copy_from_slice(vb_bytes);
+        vb.slice(..)
+            .get_mapped_range_mut()
+            .copy_from_slice(vb_bytes);
         vb.unmap();
 
         let vb_layout = wgpu::VertexBufferLayout {

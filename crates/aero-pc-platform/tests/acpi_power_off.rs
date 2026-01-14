@@ -23,4 +23,3 @@ fn pc_platform_records_power_off_event_on_acpi_s5_request() {
     pc.reset();
     assert!(pc.take_reset_events().is_empty());
 }
-

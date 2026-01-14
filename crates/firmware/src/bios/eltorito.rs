@@ -70,7 +70,9 @@ pub(super) struct ParsedBootImage {
     pub(super) image: BootImageInfo,
 }
 
-pub(super) fn parse_boot_image(disk: &mut dyn BlockDevice) -> Result<ParsedBootImage, &'static str> {
+pub(super) fn parse_boot_image(
+    disk: &mut dyn BlockDevice,
+) -> Result<ParsedBootImage, &'static str> {
     let boot_catalog_lba = find_boot_catalog_lba(disk)?;
     let image = parse_boot_catalog(disk, boot_catalog_lba)?;
 
@@ -158,8 +160,7 @@ fn parse_boot_catalog(
     let total_blocks = disk.size_in_sectors() / BIOS_SECTORS_PER_ISO_BLOCK;
     let available_blocks = total_blocks.saturating_sub(u64::from(boot_catalog_lba));
     let blocks_to_read =
-        u32::try_from(available_blocks.min(u64::from(MAX_CATALOG_BLOCKS)).max(1))
-            .unwrap_or(1);
+        u32::try_from(available_blocks.min(u64::from(MAX_CATALOG_BLOCKS)).max(1)).unwrap_or(1);
 
     let mut catalog = vec![0u8; (blocks_to_read as usize) * ISO_BLOCK_BYTES];
     for i in 0..blocks_to_read {
@@ -421,13 +422,8 @@ mod tests {
         let boot_catalog_lba = 20;
         let boot_image_lba = 21;
         let boot_image = [0xAB; ISO_BLOCK_BYTES];
-        let img = build_minimal_iso_no_emulation(
-            boot_catalog_lba,
-            boot_image_lba,
-            &boot_image,
-            0,
-            4,
-        );
+        let img =
+            build_minimal_iso_no_emulation(boot_catalog_lba, boot_image_lba, &boot_image, 0, 4);
         let mut disk = InMemoryDisk::new(img);
 
         let parsed = parse_boot_image(&mut disk).expect("parser should succeed");
@@ -448,13 +444,8 @@ mod tests {
         let boot_catalog_lba = 20;
         let boot_image_lba = 21;
         let boot_image = [0xAB; ISO_BLOCK_BYTES];
-        let mut img = build_minimal_iso_no_emulation(
-            boot_catalog_lba,
-            boot_image_lba,
-            &boot_image,
-            0,
-            4,
-        );
+        let mut img =
+            build_minimal_iso_no_emulation(boot_catalog_lba, boot_image_lba, &boot_image, 0, 4);
 
         // Patch the Boot Record Volume Descriptor (LBA17) boot system id to be NUL-padded rather
         // than space-padded.
@@ -486,13 +477,8 @@ mod tests {
         // Include a traditional 0x55AA signature so tests can sanity-check the first 512 bytes.
         boot_image[510] = 0x55;
         boot_image[511] = 0xAA;
-        let img = build_minimal_iso_no_emulation(
-            boot_catalog_lba,
-            boot_image_lba,
-            &boot_image,
-            0,
-            4,
-        );
+        let img =
+            build_minimal_iso_no_emulation(boot_catalog_lba, boot_image_lba, &boot_image, 0, 4);
 
         let mut bios = Bios::new(BiosConfig {
             memory_size_bytes: 16 * 1024 * 1024,
@@ -520,7 +506,10 @@ mod tests {
         let info = bios
             .el_torito_boot_info
             .expect("El Torito boot should populate cached boot metadata");
-        assert_eq!(info.media_type, crate::bios::ElToritoBootMediaType::NoEmulation);
+        assert_eq!(
+            info.media_type,
+            crate::bios::ElToritoBootMediaType::NoEmulation
+        );
         assert_eq!(info.boot_drive, 0xE0);
         assert_eq!(info.controller_index, 0);
         assert_eq!(info.boot_catalog_lba, Some(boot_catalog_lba));
@@ -582,7 +571,9 @@ mod tests {
 
             bios.post(&mut cpu, &mut mem, &mut disk);
             assert!(cpu.halted, "boot should fail");
-            String::from_utf8_lossy(bios.tty_output()).trim().to_string()
+            String::from_utf8_lossy(bios.tty_output())
+                .trim()
+                .to_string()
         }
 
         // 1) Missing boot record volume descriptor.
@@ -603,26 +594,16 @@ mod tests {
         let boot_catalog_lba = 20;
         let boot_image_lba = 21;
         let boot_image = [0x11; ISO_BLOCK_BYTES];
-        let mut img = build_minimal_iso_no_emulation(
-            boot_catalog_lba,
-            boot_image_lba,
-            &boot_image,
-            0,
-            4,
-        );
+        let mut img =
+            build_minimal_iso_no_emulation(boot_catalog_lba, boot_image_lba, &boot_image, 0, 4);
         // Corrupt the header id so validation fails.
         let off = boot_catalog_lba as usize * ISO_BLOCK_BYTES;
         img[off] = 0x02;
         assert_eq!(run(img), ERR_INVALID_CATALOG);
 
         // 3) No bootable initial/default entry.
-        let mut img = build_minimal_iso_no_emulation(
-            boot_catalog_lba,
-            boot_image_lba,
-            &boot_image,
-            0,
-            4,
-        );
+        let mut img =
+            build_minimal_iso_no_emulation(boot_catalog_lba, boot_image_lba, &boot_image, 0, 4);
         let off = boot_catalog_lba as usize * ISO_BLOCK_BYTES;
         // Clear the initial entry (boot indicator 0).
         img[off + 32] = 0x00;
@@ -787,9 +768,10 @@ mod tests {
             write_iso_block(&mut img, iso_lba, &desc);
         }
 
-        let cap_reads = (MAX_VOLUME_DESCRIPTOR_SCAN as usize)
-            * (BIOS_SECTORS_PER_ISO_BLOCK as usize);
-        let mut disk = CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
+        let cap_reads =
+            (MAX_VOLUME_DESCRIPTOR_SCAN as usize) * (BIOS_SECTORS_PER_ISO_BLOCK as usize);
+        let mut disk =
+            CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
 
         let err = parse_boot_image(&mut disk).unwrap_err();
         assert_eq!(err, ERR_NO_BOOT_RECORD);
@@ -818,9 +800,10 @@ mod tests {
         let term = iso9660_volume_descriptor(0xFF);
         write_iso_block(&mut img, terminator_lba as usize, &term);
 
-        let cap_reads = (MAX_VOLUME_DESCRIPTOR_SCAN as usize)
-            * (BIOS_SECTORS_PER_ISO_BLOCK as usize);
-        let mut disk = CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
+        let cap_reads =
+            (MAX_VOLUME_DESCRIPTOR_SCAN as usize) * (BIOS_SECTORS_PER_ISO_BLOCK as usize);
+        let mut disk =
+            CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
 
         let err = parse_boot_image(&mut disk).unwrap_err();
         assert_eq!(err, ERR_NO_BOOT_RECORD);

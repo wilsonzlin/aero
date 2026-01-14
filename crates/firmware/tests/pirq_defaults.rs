@@ -17,4 +17,3 @@ fn default_pirq_to_gsi_mapping_is_consistent_across_firmware_acpi_and_pci_routin
         "BiosConfig::default().pirq_to_gsi must match PciIntxRouterConfig::default().pirq_to_gsi"
     );
 }
-

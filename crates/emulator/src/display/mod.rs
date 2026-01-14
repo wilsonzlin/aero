@@ -1,3 +1,4 @@
+pub use aero_shared::shared_framebuffer as framebuffer;
 /// Shared framebuffer protocol used by the browser/WASM runtime.
 ///
 /// This module intentionally re-exports the canonical implementation from
@@ -6,4 +7,3 @@
 /// The canonical module is also re-exported as `emulator::display::framebuffer`
 /// to keep older module paths working.
 pub use aero_shared::shared_framebuffer::*;
-pub use aero_shared::shared_framebuffer as framebuffer;

@@ -5,4 +5,3 @@
 //!
 //! Keeping these tests out of `crates/emulator` makes it explicit that they
 //! exercise the canonical integration stack, not emulator-specific code.
-

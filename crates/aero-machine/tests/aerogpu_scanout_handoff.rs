@@ -177,7 +177,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
     }
 
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH),
+        width,
+    );
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
         height,
@@ -198,7 +201,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        1,
+    );
 
     // Host-side scanout reads are gated by PCI COMMAND.BME to match device DMA semantics; emulate
     // what the WDDM driver does during start-device.
@@ -214,7 +220,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
 
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
-    assert_eq!(m.display_resolution(), (u32::from(width), u32::from(height)));
+    assert_eq!(
+        m.display_resolution(),
+        (u32::from(width), u32::from(height))
+    );
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
     // Scribble into the legacy VBE LFB (BAR1 + fixed offset) to ensure it does not steal scanout
@@ -232,6 +241,9 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
 
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
-    assert_eq!(m.display_resolution(), (u32::from(width), u32::from(height)));
+    assert_eq!(
+        m.display_resolution(),
+        (u32::from(width), u32::from(height))
+    );
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 }

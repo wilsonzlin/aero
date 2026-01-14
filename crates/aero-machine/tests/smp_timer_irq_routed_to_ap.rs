@@ -114,8 +114,7 @@ fn run_until_bsp_halted(m: &mut Machine) {
 fn run_until_ap_halted(m: &mut Machine, cpu_index: usize) {
     for _ in 0..200 {
         let _ = m.run_slice(10_000);
-        if m
-            .vcpu_state(cpu_index)
+        if m.vcpu_state(cpu_index)
             .expect("AP vCPU should exist")
             .halted
         {
@@ -186,7 +185,12 @@ fn smp_timer_irq_routed_to_ap() {
         let interrupts = m.platform_interrupts().expect("pc platform enabled");
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
-        program_ioapic_entry(&mut ints, PIT_GSI, u32::from(VECTOR), u32::from(APIC_ID_AP) << 24);
+        program_ioapic_entry(
+            &mut ints,
+            PIT_GSI,
+            u32::from(VECTOR),
+            u32::from(APIC_ID_AP) << 24,
+        );
     }
 
     // Program PIT channel 0 for ~1kHz periodic interrupts (mode 2, lo/hi).
@@ -217,4 +221,3 @@ fn smp_timer_irq_routed_to_ap() {
         FLAG_VALUE
     );
 }
-

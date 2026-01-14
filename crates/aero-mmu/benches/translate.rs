@@ -49,7 +49,9 @@ struct TestMemory {
 #[cfg(not(target_arch = "wasm32"))]
 impl TestMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn write_u64_raw(&mut self, paddr: u64, value: u64) {
@@ -186,4 +188,3 @@ fn bench_translate(c: &mut Criterion) {
 criterion_group!(benches, bench_translate);
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
-

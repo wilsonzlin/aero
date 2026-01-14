@@ -27,7 +27,10 @@ fn nvme_pci_config_matches_canonical_profile_and_bar0_probing() {
     assert_eq!(read_u8(&mut dev, 0x0b), NVME_CONTROLLER.class.base_class);
 
     assert_eq!(read_u8(&mut dev, 0x0e), NVME_CONTROLLER.header_type);
-    assert_eq!(read_u16(&mut dev, 0x2c), NVME_CONTROLLER.subsystem_vendor_id);
+    assert_eq!(
+        read_u16(&mut dev, 0x2c),
+        NVME_CONTROLLER.subsystem_vendor_id
+    );
     assert_eq!(read_u16(&mut dev, 0x2e), NVME_CONTROLLER.subsystem_id);
 
     let expected_pin = NVME_CONTROLLER
@@ -51,6 +54,9 @@ fn nvme_pci_config_matches_canonical_profile_and_bar0_probing() {
     let flags = mask_lo & 0xf;
     let addr_mask = mask_lo & !0xf;
     dev.config_mut().write(0x10, 4, 0xdead_bee0);
-    assert_eq!(dev.config_mut().read(0x10, 4), (0xdead_bee0 & addr_mask) | flags);
+    assert_eq!(
+        dev.config_mut().read(0x10, 4),
+        (0xdead_bee0 & addr_mask) | flags
+    );
     assert_eq!(dev.config_mut().read(0x14, 4), 0);
 }

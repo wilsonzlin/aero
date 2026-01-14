@@ -24,9 +24,19 @@ fn xhci_snapshot_preserves_event_ring_producer_cursor() {
 
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    ctrl.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    ctrl.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (ring_base >> 32) as u32,
+    );
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     let mut ev0 = Trb::default();
@@ -62,7 +72,10 @@ fn xhci_snapshot_preserves_event_ring_producer_cursor() {
     // consumer pointer.
     let got2 = Trb::read_from(&mut mem, ring_base + 2 * TRB_LEN as u64);
     assert_eq!(got2.parameter, 0xcccc);
-    assert!(got2.cycle(), "producer cycle bit should be preserved across snapshot");
+    assert!(
+        got2.cycle(),
+        "producer cycle bit should be preserved across snapshot"
+    );
 
     // Verify older entries were not overwritten.
     let got0_again = Trb::read_from(&mut mem, ring_base);
@@ -97,4 +110,3 @@ fn xhci_snapshot_preserves_pending_events_and_drop_counter() {
     assert_eq!(restored.pending_event_count() as u64, pending);
     assert_eq!(restored.dropped_event_trbs(), dropped);
 }
-

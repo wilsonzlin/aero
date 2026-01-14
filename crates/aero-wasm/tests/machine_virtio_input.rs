@@ -16,8 +16,8 @@ fn virtio_input_injection_advances_device_state_when_enabled() {
         ..Default::default()
     };
 
-    let mut m =
-        Machine::new_with_machine_config(cfg).expect("Machine::new_with_machine_config should succeed");
+    let mut m = Machine::new_with_machine_config(cfg)
+        .expect("Machine::new_with_machine_config should succeed");
     assert_eq!(m.virtio_input_keyboard_pending_events(), 0);
     assert_eq!(m.virtio_input_mouse_pending_events(), 0);
     assert!(!m.virtio_input_keyboard_driver_ok());

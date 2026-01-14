@@ -17,7 +17,9 @@ fn bench_a20_disabled_large_read(c: &mut Criterion) {
     let chipset = ChipsetState::new(false);
     let filter = AddressFilter::new(chipset.a20());
     let mut bus = MemoryBus::new(filter, 2 * 1024 * 1024);
-    bus.ram_mut().write_from(0, &vec![0xAAu8; 2 * 1024 * 1024]).unwrap();
+    bus.ram_mut()
+        .write_from(0, &vec![0xAAu8; 2 * 1024 * 1024])
+        .unwrap();
 
     let mut buf = vec![0u8; len];
     c.bench_function("a20_disabled_read_chunked_1mib_cross_boundary", |b| {
@@ -29,8 +31,7 @@ fn bench_a20_disabled_large_read(c: &mut Criterion) {
 
     // Baseline reference: a naive per-byte implementation that applies the A20 mask to each
     // address and performs a 1-byte physical bus read.
-    let mut slow_bus =
-        PhysicalMemoryBus::new(Box::new(DenseMemory::new(2 * 1024 * 1024).unwrap()));
+    let mut slow_bus = PhysicalMemoryBus::new(Box::new(DenseMemory::new(2 * 1024 * 1024).unwrap()));
     slow_bus
         .ram
         .write_from(0, &vec![0xAAu8; 2 * 1024 * 1024])

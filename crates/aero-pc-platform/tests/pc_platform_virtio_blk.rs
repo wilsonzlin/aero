@@ -5,9 +5,8 @@ use aero_devices::pci::profile::{
     VIRTIO_ISR_CFG_BAR0_OFFSET, VIRTIO_NOTIFY_CFG_BAR0_OFFSET,
 };
 use aero_devices::pci::{
-    msix::PCI_CAP_ID_MSIX,
-    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocatorConfig,
-    PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+    msix::PCI_CAP_ID_MSIX, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciResourceAllocatorConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_io_snapshot::io::state::IoSnapshot;

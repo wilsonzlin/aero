@@ -98,4 +98,3 @@ fn pci_ecam_enforces_configured_bus_range() {
     assert_eq!(cmd0_after, cmd0_before);
     assert_eq!(cmd1_after, cmd1_before);
 }
-

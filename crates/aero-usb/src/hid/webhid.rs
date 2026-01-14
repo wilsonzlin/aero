@@ -477,7 +477,11 @@ mod tests {
         }]
     }
 
-    fn make_output_collections(report_id: u32, report_size: u32, report_count: u32) -> Vec<HidCollectionInfo> {
+    fn make_output_collections(
+        report_id: u32,
+        report_size: u32,
+        report_count: u32,
+    ) -> Vec<HidCollectionInfo> {
         vec![HidCollectionInfo {
             usage_page: 0x01,
             usage: 0x02,

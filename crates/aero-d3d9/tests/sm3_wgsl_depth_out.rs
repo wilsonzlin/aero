@@ -69,4 +69,3 @@ fn wgsl_ps30_writes_odepth_emits_frag_depth() {
     assert!(wgsl.contains("@builtin(frag_depth)"), "{wgsl}");
     assert!(wgsl.contains("out.depth = oDepth.x;"), "{wgsl}");
 }
-

@@ -266,9 +266,7 @@ fn generate_vertex_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) -> S
 
     if desc.lighting.enabled && layout.has_normal && layout.position == PositionType::Xyz {
         wgsl.push_str("  let n = normalize(input.normal);\n");
-        wgsl.push_str(
-            "  let light_enabled = f32(globals.lighting_flags.y);\n",
-        );
+        wgsl.push_str("  let light_enabled = f32(globals.lighting_flags.y);\n");
         wgsl.push_str(
             "  let lambert = max(dot(n, -globals.light_dir.xyz), 0.0) * light_enabled;\n",
         );
@@ -406,9 +404,7 @@ fn emit_tss_stage(
         //
         // If the vertex format provides fewer sets than requested, fall back to TEXCOORD0 (common
         // for UI that reuses the same UVs).
-        let texcoord_index = stage
-            .texcoord_index
-            .unwrap_or(stage_index as u8) as usize;
+        let texcoord_index = stage.texcoord_index.unwrap_or(stage_index as u8) as usize;
         let uv_expr = if layout.texcoords.is_empty() {
             "vec2<f32>(0.0, 0.0)".to_string()
         } else if texcoord_index < layout.texcoords.len() {
@@ -422,11 +418,7 @@ fn emit_tss_stage(
             tex_var, tex_decl.0, tex_decl.1, uv_expr
         );
     } else {
-        let _ = writeln!(
-            wgsl,
-            "  let {} = vec4<f32>(1.0, 1.0, 1.0, 1.0);",
-            tex_var
-        );
+        let _ = writeln!(wgsl, "  let {} = vec4<f32>(1.0, 1.0, 1.0, 1.0);", tex_var);
     }
 
     let color_arg0 = wgsl_arg_component(stage.color_arg0, stage_index, Component::Rgb);
@@ -588,7 +580,10 @@ fn wgsl_op_expr(
         }
         TextureOp::BlendTextureAlpha => {
             let tex_a = format!("tex{}_color.a", stage_index);
-            format!("((({}) * ({})) + (({}) * (1.0 - ({}))))", arg1, tex_a, arg2, tex_a)
+            format!(
+                "((({}) * ({})) + (({}) * (1.0 - ({}))))",
+                arg1, tex_a, arg2, tex_a
+            )
         }
         TextureOp::BlendFactorAlpha => {
             let f = "globals.texture_factor.a";

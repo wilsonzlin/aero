@@ -36,11 +36,7 @@ pub enum BiosAcpiError {
 impl core::fmt::Display for BiosAcpiError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
-            BiosAcpiError::TableAddressOverflow {
-                table,
-                addr,
-                len,
-            } => write!(
+            BiosAcpiError::TableAddressOverflow { table, addr, len } => write!(
                 f,
                 "ACPI {table} address overflow (addr=0x{addr:x} len=0x{len:x})"
             ),
@@ -53,7 +49,10 @@ impl core::fmt::Display for BiosAcpiError {
                 "ACPI {table} out of bounds (end=0x{end:x} mem=0x{memory_size_bytes:x})"
             ),
             BiosAcpiError::NvsAddressOverflow { base, size } => {
-                write!(f, "ACPI NVS address overflow (base=0x{base:x} size=0x{size:x})")
+                write!(
+                    f,
+                    "ACPI NVS address overflow (base=0x{base:x} size=0x{size:x})"
+                )
             }
             BiosAcpiError::NvsOutOfBounds {
                 end,

@@ -1,6 +1,6 @@
 use aero_devices::pci::profile::{
-    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, SATA_AHCI_ICH9, USB_UHCI_PIIX3,
-    NVME_CONTROLLER,
+    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9,
+    USB_UHCI_PIIX3,
 };
 use aero_devices::pci::PciDevice as CanonPciDevice;
 use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
@@ -43,12 +43,7 @@ fn assert_basic_identity(
         profile.name
     );
 
-    assert_eq!(
-        read(0x0e, 1) as u8,
-        profile.header_type,
-        "{}",
-        profile.name
-    );
+    assert_eq!(read(0x0e, 1) as u8, profile.header_type, "{}", profile.name);
 
     assert_eq!(
         read(0x2c, 2) as u16,
@@ -80,7 +75,10 @@ fn uhci_pci_config_matches_canonical_profile() {
         .interrupt_pin
         .expect("profile should provide interrupt pin");
     let expected_gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, expected_pin);
-    assert_eq!(uhci.config_read(0x3c, 1) as u8, u8::try_from(expected_gsi).unwrap());
+    assert_eq!(
+        uhci.config_read(0x3c, 1) as u8,
+        u8::try_from(expected_gsi).unwrap()
+    );
 
     // UHCI uses BAR4 (I/O) at 0x20.
     assert_eq!(uhci.config_read(0x20, 4) & 0x1, 0x1);

@@ -43,10 +43,7 @@ impl PartialEq for StepExit {
             | (Self::Branch, Self::Branch)
             | (Self::Halted, Self::Halted) => true,
             (Self::BiosInterrupt(a), Self::BiosInterrupt(b)) => a == b,
-            (
-                Self::Assist { reason: a, .. },
-                Self::Assist { reason: b, .. },
-            ) => a == b,
+            (Self::Assist { reason: a, .. }, Self::Assist { reason: b, .. }) => a == b,
             _ => false,
         }
     }

@@ -161,8 +161,7 @@ fn pc_platform_triggers_ahci_msi_when_enabled_even_if_intx_disabled() {
     write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
     write_prdt(&mut pc, ctba, 0, identify_buf, 512);
 
-    pc.memory
-        .write_u32(abar.base + PORT_BASE + PORT_REG_CI, 1);
+    pc.memory.write_u32(abar.base + PORT_BASE + PORT_REG_CI, 1);
     pc.process_ahci();
 
     // Convert the controller's asserted interrupt state into an MSI delivery.

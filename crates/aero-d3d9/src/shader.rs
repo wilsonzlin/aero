@@ -847,7 +847,14 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Pow => {
                 let required_params = match op {
                     // dst + 1 src
-                    Op::Mov | Op::Exp | Op::Log | Op::Rcp | Op::Rsq | Op::Frc | Op::Dsx | Op::Dsy => 2,
+                    Op::Mov
+                    | Op::Exp
+                    | Op::Log
+                    | Op::Rcp
+                    | Op::Rsq
+                    | Op::Frc
+                    | Op::Dsx
+                    | Op::Dsy => 2,
                     // dst + 2 src
                     Op::Add
                     | Op::Sub

@@ -19,14 +19,22 @@ fn reports_expected_consumed_prefix_lengths() {
     // no prefix
     assert_eq!(scan_prefixes(DecodeMode::Bits64, &[0x90]).unwrap().1, 0);
     // 66
-    assert_eq!(scan_prefixes(DecodeMode::Bits64, &[0x66, 0x90]).unwrap().1, 1);
+    assert_eq!(
+        scan_prefixes(DecodeMode::Bits64, &[0x66, 0x90]).unwrap().1,
+        1
+    );
     // 66 67
     assert_eq!(
-        scan_prefixes(DecodeMode::Bits64, &[0x66, 0x67, 0x90]).unwrap().1,
+        scan_prefixes(DecodeMode::Bits64, &[0x66, 0x67, 0x90])
+            .unwrap()
+            .1,
         2
     );
     // REX
-    assert_eq!(scan_prefixes(DecodeMode::Bits64, &[0x48, 0x90]).unwrap().1, 1);
+    assert_eq!(
+        scan_prefixes(DecodeMode::Bits64, &[0x48, 0x90]).unwrap().1,
+        1
+    );
 }
 
 #[test]

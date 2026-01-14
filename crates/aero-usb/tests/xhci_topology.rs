@@ -48,9 +48,7 @@ fn xhci_route_string_binds_device_behind_external_hub() {
     let completion = ctrl.address_device_input_context(&mut mem, slot_id, input_ctx_base);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
-    let dev = ctrl
-        .slot_device_mut(slot_id)
-        .expect("slot must be bound");
+    let dev = ctrl.slot_device_mut(slot_id).expect("slot must be bound");
 
     // Issue a control transfer (GET_DESCRIPTOR: Device) through EP0 and validate this is the
     // keyboard (idProduct = 0x0001), not the hub (idProduct = 0x0002).
@@ -112,9 +110,7 @@ fn xhci_route_string_binds_device_behind_nested_hubs() {
     let completion = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
-    let dev = ctrl
-        .slot_device_mut(slot_id)
-        .expect("slot must be bound");
+    let dev = ctrl.slot_device_mut(slot_id).expect("slot must be bound");
 
     // Issue a control transfer (GET_DESCRIPTOR: Device) through EP0 and validate this is the
     // keyboard (idProduct = 0x0001), not either hub (idProduct = 0x0002).
@@ -172,7 +168,8 @@ fn xhci_detach_clears_slot_device_binding() {
         "slot must no longer resolve after port detach"
     );
     assert!(
-        !ctrl.slot_state(slot_id)
+        !ctrl
+            .slot_state(slot_id)
             .expect("slot state")
             .device_attached(),
         "slot state should record detached device"
@@ -204,7 +201,9 @@ fn xhci_detach_at_path_clears_slot_device_binding_for_downstream_device() {
 
     assert!(ctrl.slot_device_mut(slot_id).is_some());
     assert!(
-        ctrl.slot_state(slot_id).expect("slot state").device_attached(),
+        ctrl.slot_state(slot_id)
+            .expect("slot state")
+            .device_attached(),
         "slot state should record attached device"
     );
 
@@ -216,7 +215,8 @@ fn xhci_detach_at_path_clears_slot_device_binding_for_downstream_device() {
         "slot must no longer resolve after downstream detach"
     );
     assert!(
-        !ctrl.slot_state(slot_id)
+        !ctrl
+            .slot_state(slot_id)
             .expect("slot state")
             .device_attached(),
         "slot state should record detached device"

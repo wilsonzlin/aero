@@ -98,18 +98,7 @@ fn gen_data_byte(rng: &mut Rng) -> u8 {
         // Mouse commands.
         0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xF0, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xFF,
         // Common data values used by those commands.
-        0x00,
-        0x01,
-        0x02,
-        0x03,
-        0x04,
-        0x20,
-        0x40,
-        0x80,
-        0xA5,
-        0xAA,
-        0x55,
-        0xED,
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x20, 0x40, 0x80, 0xA5, 0xAA, 0x55, 0xED,
     ];
 
     if rng.next_u8() < 220 {
@@ -172,10 +161,10 @@ fn gen_scancode_bytes(rng: &mut Rng) -> Vec<u8> {
         1 => vec![0xF0, MAKE[rng.gen_range_usize(0, MAKE.len())]],
         2 => vec![0xE0, EXT[rng.gen_range_usize(0, EXT.len())]],
         3 => vec![0xE0, 0xF0, EXT[rng.gen_range_usize(0, EXT.len())]],
-        4 => vec![0xE0], // leave saw_e0=true
-        5 => vec![0xF0], // leave saw_f0=true
+        4 => vec![0xE0],       // leave saw_e0=true
+        5 => vec![0xF0],       // leave saw_f0=true
         6 => vec![0xE0, 0xF0], // leave saw_e0 + saw_f0
-        7 => vec![0xE1], // Pause/Break prefix
+        7 => vec![0xE1],       // Pause/Break prefix
         8 => vec![rng.next_u8(), rng.next_u8()],
         _ => {
             let len = rng.gen_range_usize(1, 5);
@@ -299,10 +288,7 @@ fn i8042_randomized_snapshot_restore_produces_equivalent_controller() {
             let ra = apply_op(&mut a, &op);
             let rb = apply_op(b_ref, &op);
 
-            assert_eq!(
-                ra, rb,
-                "seed={SEED:#x} step={step} op={op:?} read mismatch"
-            );
+            assert_eq!(ra, rb, "seed={SEED:#x} step={step} op={op:?} read mismatch");
             assert_eq!(
                 a.irq1_level(),
                 b_ref.irq1_level(),

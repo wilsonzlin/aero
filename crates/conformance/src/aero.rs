@@ -3,9 +3,9 @@ use std::ops::Range;
 use aero_cpu_core::interp::tier0::exec::{self, StepExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState as CoreState};
-use aero_cpu_core::{AssistReason, CpuBus, Exception};
 #[cfg(feature = "qemu-reference")]
 use aero_cpu_core::CpuCore;
+use aero_cpu_core::{AssistReason, CpuBus, Exception};
 
 use crate::corpus::TestCase;
 use crate::signals;
@@ -33,7 +33,8 @@ impl AeroBackend {
             return self.execute_real_mode(case);
         }
 
-        let mut bus = ConformanceBus::new(case.template.bytes, 0, case.mem_base, case.memory.clone());
+        let mut bus =
+            ConformanceBus::new(case.template.bytes, 0, case.mem_base, case.memory.clone());
 
         let mut cpu = CoreState::new(CpuMode::Long);
         import_state(&case.init, &mut cpu);
@@ -70,8 +71,12 @@ impl AeroBackend {
         const RETURN_IP: u16 = 0x0000;
         const STACK_SP: u16 = 0x8FFE;
 
-        let mut bus =
-            ConformanceBus::new(case.template.bytes, case.init.rip, case.mem_base, case.memory.clone());
+        let mut bus = ConformanceBus::new(
+            case.template.bytes,
+            case.init.rip,
+            case.mem_base,
+            case.memory.clone(),
+        );
 
         // Seed a synthetic return address on the stack so the snippet's `ret` has somewhere to go.
         let ret_addr = (STACK_SP as u64)
@@ -124,7 +129,9 @@ impl AeroBackend {
         }
 
         if fault.is_none() && cpu.state.rip() as u16 != RETURN_IP {
-            fault = Some(Fault::Unsupported("tier-0 real-mode snippet did not return"));
+            fault = Some(Fault::Unsupported(
+                "tier-0 real-mode snippet did not return",
+            ));
         }
 
         let mut state = export_state(&cpu.state);
@@ -242,7 +249,9 @@ impl ConformanceBus {
     }
 
     fn range(&self, vaddr: u64, len: usize) -> Result<Range<usize>, Exception> {
-        let start = vaddr.checked_sub(self.mem_base).ok_or(Exception::MemoryFault)?;
+        let start = vaddr
+            .checked_sub(self.mem_base)
+            .ok_or(Exception::MemoryFault)?;
         let start = usize::try_from(start).map_err(|_| Exception::MemoryFault)?;
         let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
         if end > self.mem.len() {
@@ -252,7 +261,9 @@ impl ConformanceBus {
     }
 
     fn code_range(&self, vaddr: u64, len: usize) -> Result<Range<usize>, Exception> {
-        let start = vaddr.checked_sub(self.code_base).ok_or(Exception::MemoryFault)?;
+        let start = vaddr
+            .checked_sub(self.code_base)
+            .ok_or(Exception::MemoryFault)?;
         let start = usize::try_from(start).map_err(|_| Exception::MemoryFault)?;
         let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
         if end > self.code.len() {
@@ -422,8 +433,14 @@ mod tests {
         let mut bus = ConformanceBus::new(&[], 0, 0x1000, vec![0u8; 16]);
 
         assert_eq!(bus.read_u8(0x0fff).unwrap_err(), Exception::MemoryFault);
-        assert_eq!(bus.read_u8(0x1000 + 16).unwrap_err(), Exception::MemoryFault);
-        assert_eq!(bus.fetch(0x1000 + 8, 15).unwrap_err(), Exception::MemoryFault);
+        assert_eq!(
+            bus.read_u8(0x1000 + 16).unwrap_err(),
+            Exception::MemoryFault
+        );
+        assert_eq!(
+            bus.fetch(0x1000 + 8, 15).unwrap_err(),
+            Exception::MemoryFault
+        );
     }
 
     #[test]
@@ -466,9 +483,6 @@ mod tests {
         let mut mem_fault_case = TestCase::generate(2, mem_fault, &mut rng, mem_base);
         mem_fault_case.init.rflags = FLAG_FIXED_1;
         let mem_fault_out = backend.execute(&mem_fault_case);
-        assert_eq!(
-            mem_fault_out.fault,
-            Some(Fault::Signal(mem_fault_signal))
-        );
+        assert_eq!(mem_fault_out.fault, Some(Fault::Signal(mem_fault_signal)));
     }
 }

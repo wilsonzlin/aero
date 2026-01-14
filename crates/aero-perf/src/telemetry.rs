@@ -93,7 +93,10 @@ impl Telemetry {
             .expect("telemetry jit rolling lock poisoned");
 
         let Some(prev) = *guard else {
-            *guard = Some(JitRollingState { at_ns: now_ns, totals });
+            *guard = Some(JitRollingState {
+                at_ns: now_ns,
+                totals,
+            });
             return JitRollingExport {
                 window_ms: 0,
                 cache_hit_rate: 0.0,
@@ -103,7 +106,10 @@ impl Telemetry {
         };
 
         let window_ns = now_ns.saturating_sub(prev.at_ns);
-        *guard = Some(JitRollingState { at_ns: now_ns, totals });
+        *guard = Some(JitRollingState {
+            at_ns: now_ns,
+            totals,
+        });
 
         let window_ms = window_ns / 1_000_000;
         let window_s = (window_ns as f64) / 1_000_000_000.0;

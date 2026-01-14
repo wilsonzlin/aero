@@ -326,7 +326,10 @@ fn snapshot_restore_requeues_inflight_feature_report_request() {
         w_length: 4,
     };
 
-    assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+    assert_eq!(
+        dev.handle_control_request(setup, None),
+        ControlResponse::Nak
+    );
     let req = dev
         .pop_feature_report_request()
         .expect("expected queued feature report request");
@@ -397,7 +400,10 @@ fn snapshot_restore_does_not_requeue_failed_feature_report_request() {
         w_length: 4,
     };
 
-    assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+    assert_eq!(
+        dev.handle_control_request(setup, None),
+        ControlResponse::Nak
+    );
     let req = dev
         .pop_feature_report_request()
         .expect("expected queued feature report request");

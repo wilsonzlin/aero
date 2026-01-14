@@ -216,7 +216,10 @@ fn session_token_valid_signature_but_huge_non_json_payload_is_rejected_without_p
 
     let res = std::panic::catch_unwind(|| verify_gateway_session_token(&token, secret, now_ms));
     assert!(res.is_ok(), "verify_gateway_session_token panicked");
-    assert!(res.unwrap().is_none(), "expected huge non-json payload to be rejected");
+    assert!(
+        res.unwrap().is_none(),
+        "expected huge non-json payload to be rejected"
+    );
 }
 
 #[test]
@@ -235,7 +238,10 @@ fn jwt_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking()
 
     let res = std::panic::catch_unwind(|| verify_hs256_jwt(&token, secret, now_sec));
     assert!(res.is_ok(), "verify_hs256_jwt panicked");
-    assert!(res.unwrap().is_none(), "expected huge non-json payload to be rejected");
+    assert!(
+        res.unwrap().is_none(),
+        "expected huge non-json payload to be rejected"
+    );
 }
 
 #[test]

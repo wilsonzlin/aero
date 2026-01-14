@@ -25,4 +25,3 @@ fn aerogpu_cmd_runtime_rejects_nonzero_emit_stream_index() {
         );
     });
 }
-

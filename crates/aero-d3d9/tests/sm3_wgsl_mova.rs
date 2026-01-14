@@ -111,15 +111,12 @@ fn wgsl_supports_mova_and_relative_constant_indexing() {
 
         // Embedded `def c2` must override the uniform constant buffer even for relative indexing.
         assert!(
-            wgsl.wgsl.contains("const c2: vec4<f32> = vec4<f32>(2.0, 3.0, 4.0, 5.0);"),
+            wgsl.wgsl
+                .contains("const c2: vec4<f32> = vec4<f32>(2.0, 3.0, 4.0, 5.0);"),
             "{}",
             wgsl.wgsl
         );
-        assert!(
-            wgsl.wgsl.contains("fn aero_read_const"),
-            "{}",
-            wgsl.wgsl
-        );
+        assert!(wgsl.wgsl.contains("fn aero_read_const"), "{}", wgsl.wgsl);
         assert!(wgsl.wgsl.contains("return c2;"), "{}", wgsl.wgsl);
     }
 }

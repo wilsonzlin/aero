@@ -190,7 +190,8 @@ impl StreamFormat {
     }
 
     pub fn bytes_per_frame(&self) -> u32 {
-        self.bytes_per_sample().saturating_mul(u32::from(self.channels))
+        self.bytes_per_sample()
+            .saturating_mul(u32::from(self.channels))
     }
 
     /// Convert this HDA stream format into a DSP [`PcmSpec`].
@@ -898,11 +899,10 @@ mod tests {
             mem.data[BUF0 as usize..BUF0 as usize + EXPECTED_TICK_BYTES],
             input[..EXPECTED_TICK_BYTES]
         );
-        assert!(
-            mem.data[BUF0 as usize + EXPECTED_TICK_BYTES..BUF0 as usize + EXPECTED_TICK_BYTES + 16]
-                .iter()
-                .all(|&b| b == 0xaa)
-        );
+        assert!(mem.data
+            [BUF0 as usize + EXPECTED_TICK_BYTES..BUF0 as usize + EXPECTED_TICK_BYTES + 16]
+            .iter()
+            .all(|&b| b == 0xaa));
     }
 
     #[test]

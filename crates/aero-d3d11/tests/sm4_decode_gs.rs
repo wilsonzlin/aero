@@ -151,11 +151,7 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
     // mov r0, v0[1]
     let mut mov_in = vec![opcode_token(OPCODE_MOV, 1 + 2 + 3)];
     mov_in.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
-    mov_in.extend_from_slice(&reg_src(
-        OPERAND_TYPE_INPUT,
-        &[0, 1],
-        Swizzle::XYZW,
-    ));
+    mov_in.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[0, 1], Swizzle::XYZW));
     body.extend_from_slice(&mov_in);
 
     // mov o0, r0
@@ -342,7 +338,11 @@ fn decodes_emitthen_cut_variants() {
     assert_eq!(module.stage, ShaderStage::Geometry);
     assert!(matches!(
         module.instructions.as_slice(),
-        [Sm4Inst::EmitThenCut { stream: 0 }, Sm4Inst::EmitThenCut { stream: 2 }, Sm4Inst::Ret]
+        [
+            Sm4Inst::EmitThenCut { stream: 0 },
+            Sm4Inst::EmitThenCut { stream: 2 },
+            Sm4Inst::Ret
+        ]
     ));
 }
 

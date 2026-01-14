@@ -91,8 +91,7 @@ impl Icr {
         let vector = (icr_low & 0xFF) as u8;
         let delivery_mode = DeliveryMode::from_bits(((icr_low >> 8) & 0x7) as u8);
         let level = Level::from_bit(((icr_low >> 14) & 1) != 0);
-        let destination_shorthand =
-            DestinationShorthand::from_bits(((icr_low >> 18) & 0x3) as u8);
+        let destination_shorthand = DestinationShorthand::from_bits(((icr_low >> 18) & 0x3) as u8);
         let destination = ((icr_high >> 24) & 0xFF) as u8;
 
         Self {
@@ -175,4 +174,3 @@ impl LocalApic {
         }
     }
 }
-

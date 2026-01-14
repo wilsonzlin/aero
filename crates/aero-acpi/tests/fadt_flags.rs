@@ -26,4 +26,3 @@ fn fadt_flags_advertise_reset_register_and_fixed_feature_power_button() {
         "FADT must advertise PWR_BUTTON so OSes (e.g. Win7) use PM1_STS.PWRBTN_STS"
     );
 }
-

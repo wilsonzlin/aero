@@ -43,7 +43,9 @@ fn patch_vga_state_to_vgad_v1_0(bytes: &mut [u8]) {
         off += 8;
 
         let data_start = off;
-        let data_end = data_start.checked_add(len).expect("device data end overflow");
+        let data_end = data_start
+            .checked_add(len)
+            .expect("device data end overflow");
         if data_end > devices_end || data_end > bytes.len() {
             break;
         }

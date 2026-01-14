@@ -236,7 +236,14 @@ fn uhci_external_hub_enumerates_downstream_hid() {
     ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
 
     // Enumerate and configure the hub itself at address 0 -> 1.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(1),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -250,7 +257,14 @@ fn uhci_external_hub_enumerates_downstream_hid() {
     power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 1, 1);
 
     // Enumerate and configure the downstream keyboard at address 5.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(5));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(5),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -302,7 +316,14 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
 
     // Enumerate and configure hub at address 0 -> 1.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(1),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -315,7 +336,14 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     // Enumerate each downstream keyboard on ports 1..3 at addresses 5..7.
     for (port, addr) in [(1u16, 5u16), (2u16, 6u16), (3u16, 7u16)] {
         power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 1, port);
-        control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(addr));
+        control_no_data(
+            &mut ctrl,
+            &mut mem,
+            &mut alloc,
+            fl_base,
+            0,
+            setup_set_address(addr),
+        );
         control_no_data(
             &mut ctrl,
             &mut mem,
@@ -369,7 +397,14 @@ fn uhci_external_hub_enumerates_device_behind_nested_hubs() {
     ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
 
     // Enumerate and configure hub1 at address 0 -> 1.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(1),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -383,7 +418,14 @@ fn uhci_external_hub_enumerates_device_behind_nested_hubs() {
     power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 1, 1);
 
     // Enumerate hub2 at address 0 -> 2 and configure it.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(2));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(2),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,
@@ -397,7 +439,14 @@ fn uhci_external_hub_enumerates_device_behind_nested_hubs() {
     power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 2, 1);
 
     // Enumerate the downstream keyboard at address 0 -> 5.
-    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(5));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        0,
+        setup_set_address(5),
+    );
     control_no_data(
         &mut ctrl,
         &mut mem,

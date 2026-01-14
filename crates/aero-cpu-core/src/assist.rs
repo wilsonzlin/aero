@@ -68,8 +68,7 @@ impl AssistContext {
         if self.invlpg_log.len() < Self::INVLPG_LOG_CAP {
             self.invlpg_log.push(addr);
         } else {
-            self.dropped_invlpg_log_entries =
-                self.dropped_invlpg_log_entries.saturating_add(1);
+            self.dropped_invlpg_log_entries = self.dropped_invlpg_log_entries.saturating_add(1);
         }
     }
 }

@@ -1,5 +1,7 @@
 use aero_machine::{Machine, MachineConfig};
-use aero_pc_constants::{PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS};
+use aero_pc_constants::{
+    PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
+};
 
 fn checksum_ok(bytes: &[u8]) -> bool {
     bytes.iter().fold(0u8, |acc, b| acc.wrapping_add(*b)) == 0
@@ -36,7 +38,9 @@ fn machine_acpi_mcfg_publishes_canonical_ecam_window() {
     })
     .unwrap();
 
-    let rsdp_addr = m.acpi_rsdp_addr().expect("expected ACPI RSDP to be present");
+    let rsdp_addr = m
+        .acpi_rsdp_addr()
+        .expect("expected ACPI RSDP to be present");
     let rsdp = m.read_physical_bytes(rsdp_addr, 36);
     assert_eq!(&rsdp[0..8], b"RSD PTR ");
     assert!(checksum_ok(&rsdp[..20]));
@@ -95,4 +99,3 @@ fn machine_acpi_mcfg_publishes_canonical_ecam_window() {
     assert_eq!(start_bus, PCIE_ECAM_START_BUS);
     assert_eq!(end_bus, PCIE_ECAM_END_BUS);
 }
-

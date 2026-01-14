@@ -62,7 +62,13 @@ fn build_int10_vbe_logical_scanline_boot_sector(lfb_base: u32) -> [u8; 512] {
     // The boot sector is loaded at 0x0000:0x7C00. We store the GDTR at offset 0x1D8 within the
     // sector, so its physical address is 0x7C00 + 0x1D8 = 0x7DD8.
     const GDTR_PHYS: u16 = 0x7DD8;
-    sector[i..i + 5].copy_from_slice(&[0x0F, 0x01, 0x16, (GDTR_PHYS & 0xFF) as u8, (GDTR_PHYS >> 8) as u8]);
+    sector[i..i + 5].copy_from_slice(&[
+        0x0F,
+        0x01,
+        0x16,
+        (GDTR_PHYS & 0xFF) as u8,
+        (GDTR_PHYS >> 8) as u8,
+    ]);
     i += 5;
 
     // mov eax, cr0
@@ -142,8 +148,7 @@ fn build_int10_vbe_logical_scanline_boot_sector(lfb_base: u32) -> [u8; 512] {
     // GDT: null, code, data (each 8 bytes).
     let gdt: [u8; 24] = [
         // null
-        0, 0, 0, 0, 0, 0, 0, 0,
-        // code: base=0, limit=4GiB, 32-bit
+        0, 0, 0, 0, 0, 0, 0, 0, // code: base=0, limit=4GiB, 32-bit
         0xFF, 0xFF, 0x00, 0x00, 0x00, 0x9A, 0xCF, 0x00,
         // data: base=0, limit=4GiB, 32-bit
         0xFF, 0xFF, 0x00, 0x00, 0x00, 0x92, 0xCF, 0x00,
@@ -152,7 +157,8 @@ fn build_int10_vbe_logical_scanline_boot_sector(lfb_base: u32) -> [u8; 512] {
 
     // GDTR pseudo-descriptor: limit (u16) + base (u32).
     let gdtr: [u8; 6] = [
-        0x17, 0x00, // limit = 24-1
+        0x17,
+        0x00, // limit = 24-1
         (GDT_PHYS_BASE & 0xFF) as u8,
         ((GDT_PHYS_BASE >> 8) & 0xFF) as u8,
         ((GDT_PHYS_BASE >> 16) & 0xFF) as u8,

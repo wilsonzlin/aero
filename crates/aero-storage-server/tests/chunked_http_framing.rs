@@ -129,4 +129,3 @@ async fn chunked_responses_are_not_chunked_transfer_encoding_on_http1() -> anyho
     server.shutdown().await?;
     Ok(())
 }
-

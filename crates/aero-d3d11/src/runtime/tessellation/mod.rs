@@ -117,7 +117,9 @@ mod tests {
             let exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
                 Err(e) => {
-                    eprintln!("skipping tessellation scratch allocation test: wgpu unavailable ({e:#})");
+                    eprintln!(
+                        "skipping tessellation scratch allocation test: wgpu unavailable ({e:#})"
+                    );
                     return;
                 }
             };
@@ -136,7 +138,10 @@ mod tests {
                 draw.sizes.hs_patch_constants_bytes
             );
             assert_eq!(draw.tess_metadata.size, draw.sizes.tess_metadata_bytes);
-            assert_eq!(draw.expanded_vertices.size, draw.sizes.expanded_vertex_bytes);
+            assert_eq!(
+                draw.expanded_vertices.size,
+                draw.sizes.expanded_vertex_bytes
+            );
             assert_eq!(draw.expanded_indices.size, draw.sizes.expanded_index_bytes);
             assert_eq!(draw.indirect_args.size, draw.sizes.indirect_args_bytes);
 

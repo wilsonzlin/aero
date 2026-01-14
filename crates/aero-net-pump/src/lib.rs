@@ -204,8 +204,7 @@ pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
         // `E1000Device::enqueue_rx_frame` already drops invalid frames, but we
         // pre-filter here so `PumpCounts::rx_frames` accurately reflects frames
         // actually queued into the NIC.
-        if len < aero_net_e1000::MIN_L2_FRAME_LEN || len > aero_net_e1000::MAX_L2_FRAME_LEN
-        {
+        if len < aero_net_e1000::MIN_L2_FRAME_LEN || len > aero_net_e1000::MAX_L2_FRAME_LEN {
             continue;
         }
         nic.enqueue_rx_frame(frame);
@@ -2256,7 +2255,8 @@ mod virtio_net_tick_tests {
         // Post one RX buffer chain: [virtio_net_hdr(write)][payload(write)].
         let rx_hdr_addr = 0x8000;
         let rx_payload_addr = 0x8100;
-        mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN]).unwrap();
+        mem.write(rx_hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN])
+            .unwrap();
         mem.write(rx_payload_addr, &[0xbb; 64]).unwrap();
 
         write_desc(
@@ -2370,7 +2370,8 @@ mod virtio_net_tick_tests {
             let payload_addr = hdr_addr + 0x40;
             payload_addrs.push(payload_addr);
 
-            mem.write(hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN]).unwrap();
+            mem.write(hdr_addr, &[0xaa; VirtioNetHdr::BASE_LEN])
+                .unwrap();
             mem.write(payload_addr, &[0xbb; BUF_LEN as usize]).unwrap();
 
             write_desc(

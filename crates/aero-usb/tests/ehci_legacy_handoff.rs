@@ -11,8 +11,16 @@ fn ehci_legacy_handoff_bios_to_os() {
 
     let usblegsup = ehci.mmio_read(eecp, 4);
     assert_eq!(usblegsup & 0xff, USBLEGSUP_CAPID);
-    assert_ne!(usblegsup & USBLEGSUP_BIOS_SEM, 0, "BIOS should own EHCI on reset");
-    assert_eq!(usblegsup & USBLEGSUP_OS_SEM, 0, "OS should not own EHCI on reset");
+    assert_ne!(
+        usblegsup & USBLEGSUP_BIOS_SEM,
+        0,
+        "BIOS should own EHCI on reset"
+    );
+    assert_eq!(
+        usblegsup & USBLEGSUP_OS_SEM,
+        0,
+        "OS should not own EHCI on reset"
+    );
 
     // Guest requests ownership.
     ehci.mmio_write(eecp, 4, USBLEGSUP_OS_SEM);

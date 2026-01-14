@@ -273,20 +273,13 @@ fn range_limits_descriptor(preferred: Timing, preferred_dtd: &[u8; 18]) -> [u8; 
 
     // Baseline modes: 50-75Hz vertical, 30-80kHz horizontal, 80MHz max pixel clock.
     let min_v_rate_hz = preferred.refresh_hz.clamp(1, 50) as u8;
-    let max_v_rate_hz = preferred
-        .refresh_hz
-        .saturating_add(15)
-        .clamp(75, 255) as u8;
+    let max_v_rate_hz = preferred.refresh_hz.saturating_add(15).clamp(75, 255) as u8;
 
     let min_h_rate_khz = h_freq_khz.clamp(1, 30) as u8;
-    let max_h_rate_khz = h_freq_khz
-        .saturating_add(10)
-        .clamp(80, 255) as u8;
+    let max_h_rate_khz = h_freq_khz.saturating_add(10).clamp(80, 255) as u8;
 
     let required_pclk_10mhz = pixel_clock_hz.div_ceil(10_000_000);
-    let max_pixel_clock_10mhz = required_pclk_10mhz
-        .saturating_add(1)
-        .clamp(8, 255) as u8;
+    let max_pixel_clock_10mhz = required_pclk_10mhz.saturating_add(1).clamp(8, 255) as u8;
 
     let mut desc = [0u8; 18];
     desc[0] = 0;
@@ -414,12 +407,7 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
         .saturating_mul(v_total as u64)
         .saturating_mul(refresh_hz as u64);
     if pixel_clock_hz > MAX_PIXEL_CLOCK_HZ {
-        fn fit_h_blank(
-            h_active: u32,
-            v_total: u32,
-            refresh_hz: u32,
-            h_blank: u32,
-        ) -> Option<u32> {
+        fn fit_h_blank(h_active: u32, v_total: u32, refresh_hz: u32, h_blank: u32) -> Option<u32> {
             let denom = v_total as u64 * refresh_hz as u64;
             if denom == 0 {
                 return None;
@@ -472,9 +460,13 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
         // Clamp to something that fits within blanking; preserve invariants by
         // shrinking sync widths first.
         let available = h_blank.saturating_sub(h_front_porch + h_back_porch_min);
-        h_sync_width = h_sync_width.min(available).max(h_sync_width_min.min(available));
+        h_sync_width = h_sync_width
+            .min(available)
+            .max(h_sync_width_min.min(available));
         let available = h_blank.saturating_sub(h_sync_width + h_back_porch_min);
-        h_front_porch = h_front_porch.min(available).max(h_front_porch_min.min(available));
+        h_front_porch = h_front_porch
+            .min(available)
+            .max(h_front_porch_min.min(available));
     }
 
     // Pixel clock (10kHz units). Round to nearest.
@@ -574,9 +566,7 @@ mod tests {
     const EDID_HEADER: [u8; 8] = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00];
 
     fn checksum_ok(edid: &[u8; EDID_BLOCK_SIZE]) -> bool {
-        edid.iter()
-            .fold(0u8, |acc, &b| acc.wrapping_add(b))
-            == 0
+        edid.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) == 0
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -632,8 +622,7 @@ mod tests {
         let v_active = bytes[5] as u16 | (((bytes[7] & 0xF0) as u16) << 4);
         let v_blank = bytes[6] as u16 | (((bytes[7] & 0x0F) as u16) << 8);
 
-        let h_sync_offset =
-            bytes[8] as u16 | ((((bytes[11] & 0xC0) >> 6) as u16) << 8);
+        let h_sync_offset = bytes[8] as u16 | ((((bytes[11] & 0xC0) >> 6) as u16) << 8);
         let h_sync_pulse = bytes[9] as u16 | ((((bytes[11] & 0x30) >> 4) as u16) << 8);
 
         let v_sync_offset = ((bytes[10] >> 4) as u16) | ((((bytes[11] & 0x0C) >> 2) as u16) << 4);
@@ -843,8 +832,8 @@ mod tests {
         assert_eq!(
             &edid[54..72],
             &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
-                0x0E, 0x11, 0x00, 0x00, 0x18
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+                0x11, 0x00, 0x00, 0x18
             ]
         );
     }
@@ -903,7 +892,10 @@ mod tests {
         // tolerance due to EDID pixel clock quantization (10kHz steps) and the
         // common practice of encoding "nominal" clocks.
         let refresh = dtd.refresh_hz();
-        assert!((refresh - preferred.refresh_hz as f64).abs() < 0.75, "refresh={refresh}");
+        assert!(
+            (refresh - preferred.refresh_hz as f64).abs() < 0.75,
+            "refresh={refresh}"
+        );
     }
 
     #[test]
@@ -912,8 +904,8 @@ mod tests {
         assert_eq!(
             &edid[54..72],
             &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
-                0x0E, 0x11, 0x00, 0x00, 0x18
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+                0x11, 0x00, 0x00, 0x18
             ]
         );
     }
@@ -954,7 +946,10 @@ mod tests {
         assert!(dtd.pixel_clock_hz <= MAX_PIXEL_CLOCK_HZ);
 
         let refresh = dtd.refresh_hz();
-        assert!((refresh - preferred.refresh_hz as f64).abs() < 0.75, "refresh={refresh}");
+        assert!(
+            (refresh - preferred.refresh_hz as f64).abs() < 0.75,
+            "refresh={refresh}"
+        );
     }
 
     #[test]
@@ -966,8 +961,8 @@ mod tests {
         assert_eq!(
             &edid[54..72],
             &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
-                0x0E, 0x11, 0x00, 0x00, 0x18
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+                0x11, 0x00, 0x00, 0x18
             ]
         );
     }
@@ -980,8 +975,8 @@ mod tests {
         assert_eq!(
             &edid[54..72],
             &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
-                0x0E, 0x11, 0x00, 0x00, 0x18
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+                0x11, 0x00, 0x00, 0x18
             ]
         );
     }
@@ -994,8 +989,8 @@ mod tests {
         assert_eq!(
             &edid[54..72],
             &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
-                0x0E, 0x11, 0x00, 0x00, 0x18
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+                0x11, 0x00, 0x00, 0x18
             ]
         );
     }

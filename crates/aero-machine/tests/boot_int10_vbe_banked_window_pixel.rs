@@ -132,4 +132,3 @@ fn boot_int10_vbe_banked_window_pixel_pc_platform() {
 fn boot_int10_vbe_banked_window_pixel_no_pc_platform() {
     run_banked_window_pixel_test(false);
 }
-

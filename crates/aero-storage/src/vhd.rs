@@ -475,10 +475,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         }
     }
 
-    pub fn open_differencing(
-        mut backend: B,
-        parent: Box<dyn VirtualDisk + Send>,
-    ) -> Result<Self> {
+    pub fn open_differencing(mut backend: B, parent: Box<dyn VirtualDisk + Send>) -> Result<Self> {
         let len = backend.len()?;
         if len < SECTOR_SIZE as u64 {
             return Err(DiskError::CorruptImage("vhd file too small"));

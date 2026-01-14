@@ -4,7 +4,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
-const CMD_STREAM_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
 
 fn push_u32(buf: &mut Vec<u8>, v: u32) {
     buf.extend_from_slice(&v.to_le_bytes());

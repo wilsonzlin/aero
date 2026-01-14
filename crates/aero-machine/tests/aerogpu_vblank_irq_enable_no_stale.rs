@@ -55,9 +55,9 @@ fn enabling_vblank_irq_does_not_deliver_stale_interrupt_from_catchup_ticks() {
     m.write_physical_u32(bar0 + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
     m.poll_pci_intx_lines();
 
-    let period_ns = u64::from(m.read_physical_u32(
-        bar0 + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
-    ));
+    let period_ns = u64::from(
+        m.read_physical_u32(bar0 + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    );
     assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
 
     // Advance guest time well past the next-vblank deadline without polling vblank.
@@ -93,4 +93,3 @@ fn enabling_vblank_irq_does_not_deliver_stale_interrupt_from_catchup_ticks() {
     let irq_status = m.read_physical_u32(bar0 + u64::from(proto::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_ne!(irq_status & proto::AEROGPU_IRQ_SCANOUT_VBLANK, 0);
 }
-

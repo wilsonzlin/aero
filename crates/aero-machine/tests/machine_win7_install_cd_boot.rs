@@ -96,12 +96,7 @@ fn build_minimal_eltorito_iso(boot_char: u8) -> Vec<u8> {
 
     // El Torito Boot Record Volume Descriptor (LBA 17).
     write_volume_descriptor_header(&mut iso, 17, 0x00);
-    write_space_padded_ascii(
-        &mut iso,
-        lba_offset(17) + 7,
-        32,
-        "EL TORITO SPECIFICATION",
-    );
+    write_space_padded_ascii(&mut iso, lba_offset(17) + 7, 32, "EL TORITO SPECIFICATION");
     // Boot catalog pointer (little-endian LBA) at offset 0x47 (71).
     write_u32_le(&mut iso, lba_offset(17) + 0x47, boot_catalog_lba);
 

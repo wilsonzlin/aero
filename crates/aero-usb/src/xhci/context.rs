@@ -48,10 +48,7 @@ impl fmt::Display for ContextError {
 
 impl core::error::Error for ContextError {}
 
-fn read_context32_dwords(
-    mem: &mut (impl MemoryBus + ?Sized),
-    paddr: u64,
-) -> [u32; CONTEXT_DWORDS] {
+fn read_context32_dwords(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> [u32; CONTEXT_DWORDS] {
     let mut raw = [0u8; CONTEXT_DWORDS * 4];
     mem.read_bytes(paddr, &mut raw);
     let mut out = [0u32; CONTEXT_DWORDS];
@@ -414,8 +411,7 @@ impl EndpointContext {
 
     /// Sets the Max Packet Size field (DW1 bits 16..=31).
     pub fn set_max_packet_size(&mut self, max_packet_size: u16) {
-        self.dwords[1] =
-            (self.dwords[1] & !(0xffff << 16)) | ((max_packet_size as u32) << 16);
+        self.dwords[1] = (self.dwords[1] & !(0xffff << 16)) | ((max_packet_size as u32) << 16);
     }
 
     /// TR Dequeue Pointer field (DW2-DW3).
@@ -559,7 +555,9 @@ impl InputContext32 {
         ctx: &EndpointContext,
     ) -> Result<(), ContextError> {
         if !(1..=31).contains(&device_context_index) {
-            return Err(ContextError::InvalidDeviceContextIndex(device_context_index));
+            return Err(ContextError::InvalidDeviceContextIndex(
+                device_context_index,
+            ));
         }
 
         // Input Context layout: [Input Control][Slot][EP0][EP1 OUT][EP1 IN]...
@@ -627,7 +625,9 @@ impl DeviceContext32 {
         ctx: &EndpointContext,
     ) -> Result<(), ContextError> {
         if !(1..=31).contains(&device_context_index) {
-            return Err(ContextError::InvalidDeviceContextIndex(device_context_index));
+            return Err(ContextError::InvalidDeviceContextIndex(
+                device_context_index,
+            ));
         }
 
         let addr = self

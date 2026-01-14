@@ -559,7 +559,13 @@ mod tests {
         fn push_interleaved_f32(&mut self, _samples: &[f32]) {}
     }
 
-    fn program_single_descriptor(mem: &mut Bus, bdbar: u64, buf_addr: u32, len_words: u16, ioc: bool) {
+    fn program_single_descriptor(
+        mem: &mut Bus,
+        bdbar: u64,
+        buf_addr: u32,
+        len_words: u16,
+        ioc: bool,
+    ) {
         mem.write_u32(bdbar, buf_addr);
         let mut ctl = u32::from(len_words);
         if ioc {

@@ -164,7 +164,12 @@ fn readback_rgba8(
 
 fn pixel_at_rgba(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * width + x) * 4) as usize;
-    [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]
+    [
+        pixels[idx],
+        pixels[idx + 1],
+        pixels[idx + 2],
+        pixels[idx + 3],
+    ]
 }
 
 fn assert_rgba_approx(actual: [u8; 4], expected: [u8; 4], tolerance: u8) {
@@ -258,59 +263,63 @@ fn d3d9_packed16_upload_and_sample() {
     let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
     rm.begin_frame();
 
-    let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("packed16 sample shader"),
-        source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
-    });
+    let shader = rm
+        .device()
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("packed16 sample shader"),
+            source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
+        });
 
     let bgl = rm
         .device()
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                multisampled: false,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            },
-            count: None,
-        }],
-    });
+            label: Some("bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            }],
+        });
 
-    let pipeline_layout = rm.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("pl"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
+    let pipeline_layout = rm
+        .device()
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pl"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
 
     let pipeline = rm
         .device()
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sample pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: "vs_main",
-            buffers: &[],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: "fs_main",
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-    });
+            label: Some("sample pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
 
     struct Case {
         fmt: D3DFormat,
@@ -493,10 +502,12 @@ fn d3d9_packed16_cube_upload_and_sample() {
     let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
     rm.begin_frame();
 
-    let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("packed16 cube sample shader"),
-        source: wgpu::ShaderSource::Wgsl(SAMPLE_CUBE_SHADER.into()),
-    });
+    let shader = rm
+        .device()
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("packed16 cube sample shader"),
+            source: wgpu::ShaderSource::Wgsl(SAMPLE_CUBE_SHADER.into()),
+        });
 
     let sampler = rm.device().create_sampler(&wgpu::SamplerDescriptor {
         label: Some("cube sampler"),
@@ -533,11 +544,13 @@ fn d3d9_packed16_cube_upload_and_sample() {
             ],
         });
 
-    let pipeline_layout = rm.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("cube pipeline layout"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
+    let pipeline_layout = rm
+        .device()
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("cube pipeline layout"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
 
     let pipeline = rm
         .device()
@@ -581,12 +594,12 @@ fn d3d9_packed16_cube_upload_and_sample() {
     // Fill cube faces (array layers) in WebGPU order: +X, -X, +Y, -Y, +Z, -Z.
     // Use distinct colors + alpha to validate A1 handling as well.
     let faces: [(u16, [u8; 4]); 6] = [
-        (0xFC00, [255, 0, 0, 255]),     // +X: opaque red
-        (0x03E0, [0, 255, 0, 0]),       // -X: transparent green
-        (0x801F, [0, 0, 255, 255]),     // +Y: opaque blue
-        (0x7FFF, [255, 255, 255, 0]),   // -Y: transparent white
-        (0x8000, [0, 0, 0, 255]),       // +Z: opaque black
-        (0x7C1F, [255, 0, 255, 0]),     // -Z: transparent magenta
+        (0xFC00, [255, 0, 0, 255]),   // +X: opaque red
+        (0x03E0, [0, 255, 0, 0]),     // -X: transparent green
+        (0x801F, [0, 0, 255, 255]),   // +Y: opaque blue
+        (0x7FFF, [255, 255, 255, 0]), // -Y: transparent white
+        (0x8000, [0, 0, 0, 255]),     // +Z: opaque black
+        (0x7C1F, [255, 0, 255, 0]),   // -Z: transparent magenta
     ];
 
     for (layer, (pixel, _expected)) in faces.iter().enumerate() {
@@ -681,10 +694,12 @@ fn d3d9_packed16_managed_eviction_reuploads_shadow_data() {
     let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
     rm.begin_frame();
 
-    let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("packed16 sample shader (managed eviction)"),
-        source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
-    });
+    let shader = rm
+        .device()
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("packed16 sample shader (managed eviction)"),
+            source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
+        });
 
     let bgl = rm
         .device()
@@ -702,11 +717,13 @@ fn d3d9_packed16_managed_eviction_reuploads_shadow_data() {
             }],
         });
 
-    let pipeline_layout = rm.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("pl"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
+    let pipeline_layout = rm
+        .device()
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pl"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
 
     let pipeline = rm
         .device()

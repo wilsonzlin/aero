@@ -2,7 +2,8 @@ use aero_devices_input::browser_code_to_set2_bytes;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-const HID_USAGE_KEYBOARD_JSON: &str = include_str!("../../../docs/fixtures/hid_usage_keyboard.json");
+const HID_USAGE_KEYBOARD_JSON: &str =
+    include_str!("../../../docs/fixtures/hid_usage_keyboard.json");
 const SCANCODES_JSON: &str = include_str!("../../../tools/gen_scancodes/scancodes.json");
 
 // Defensive limits: these JSON files are trusted repo data, but this is still an
@@ -14,7 +15,10 @@ const MAX_SCANCODES_ENTRIES: usize = 512;
 const MAX_SEQ_LEN: usize = 32;
 
 fn parse_hex_u8(s: &str) -> u8 {
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     if s.is_empty() || s.len() > 2 || !s.as_bytes().iter().all(|b| b.is_ascii_hexdigit()) {
         panic!("Invalid u8 hex literal {s:?} in hid_usage_keyboard.json");
     }
@@ -47,14 +51,15 @@ fn load_hid_usage_fixture() -> HashMap<String, u8> {
             panic!("Expected each hid_usage_keyboard.json entry to be an object")
         });
 
-        let code = obj
-            .get("code")
-            .and_then(|v| v.as_str())
-            .unwrap_or_else(|| panic!("Expected hid_usage_keyboard.json entry field `code` to be a string"));
+        let code = obj.get("code").and_then(|v| v.as_str()).unwrap_or_else(|| {
+            panic!("Expected hid_usage_keyboard.json entry field `code` to be a string")
+        });
         let usage_str = obj
             .get("usage")
             .and_then(|v| v.as_str())
-            .unwrap_or_else(|| panic!("Expected hid_usage_keyboard.json entry field `usage` to be a string"));
+            .unwrap_or_else(|| {
+                panic!("Expected hid_usage_keyboard.json entry field `usage` to be a string")
+            });
         let usage = parse_hex_u8(usage_str);
 
         if by_code.insert(code.to_owned(), usage).is_some() {
@@ -125,7 +130,9 @@ fn hid_usage_fixture_and_ps2_scancode_mapping_do_not_drift() {
     let ps2_set2 = scancodes_root
         .get("ps2_set2")
         .and_then(|v| v.as_object())
-        .unwrap_or_else(|| panic!("Expected scancodes.json to contain a top-level `ps2_set2` object"));
+        .unwrap_or_else(|| {
+            panic!("Expected scancodes.json to contain a top-level `ps2_set2` object")
+        });
     if ps2_set2.len() > MAX_SCANCODES_ENTRIES {
         panic!(
             "Refusing to iterate scancodes.json: entry count {} exceeds limit {MAX_SCANCODES_ENTRIES}",
@@ -147,4 +154,3 @@ fn hid_usage_fixture_and_ps2_scancode_mapping_do_not_drift() {
         "Core PS/2 scancode mappings are missing from the shared HID usage fixture (docs/fixtures/hid_usage_keyboard.json): {missing_hid:?}"
     );
 }
-

@@ -1,4 +1,6 @@
-use aero_devices::pci::{PciBdf, PciConfigPorts, PciConfigSpace, PciDevice, PciEcamConfig, PciEcamMmio};
+use aero_devices::pci::{
+    PciBdf, PciConfigPorts, PciConfigSpace, PciDevice, PciEcamConfig, PciEcamMmio,
+};
 use memory::Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -62,8 +64,7 @@ fn pci_ecam_extended_reads_are_zero_for_present_and_all_ones_for_absent_function
         for size in [1usize, 2, 4] {
             let value = mem.read(ecam_addr(ecam_base, 0, 2, 0, off), size);
             assert_eq!(
-                value,
-                0,
+                value, 0,
                 "present function read at offset {off:#x} size {size} returned {value:#x}",
             );
         }
@@ -103,13 +104,20 @@ fn pci_ecam_extended_reads_are_zero_for_present_and_all_ones_for_absent_function
                 4 => 0xFFFF_FFFF,
                 _ => unreachable!(),
             };
-            let value = mem.read(ecam_addr(ecam_base, bdf_absent.bus, bdf_absent.device, bdf_absent.function, off), size);
+            let value = mem.read(
+                ecam_addr(
+                    ecam_base,
+                    bdf_absent.bus,
+                    bdf_absent.device,
+                    bdf_absent.function,
+                    off,
+                ),
+                size,
+            );
             assert_eq!(
-                value,
-                expected,
+                value, expected,
                 "absent function read at offset {off:#x} size {size} returned {value:#x}",
             );
         }
     }
 }
-

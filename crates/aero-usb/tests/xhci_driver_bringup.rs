@@ -7,8 +7,8 @@
 //! - Event ring cycle-bit wrap behaviour
 //! - IRQ assertion + RW1C clearing via USBSTS
 
-use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
 use aero_usb::xhci::interrupter::IMAN_IE;
+use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
 use aero_usb::xhci::{regs, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
@@ -131,7 +131,11 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     // ---- Build input context for Configure Endpoint ----
     // Drop=0, Add = Slot + EP0 + EP1 IN (device context index 3).
     MemoryBus::write_u32(&mut mem, input_ctx_cfg + 0x00, 0);
-    MemoryBus::write_u32(&mut mem, input_ctx_cfg + 0x04, (1 << 0) | (1 << 1) | (1 << 3));
+    MemoryBus::write_u32(
+        &mut mem,
+        input_ctx_cfg + 0x04,
+        (1 << 0) | (1 << 1) | (1 << 3),
+    );
     MemoryBus::write_u32(&mut mem, input_ctx_cfg + 0x20 + 4, 1 << 16);
 
     // Endpoint 1 IN context lives at Input Context index 4 (device index 3 + 1):
@@ -206,7 +210,10 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     // Start controller (RUN). This triggers a small DMA read + sets USBSTS.EINT; clear it so the
     // subsequent assertions are tied to command/transfer events.
     xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    assert!(xhci.irq_level(), "RUN should assert an IRQ due to dma_on_run");
+    assert!(
+        xhci.irq_level(),
+        "RUN should assert an IRQ due to dma_on_run"
+    );
     xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
     assert!(!xhci.irq_level(), "USBSTS RW1C should clear IRQ");
 
@@ -216,11 +223,17 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
 
     let ev0 = Trb::read_from(&mut mem, event_ring + 0x00);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
-    assert!(ev0.cycle(), "event[0] should use initial event-ring cycle state (1)");
+    assert!(
+        ev0.cycle(),
+        "event[0] should use initial event-ring cycle state (1)"
+    );
     assert_eq!(ev0.pointer(), cmd_ring + 0x00);
     assert_eq!(ev0.completion_code_raw(), CompletionCode::Success.as_u8());
     let slot_id = ev0.slot_id();
-    assert_eq!(slot_id, 1, "model should allocate slot 1 for the first device");
+    assert_eq!(
+        slot_id, 1,
+        "model should allocate slot 1 for the first device"
+    );
 
     assert!(xhci.irq_level(), "Enable Slot completion should assert IRQ");
     xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
@@ -232,8 +245,13 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     // Make Address Device + Configure Endpoint visible (cycle=1), then ring doorbell again.
     make_command_trb(TrbType::AddressDeviceCommand, input_ctx_addr, slot_id, true)
         .write_to(&mut mem, cmd_ring + 0x10);
-    make_command_trb(TrbType::ConfigureEndpointCommand, input_ctx_cfg, slot_id, true)
-        .write_to(&mut mem, cmd_ring + 0x20);
+    make_command_trb(
+        TrbType::ConfigureEndpointCommand,
+        input_ctx_cfg,
+        slot_id,
+        true,
+    )
+    .write_to(&mut mem, cmd_ring + 0x20);
     make_link_trb(cmd_ring, true, true).write_to(&mut mem, cmd_ring + 0x30);
 
     xhci.mmio_write(&mut mem, dboff as u64, 4, 0);
@@ -277,7 +295,10 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     assert_eq!(ev3.pointer(), cmd_ring + 0x00);
     assert_eq!(ev3.completion_code_raw(), CompletionCode::Success.as_u8());
 
-    assert!(xhci.irq_level(), "second command completion should assert IRQ");
+    assert!(
+        xhci.irq_level(),
+        "second command completion should assert IRQ"
+    );
     xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
     assert!(!xhci.irq_level());
 

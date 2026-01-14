@@ -66,10 +66,7 @@ pub(crate) fn process_frame<M: MemoryBus + ?Sized>(
     walk_link(ctx, link);
 }
 
-fn walk_link<M: MemoryBus + ?Sized>(
-    ctx: &mut ScheduleContext<'_, M>,
-    mut link: LinkPointer,
-) {
+fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: LinkPointer) {
     let mut visited: Vec<u32> = Vec::with_capacity(16);
     for _ in 0..MAX_SCHEDULE_LINKS_PER_FRAME {
         if link.terminated() {
@@ -111,7 +108,9 @@ mod tests {
 
     impl TestMem {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
 
         fn write_u32(&mut self, addr: u64, value: u32) {

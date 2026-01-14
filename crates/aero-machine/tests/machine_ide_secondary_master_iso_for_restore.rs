@@ -39,4 +39,3 @@ fn machine_attach_ide_secondary_master_iso_for_restore_returns_ok_after_snapshot
         .attach_ide_secondary_master_iso_for_restore(Box::new(iso))
         .is_ok());
 }
-

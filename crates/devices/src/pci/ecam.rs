@@ -167,10 +167,12 @@ mod tests {
         // Ensure that wide reads/writes near `u64::MAX` do not wrap around and access low ECAM
         // offsets.
         let mut bus = PciBus::new();
-        bus.add_device(PciBdf::new(0, 0, 0), Box::new(StubDevice::new(0x1234, 0x5678)));
+        bus.add_device(
+            PciBdf::new(0, 0, 0),
+            Box::new(StubDevice::new(0x1234, 0x5678)),
+        );
 
-        let cfg_ports: SharedPciConfigPorts =
-            Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+        let cfg_ports: SharedPciConfigPorts = Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
         let cfg = PciEcamConfig {
             segment: 0,
             start_bus: 0,

@@ -63,12 +63,17 @@ fn save_snapshot_single_vcpu_cpus_section_still_uses_legacy_mmu_section() {
         "expected save_snapshot to encode a single-vCPU state using CPUS when internal_state is present"
     );
     assert!(
-        index.sections.iter().any(|s| s.id == snapshot::SectionId::MMU),
+        index
+            .sections
+            .iter()
+            .any(|s| s.id == snapshot::SectionId::MMU),
         "expected save_snapshot to preserve the legacy MMU section for single-vCPU snapshots"
     );
     assert!(
-        !index.sections.iter().any(|s| s.id == snapshot::SectionId::MMUS),
+        !index
+            .sections
+            .iter()
+            .any(|s| s.id == snapshot::SectionId::MMUS),
         "expected save_snapshot to avoid MMUS for single-vCPU snapshots"
     );
 }
-

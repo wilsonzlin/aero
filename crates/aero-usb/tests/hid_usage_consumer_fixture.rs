@@ -53,4 +53,3 @@ fn keyboard_code_to_consumer_usage_matches_shared_fixture() {
     // Sanity-check that regular keyboard keys are not mapped via the consumer table.
     assert_eq!(keyboard_code_to_consumer_usage("KeyA"), None);
 }
-

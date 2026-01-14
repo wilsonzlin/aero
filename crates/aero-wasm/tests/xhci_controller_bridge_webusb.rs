@@ -44,7 +44,9 @@ fn xhci_bridge_exports_webusb_passthrough_surface_and_roundtrips_snapshot() {
     // Smoke-test `push_completion` wiring: stale completions should be accepted and ignored.
     let completion = UsbHostCompletion::ControlIn {
         id: 1,
-        result: UsbHostCompletionIn::Success { data: vec![1, 2, 3] },
+        result: UsbHostCompletionIn::Success {
+            data: vec![1, 2, 3],
+        },
     };
     let completion_js: JsValue = serde_wasm_bindgen::to_value(&completion).unwrap();
     bridge
@@ -88,4 +90,3 @@ fn xhci_bridge_exports_webusb_passthrough_surface_and_roundtrips_snapshot() {
         "expected nested WebUSB device snapshot to roundtrip"
     );
 }
-

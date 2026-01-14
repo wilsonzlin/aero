@@ -100,25 +100,21 @@ pub fn parse_ctab_chunk(bytes: &[u8]) -> Result<ConstantTable, DxbcError> {
 
         let register_index = read_u16_le_entry(
             bytes,
-            entry_start
-                .checked_add(6)
-                .ok_or_else(|| {
-                    DxbcError::invalid_chunk(format!(
-                        "constant entry {entry_index} register_index offset overflows"
-                    ))
-                })?,
+            entry_start.checked_add(6).ok_or_else(|| {
+                DxbcError::invalid_chunk(format!(
+                    "constant entry {entry_index} register_index offset overflows"
+                ))
+            })?,
             entry_index,
             "register_index",
         )?;
         let register_count = read_u16_le_entry(
             bytes,
-            entry_start
-                .checked_add(8)
-                .ok_or_else(|| {
-                    DxbcError::invalid_chunk(format!(
-                        "constant entry {entry_index} register_count offset overflows"
-                    ))
-                })?,
+            entry_start.checked_add(8).ok_or_else(|| {
+                DxbcError::invalid_chunk(format!(
+                    "constant entry {entry_index} register_count offset overflows"
+                ))
+            })?,
             entry_index,
             "register_count",
         )?;
@@ -145,7 +141,10 @@ fn read_u32_le_entry(
     field: &'static str,
 ) -> Result<u32, DxbcError> {
     read_u32_le(bytes, offset, field).map_err(|e| {
-        DxbcError::invalid_chunk(format!("constant entry {entry_index} {field}: {}", e.context()))
+        DxbcError::invalid_chunk(format!(
+            "constant entry {entry_index} {field}: {}",
+            e.context()
+        ))
     })
 }
 
@@ -156,7 +155,10 @@ fn read_u16_le_entry(
     field: &'static str,
 ) -> Result<u16, DxbcError> {
     read_u16_le(bytes, offset, field).map_err(|e| {
-        DxbcError::invalid_chunk(format!("constant entry {entry_index} {field}: {}", e.context()))
+        DxbcError::invalid_chunk(format!(
+            "constant entry {entry_index} {field}: {}",
+            e.context()
+        ))
     })
 }
 
@@ -167,7 +169,10 @@ fn read_cstring_owned_entry(
     field: &'static str,
 ) -> Result<String, DxbcError> {
     read_cstring_owned(bytes, offset, field).map_err(|e| {
-        DxbcError::invalid_chunk(format!("constant entry {entry_index} {field}: {}", e.context()))
+        DxbcError::invalid_chunk(format!(
+            "constant entry {entry_index} {field}: {}",
+            e.context()
+        ))
     })
 }
 
@@ -200,9 +205,8 @@ fn read_u16_le(bytes: &[u8], offset: usize, what: &str) -> Result<u16, DxbcError
 fn read_cstring_owned(bytes: &[u8], offset: usize, what: &str) -> Result<String, DxbcError> {
     let s = read_cstring(bytes, offset, what)?;
     let mut out = String::new();
-    out.try_reserve_exact(s.len()).map_err(|_| {
-        DxbcError::invalid_chunk(format!("{what} string is too large to allocate"))
-    })?;
+    out.try_reserve_exact(s.len())
+        .map_err(|_| DxbcError::invalid_chunk(format!("{what} string is too large to allocate")))?;
     out.push_str(s);
     Ok(out)
 }
@@ -224,4 +228,3 @@ fn read_cstring<'a>(bytes: &'a [u8], offset: usize, what: &str) -> Result<&'a st
         DxbcError::invalid_chunk(format!("{what} at offset {offset} is not valid UTF-8"))
     })
 }
-

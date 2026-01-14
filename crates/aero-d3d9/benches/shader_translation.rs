@@ -13,10 +13,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 #[cfg(not(target_arch = "wasm32"))]
 fn load_fixture(name: &str) -> Vec<u8> {
-    let path = format!(
-        "{}/tests/fixtures/dxbc/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = format!("{}/tests/fixtures/dxbc/{name}", env!("CARGO_MANIFEST_DIR"));
     fs::read(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"))
 }
 

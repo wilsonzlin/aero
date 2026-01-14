@@ -124,7 +124,9 @@ fn restore_snapshot_rejects_too_many_mmus_entries() {
     bytes.extend_from_slice(&0u32.to_le_bytes());
 
     let mut cpu_payload = Vec::new();
-    snapshot::CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    snapshot::CpuState::default()
+        .encode_v2(&mut cpu_payload)
+        .unwrap();
     push_section(&mut bytes, snapshot::SectionId::CPU, 2, 0, &cpu_payload);
 
     // MMUS section with only the count field set above MAX_CPU_COUNT. The decoder should reject it
@@ -150,4 +152,3 @@ fn restore_snapshot_rejects_too_many_mmus_entries() {
         snapshot::SnapshotError::Corrupt("too many MMU states")
     ));
 }
-

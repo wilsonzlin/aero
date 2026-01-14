@@ -1821,7 +1821,10 @@ mod tests {
         snd.queue_event(evt_type, evt_data);
 
         let need_irq = snd.flush_eventq(&mut queue, &mut mem).unwrap();
-        assert!(need_irq, "used entry should trigger an interrupt by default");
+        assert!(
+            need_irq,
+            "used entry should trigger an interrupt by default"
+        );
 
         assert!(snd.event_buffers.is_empty());
         assert!(snd.pending_events.is_empty());
@@ -2723,24 +2726,8 @@ mod tests {
         hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
         write_bytes(&mut mem, hdr_addr, &hdr);
 
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            hdr_addr,
-            8,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
-        write_desc(
-            &mut mem,
-            desc_table,
-            1,
-            resp_addr,
-            8,
-            VIRTQ_DESC_F_WRITE,
-            0,
-        );
+        write_desc(&mut mem, desc_table, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(&mut mem, desc_table, 1, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
 
         write_u16_le(&mut mem, avail, 0).unwrap();
         write_u16_le(&mut mem, avail + 2, 1).unwrap();
@@ -2794,15 +2781,7 @@ mod tests {
         // Incomplete stereo frame: only one i16 sample.
         write_bytes(&mut mem, payload_addr, &16384i16.to_le_bytes());
 
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            hdr_addr,
-            8,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
+        write_desc(&mut mem, desc_table, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
         write_desc(
             &mut mem,
             desc_table,
@@ -2812,15 +2791,7 @@ mod tests {
             VIRTQ_DESC_F_NEXT,
             2,
         );
-        write_desc(
-            &mut mem,
-            desc_table,
-            2,
-            resp_addr,
-            8,
-            VIRTQ_DESC_F_WRITE,
-            0,
-        );
+        write_desc(&mut mem, desc_table, 2, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
 
         write_u16_le(&mut mem, avail, 0).unwrap();
         write_u16_le(&mut mem, avail + 2, 1).unwrap();
@@ -2870,24 +2841,8 @@ mod tests {
         hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
         write_bytes(&mut mem, hdr_addr, &hdr);
 
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            hdr_addr,
-            8,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
-        write_desc(
-            &mut mem,
-            desc_table,
-            1,
-            resp_addr,
-            8,
-            VIRTQ_DESC_F_WRITE,
-            0,
-        );
+        write_desc(&mut mem, desc_table, 0, hdr_addr, 8, VIRTQ_DESC_F_NEXT, 1);
+        write_desc(&mut mem, desc_table, 1, resp_addr, 8, VIRTQ_DESC_F_WRITE, 0);
 
         write_u16_le(&mut mem, avail, 0).unwrap();
         write_u16_le(&mut mem, avail + 2, 1).unwrap();

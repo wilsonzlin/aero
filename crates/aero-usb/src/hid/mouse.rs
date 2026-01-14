@@ -196,7 +196,15 @@ impl IoSnapshot for UsbHidMouse {
         let pending: Vec<Vec<u8>> = self
             .pending_reports
             .iter()
-            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8, r.hwheel as u8])
+            .map(|r| {
+                vec![
+                    r.buttons,
+                    r.x as u8,
+                    r.y as u8,
+                    r.wheel as u8,
+                    r.hwheel as u8,
+                ]
+            })
             .collect();
         w.field_bytes(
             TAG_PENDING_REPORTS,
@@ -1094,9 +1102,7 @@ mod tests {
             let mut w = SnapshotWriter::new(UsbHidMouse::DEVICE_ID, UsbHidMouse::DEVICE_VERSION);
             w.field_bytes(
                 TAG_PENDING_REPORTS,
-                Encoder::new()
-                    .u32(MAX_PENDING_REPORTS as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PENDING_REPORTS as u32 + 1).finish(),
             );
             w.finish()
         };

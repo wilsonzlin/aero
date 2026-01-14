@@ -4,9 +4,9 @@ use super::{
     regs, RingCursor, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR,
     PORTSC_PRC,
 };
-use aero_io_snapshot::io::state::IoSnapshot;
 use crate::hub::UsbHubDevice;
 use crate::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
+use aero_io_snapshot::io::state::IoSnapshot;
 
 struct DummyUsbDevice;
 
@@ -26,7 +26,9 @@ struct TestMem {
 
 impl TestMem {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn len(&self) -> usize {
@@ -123,7 +125,10 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
 
     // Enable slot 1, then populate its DCBAA entry with a device context pointer.
     let completion = ctrl.enable_slot(&mut mem);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     assert_eq!(completion.slot_id, slot_id);
     mem.write_u64(dcbaa + 8, dev_ctx);
 
@@ -134,13 +139,19 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
 
     // Stop Endpoint -> Stopped (3).
     let completion = ctrl.stop_endpoint(&mut mem, slot_id, endpoint_id);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
 
     // Set TR Dequeue Pointer updates the context + internal ring cursor state.
     let new_trdp = 0x6000u64;
     let completion = ctrl.set_tr_dequeue_pointer(&mut mem, slot_id, endpoint_id, new_trdp, false);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     let dw2 = read_u32(&mut mem, ep_ctx + 8);
     let dw3 = read_u32(&mut mem, ep_ctx + 12);
     let raw = (u64::from(dw3) << 32) | u64::from(dw2);
@@ -159,7 +170,10 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
     let halted_dw0 = (read_u32(&mut mem, ep_ctx + 0) & !0x7) | 2;
     mem.write_u32(ep_ctx + 0, halted_dw0);
     let completion = ctrl.reset_endpoint(&mut mem, slot_id, endpoint_id);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
 }
 
@@ -349,7 +363,10 @@ fn configure_endpoint_rejects_unsupported_add_flags() {
 
     let ev1 = mem.read_trb(event_ring + 2 * 16);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
-    assert_eq!(event_completion_code(ev1), CompletionCode::ParameterError.as_u8());
+    assert_eq!(
+        event_completion_code(ev1),
+        CompletionCode::ParameterError.as_u8()
+    );
 
     // Ensure we didn't update EP0 despite the input asking for MPS=64.
     let mut buf = [0u8; 4];
@@ -558,7 +575,10 @@ fn evaluate_context_rejects_unsupported_context_flags() {
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
-    assert_eq!(event_completion_code(ev1), CompletionCode::ParameterError.as_u8());
+    assert_eq!(
+        event_completion_code(ev1),
+        CompletionCode::ParameterError.as_u8()
+    );
 
     // Ensure we didn't update EP0 despite the input asking for MPS=64.
     let mut buf = [0u8; 4];
@@ -847,7 +867,10 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
     ctrl.set_dcbaap(dcbaa);
 
     let completion = ctrl.enable_slot(&mut mem);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     let slot_id = completion.slot_id;
     assert_ne!(slot_id, 0);
 
@@ -864,7 +887,10 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
 
     // Set TR Dequeue Pointer should reset EP0 TD tracking so the next transfer starts clean.
     let completion = ctrl.set_tr_dequeue_pointer(&mut mem, slot_id, 1, 0x6000, false);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     assert_eq!(
         ctrl.ep0_control_td[usize::from(slot_id)],
         super::ControlTdState::default()
@@ -879,7 +905,10 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
         completion_code: CompletionCode::StallError,
     };
     let completion = ctrl.reset_endpoint(&mut mem, slot_id, 1);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     assert_eq!(
         ctrl.ep0_control_td[usize::from(slot_id)],
         super::ControlTdState::default()
@@ -899,7 +928,10 @@ fn command_ring_context_commands_reset_ep0_control_td_state() {
     ctrl.set_dcbaap(dcbaa);
 
     let completion = ctrl.enable_slot(&mut mem);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     let slot_id = completion.slot_id;
     assert_ne!(slot_id, 0);
 
@@ -1026,9 +1058,19 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     // Configure interrupter 0 (this bumps generation counters which are part of the snapshot).
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (ring_base >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // Attach a device so port snapshots include a nested `AttachedUsbDevice` record.
@@ -1101,29 +1143,34 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     assert_eq!(restored.usbcmd, xhci.usbcmd & regs::USBCMD_SNAPSHOT_MASK);
     assert_eq!(
         restored.usbsts,
-        xhci.usbsts & regs::USBSTS_SNAPSHOT_MASK & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE)
+        xhci.usbsts
+            & regs::USBSTS_SNAPSHOT_MASK
+            & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE)
     );
     assert_eq!(restored.host_controller_error, xhci.host_controller_error);
     assert_eq!(restored.crcr, xhci.crcr & regs::CRCR_SNAPSHOT_MASK);
     assert_eq!(restored.dcbaap, xhci.dcbaap & regs::DCBAAP_SNAPSHOT_MASK);
     assert_eq!(restored.config, xhci.config & regs::CONFIG_SNAPSHOT_MASK);
-    assert_eq!(
-        restored.mfindex,
-        xhci.mfindex & regs::runtime::MFINDEX_MASK
-    );
+    assert_eq!(restored.mfindex, xhci.mfindex & regs::runtime::MFINDEX_MASK);
     assert_eq!(restored.dnctrl, xhci.dnctrl);
     assert_eq!(restored.command_ring, xhci.command_ring);
     assert_eq!(restored.cmd_kick, xhci.cmd_kick);
     assert_eq!(restored.active_endpoints, xhci.active_endpoints);
     assert_eq!(restored.ep0_control_td, xhci.ep0_control_td);
-    assert_eq!(restored.interrupter0.iman_raw(), xhci.interrupter0.iman_raw());
+    assert_eq!(
+        restored.interrupter0.iman_raw(),
+        xhci.interrupter0.iman_raw()
+    );
     assert_eq!(restored.interrupter0.erst_gen, xhci.interrupter0.erst_gen);
     assert_eq!(restored.interrupter0.erdp_gen, xhci.interrupter0.erdp_gen);
     assert_eq!(
         restored.event_ring.save_snapshot(),
         xhci.event_ring.save_snapshot()
     );
-    assert_eq!(restored.ports[0].save_snapshot(), xhci.ports[0].save_snapshot());
+    assert_eq!(
+        restored.ports[0].save_snapshot(),
+        xhci.ports[0].save_snapshot()
+    );
     assert_eq!(restored.slots[1].enabled, xhci.slots[1].enabled);
     assert_eq!(restored.slots[1].port_id, xhci.slots[1].port_id);
     assert_eq!(
@@ -1213,12 +1260,20 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erst as u32);
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erst >> 32) as u32);
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (event_ring >> 32) as u32);
+    ctrl.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (event_ring >> 32) as u32,
+    );
 
     // Start controller and clear the synthetic RUN-transition IRQ.
     ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
     ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
-    assert!(!ctrl.irq_level(), "IRQ should be clear before ringing doorbell");
+    assert!(
+        !ctrl.irq_level(),
+        "IRQ should be clear before ringing doorbell"
+    );
 
     // Ring the command doorbell (DB0).
     ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
@@ -1232,7 +1287,10 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
 
     // Interrupt should be asserted for the completion event.
     assert!(ctrl.irq_level());
-    assert_ne!(ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT, 0);
+    assert_ne!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
+        0
+    );
 
     // Clear interrupt pending state so we can observe a second interrupt.
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
@@ -1289,7 +1347,10 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
 
     // Interrupt should be asserted for the second batch of events.
     assert!(ctrl.irq_level());
-    assert_ne!(ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT, 0);
+    assert_ne!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
+        0
+    );
 }
 
 #[test]
@@ -1368,8 +1429,7 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     mem.write_u64(erstba, event_ring_base);
     mem.write_u32(erstba + 8, 2); // segment size in TRBs
 
-    ctrl.interrupter0
-        .write_iman(super::interrupter::IMAN_IE);
+    ctrl.interrupter0.write_iman(super::interrupter::IMAN_IE);
     ctrl.interrupter0.write_erstsz(1);
     ctrl.interrupter0.write_erstba(erstba);
     ctrl.interrupter0.write_erdp(event_ring_base);
@@ -1386,7 +1446,10 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
 
     let snapshot1 = ctrl.save_state();
     let snapshot2 = ctrl.save_state();
-    assert_eq!(snapshot1, snapshot2, "snapshot output must be deterministic");
+    assert_eq!(
+        snapshot1, snapshot2,
+        "snapshot output must be deterministic"
+    );
 
     let mut restored = XhciController::with_port_count(1);
     restored
@@ -1419,17 +1482,21 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     assert_eq!(mem.read_trb(event_ring_base + 1 * 16), ev1_before);
 
     // Guest consumes the first event, leaving index 1 unconsumed.
-    restored
-        .interrupter0
-        .write_erdp(event_ring_base + 1 * 16);
+    restored.interrupter0.write_erdp(event_ring_base + 1 * 16);
     restored.service_event_ring(&mut mem);
     assert_eq!(restored.pending_event_count(), 0);
 
     let ev0_after = mem.read_trb(event_ring_base + 0 * 16);
     let ev1_after = mem.read_trb(event_ring_base + 1 * 16);
-    assert_eq!(ev1_after, ev1_before, "unconsumed event should not be overwritten");
+    assert_eq!(
+        ev1_after, ev1_before,
+        "unconsumed event should not be overwritten"
+    );
     assert_eq!(ev0_after.trb_type(), TrbType::PortStatusChangeEvent);
-    assert!(!ev0_after.cycle(), "producer should have wrapped and toggled cycle");
+    assert!(
+        !ev0_after.cycle(),
+        "producer should have wrapped and toggled cycle"
+    );
     assert_eq!(((ev0_after.parameter >> 24) & 0xff) as u8, 1);
 
     // Port 0 should be connected/enabled with CSC, PEC, and PRC latched.
@@ -1456,10 +1523,7 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     assert_eq!(slot.device_context_ptr, 0x2000);
     assert_eq!(slot.slot_context.dword(0), 0xfeed_face);
     assert_eq!(slot.endpoint_contexts[0].dword(0), 0x1111_2222);
-    assert_eq!(
-        slot.transfer_ring(1),
-        Some(RingCursor::new(0x3000, true))
-    );
+    assert_eq!(slot.transfer_ring(1), Some(RingCursor::new(0x3000, true)));
 
     // The keyboard's pending report should survive snapshot/restore via the nested ADEV/UKBD
     // snapshot.

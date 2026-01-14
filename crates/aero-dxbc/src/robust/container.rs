@@ -149,6 +149,9 @@ mod tests {
         bytes.extend_from_slice(&(MAX_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
 
         let err = DxbcContainer::parse(&bytes).unwrap_err();
-        assert!(matches!(err, DxbcError::ChunkCountTooLarge { .. }), "{err:?}");
+        assert!(
+            matches!(err, DxbcError::ChunkCountTooLarge { .. }),
+            "{err:?}"
+        );
     }
 }

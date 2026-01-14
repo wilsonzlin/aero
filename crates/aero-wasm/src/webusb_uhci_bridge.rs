@@ -5,10 +5,10 @@ use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
+use aero_usb::UsbWebUsbPassthroughDevice;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::UhciController;
-use aero_usb::UsbWebUsbPassthroughDevice;
 
 use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
 

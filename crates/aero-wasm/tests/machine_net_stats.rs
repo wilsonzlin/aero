@@ -17,7 +17,9 @@ fn make_shared_ring(capacity_bytes: u32) -> SharedRingBuffer {
     SharedRingBuffer::new(sab, 0).expect("SharedRingBuffer::new")
 }
 
-fn make_shared_ring_pair(capacity_bytes: u32) -> (SharedArrayBuffer, SharedRingBuffer, SharedRingBuffer) {
+fn make_shared_ring_pair(
+    capacity_bytes: u32,
+) -> (SharedArrayBuffer, SharedRingBuffer, SharedRingBuffer) {
     assert_eq!(capacity_bytes as usize % aero_ipc::layout::RECORD_ALIGN, 0);
     let total_bytes = ring_ctrl::BYTES as u32 + capacity_bytes;
     let sab = SharedArrayBuffer::new(total_bytes);
@@ -53,8 +55,8 @@ fn machine_net_stats_smoke() {
     let stats = m.net_stats();
     assert!(!stats.is_null());
 
-    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken"))
-        .expect("Reflect::get(rx_broken)");
+    let rx_broken =
+        Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get(rx_broken)");
     assert_eq!(
         rx_broken.as_bool(),
         Some(false),
@@ -80,7 +82,11 @@ fn machine_net_stats_smoke() {
     }
 
     let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get");
-    assert_eq!(rx_broken.as_bool(), Some(false), "rx_broken should start false");
+    assert_eq!(
+        rx_broken.as_bool(),
+        Some(false),
+        "rx_broken should start false"
+    );
 
     // Push one host->guest frame into NET_RX and run the network pump once.
     // This should cause the ring backend to pop the frame and increment its RX counters.
@@ -150,23 +156,24 @@ fn machine_net_stats_marks_rx_broken_after_corrupt_record() {
 
     // Corrupt the record length at the current head so the next pop yields PopError::Corrupt,
     // which should permanently flip `rx_broken`.
-    let ctrl =
-        Int32Array::new_with_byte_offset_and_length(&net_rx_sab, 0, ring_ctrl::WORDS as u32);
+    let ctrl = Int32Array::new_with_byte_offset_and_length(&net_rx_sab, 0, ring_ctrl::WORDS as u32);
     let cap = ctrl.get_index(ring_ctrl::CAPACITY as u32) as u32;
     let head = ctrl.get_index(ring_ctrl::HEAD as u32) as u32;
     let head_index = head % cap;
 
-    let data = Uint8Array::new_with_byte_offset_and_length(&net_rx_sab, ring_ctrl::BYTES as u32, cap);
+    let data =
+        Uint8Array::new_with_byte_offset_and_length(&net_rx_sab, ring_ctrl::BYTES as u32, cap);
     let bogus_len = 100u32.to_le_bytes();
-    data.subarray(head_index, head_index + 4).copy_from(&bogus_len);
+    data.subarray(head_index, head_index + 4)
+        .copy_from(&bogus_len);
 
     m.poll_network();
 
     let stats = m.net_stats();
     assert!(!stats.is_null());
 
-    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken"))
-        .expect("Reflect::get(rx_broken)");
+    let rx_broken =
+        Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get(rx_broken)");
     assert_eq!(
         rx_broken.as_bool(),
         Some(true),

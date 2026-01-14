@@ -43,10 +43,25 @@ mod tests {
 
         assert_eq!(core::mem::size_of::<DrawIndexedIndirectArgs>(), 20);
         assert_eq!(core::mem::align_of::<DrawIndexedIndirectArgs>(), 4);
-        assert_eq!(core::mem::offset_of!(DrawIndexedIndirectArgs, index_count), 0);
-        assert_eq!(core::mem::offset_of!(DrawIndexedIndirectArgs, instance_count), 4);
-        assert_eq!(core::mem::offset_of!(DrawIndexedIndirectArgs, first_index), 8);
-        assert_eq!(core::mem::offset_of!(DrawIndexedIndirectArgs, base_vertex), 12);
-        assert_eq!(core::mem::offset_of!(DrawIndexedIndirectArgs, first_instance), 16);
+        assert_eq!(
+            core::mem::offset_of!(DrawIndexedIndirectArgs, index_count),
+            0
+        );
+        assert_eq!(
+            core::mem::offset_of!(DrawIndexedIndirectArgs, instance_count),
+            4
+        );
+        assert_eq!(
+            core::mem::offset_of!(DrawIndexedIndirectArgs, first_index),
+            8
+        );
+        assert_eq!(
+            core::mem::offset_of!(DrawIndexedIndirectArgs, base_vertex),
+            12
+        );
+        assert_eq!(
+            core::mem::offset_of!(DrawIndexedIndirectArgs, first_instance),
+            16
+        );
     }
 }

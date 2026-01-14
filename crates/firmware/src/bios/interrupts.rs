@@ -4,8 +4,8 @@ use aero_cpu_core::state::{
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    CdromDevice, DiskError, ElToritoBootMediaType, CDROM_SECTOR_SIZE, BDA_BASE,
-    BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT,
+    CdromDevice, DiskError, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_HEAD_OFFSET,
+    BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT, CDROM_SECTOR_SIZE,
     DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET,
     KEYBOARD_QUEUE_CAPACITY,
 };
@@ -159,7 +159,10 @@ pub(super) fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
         bus.write_u16(addr, 0);
     }
 
-    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START);
+    bus.write_u16(
+        BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET,
+        BDA_KEYBOARD_BUF_START,
+    );
     let tail = BDA_KEYBOARD_BUF_START.wrapping_add((used as u16) * 2);
     bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET, tail);
 }
@@ -576,7 +579,7 @@ fn handle_int13(
                     bus.write_u32(packet_addr + 8, 0); // boot catalog LBA
                     bus.write_u16(packet_addr + 12, 0); // load segment
                     bus.write_u16(packet_addr + 14, 0); // sector count
-                    // Reserved bytes.
+                                                        // Reserved bytes.
                     bus.write_u8(packet_addr + 16, 0);
                     bus.write_u8(packet_addr + 17, 0);
                     bus.write_u8(packet_addr + 18, 0);
@@ -3165,7 +3168,8 @@ mod tests {
         // Some callers provide a buffer slightly larger than 0x1A but smaller than 0x1E; BIOSes
         // should round down to the largest supported structure size (0x1A) instead of returning a
         // non-standard, partially-defined size.
-        for (drive, expected_sectors, expected_bps) in [(0x80u8, 8u64, 512u16), (0xE0u8, 2u64, 2048u16)]
+        for (drive, expected_sectors, expected_bps) in
+            [(0x80u8, 8u64, 512u16), (0xE0u8, 2u64, 2048u16)]
         {
             let mut bios = Bios::new(BiosConfig {
                 boot_drive: drive,
@@ -3173,25 +3177,25 @@ mod tests {
             });
             let disk_bytes = vec![0u8; 512 * 8];
             let mut disk = InMemoryDisk::new(disk_bytes);
- 
+
             let mut cpu = CpuState::new(CpuMode::Real);
             set_real_mode_seg(&mut cpu.segments.ds, 0);
             cpu.gpr[gpr::RSI] = 0x0600;
             cpu.gpr[gpr::RDX] = drive as u64; // DL
             cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
- 
+
             let mut mem = TestMemory::new(2 * 1024 * 1024);
             ivt::init_bda(&mut mem, drive);
             cpu.a20_enabled = mem.a20_enabled();
- 
+
             let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
             for i in 0..0x1Bu64 {
                 mem.write_u8(table_addr + i, 0xCC);
             }
             mem.write_u16(table_addr, 0x1B); // buffer size (non-standard)
- 
+
             handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
- 
+
             assert_eq!(cpu.rflags & FLAG_CF, 0);
             assert_eq!(mem.read_u16(table_addr), 0x1A);
             assert_eq!(mem.read_u64(table_addr + 16), expected_sectors);

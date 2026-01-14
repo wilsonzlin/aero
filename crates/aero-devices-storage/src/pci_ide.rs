@@ -2128,7 +2128,10 @@ mod tests {
         // Run DMA; it should error due to malformed PRD table.
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
         let bm_st = ctl.io_read(BM_BASE + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
 
@@ -2138,14 +2141,33 @@ mod tests {
         // ATAPI uses Sector Count as interrupt reason; errors should still transition to status
         // phase (IO=1, CoD=1).
         let irq_reason = ctl.io_read(cmd_base + ATA_REG_SECTOR_COUNT, 1) as u8;
-        assert_eq!(irq_reason, 0x03, "expected ATAPI status phase after DMA failure");
+        assert_eq!(
+            irq_reason, 0x03,
+            "expected ATAPI status phase after DMA failure"
+        );
 
         // Use ALT_STATUS so we don't accidentally clear the interrupt.
         let st = ctl.io_read(alt_status_port, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         // Even though the PRD table is malformed, the DMA engine should still have written the
         // data before detecting the missing EOT bit.
@@ -2423,8 +2445,14 @@ mod tests {
         // Run DMA; it should error due to the PRD being too short.
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
-        assert!(ctl.primary.pending_dma.is_none(), "DMA request should be consumed on error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
+        assert!(
+            ctl.primary.pending_dma.is_none(),
+            "DMA request should be consumed on error"
+        );
 
         let bm_st = ctl.io_read(BM_BASE + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
@@ -2433,13 +2461,32 @@ mod tests {
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
         let irq_reason = ctl.io_read(cmd_base + ATA_REG_SECTOR_COUNT, 1) as u8;
-        assert_eq!(irq_reason, 0x03, "expected ATAPI status phase after DMA failure");
+        assert_eq!(
+            irq_reason, 0x03,
+            "expected ATAPI status phase after DMA failure"
+        );
 
         let st = ctl.io_read(alt_status_port, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         // Verify partial transfer semantics.
         let mut actual = vec![0u8; AtapiCdrom::SECTOR_SIZE];
@@ -2530,8 +2577,14 @@ mod tests {
         // Run DMA; it should error due to direction mismatch.
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
-        assert!(ctl.primary.pending_dma.is_none(), "DMA request should be consumed on error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
+        assert!(
+            ctl.primary.pending_dma.is_none(),
+            "DMA request should be consumed on error"
+        );
 
         let bm_st = ctl.io_read(BM_BASE + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
@@ -2540,13 +2593,32 @@ mod tests {
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
         let irq_reason = ctl.io_read(cmd_base + ATA_REG_SECTOR_COUNT, 1) as u8;
-        assert_eq!(irq_reason, 0x03, "expected ATAPI status phase after DMA failure");
+        assert_eq!(
+            irq_reason, 0x03,
+            "expected ATAPI status phase after DMA failure"
+        );
 
         let st = ctl.io_read(alt_status_port, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         let mut actual = vec![0u8; AtapiCdrom::SECTOR_SIZE];
         mem.read_physical(BUF_BASE, &mut actual);
@@ -2622,17 +2694,36 @@ mod tests {
         ctl.tick(&mut mem);
 
         // IDE channel should abort the command and raise an interrupt.
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
 
         let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
         // Use ALT_STATUS so we don't accidentally clear the interrupt.
         let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         // Bus Master status should indicate interrupt + error, and clear ACTIVE.
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
@@ -2698,7 +2789,10 @@ mod tests {
 
         // Re-enable interrupts; the pending IRQ should now surface.
         ctl.io_write(ctrl_port, 1, 0);
-        assert!(ctl.primary_irq_pending(), "IRQ should surface after re-enabling");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should surface after re-enabling"
+        );
 
         // Reading STATUS acknowledges/clears the latch.
         let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
@@ -2797,7 +2891,10 @@ mod tests {
         ctl.tick(&mut mem);
 
         // IDE channel should abort the command and raise an interrupt.
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
 
         let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
@@ -2852,16 +2949,35 @@ mod tests {
         ctl.io_write(bm_base, 1, 0x01);
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
 
         let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
         let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
@@ -2906,7 +3022,10 @@ mod tests {
         ctl.io_write(bm_base, 1, 0x01);
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
 
@@ -2956,7 +3075,10 @@ mod tests {
         ctl.io_write(bm_base, 1, 0x01);
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
 
@@ -2964,10 +3086,26 @@ mod tests {
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
         let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
         let got = read_primary_sector0_via_pio(&mut ctl);
@@ -3004,7 +3142,10 @@ mod tests {
         ctl.io_write(bm_base, 1, 0x09);
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
 
@@ -3012,10 +3153,26 @@ mod tests {
         assert_eq!(err, 0x04, "expected ABRT after DMA failure");
 
         let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
-        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
-        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
-        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
-        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+        assert_ne!(
+            st & IDE_STATUS_ERR,
+            0,
+            "ERR bit should be set after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_BSY,
+            0,
+            "BSY should be clear after DMA failure"
+        );
+        assert_eq!(
+            st & IDE_STATUS_DRQ,
+            0,
+            "DRQ should be clear after DMA failure"
+        );
+        assert_ne!(
+            st & IDE_STATUS_DRDY,
+            0,
+            "DRDY should be set after DMA failure"
+        );
 
         let _ = ctl.io_read(cmd_base + ATA_REG_STATUS_COMMAND, 1);
         let got = read_primary_sector0_via_pio(&mut ctl);
@@ -3053,7 +3210,10 @@ mod tests {
         ctl.io_write(bm_base, 1, 0x01);
         ctl.tick(&mut mem);
 
-        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        assert!(
+            ctl.primary_irq_pending(),
+            "IRQ should be pending after DMA error"
+        );
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
 

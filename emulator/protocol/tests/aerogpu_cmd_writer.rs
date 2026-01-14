@@ -3,12 +3,12 @@ use core::mem::{offset_of, size_of};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_bind_shaders_payload_le, decode_cmd_hdr_le, decode_cmd_stream_header_le,
     AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdBindShaders, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateShaderDxbc,
-    AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
-    AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetTexture, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
-    AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuShaderStageEx,
-    AerogpuVertexBufferBinding, BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface, AerogpuCmdHdr,
+    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
+    AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode,
+    AerogpuFillMode, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
+    BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -78,9 +78,8 @@ fn cmd_writer_bind_shaders_ex_emits_extended_packet() {
     assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
     assert_eq!(size_bytes as usize, size_of::<AerogpuCmdBindShaders>() + 12);
 
-    let read_u32 = |off: usize| -> u32 {
-        u32::from_le_bytes(buf[off..off + 4].try_into().unwrap())
-    };
+    let read_u32 =
+        |off: usize| -> u32 { u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) };
 
     // Extended payload begins immediately after `struct aerogpu_cmd_bind_shaders`.
     let ex_base = packet_offset + size_of::<AerogpuCmdBindShaders>();
@@ -662,11 +661,7 @@ fn cmd_writer_emits_stage_ex_and_bind_shaders_ex_packets() {
     let mut w = AerogpuCmdWriter::new();
 
     w.bind_shaders_ex(1, 2, 3, 4, 5, 6);
-    w.create_shader_dxbc_ex(
-        7,
-        AerogpuShaderStageEx::Geometry,
-        &[0xAA, 0xBB, 0xCC],
-    );
+    w.create_shader_dxbc_ex(7, AerogpuShaderStageEx::Geometry, &[0xAA, 0xBB, 0xCC]);
     w.set_texture_ex(AerogpuShaderStageEx::Hull, 9, 10);
 
     let buf = w.finish();
@@ -720,11 +715,19 @@ fn cmd_writer_emits_stage_ex_and_bind_shaders_ex_packets() {
         4
     );
     assert_eq!(
-        u32::from_le_bytes(buf[trailing_base + 4..trailing_base + 8].try_into().unwrap()),
+        u32::from_le_bytes(
+            buf[trailing_base + 4..trailing_base + 8]
+                .try_into()
+                .unwrap()
+        ),
         5
     );
     assert_eq!(
-        u32::from_le_bytes(buf[trailing_base + 8..trailing_base + 12].try_into().unwrap()),
+        u32::from_le_bytes(
+            buf[trailing_base + 8..trailing_base + 12]
+                .try_into()
+                .unwrap()
+        ),
         6
     );
 
@@ -1088,7 +1091,8 @@ fn cmd_writer_emits_stage_ex_binding_packets() {
     use aero_protocol::aerogpu::aerogpu_cmd::{
         AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers, AerogpuCmdSetShaderResourceBuffers,
         AerogpuCmdSetUnorderedAccessBuffers, AerogpuConstantBufferBinding, AerogpuHandle,
-        AerogpuShaderResourceBufferBinding, AerogpuShaderStageEx, AerogpuUnorderedAccessBufferBinding,
+        AerogpuShaderResourceBufferBinding, AerogpuShaderStageEx,
+        AerogpuUnorderedAccessBufferBinding,
     };
 
     let mut w = AerogpuCmdWriter::new();
@@ -1323,10 +1327,7 @@ fn cmd_writer_emits_stage_ex_binding_packets() {
         let opcode = hdr.opcode;
         let size_bytes = hdr.size_bytes as usize;
         assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsF as u32);
-        assert_eq!(
-            size_bytes,
-            size_of::<AerogpuCmdSetShaderConstantsF>() + 16
-        );
+        assert_eq!(size_bytes, size_of::<AerogpuCmdSetShaderConstantsF>() + 16);
         assert_eq!(
             u32::from_le_bytes(
                 buf[cursor + offset_of!(AerogpuCmdSetShaderConstantsF, stage)
@@ -1508,10 +1509,7 @@ fn cmd_writer_emits_stage_ex_binding_packets() {
         let opcode = hdr.opcode;
         let size_bytes = hdr.size_bytes as usize;
         assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsF as u32);
-        assert_eq!(
-            size_bytes,
-            size_of::<AerogpuCmdSetShaderConstantsF>() + 16
-        );
+        assert_eq!(size_bytes, size_of::<AerogpuCmdSetShaderConstantsF>() + 16);
         assert_eq!(
             u32::from_le_bytes(
                 buf[cursor + offset_of!(AerogpuCmdSetShaderConstantsF, stage)

@@ -384,7 +384,9 @@ fn validate_report_list(
             })? / 8;
             let report_bytes = data_bytes
                 .checked_add(if report.report_id != 0 { 1 } else { 0 })
-                .ok_or_else(|| HidDescriptorError::at(&item_path, "report byte length overflows u32"))?;
+                .ok_or_else(|| {
+                    HidDescriptorError::at(&item_path, "report byte length overflows u32")
+                })?;
 
             match kind {
                 HidReportKind::Input => {

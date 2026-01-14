@@ -417,15 +417,27 @@ mod tests {
             "bytes=0-1,,2-3",
         ] {
             assert!(
-                matches!(parse_range_header(header).unwrap_err(), RangeParseError::InvalidSyntax),
+                matches!(
+                    parse_range_header(header).unwrap_err(),
+                    RangeParseError::InvalidSyntax
+                ),
                 "expected InvalidSyntax for {header:?}"
             );
         }
 
         // Non-digit numbers.
-        for header in ["bytes=a-1", "bytes=0-a", "bytes=0-1-2", "bytes=-1-2", "bytes=--1"] {
+        for header in [
+            "bytes=a-1",
+            "bytes=0-a",
+            "bytes=0-1-2",
+            "bytes=-1-2",
+            "bytes=--1",
+        ] {
             assert!(
-                matches!(parse_range_header(header).unwrap_err(), RangeParseError::InvalidNumber),
+                matches!(
+                    parse_range_header(header).unwrap_err(),
+                    RangeParseError::InvalidNumber
+                ),
                 "expected InvalidNumber for {header:?}"
             );
         }

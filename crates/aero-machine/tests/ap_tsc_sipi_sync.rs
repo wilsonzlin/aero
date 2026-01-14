@@ -22,7 +22,8 @@ fn ap_rdtsc_is_nonzero_and_in_sync_after_sipi() {
     cfg.enable_pc_platform = true;
 
     let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(boot_sector_spin_forever().to_vec()).unwrap();
+    m.set_disk_image(boot_sector_spin_forever().to_vec())
+        .unwrap();
     m.reset();
 
     // Advance BSP time so the global TSC is non-zero.
@@ -74,7 +75,10 @@ fn ap_rdtsc_is_nonzero_and_in_sync_after_sipi() {
             break;
         }
     }
-    assert_ne!(ap_tsc_low32, 0, "expected AP to execute and store a non-zero TSC");
+    assert_ne!(
+        ap_tsc_low32, 0,
+        "expected AP to execute and store a non-zero TSC"
+    );
 
     let tsc_after = m.cpu().msr.tsc;
     let before_low32 = tsc_before as u32;

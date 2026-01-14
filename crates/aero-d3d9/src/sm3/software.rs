@@ -12,13 +12,13 @@ use crate::state::{
 };
 use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
 
+use super::wgsl::varying_location;
+use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
     Stmt, TexSampleKind,
 };
-use super::wgsl::varying_location;
-use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 
 const MAX_LOOP_ITERS: usize = 1_024;
 const CONST_INT_REGS: usize = 16;
@@ -150,7 +150,11 @@ fn predicate_truth(pred: &PredicateRef, preds: &[Vec4]) -> bool {
     let idx = pred.reg.index as usize;
     let v = preds.get(idx).copied().unwrap_or(Vec4::ZERO);
     let truth = component(v, pred.component) != 0.0;
-    if pred.negate { !truth } else { truth }
+    if pred.negate {
+        !truth
+    } else {
+        truth
+    }
 }
 
 fn resolve_reg_index(
@@ -220,8 +224,14 @@ fn exec_src(
         (RegFile::Input, Some(i)) => inputs_v.get(&(i as u16)).copied().unwrap_or(Vec4::ZERO),
         (RegFile::Texture, Some(i)) => inputs_t.get(&(i as u16)).copied().unwrap_or(Vec4::ZERO),
         (RegFile::Const, Some(i)) => constants.f32.get(i as usize).copied().unwrap_or(Vec4::ZERO),
-        (RegFile::ConstInt, Some(i)) => constants.i32.get(i as usize).copied().unwrap_or(Vec4::ZERO),
-        (RegFile::ConstBool, Some(i)) => constants.bool.get(i as usize).copied().unwrap_or(Vec4::ZERO),
+        (RegFile::ConstInt, Some(i)) => {
+            constants.i32.get(i as usize).copied().unwrap_or(Vec4::ZERO)
+        }
+        (RegFile::ConstBool, Some(i)) => constants
+            .bool
+            .get(i as usize)
+            .copied()
+            .unwrap_or(Vec4::ZERO),
         _ => Vec4::ZERO,
     };
     let v = swizzle(v, src.swizzle);
@@ -329,11 +339,20 @@ fn eval_cond(
 ) -> bool {
     match cond {
         Cond::NonZero { src } => {
-            exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants).x != 0.0
+            exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            )
+            .x != 0.0
         }
         Cond::Compare { op, src0, src1 } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants).x;
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants).x;
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            )
+            .x;
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            )
+            .x;
             compare(*op, a, b)
         }
         Cond::Predicate { pred } => predicate_truth(pred, preds),
@@ -390,8 +409,9 @@ fn exec_block(
                 then_block,
                 else_block,
             } => {
-                let take_then =
-                    eval_cond(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                let take_then = eval_cond(
+                    cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+                );
                 if take_then {
                     exec_block(
                         then_block,
@@ -456,8 +476,8 @@ fn exec_block(
                 let end = ctrl.y as i32;
                 let step = ctrl.z as i32;
 
-                let Some(loop_idx) =
-                    resolve_reg_index(&init.loop_reg, temps, addrs, loops, preds).map(|v| v as usize)
+                let Some(loop_idx) = resolve_reg_index(&init.loop_reg, temps, addrs, loops, preds)
+                    .map(|v| v as usize)
                 else {
                     return Flow::Continue;
                 };
@@ -521,14 +541,18 @@ fn exec_block(
             }
             Stmt::Break => Flow::Break,
             Stmt::BreakIf { cond } => {
-                if eval_cond(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants) {
+                if eval_cond(
+                    cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+                ) {
                     Flow::Break
                 } else {
                     Flow::Continue
                 }
             }
             Stmt::Discard { src } => {
-                let v = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                let v = exec_src(
+                    src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+                );
                 if v.x < 0.0 || v.y < 0.0 || v.z < 0.0 || v.w < 0.0 {
                     Flow::Discard
                 } else {
@@ -605,66 +629,122 @@ fn exec_op(
     }
 
     let v = match op {
-        IrOp::Mov { src, .. } => exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants),
+        IrOp::Mov { src, .. } => exec_src(
+            src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+        ),
         IrOp::Mova { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             // Match the WGSL lowering: apply float result modifiers first, then convert float -> int.
             let a = apply_result_modifier(a, modifiers);
             let to_i32 = |v: f32| (v as i32) as f32;
             Vec4::new(to_i32(a.x), to_i32(a.y), to_i32(a.z), to_i32(a.w))
         }
         IrOp::Add { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             a + b
         }
         IrOp::Sub { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             a - b
         }
         IrOp::Mul { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             a * b
         }
-        IrOp::Mad { src0, src1, src2, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let c = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+        IrOp::Mad {
+            src0, src1, src2, ..
+        } => {
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let c = exec_src(
+                src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             a * b + c
         }
-        IrOp::Lrp { src0, src1, src2, .. } => {
-            let t = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let a = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+        IrOp::Lrp {
+            src0, src1, src2, ..
+        } => {
+            let t = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let a = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             // D3D9 `lrp`: dst = t*a + (1-t)*b.
             t * a + (Vec4::splat(1.0) - t) * b
         }
         IrOp::Dp2 { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::splat(a.x * b.x + a.y * b.y)
         }
-        IrOp::Dp2Add { src0, src1, src2, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let c = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+        IrOp::Dp2Add {
+            src0, src1, src2, ..
+        } => {
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let c = exec_src(
+                src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::splat(a.x * b.x + a.y * b.y + c.x)
         }
         IrOp::Dp3 { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::splat(a.dot3(b))
         }
         IrOp::Dp4 { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::splat(a.dot4(b))
         }
         IrOp::Crs { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             // D3D9 `crs`: cross product of the xyz components. The W component is not well-specified,
             // but most shaders only consume `.xyz`. Set W to 1.0 for deterministic output.
             Vec4::new(
@@ -682,13 +762,17 @@ fn exec_op(
             n,
             ..
         } => {
-            let v = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let v = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
 
             let mut dots = [0.0_f32; 4];
             for (col, dot) in dots.iter_mut().enumerate().take(usize::from(*n)) {
                 let mut column = src1.clone();
                 column.reg.index = column.reg.index.saturating_add(col as u32);
-                let mvec = exec_src(&column, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                let mvec = exec_src(
+                    &column, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+                );
                 *dot = match *m {
                     4 => v.dot4(mvec),
                     3 => v.dot3(mvec),
@@ -735,25 +819,35 @@ fn exec_op(
             }
         }
         IrOp::Rcp { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w)
         }
         IrOp::Rsq { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let inv_sqrt = |v: f32| 1.0 / v.sqrt();
             Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w))
         }
         IrOp::Frc { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let fract = |v: f32| v - v.floor();
             Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w))
         }
         IrOp::Abs { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             a.abs()
         }
         IrOp::Sgn { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let sign = |v: f32| {
                 if v > 0.0 {
                     1.0
@@ -766,12 +860,16 @@ fn exec_op(
             Vec4::new(sign(a.x), sign(a.y), sign(a.z), sign(a.w))
         }
         IrOp::Exp { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let exp2 = |v: f32| 2.0_f32.powf(v);
             Vec4::new(exp2(a.x), exp2(a.y), exp2(a.z), exp2(a.w))
         }
         IrOp::Log { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let log2 = |v: f32| v.log2();
             Vec4::new(log2(a.x), log2(a.y), log2(a.z), log2(a.w))
         }
@@ -781,7 +879,9 @@ fn exec_op(
             Vec4::ZERO
         }
         IrOp::Nrm { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let len = (a.x * a.x + a.y * a.y + a.z * a.z).sqrt();
             if len <= f32::EPSILON {
                 Vec4::new(0.0, 0.0, 0.0, 1.0)
@@ -790,7 +890,9 @@ fn exec_op(
             }
         }
         IrOp::Lit { src, .. } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let y = a.x.max(0.0);
             let z = if a.x > 0.0 {
                 a.y.max(0.0).powf(a.w)
@@ -800,19 +902,20 @@ fn exec_op(
             Vec4::new(1.0, y, z, 1.0)
         }
         IrOp::SinCos {
-            src,
-            src1,
-            src2,
-            ..
+            src, src1, src2, ..
         } => {
-            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let angle = match (src1, src2) {
                 (None, None) => a.x,
                 (Some(src1), Some(src2)) => {
-                    let s1 =
-                        exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-                    let s2 =
-                        exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                    let s1 = exec_src(
+                        src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+                    );
+                    let s2 = exec_src(
+                        src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+                    );
                     a.x * s1.x + s2.x
                 }
                 _ => a.x,
@@ -820,18 +923,30 @@ fn exec_op(
             Vec4::new(angle.sin(), angle.cos(), 0.0, 0.0)
         }
         IrOp::Min { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w))
         }
         IrOp::Max { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w))
         }
         IrOp::SetCmp { op, src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let cmp = |av: f32, bv: f32| compare(*op, av, bv) as u8 as f32;
             Vec4::new(cmp(a.x, b.x), cmp(a.y, b.y), cmp(a.z, b.z), cmp(a.w, b.w))
         }
@@ -841,9 +956,15 @@ fn exec_op(
             src_lt,
             ..
         } => {
-            let cond = exec_src(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let ge = exec_src(src_ge, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let lt = exec_src(src_lt, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let cond = exec_src(
+                cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let ge = exec_src(
+                src_ge, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let lt = exec_src(
+                src_lt, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let pick = |cond: f32, ge: f32, lt: f32| if cond >= 0.0 { ge } else { lt };
             Vec4::new(
                 pick(cond.x, ge.x, lt.x),
@@ -853,8 +974,12 @@ fn exec_op(
             )
         }
         IrOp::Pow { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let a = exec_src(
+                src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
+            let b = exec_src(
+                src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let pow = |a: f32, b: f32| a.powf(b);
             Vec4::new(pow(a.x, b.x), pow(a.y, b.y), pow(a.z, b.z), pow(a.w, b.w))
         }
@@ -867,7 +992,9 @@ fn exec_op(
             ..
         } => {
             // Reference model: use `software::Texture2D` sampling.
-            let coord_v = exec_src(coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let coord_v = exec_src(
+                coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
+            );
             let sampler_u16 = u16::try_from(*sampler).ok();
             let (u, v) = match kind {
                 TexSampleKind::ImplicitLod { project: true } => {
@@ -895,17 +1022,7 @@ fn exec_op(
         apply_result_modifier(v, modifiers)
     };
     exec_dst(
-        dst,
-        temps,
-        addrs,
-        loops,
-        preds,
-        o_pos,
-        o_attr,
-        o_tex,
-        o_out,
-        o_color,
-        v,
+        dst, temps, addrs, loops, preds, o_pos, o_attr, o_tex, o_out, o_color, v,
     );
 }
 
@@ -946,7 +1063,9 @@ fn read_f32(bytes: &[u8]) -> f32 {
 fn read_vertex_element(bytes: &[u8], ty: VertexElementType) -> Vec4 {
     match ty {
         VertexElementType::Float1 => Vec4::new(read_f32(&bytes[0..4]), 0.0, 0.0, 1.0),
-        VertexElementType::Float2 => Vec4::new(read_f32(&bytes[0..4]), read_f32(&bytes[4..8]), 0.0, 1.0),
+        VertexElementType::Float2 => {
+            Vec4::new(read_f32(&bytes[0..4]), read_f32(&bytes[4..8]), 0.0, 1.0)
+        }
         VertexElementType::Float3 => Vec4::new(
             read_f32(&bytes[0..4]),
             read_f32(&bytes[4..8]),
@@ -978,10 +1097,7 @@ struct VsOut {
     out: HashMap<u16, Vec4>,
 }
 
-fn prepare_constants(
-    constants_in: &[Vec4; 256],
-    ir: &crate::sm3::ir::ShaderIr,
-) -> ConstBank {
+fn prepare_constants(constants_in: &[Vec4; 256], ir: &crate::sm3::ir::ShaderIr) -> ConstBank {
     let mut f32 = *constants_in;
     for def in &ir.const_defs_f32 {
         if let Some(slot) = f32.get_mut(def.index as usize) {
@@ -1374,7 +1490,10 @@ fn collect_used_pixel_inputs_src(src: &Src, out: &mut BTreeSet<(RegFile, u32)>) 
     collect_used_pixel_inputs_reg(&src.reg, out);
 }
 
-fn collect_used_pixel_inputs_modifiers(modifiers: &InstModifiers, out: &mut BTreeSet<(RegFile, u32)>) {
+fn collect_used_pixel_inputs_modifiers(
+    modifiers: &InstModifiers,
+    out: &mut BTreeSet<(RegFile, u32)>,
+) {
     if let Some(pred) = &modifiers.predicate {
         collect_used_pixel_inputs_reg(&pred.reg, out);
     }
@@ -1513,8 +1632,9 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
         let mut varyings = HashMap::<u32, Vec4>::new();
         for (index, value) in attr {
             let index = u32::from(index);
-            let loc = varying_location(RegFile::AttrOut, index, None)
-                .unwrap_or_else(|e| panic!("failed to map AttrOut{index} to varying location: {e}"));
+            let loc = varying_location(RegFile::AttrOut, index, None).unwrap_or_else(|e| {
+                panic!("failed to map AttrOut{index} to varying location: {e}")
+            });
             varyings.insert(loc, value);
         }
         for (index, value) in tex {
@@ -1586,19 +1706,9 @@ fn rasterize_triangle(
     c: &ScreenVertex,
 ) {
     let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
-    let max_x = a
-        .x
-        .max(b.x)
-        .max(c.x)
-        .ceil()
-        .min(target.width as f32 - 1.0) as i32;
+    let max_x = a.x.max(b.x).max(c.x).ceil().min(target.width as f32 - 1.0) as i32;
     let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
-    let max_y = a
-        .y
-        .max(b.y)
-        .max(c.y)
-        .ceil()
-        .min(target.height as f32 - 1.0) as i32;
+    let max_y = a.y.max(b.y).max(c.y).ceil().min(target.height as f32 - 1.0) as i32;
 
     let area = edge(a.x, a.y, b.x, b.y, c.x, c.y);
     if area.abs() < f32::EPSILON {
@@ -1614,8 +1724,7 @@ fn rasterize_triangle(
             let w1 = edge(c.x, c.y, a.x, a.y, px, py);
             let w2 = edge(a.x, a.y, b.x, b.y, px, py);
 
-            if (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0)
-            {
+            if (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0) {
                 let b0 = w0 / area;
                 let b1 = w1 / area;
                 let b2 = w2 / area;

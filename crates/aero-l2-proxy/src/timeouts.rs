@@ -37,4 +37,3 @@ mod tests {
         assert!(res.is_err(), "expected timeout_opt to time out");
     }
 }
-

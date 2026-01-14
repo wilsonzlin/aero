@@ -62,7 +62,9 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
 
     // Enumerate hub (addr=1, cfg=1).
     {
-        let hub_dev = ctrl.port_device_mut(0).expect("expected hub on root port 0");
+        let hub_dev = ctrl
+            .port_device_mut(0)
+            .expect("expected hub on root port 0");
         control_no_data(
             hub_dev,
             SetupPacket {
@@ -112,7 +114,9 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
 
     // Enumerate downstream keyboard to addr=2, cfg=1.
     {
-        let hub_dev = ctrl.port_device_mut(0).expect("expected hub on root port 0");
+        let hub_dev = ctrl
+            .port_device_mut(0)
+            .expect("expected hub on root port 0");
         let kb_dev = hub_dev
             .model_mut()
             .hub_port_device_mut(1)
@@ -233,7 +237,13 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
     while restored.read_portsc(1) & PORTSC_PR != 0 {
         restored.tick_1ms_no_dma();
         remaining += 1;
-        assert!(remaining <= 50, "root port reset should complete within 50ms");
+        assert!(
+            remaining <= 50,
+            "root port reset should complete within 50ms"
+        );
     }
-    assert_eq!(remaining, 40, "expected 40ms remaining on restored port reset");
+    assert_eq!(
+        remaining, 40,
+        "expected 40ms remaining on restored port reset"
+    );
 }

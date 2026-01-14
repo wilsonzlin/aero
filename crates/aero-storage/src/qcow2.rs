@@ -109,10 +109,14 @@ impl Qcow2Header {
                 return Err(DiskError::Unsupported("qcow2 backing file"));
             }
             if backing_file_offset == 0 || backing_file_size == 0 {
-                return Err(DiskError::CorruptImage("qcow2 invalid backing file reference"));
+                return Err(DiskError::CorruptImage(
+                    "qcow2 invalid backing file reference",
+                ));
             }
             if backing_file_offset < header_length_u64 {
-                return Err(DiskError::CorruptImage("qcow2 backing file overlaps header"));
+                return Err(DiskError::CorruptImage(
+                    "qcow2 backing file overlaps header",
+                ));
             }
             let end = backing_file_offset
                 .checked_add(backing_file_size as u64)
@@ -822,7 +826,11 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         Ok(new_data_offset)
     }
 
-    fn copy_data_cluster(&mut self, src_cluster_offset: u64, dst_cluster_offset: u64) -> Result<()> {
+    fn copy_data_cluster(
+        &mut self,
+        src_cluster_offset: u64,
+        dst_cluster_offset: u64,
+    ) -> Result<()> {
         let cluster_size = self.cluster_size();
         // Heap-allocate the copy buffer to avoid large stack frames (important for wasm32).
         const CHUNK: u64 = 64 * 1024;

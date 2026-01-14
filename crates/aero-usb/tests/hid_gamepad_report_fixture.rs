@@ -48,7 +48,11 @@ fn hid_gamepad_report_vectors_match_fixture() {
     let mut unique_names = HashSet::<String>::new();
 
     for (idx, v) in vectors.iter().enumerate() {
-        let name = if v.name.is_empty() { "<unnamed>" } else { &v.name };
+        let name = if v.name.is_empty() {
+            "<unnamed>"
+        } else {
+            &v.name
+        };
         if !v.name.is_empty() {
             assert!(
                 unique_names.insert(v.name.clone()),

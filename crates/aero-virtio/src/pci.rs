@@ -449,8 +449,7 @@ impl VirtioPciDevice {
         {
             self.isr_cfg_read(offset - self.bar0_isr_offset, data);
         } else if offset >= self.bar0_device_offset
-            && offset
-                < self.bar0_device_offset + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_SIZE)
+            && offset < self.bar0_device_offset + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_SIZE)
         {
             self.device_cfg_read(offset - self.bar0_device_offset, data);
         } else {
@@ -512,8 +511,7 @@ impl VirtioPciDevice {
         {
             self.notify_cfg_write(offset - self.bar0_notify_offset, data);
         } else if offset >= self.bar0_device_offset
-            && offset
-                < self.bar0_device_offset + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_SIZE)
+            && offset < self.bar0_device_offset + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_SIZE)
         {
             self.device_cfg_write(offset - self.bar0_device_offset, data);
         } else {
@@ -1343,7 +1341,8 @@ impl VirtioPciDevice {
     }
 
     fn sync_legacy_irq_line(&mut self) {
-        let should_assert = self.legacy_irq_pending && !self.intx_disabled() && !self.msix_enabled();
+        let should_assert =
+            self.legacy_irq_pending && !self.intx_disabled() && !self.msix_enabled();
         if should_assert == self.legacy_irq_line {
             return;
         }
@@ -2339,10 +2338,8 @@ mod tests {
 
     #[test]
     fn reset_disables_msix_and_resets_vector_selects() {
-        let mut pci = VirtioPciDevice::new(
-            Box::new(CountingDevice::new(0)),
-            Box::new(NoopInterrupts),
-        );
+        let mut pci =
+            VirtioPciDevice::new(Box::new(CountingDevice::new(0)), Box::new(NoopInterrupts));
 
         // Enable MSI-X and set Function Mask so we can verify reset clears both bits.
         let cap_offset = pci

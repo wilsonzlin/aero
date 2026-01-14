@@ -124,7 +124,11 @@ fn rx_ring_consumes_descriptors_in_modulo_order_on_wraparound() {
     for (idx, buf_addr, frame) in expected {
         let desc_addr = 0x2000 + idx * 16;
         let (len, status, errors) = read_rx_desc_fields(&mut dma, desc_addr);
-        assert_eq!(len as usize, frame.len(), "length mismatch for desc idx={idx}");
+        assert_eq!(
+            len as usize,
+            frame.len(),
+            "length mismatch for desc idx={idx}"
+        );
         assert_eq!(status & 0x03, 0x03, "DD|EOP should be set for idx={idx}");
         assert_eq!(errors, 0, "unexpected errors for idx={idx}");
         assert_eq!(
@@ -140,4 +144,3 @@ fn rx_ring_consumes_descriptors_in_modulo_order_on_wraparound() {
     assert_eq!(status, 0);
     assert_eq!(errors, 0);
 }
-

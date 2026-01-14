@@ -291,7 +291,8 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                 None
             };
 
-            let requires_src = has_dst || matches!(opcode, crate::Opcode::Texkill | crate::Opcode::If);
+            let requires_src =
+                has_dst || matches!(opcode, crate::Opcode::Texkill | crate::Opcode::If);
 
             // Some opcodes have mandatory operands even when the instruction length nibble is
             // malformed (too small). Treat these as truncated encodings rather than silently

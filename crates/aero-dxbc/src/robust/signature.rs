@@ -69,4 +69,3 @@ pub(crate) fn parse_signature(fourcc: FourCc, bytes: &[u8]) -> Result<DxbcSignat
 
     Ok(DxbcSignature { parameters })
 }
-

@@ -78,4 +78,3 @@ fn boot_sector_int10_mode13h_sets_live_vga_mode_and_pixel_is_visible() {
     // Palette index 4 in the default VGA palette is EGA red: RGB(0xAA, 0x00, 0x00).
     assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_00AA);
 }
-

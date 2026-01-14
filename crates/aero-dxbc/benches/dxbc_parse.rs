@@ -37,12 +37,16 @@ fn bench_dxbc_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("dxbc_parse");
     for (name, bytes) in PARSE_FIXTURES {
         group.throughput(Throughput::Bytes(bytes.len() as u64));
-        group.bench_with_input(BenchmarkId::new("DxbcFile::parse", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let file = DxbcFile::parse(black_box(bytes)).expect("fixture must parse");
-                black_box(file);
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("DxbcFile::parse", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let file = DxbcFile::parse(black_box(bytes)).expect("fixture must parse");
+                    black_box(file);
+                })
+            },
+        );
     }
     group.finish();
 }

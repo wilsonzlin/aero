@@ -9,17 +9,14 @@ fn wgpu_draw_indirect_renders_pixels() {
     pollster::block_on(async {
         let test_name = concat!(module_path!(), "::wgpu_draw_indirect_renders_pixels");
 
-        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 draw_indirect test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                return;
-            }
-        };
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 draw_indirect test device").await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
 
         let (args_size, args_align) = DrawIndirectArgs::layout();
         assert_eq!(args_size, 16);

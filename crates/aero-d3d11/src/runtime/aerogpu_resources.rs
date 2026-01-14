@@ -18,9 +18,9 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     MappedInputLayout, VsInputSignatureElement,
 };
+use crate::sm4::opcode as sm4_opcode;
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
-use crate::sm4::opcode as sm4_opcode;
 
 fn device_supports_storage_buffers(device: &wgpu::Device) -> bool {
     let limits = device.limits();
@@ -432,7 +432,10 @@ impl AerogpuResourceManager {
         // Signature entries include a `stream` field (used by GS multi-stream output / stream-out).
         // Our rasterization pipeline only supports stream 0 at the moment, so reject shaders that
         // declare non-zero streams to avoid silent misrendering.
-        if matches!(stage, AerogpuShaderStage::Vertex | AerogpuShaderStage::Pixel) {
+        if matches!(
+            stage,
+            AerogpuShaderStage::Vertex | AerogpuShaderStage::Pixel
+        ) {
             if let Some(osgn) = signatures.osgn.as_ref() {
                 for p in &osgn.parameters {
                     if p.stream != 0 {
@@ -470,7 +473,8 @@ impl AerogpuResourceManager {
             });
 
         let reflection = if stage == AerogpuShaderStage::Vertex && signature_driven {
-            let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
+            let module =
+                crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
             ShaderReflection {
                 vs_input_signature: extract_vs_input_signature_unique_locations(
                     &signatures,
@@ -825,8 +829,8 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
     while i < toks.len() {
         let opcode_token = toks[i];
         let opcode = opcode_token & sm4_opcode::OPCODE_MASK;
-        let len = ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK)
-            as usize;
+        let len =
+            ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK) as usize;
         if len == 0 || i + len > toks.len() {
             // Malformed instruction; let downstream decode/translation surface the issue.
             return Ok(());
@@ -1110,10 +1114,7 @@ pub fn map_aerogpu_format(format: u32) -> Result<LinearTextureFormat> {
     })
 }
 
-pub fn map_buffer_usage_flags(
-    usage_flags: u32,
-    supports_compute: bool,
-) -> wgpu::BufferUsages {
+pub fn map_buffer_usage_flags(usage_flags: u32, supports_compute: bool) -> wgpu::BufferUsages {
     let mut out = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
     // Compute-based GS emulation (vertex pulling + expansion) and raw/structured buffer bindings
     // represent buffers as `var<storage>` in WGSL. wgpu requires buffers used in storage bindings
@@ -1359,10 +1360,7 @@ fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
     bytes_per_row.div_ceil(align) * align
 }
 
-fn texture_unpadded_bytes_per_row(
-    format: LinearTextureFormat,
-    width_texels: u32,
-) -> Result<u32> {
+fn texture_unpadded_bytes_per_row(format: LinearTextureFormat, width_texels: u32) -> Result<u32> {
     let info = linear_format_layout_info(format)?;
     Ok(match info {
         TextureFormatLayout::Uncompressed { bytes_per_texel } => width_texels
@@ -1660,7 +1658,8 @@ fn upload_texture_from_linear_bytes(
                 let dst_tight_bpr_usize: usize = dst_tight_bpr
                     .try_into()
                     .context("dst bytes_per_row out of range")?;
-                let height_usize: usize = linear.height.try_into().context("height out of range")?;
+                let height_usize: usize =
+                    linear.height.try_into().context("height out of range")?;
                 let tight_len = dst_tight_bpr_usize
                     .checked_mul(height_usize)
                     .ok_or_else(|| anyhow!("expanded size overflows usize"))?;
@@ -1696,27 +1695,27 @@ fn upload_texture_from_linear_bytes(
                     }
                 }
 
-                let padded_bytes_per_row = if linear.height > 1 && !dst_tight_bpr.is_multiple_of(align)
-                {
-                    align_copy_bytes_per_row(dst_tight_bpr)
-                } else {
-                    dst_tight_bpr
-                };
-
-                let upload_bytes: std::borrow::Cow<'_, [u8]> =
-                    if padded_bytes_per_row == dst_tight_bpr {
-                        std::borrow::Cow::Owned(rgba)
+                let padded_bytes_per_row =
+                    if linear.height > 1 && !dst_tight_bpr.is_multiple_of(align) {
+                        align_copy_bytes_per_row(dst_tight_bpr)
                     } else {
-                        let mut tmp =
-                            vec![0u8; padded_bytes_per_row as usize * linear.height as usize];
-                        for y in 0..linear.height as usize {
-                            let src_start = y * dst_tight_bpr as usize;
-                            let dst_start = y * padded_bytes_per_row as usize;
-                            tmp[dst_start..dst_start + dst_tight_bpr as usize]
-                                .copy_from_slice(&rgba[src_start..src_start + dst_tight_bpr as usize]);
-                        }
-                        std::borrow::Cow::Owned(tmp)
+                        dst_tight_bpr
                     };
+
+                let upload_bytes: std::borrow::Cow<'_, [u8]> = if padded_bytes_per_row
+                    == dst_tight_bpr
+                {
+                    std::borrow::Cow::Owned(rgba)
+                } else {
+                    let mut tmp = vec![0u8; padded_bytes_per_row as usize * linear.height as usize];
+                    for y in 0..linear.height as usize {
+                        let src_start = y * dst_tight_bpr as usize;
+                        let dst_start = y * padded_bytes_per_row as usize;
+                        tmp[dst_start..dst_start + dst_tight_bpr as usize]
+                            .copy_from_slice(&rgba[src_start..src_start + dst_tight_bpr as usize]);
+                    }
+                    std::borrow::Cow::Owned(tmp)
+                };
 
                 queue.write_texture(
                     wgpu::ImageCopyTexture {
@@ -1784,27 +1783,31 @@ fn upload_texture_from_linear_bytes(
 
                 let (extent_width, extent_height) =
                     match wgpu_format_layout_info(desc.texture_format)? {
-                    TextureFormatLayout::BlockCompressed {
-                        block_width,
-                        block_height,
-                        ..
-                    } => {
-                        // WebGPU requires BC uploads to use the physical (block-rounded) size, even
-                        // when the mip itself is smaller than a full block.
-                        let w = linear
-                            .width
-                            .div_ceil(block_width)
-                            .checked_mul(block_width)
-                            .ok_or_else(|| anyhow!("texture upload extent width overflows u32"))?;
-                        let h = linear
-                            .height
-                            .div_ceil(block_height)
-                            .checked_mul(block_height)
-                            .ok_or_else(|| anyhow!("texture upload extent height overflows u32"))?;
-                        (w, h)
-                    }
-                    TextureFormatLayout::Uncompressed { .. } => (linear.width, linear.height),
-                };
+                        TextureFormatLayout::BlockCompressed {
+                            block_width,
+                            block_height,
+                            ..
+                        } => {
+                            // WebGPU requires BC uploads to use the physical (block-rounded) size, even
+                            // when the mip itself is smaller than a full block.
+                            let w = linear
+                                .width
+                                .div_ceil(block_width)
+                                .checked_mul(block_width)
+                                .ok_or_else(|| {
+                                    anyhow!("texture upload extent width overflows u32")
+                                })?;
+                            let h = linear
+                                .height
+                                .div_ceil(block_height)
+                                .checked_mul(block_height)
+                                .ok_or_else(|| {
+                                    anyhow!("texture upload extent height overflows u32")
+                                })?;
+                            (w, h)
+                        }
+                        TextureFormatLayout::Uncompressed { .. } => (linear.width, linear.height),
+                    };
 
                 queue.write_texture(
                     wgpu::ImageCopyTexture {

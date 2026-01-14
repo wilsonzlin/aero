@@ -765,7 +765,10 @@ fn validate_packaging_specs(
                             existing.expected_add_services.push(svc);
                         }
                     }
-                    if existing.expected_add_services_from_devices_cmd_var.is_none() {
+                    if existing
+                        .expected_add_services_from_devices_cmd_var
+                        .is_none()
+                    {
                         existing.expected_add_services_from_devices_cmd_var =
                             legacy.expected_add_services_from_devices_cmd_var;
                     }
@@ -1787,7 +1790,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                 // virtio-input is intentionally SUBSYS-only (keyboard + mouse) so the canonical keyboard/mouse INF
                 // does not overlap with the tablet INF. The generic (no SUBSYS) fallback HWID is carried only by
                 // the opt-in legacy alias INF (`virtio-input.inf.disabled`).
-                if dev.device != "virtio-input" && !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
+                if dev.device != "virtio-input"
+                    && !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict))
+                {
                     bail!(
                         "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
                         inf_path.display(),
@@ -1832,7 +1837,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         expected_rev,
                         /* require_fallback */ false,
                     )
-                    .with_context(|| format!("{name}: validate virtio-input canonical DeviceDesc split"))?;
+                    .with_context(|| {
+                        format!("{name}: validate virtio-input canonical DeviceDesc split")
+                    })?;
 
                     // Optional: validate the legacy alias INF (if present) which is allowed to carry
                     // a strict generic fallback HWID for environments that don't expose subsystem IDs.
@@ -1844,8 +1851,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         if !alias.exists() {
                             continue;
                         }
-                        let alias_text = read_inf_text(&alias)
-                            .with_context(|| format!("{name}: read virtio-input legacy alias INF"))?;
+                        let alias_text = read_inf_text(&alias).with_context(|| {
+                            format!("{name}: read virtio-input legacy alias INF")
+                        })?;
                         validate_virtio_input_device_desc_split(
                             &alias,
                             &alias_text,

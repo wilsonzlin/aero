@@ -210,7 +210,12 @@ fn inf_strings(contents: &str) -> BTreeMap<String, String> {
     out
 }
 
-fn inf_section_has_token(contents: &str, section_name: &str, key: &str, expected_token: &str) -> bool {
+fn inf_section_has_token(
+    contents: &str,
+    section_name: &str,
+    key: &str,
+    expected_token: &str,
+) -> bool {
     let mut current_section = String::new();
     for raw in contents.lines() {
         let line = raw.split(';').next().unwrap_or("").trim();
@@ -397,9 +402,8 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
     let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
-        let (kbd_desc, kbd_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
-                .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
+        let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
+            .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
         let (mouse_desc, mouse_install) =
             inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
                 .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
@@ -407,7 +411,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
                 .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
 
-        assert_eq!(kbd_install, mouse_install, "{section}: install section mismatch");
+        assert_eq!(
+            kbd_install, mouse_install,
+            "{section}: install section mismatch"
+        );
         assert_eq!(
             kbd_install, fallback_install,
             "{section}: install section mismatch"
@@ -507,7 +514,8 @@ fn windows_device_contract_virtio_snd_inf_opts_into_msi() {
         inf_path.display()
     );
 
-    let inf_contents = std::fs::read_to_string(&inf_path).expect("read virtio-snd INF from repository");
+    let inf_contents =
+        std::fs::read_to_string(&inf_path).expect("read virtio-snd INF from repository");
 
     assert!(
         inf_section_has_token(

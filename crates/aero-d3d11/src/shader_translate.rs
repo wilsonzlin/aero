@@ -629,8 +629,12 @@ fn translate_hs(
     resources.emit_decls(&mut w, ShaderStage::Hull)?;
 
     w.line(&format!("const HS_IN_STRIDE: u32 = {hs_in_stride}u;"));
-    w.line(&format!("const HS_CP_OUT_STRIDE: u32 = {hs_cp_out_stride}u;"));
-    w.line(&format!("const HS_PC_OUT_STRIDE: u32 = {hs_pc_out_stride}u;"));
+    w.line(&format!(
+        "const HS_CP_OUT_STRIDE: u32 = {hs_cp_out_stride}u;"
+    ));
+    w.line(&format!(
+        "const HS_PC_OUT_STRIDE: u32 = {hs_pc_out_stride}u;"
+    ));
     w.line("const HS_MAX_CONTROL_POINTS: u32 = 32u;");
     if let Some(count) = output_control_points {
         w.line(&format!("const HS_OUTPUT_CONTROL_POINTS: u32 = {count}u;"));
@@ -662,9 +666,7 @@ fn translate_hs(
 
     w.line("");
     for &reg in io_cp.outputs.keys() {
-        w.line(&format!(
-            "hs_out_cp.data[hs_out_base + {reg}u] = o{reg};"
-        ));
+        w.line(&format!("hs_out_cp.data[hs_out_base + {reg}u] = o{reg};"));
     }
     w.dedent();
     w.line("}");
@@ -692,9 +694,7 @@ fn translate_hs(
 
     w.line("");
     for &reg in io_pc.outputs.keys() {
-        w.line(&format!(
-            "hs_out_pc.data[hs_out_base + {reg}u] = o{reg};"
-        ));
+        w.line(&format!("hs_out_pc.data[hs_out_base + {reg}u] = o{reg};"));
     }
     w.dedent();
     w.line("}");
@@ -1954,9 +1954,7 @@ impl IoMaps {
                         HullSysValue::PrimitiveId => "hs_primitive_id",
                         HullSysValue::OutputControlPointId => "hs_output_control_point_id",
                     };
-                    return Ok(format!(
-                        "vec4<f32>(bitcast<f32>({expr}), 0.0, 0.0, 1.0)"
-                    ));
+                    return Ok(format!("vec4<f32>(bitcast<f32>({expr}), 0.0, 0.0, 1.0)"));
                 }
 
                 let p = self.inputs.get(&reg).ok_or(
@@ -3220,16 +3218,16 @@ fn emit_instructions(
 
     let close_case_body =
         |w: &mut WgslWriter, cf_stack: &mut Vec<CfFrame>| -> Result<(), ShaderTranslateError> {
-        let Some(CfFrame::Case) = cf_stack.last() else {
-            return Ok(());
-        };
+            let Some(CfFrame::Case) = cf_stack.last() else {
+                return Ok(());
+            };
 
-        // Close the WGSL case block.
-        w.dedent();
-        w.line("}");
-        cf_stack.pop();
-        Ok(())
-    };
+            // Close the WGSL case block.
+            w.dedent();
+            w.line("}");
+            cf_stack.pop();
+            Ok(())
+        };
 
     let flush_pending_labels = |w: &mut WgslWriter,
                                 cf_stack: &mut Vec<CfFrame>,
@@ -3711,9 +3709,9 @@ fn emit_instructions(
                     dst_rem.mask,
                     r_f_name,
                     inst_index,
-                     "idiv",
-                     ctx,
-                 )?;
+                    "idiv",
+                    ctx,
+                )?;
             }
             Sm4Inst::IAdd { dst, a, b } => {
                 let a = emit_src_vec4_i32(a, inst_index, "iadd", ctx)?;
@@ -4236,18 +4234,12 @@ fn emit_instructions(
                     load_lane(8, 3),
                 ));
                 let f_name = format!("ld_uav_struct_f{inst_index}");
-                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+                w.line(&format!(
+                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                ));
 
                 let expr = maybe_saturate(dst, f_name);
-                emit_write_masked(
-                    w,
-                    dst.reg,
-                    dst.mask,
-                    expr,
-                    inst_index,
-                    "ld_structured",
-                    ctx,
-                )?;
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_structured", ctx)?;
             }
             Sm4Inst::StoreStructured {
                 uav,
@@ -4408,7 +4400,9 @@ fn emit_instructions(
                     load_lane(8, 3),
                 ));
                 let f_name = format!("ld_uav_raw_f{inst_index}");
-                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+                w.line(&format!(
+                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                ));
 
                 let expr = maybe_saturate(dst, f_name);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_uav_raw", ctx)?;
@@ -4428,7 +4422,15 @@ fn emit_instructions(
                         let tmp = format!("atomic_old_{inst_index}");
                         w.line(&format!("let {tmp}: u32 = atomicAdd({ptr}, {value_u32});"));
                         let expr = format!("vec4<f32>(bitcast<f32>({tmp}))");
-                        emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "atomic_add", ctx)?;
+                        emit_write_masked(
+                            w,
+                            dst.reg,
+                            dst.mask,
+                            expr,
+                            inst_index,
+                            "atomic_add",
+                            ctx,
+                        )?;
                     }
                     None => {
                         w.line(&format!("atomicAdd({ptr}, {value_u32});"));
@@ -5676,10 +5678,7 @@ mod tests {
             semantic_to_d3d_name("sv_groupthreadid"),
             Some(D3D_NAME_GROUP_THREAD_ID)
         );
-        assert_eq!(
-            semantic_to_d3d_name("SV_GROUPID"),
-            Some(D3D_NAME_GROUP_ID)
-        );
+        assert_eq!(semantic_to_d3d_name("SV_GROUPID"), Some(D3D_NAME_GROUP_ID));
         assert_eq!(
             semantic_to_d3d_name("sv_groupindex"),
             Some(D3D_NAME_GROUP_INDEX)

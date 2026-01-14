@@ -66,9 +66,19 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     // Configure interrupter 0 to deliver events into our guest event ring.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (event_ring_base >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (event_ring_base >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // EP0 control-IN GET_DESCRIPTOR via Setup/Data/Status stage TRBs.
@@ -99,7 +109,7 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
     status_trb.control |= Trb::CONTROL_IOC; // request Transfer Event
-    // DIR=0 (Status OUT) for a control read.
+                                            // DIR=0 (Status OUT) for a control read.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     // Initialise guest DMA buffer to a sentinel.
@@ -110,8 +120,8 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 
     // Ring doorbell via MMIO and tick once: SETUP is consumed, DATA stage NAKs, no event yet.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
 
@@ -174,7 +184,11 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
 
     // Tick until the DATA + STATUS stages complete; then service the event ring.
     xhci.tick(&mut mem);
-    assert_eq!(xhci.pending_event_count(), 1, "transfer event should be queued");
+    assert_eq!(
+        xhci.pending_event_count(),
+        1,
+        "transfer event should be queued"
+    );
     xhci.service_event_ring(&mut mem);
 
     // DMA should have written the returned bytes into guest memory.
@@ -194,11 +208,13 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     assert_eq!(ev.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev.slot_id(), slot_id);
     assert_eq!(ev.endpoint_id(), 1);
-    assert_eq!(ev.parameter & !0x0f, transfer_ring_base + 2 * TRB_LEN as u64);
+    assert_eq!(
+        ev.parameter & !0x0f,
+        transfer_ring_base + 2 * TRB_LEN as u64
+    );
     assert_eq!(ev.completion_code_raw(), CompletionCode::Success.raw());
     assert_eq!(ev.status & 0x00ff_ffff, 0);
 
     assert!(xhci.interrupter0().interrupt_pending());
     assert!(xhci.irq_level());
 }
-

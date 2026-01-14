@@ -40,4 +40,3 @@ fn instruction_conformance_qemu_reference() {
         None => std::env::remove_var("AERO_CONFORMANCE_CASES"),
     }
 }
-

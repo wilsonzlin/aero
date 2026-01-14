@@ -40,8 +40,14 @@ async fn cors_origin_override_is_applied_to_metadata_and_bytes_endpoints() {
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
-        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
-        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+        (
+            "chunked-manifest",
+            "/v1/images/test.img/chunked/manifest.json",
+        ),
+        (
+            "chunked-chunk",
+            "/v1/images/test.img/chunked/chunks/00000000.bin",
+        ),
     ] {
         let resp = app
             .clone()
@@ -104,8 +110,14 @@ async fn cors_preflight_for_metadata_endpoints_allows_if_none_match() {
     for (name, uri) in [
         ("list", "/v1/images"),
         ("meta", "/v1/images/test.img/meta"),
-        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
-        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+        (
+            "chunked-manifest",
+            "/v1/images/test.img/chunked/manifest.json",
+        ),
+        (
+            "chunked-chunk",
+            "/v1/images/test.img/chunked/chunks/00000000.bin",
+        ),
     ] {
         let resp = app
             .clone()

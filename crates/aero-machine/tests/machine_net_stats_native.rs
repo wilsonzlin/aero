@@ -78,15 +78,7 @@ fn parse_caps(cfg: &[u8; 256]) -> Caps {
     caps
 }
 
-fn write_desc(
-    m: &mut Machine,
-    table: u64,
-    index: u16,
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-) {
+fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
     let base = table + u64::from(index) * 16;
     m.write_physical_u64(base, addr);
     m.write_physical_u32(base + 8, len);

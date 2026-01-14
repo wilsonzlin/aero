@@ -61,4 +61,3 @@ fn aerogpu_port_window_emulates_vga_dac_ports() {
     // Read index auto-increments after every 3 components.
     assert_eq!(m.io_read(0x3C7, 1) as u8, base_index.wrapping_add(2));
 }
-

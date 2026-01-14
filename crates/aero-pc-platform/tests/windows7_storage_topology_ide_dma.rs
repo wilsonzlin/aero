@@ -152,7 +152,8 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
         *b = (i as u8).wrapping_add(0x10);
     }
     ide_disk.write_at(0, &expected_ata).unwrap();
-    pc.attach_ide_primary_master_disk(Box::new(ide_disk)).unwrap();
+    pc.attach_ide_primary_master_disk(Box::new(ide_disk))
+        .unwrap();
 
     // Locate the BMIDE BAR4 base and enable bus mastering.
     let bdf = profile::IDE_PIIX3.bdf;
@@ -228,7 +229,8 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
     // -------------------------------------------------------------------------
     // One PRD entry: 2048 bytes, EOT.
     pc.memory.write_u32(atapi_prd, atapi_buf as u32);
-    pc.memory.write_u16(atapi_prd + 4, AtapiCdrom::SECTOR_SIZE as u16);
+    pc.memory
+        .write_u16(atapi_prd + 4, AtapiCdrom::SECTOR_SIZE as u16);
     pc.memory.write_u16(atapi_prd + 6, 0x8000);
 
     // Program secondary PRD pointer (BMIDE base + 8 + 4) and clear status.
@@ -250,7 +252,13 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
     let mut read10 = [0u8; 12];
     read10[0] = 0x28;
     read10[7..9].copy_from_slice(&1u16.to_be_bytes());
-    atapi_send_packet(&mut pc, sec_cmd, 0x01, &read10, AtapiCdrom::SECTOR_SIZE as u16);
+    atapi_send_packet(
+        &mut pc,
+        sec_cmd,
+        0x01,
+        &read10,
+        AtapiCdrom::SECTOR_SIZE as u16,
+    );
     // The PACKET command phase can raise an interrupt requesting the 12-byte packet; our helper
     // supplies it synchronously, so clear that interrupt before checking DMA completion.
     let _ = pc.io.read(sec_cmd + 7, 1);

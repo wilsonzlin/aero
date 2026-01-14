@@ -14,9 +14,13 @@ fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
     bytes
 }
 
-fn make_program_header(stage_type: u16, model_major: u8, model_minor: u8, declared_len: u32) -> [u32; 2] {
-    let version =
-        ((stage_type as u32) << 16) | ((model_major as u32) << 4) | (model_minor as u32);
+fn make_program_header(
+    stage_type: u16,
+    model_major: u8,
+    model_minor: u8,
+    declared_len: u32,
+) -> [u32; 2] {
+    let version = ((stage_type as u32) << 16) | ((model_major as u32) << 4) | (model_minor as u32);
     [version, declared_len]
 }
 
@@ -96,7 +100,10 @@ fn declared_length_too_small_is_error() {
     let dxbc = DxbcFile::parse(&bytes).expect("DXBC parse");
 
     let err = Sm4Program::parse_from_dxbc(&dxbc).unwrap_err();
-    assert!(matches!(err, Sm4Error::DeclaredLengthTooSmall { declared: 1 }));
+    assert!(matches!(
+        err,
+        Sm4Error::DeclaredLengthTooSmall { declared: 1 }
+    ));
 }
 
 #[test]

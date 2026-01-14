@@ -7,26 +7,26 @@
 use core::mem::{offset_of, size_of};
 
 use super::aerogpu_cmd::{
-    encode_stage_ex, encode_stage_ex_reserved0, AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdClear,
-    AerogpuCmdCopyBuffer,
-    AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateSampler, AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d,
-    AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroySampler,
-    AerogpuCmdDestroyShader, AerogpuCmdDispatch, AerogpuCmdDraw, AerogpuCmdDrawIndexed,
-    AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdImportSharedSurface,
-    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface,
-    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetConstantBuffers,
-    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
-    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetSamplers,
-    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
-    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdSetVertexBuffers,
-    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
-    AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode,
-    AerogpuHandle, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode,
-    AerogpuSamplerFilter, AerogpuShaderResourceBufferBinding, AerogpuShaderStage,
-    AerogpuShaderStageEx, AerogpuUnorderedAccessBufferBinding, AerogpuVertexBufferBinding,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_MAX_RENDER_TARGETS,
+    encode_stage_ex, encode_stage_ex_reserved0, AerogpuBlendFactor, AerogpuBlendOp,
+    AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer,
+    AerogpuCmdCreateInputLayout, AerogpuCmdCreateSampler, AerogpuCmdCreateShaderDxbc,
+    AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
+    AerogpuCmdDestroySampler, AerogpuCmdDestroyShader, AerogpuCmdDispatch, AerogpuCmdDraw,
+    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
+    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
+    AerogpuCmdReleaseSharedSurface, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
+    AerogpuCmdSetConstantBuffers, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
+    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
+    AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
+    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
+    AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode, AerogpuHandle,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode, AerogpuSamplerFilter,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuUnorderedAccessBufferBinding, AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_MAX_RENDER_TARGETS,
 };
 use super::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -509,10 +509,7 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle),
             shader_handle,
         );
-        self.write_u32_at(
-            base + offset_of!(AerogpuCmdCreateShaderDxbc, stage),
-            stage,
-        );
+        self.write_u32_at(base + offset_of!(AerogpuCmdCreateShaderDxbc, stage), stage);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes),
             dxbc_bytes.len() as u32,
@@ -581,8 +578,7 @@ impl AerogpuCmdWriter {
     ) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;
 
-        let unpadded_size =
-            size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<AerogpuHandle>();
+        let unpadded_size = size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<AerogpuHandle>();
         let base = self.append_raw(AerogpuCmdOpcode::BindShaders, unpadded_size);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
@@ -804,7 +800,10 @@ impl AerogpuCmdWriter {
         );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, slot), slot);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, texture), texture);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetTexture, reserved0), reserved0);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetTexture, reserved0),
+            reserved0,
+        );
     }
 
     /// Stage-ex aware variant of [`Self::set_texture`].
@@ -944,7 +943,10 @@ impl AerogpuCmdWriter {
             base + offset_of!(AerogpuCmdSetSamplers, sampler_count),
             samplers.len() as u32,
         );
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplers, reserved0), reserved0);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetSamplers, reserved0),
+            reserved0,
+        );
 
         let payload_base = base + size_of::<AerogpuCmdSetSamplers>();
         for (i, &sampler) in samplers.iter().enumerate() {
@@ -994,7 +996,10 @@ impl AerogpuCmdWriter {
         );
         self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplers, start_slot), slot);
         self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplers, sampler_count), 1);
-        self.write_u32_at(base + offset_of!(AerogpuCmdSetSamplers, reserved0), reserved0);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetSamplers, reserved0),
+            reserved0,
+        );
 
         let payload_base = base + size_of::<AerogpuCmdSetSamplers>();
         self.write_u32_at(payload_base, sampler);
@@ -1188,7 +1193,12 @@ impl AerogpuCmdWriter {
         start_slot: u32,
         bindings: &[AerogpuShaderResourceBufferBinding],
     ) {
-        self.set_shader_resource_buffers_stage_ex(AerogpuShaderStage::Compute, Some(stage_ex), start_slot, bindings);
+        self.set_shader_resource_buffers_stage_ex(
+            AerogpuShaderStage::Compute,
+            Some(stage_ex),
+            start_slot,
+            bindings,
+        );
     }
 
     pub fn set_unordered_access_buffers(
@@ -1285,7 +1295,14 @@ impl AerogpuCmdWriter {
         offset_bytes: u32,
         size_bytes: u32,
     ) {
-        self.set_constant_buffer_stage_ex(shader_stage, None, slot, buffer, offset_bytes, size_bytes);
+        self.set_constant_buffer_stage_ex(
+            shader_stage,
+            None,
+            slot,
+            buffer,
+            offset_bytes,
+            size_bytes,
+        );
     }
 
     pub fn set_constant_buffer_stage_ex(

@@ -25,4 +25,3 @@ fn invlpg_log_is_capped_and_counts_drops() {
     assert_eq!(ctx.invlpg_log.len(), AssistContext::INVLPG_LOG_CAP);
     assert_eq!(ctx.invlpg_log_dropped(), extra as u64);
 }
-

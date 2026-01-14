@@ -11,4 +11,3 @@ fn per_cpu_lapic_mmio_view_exposes_correct_apic_id() {
         assert_eq!(value >> 24, cpu as u32);
     }
 }
-

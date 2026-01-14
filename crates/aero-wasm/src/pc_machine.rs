@@ -128,10 +128,7 @@ impl PcMachine {
 
     /// Return the current BIOS TTY output length without copying the bytes into JS.
     pub fn bios_tty_output_len(&self) -> u32 {
-        self.inner
-            .bios_tty_output()
-            .len()
-            .min(u32::MAX as usize) as u32
+        self.inner.bios_tty_output().len().min(u32::MAX as usize) as u32
     }
 
     /// Clear the BIOS TTY output buffer without reading it.

@@ -115,11 +115,13 @@ fn aerogpu_legacy_vga_ports_minimal_semantics() {
         m.tick_platform(STEP_NS);
     }
     assert!(any_high, "expected to observe vblank bit set at least once");
-    assert!(any_low, "expected to observe vblank bit clear at least once");
+    assert!(
+        any_low,
+        "expected to observe vblank bit clear at least once"
+    );
 
     // ---------------------------------------------------------------------
     // Unimplemented reads should float high.
     // ---------------------------------------------------------------------
     assert_eq!(m.io_read(0x3C3, 1) as u8, 0xFF);
 }
-

@@ -84,7 +84,11 @@ fn read_bar_dword_programmed(cfg: &mut PciConfigSpace, aligned_offset: u16) -> u
     }
 
     // High dword of a 64-bit BAR.
-    if bar_index > 0 && matches!(cfg.bar_definition(bar_index - 1), Some(PciBarDefinition::Mmio64 { .. }))
+    if bar_index > 0
+        && matches!(
+            cfg.bar_definition(bar_index - 1),
+            Some(PciBarDefinition::Mmio64 { .. })
+        )
     {
         let base = cfg.bar_range(bar_index - 1).map(|r| r.base).unwrap_or(0);
         return (base >> 32) as u32;

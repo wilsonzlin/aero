@@ -6,4 +6,3 @@
 //! working without renaming the canonical crate.
 
 pub use aero_protocol::*;
-

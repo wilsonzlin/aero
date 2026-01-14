@@ -13,7 +13,9 @@ pub use aero_usb::xhci::{regs, XhciController};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 use memory::MemoryBus;
 
-use aero_devices::pci::profile::{PCI_DEVICE_ID_QEMU_XHCI, PCI_VENDOR_ID_REDHAT_QEMU, USB_XHCI_QEMU};
+use aero_devices::pci::profile::{
+    PCI_DEVICE_ID_QEMU_XHCI, PCI_VENDOR_ID_REDHAT_QEMU, USB_XHCI_QEMU,
+};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 
 enum AeroUsbMemoryBus<'a> {
@@ -210,6 +212,7 @@ impl MmioDevice for XhciPciDevice {
         } else {
             AeroUsbMemoryBus::NoDma
         };
-        self.controller.mmio_write(&mut adapter, offset, size, value);
+        self.controller
+            .mmio_write(&mut adapter, offset, size, value);
     }
 }

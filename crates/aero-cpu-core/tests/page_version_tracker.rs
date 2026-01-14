@@ -32,7 +32,11 @@ fn oom_hardening_large_addresses_and_lengths_do_not_panic() {
     // Huge/out-of-range addresses must be ignored, not cause reallocations/panics.
     tracker.bump_write(u64::MAX - PAGE_SIZE, PAGE_SIZE as usize);
     let snapshot = tracker.snapshot(u64::MAX - PAGE_SIZE, u32::MAX);
-    assert_eq!(snapshot.len(), 2, "expected to span at most two pages near u64::MAX");
+    assert_eq!(
+        snapshot.len(),
+        2,
+        "expected to span at most two pages near u64::MAX"
+    );
 
     // Snapshot generation must be bounded even for absurd byte lengths.
     let bounded = tracker.snapshot(0, u32::MAX);

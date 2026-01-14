@@ -115,15 +115,20 @@ async fn run_trace_and_hash(trace_bytes: &[u8]) -> Option<(u32, u32, String)> {
         .expect("PRESENT did not report a presented render target");
 
     let (width, height) = exec.texture_size(rt).expect("texture_size");
-    let rgba8 = exec.read_texture_rgba8(rt).await.expect("read_texture_rgba8");
+    let rgba8 = exec
+        .read_texture_rgba8(rt)
+        .await
+        .expect("read_texture_rgba8");
     let hash = sha256_hex(&frame_hash_bytes(width, height, &rgba8));
     Some((width, height, hash))
 }
 
 #[test]
 fn replays_aerogpu_cmd_textured_bc1_triangle_fixture_and_matches_hash() {
-    let bytes = fs::read(fixture_path("aerogpu_cmd_textured_bc1_triangle.aerogputrace"))
-        .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    let bytes = fs::read(fixture_path(
+        "aerogpu_cmd_textured_bc1_triangle.aerogputrace",
+    ))
+    .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
     pollster::block_on(async {
         let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
             return;

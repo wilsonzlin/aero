@@ -132,10 +132,7 @@ pub fn parse_rdef_chunk_for_fourcc(fourcc: FourCC, bytes: &[u8]) -> Result<RdefC
     parse_rdef_chunk_with_fourcc(fourcc, bytes)
 }
 
-fn parse_rdef_chunk_impl(
-    fourcc: Option<FourCC>,
-    bytes: &[u8],
-) -> Result<RdefChunk, DxbcError> {
+fn parse_rdef_chunk_impl(fourcc: Option<FourCC>, bytes: &[u8]) -> Result<RdefChunk, DxbcError> {
     if bytes.len() < RDEF_HEADER_LEN_MIN {
         return Err(DxbcError::invalid_chunk(format!(
             "{} header is truncated: need at least {RDEF_HEADER_LEN_MIN} bytes, got {}",
@@ -164,9 +161,9 @@ fn parse_rdef_chunk_impl(
     // Link constant buffers to their binding slots via the resource table.
     for cb in constant_buffers.iter_mut() {
         // D3D_SIT_CBUFFER = 0, D3D_SIT_TBUFFER = 1.
-        let binding = bound_resources.iter().find(|res| {
-            (res.input_type == 0 || res.input_type == 1) && res.name == cb.name
-        });
+        let binding = bound_resources
+            .iter()
+            .find(|res| (res.input_type == 0 || res.input_type == 1) && res.name == cb.name);
         if let Some(res) = binding {
             cb.bind_point = Some(res.bind_point);
             cb.bind_count = Some(res.bind_count);
@@ -225,7 +222,9 @@ fn parse_constant_buffers(
             .checked_add(i.checked_mul(CB_DESC_LEN).ok_or_else(|| {
                 DxbcError::invalid_chunk(format!("RDEF cbuffer[{i}] entry offset overflows"))
             })?)
-            .ok_or_else(|| DxbcError::invalid_chunk(format!("RDEF cbuffer[{i}] entry start overflows")))?;
+            .ok_or_else(|| {
+                DxbcError::invalid_chunk(format!("RDEF cbuffer[{i}] entry start overflows"))
+            })?;
 
         let name_offset = read_u32_le_entry(bytes, entry_start, "cbuffer", i, "name_offset")?;
         let var_count = read_u32_le_entry(bytes, entry_start + 4, "cbuffer", i, "var_count")?;
@@ -312,19 +311,33 @@ fn parse_variables(
                 DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context()))
             })?;
         let start_offset = read_u32_le_entry(bytes, entry_start + 4, "var", i, "start_offset")
-            .map_err(|e| DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context())))?;
-        let size = read_u32_le_entry(bytes, entry_start + 8, "var", i, "size")
-            .map_err(|e| DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context())))?;
-        let flags = read_u32_le_entry(bytes, entry_start + 12, "var", i, "flags")
-            .map_err(|e| DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context())))?;
+            .map_err(|e| {
+                DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context()))
+            })?;
+        let size = read_u32_le_entry(bytes, entry_start + 8, "var", i, "size").map_err(|e| {
+            DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context()))
+        })?;
+        let flags = read_u32_le_entry(bytes, entry_start + 12, "var", i, "flags").map_err(|e| {
+            DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context()))
+        })?;
         let type_offset = read_u32_le_entry(bytes, entry_start + 16, "var", i, "type_offset")
-            .map_err(|e| DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context())))?;
+            .map_err(|e| {
+                DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context()))
+            })?;
         let _default_value_offset =
-            read_u32_le_entry(bytes, entry_start + 20, "var", i, "default_value_offset")
-                .map_err(|e| DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context())))?;
+            read_u32_le_entry(bytes, entry_start + 20, "var", i, "default_value_offset").map_err(
+                |e| {
+                    DxbcError::invalid_chunk(format!(
+                        "RDEF cbuffer[{cbuffer_index}] {}",
+                        e.context()
+                    ))
+                },
+            )?;
 
-        let name = read_cstring_entry(bytes, name_offset as usize, "var", i, "name")
-            .map_err(|e| DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context())))?;
+        let name =
+            read_cstring_entry(bytes, name_offset as usize, "var", i, "name").map_err(|e| {
+                DxbcError::invalid_chunk(format!("RDEF cbuffer[{cbuffer_index}] {}", e.context()))
+            })?;
         let ty = parse_type(bytes, type_offset as usize, 0).map_err(|e| {
             DxbcError::invalid_chunk(format!(
                 "RDEF cbuffer[{cbuffer_index}] var[{i}] type: {}",
@@ -369,12 +382,12 @@ fn parse_type(bytes: &[u8], offset: usize, depth: u32) -> Result<RdefType, DxbcE
     let member_count_usize = member_count as usize;
     let mut members = Vec::new();
     if member_count_usize > 0 {
-        let table_bytes = member_count_usize.checked_mul(MEMBER_DESC_LEN).ok_or_else(|| {
-            DxbcError::invalid_chunk("RDEF member count overflows table size")
-        })?;
-        let table_end = member_offset.checked_add(table_bytes).ok_or_else(|| {
-            DxbcError::invalid_chunk("RDEF member table end overflows")
-        })?;
+        let table_bytes = member_count_usize
+            .checked_mul(MEMBER_DESC_LEN)
+            .ok_or_else(|| DxbcError::invalid_chunk("RDEF member count overflows table size"))?;
+        let table_end = member_offset
+            .checked_add(table_bytes)
+            .ok_or_else(|| DxbcError::invalid_chunk("RDEF member table end overflows"))?;
         if table_end > bytes.len() {
             return Err(DxbcError::invalid_chunk(format!(
                 "RDEF member table at {member_offset}..{table_end} is outside chunk length {}",
@@ -391,11 +404,11 @@ fn parse_type(bytes: &[u8], offset: usize, depth: u32) -> Result<RdefType, DxbcE
         for i in 0..member_count_usize {
             let entry_start = member_offset
                 .checked_add(i.checked_mul(MEMBER_DESC_LEN).ok_or_else(|| {
-                    DxbcError::invalid_chunk(format!(
-                        "RDEF member[{i}] entry offset overflows"
-                    ))
+                    DxbcError::invalid_chunk(format!("RDEF member[{i}] entry offset overflows"))
                 })?)
-                .ok_or_else(|| DxbcError::invalid_chunk(format!("RDEF member[{i}] entry start overflows")))?;
+                .ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!("RDEF member[{i}] entry start overflows"))
+                })?;
 
             let name_offset = read_u32_le(bytes, entry_start, "member name_offset")? as usize;
             let ty_offset = read_u32_le(bytes, entry_start + 4, "member type_offset")? as usize;
@@ -462,12 +475,13 @@ fn parse_bound_resources(
             .checked_add(i.checked_mul(RESOURCE_BIND_DESC_LEN).ok_or_else(|| {
                 DxbcError::invalid_chunk(format!("RDEF resource[{i}] entry offset overflows"))
             })?)
-            .ok_or_else(|| DxbcError::invalid_chunk(format!("RDEF resource[{i}] entry start overflows")))?;
+            .ok_or_else(|| {
+                DxbcError::invalid_chunk(format!("RDEF resource[{i}] entry start overflows"))
+            })?;
 
         let name_offset = read_u32_le_entry(bytes, entry_start, "resource", i, "name_offset")?;
         let input_type = read_u32_le_entry(bytes, entry_start + 4, "resource", i, "input_type")?;
-        let return_type =
-            read_u32_le_entry(bytes, entry_start + 8, "resource", i, "return_type")?;
+        let return_type = read_u32_le_entry(bytes, entry_start + 8, "resource", i, "return_type")?;
         let dimension = read_u32_le_entry(bytes, entry_start + 12, "resource", i, "dimension")?;
         let sample_count =
             read_u32_le_entry(bytes, entry_start + 16, "resource", i, "sample_count")?;
@@ -499,9 +513,8 @@ fn read_u32_le_entry(
     index: usize,
     field: &'static str,
 ) -> Result<u32, DxbcError> {
-    read_u32_le(bytes, offset, field).map_err(|e| {
-        DxbcError::invalid_chunk(format!("{table}[{index}] {field}: {}", e.context()))
-    })
+    read_u32_le(bytes, offset, field)
+        .map_err(|e| DxbcError::invalid_chunk(format!("{table}[{index}] {field}: {}", e.context())))
 }
 
 fn read_cstring_entry<'a>(
@@ -511,9 +524,8 @@ fn read_cstring_entry<'a>(
     index: usize,
     field: &'static str,
 ) -> Result<&'a str, DxbcError> {
-    read_cstring(bytes, offset, field).map_err(|e| {
-        DxbcError::invalid_chunk(format!("{table}[{index}] {field}: {}", e.context()))
-    })
+    read_cstring(bytes, offset, field)
+        .map_err(|e| DxbcError::invalid_chunk(format!("{table}[{index}] {field}: {}", e.context())))
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize, what: &str) -> Result<u32, DxbcError> {

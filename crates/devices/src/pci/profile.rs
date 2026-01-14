@@ -93,7 +93,9 @@ impl PciBarProfile {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PciCapabilityProfile {
-    VendorSpecific { payload: &'static [u8] },
+    VendorSpecific {
+        payload: &'static [u8],
+    },
     /// Single-vector MSI capability.
     ///
     /// This is sufficient for simple PCI functions (e.g. AHCI/NVMe controllers) that only need one
@@ -321,8 +323,11 @@ pub const XHCI_MMIO_BAR_SIZE_U32: u32 = 0x1_0000;
 /// Size in bytes of the xHCI MMIO register window (BAR0).
 pub const XHCI_MMIO_BAR_SIZE: u64 = XHCI_MMIO_BAR_SIZE_U32 as u64;
 
-pub const XHCI_BARS: [PciBarProfile; 1] =
-    [PciBarProfile::mem32(XHCI_MMIO_BAR_INDEX, XHCI_MMIO_BAR_SIZE, false)];
+pub const XHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(
+    XHCI_MMIO_BAR_INDEX,
+    XHCI_MMIO_BAR_SIZE,
+    false,
+)];
 
 // -----------------------------------------------------------------------------
 // xHCI MSI-X configuration (BAR0-backed MSI-X table + PBA)
@@ -457,8 +462,11 @@ pub const VIRTIO_BAR0_SIZE: u64 = 0x4000;
 
 // NOTE: Keep VIRTIO_BARS in a simple literal array initializer form so CI guardrails can parse it
 // deterministically (see scripts/ci/check-windows-virtio-contract.py).
-pub const VIRTIO_BARS: [PciBarProfile; 1] =
-    [PciBarProfile::mem64(VIRTIO_BAR0_INDEX, VIRTIO_BAR0_SIZE, false)];
+pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(
+    VIRTIO_BAR0_INDEX,
+    VIRTIO_BAR0_SIZE,
+    false,
+)];
 
 /// AeroGPU BAR0 index (MMIO control registers).
 pub const AEROGPU_BAR0_INDEX: u8 = 0;
@@ -648,8 +656,7 @@ const fn virtio_msix_end_offset(table_size: u16) -> u32 {
 ///
 /// Panics if the derived MSI-X table/PBA layout does not fit within the provided BAR0 size.
 pub fn virtio_msix_capability_profile(num_queues: usize, bar0_size: u64) -> PciCapabilityProfile {
-    let table_size =
-        u16::try_from(num_queues.saturating_add(1)).unwrap_or(u16::MAX);
+    let table_size = u16::try_from(num_queues.saturating_add(1)).unwrap_or(u16::MAX);
     let msix_end = u64::from(virtio_msix_end_offset(table_size));
     assert!(
         msix_end <= bar0_size,
@@ -1125,7 +1132,11 @@ mod tests {
         assert_eq!(cfg.read(msi_off + 1, 1) as u8, msix_off as u8);
         let msi_ctrl = cfg.read(msi_off + 0x02, 2) as u16;
         assert_eq!(msi_ctrl & 0x0001, 0, "MSI should start disabled");
-        assert_eq!(msi_ctrl & (1 << 7), 0, "MSI 64-bit flag should match profile");
+        assert_eq!(
+            msi_ctrl & (1 << 7),
+            0,
+            "MSI 64-bit flag should match profile"
+        );
         assert_eq!(
             msi_ctrl & (1 << 8),
             0,

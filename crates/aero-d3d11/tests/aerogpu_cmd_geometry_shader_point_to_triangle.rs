@@ -1,9 +1,11 @@
 mod common;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_d3d11::sm4::opcode::{OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK};
+use aero_d3d11::sm4::opcode::{
+    OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+};
 use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Inst, Sm4Program};
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
@@ -305,7 +307,11 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, &build_vs_pos_only_dxbc());
         // Create a GS via the `stage_ex` ABI extension (CREATE_SHADER_DXBC.reserved0).
-        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, DXBC_GS_POINT_TO_TRIANGLE);
+        writer.create_shader_dxbc_ex(
+            GS,
+            AerogpuShaderStageEx::Geometry,
+            DXBC_GS_POINT_TO_TRIANGLE,
+        );
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);

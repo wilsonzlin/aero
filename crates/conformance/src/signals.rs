@@ -25,4 +25,3 @@ pub(crate) const SIGFPE: i32 = 0;
 pub(crate) const SIGSEGV: i32 = libc::SIGSEGV as i32;
 #[cfg(not(unix))]
 pub(crate) const SIGSEGV: i32 = 0;
-

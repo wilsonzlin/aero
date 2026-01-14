@@ -1,5 +1,5 @@
-use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::sm4::decode::Sm4DecodeErrorKind;
+use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     BufferKind, BufferRef, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst,
     Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
@@ -251,7 +251,10 @@ fn rejects_geometry_shader_input_with_non_immediate_vertex_index_representation(
     let err = decode_program(&program).expect_err("expected decode to fail");
 
     assert!(
-        matches!(err.kind, Sm4DecodeErrorKind::UnsupportedIndexRepresentation { rep: 1 }),
+        matches!(
+            err.kind,
+            Sm4DecodeErrorKind::UnsupportedIndexRepresentation { rep: 1 }
+        ),
         "unexpected error kind: {err:?}"
     );
 }
@@ -272,10 +275,10 @@ fn decodes_gs_instance_count_decl() {
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Geometry);
 
     let module = decode_program(&program).expect("decode");
-    assert!(module.decls.iter().any(|d| matches!(
-        d,
-        Sm4Decl::GsInstanceCount { count: 4 }
-    )));
+    assert!(module
+        .decls
+        .iter()
+        .any(|d| matches!(d, Sm4Decl::GsInstanceCount { count: 4 })));
 }
 
 #[test]
@@ -1649,7 +1652,9 @@ fn decodes_sync_with_thread_group_sync_as_workgroup_barrier() {
     assert_eq!(module.instructions[0], Sm4Inst::WorkgroupBarrier);
     assert!(matches!(
         module.instructions[1],
-        Sm4Inst::Unknown { opcode: OPCODE_SYNC }
+        Sm4Inst::Unknown {
+            opcode: OPCODE_SYNC
+        }
     ));
 }
 
@@ -1712,7 +1717,10 @@ fn decodes_bit_utils_ops() {
         Swizzle::XYZW,
         OperandModifier::None,
     );
-    let mut firstbit_shi = vec![opcode_token(OPCODE_FIRSTBIT_SHI, (1 + 2 + src.len()) as u32)];
+    let mut firstbit_shi = vec![opcode_token(
+        OPCODE_FIRSTBIT_SHI,
+        (1 + 2 + src.len()) as u32,
+    )];
     firstbit_shi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 8, WriteMask::XYZW));
     firstbit_shi.extend_from_slice(&src);
     body.extend_from_slice(&firstbit_shi);
@@ -2085,7 +2093,10 @@ fn rejects_truncated_sm5_thread_group_decl() {
 fn rejects_sm5_thread_group_decl_with_too_small_declared_len() {
     // Malformed opcode token that claims the declaration is shorter than its fixed payload.
     // (Still in-bounds per the length field, so this exercises the per-declaration reader.)
-    let body = [opcode_token(OPCODE_DCL_THREAD_GROUP, 1), opcode_token(OPCODE_RET, 1)];
+    let body = [
+        opcode_token(OPCODE_DCL_THREAD_GROUP, 1),
+        opcode_token(OPCODE_RET, 1),
+    ];
 
     let tokens = make_sm5_program_tokens(5, &body);
     let program =
@@ -2309,10 +2320,7 @@ fn decodes_buffer_srv_and_uav_declarations() {
         Swizzle::XYZW,
         OperandModifier::None,
     );
-    body.extend_from_slice(&[opcode_token(
-        OPCODE_DCL_RESOURCE_RAW,
-        (1 + t0.len()) as u32,
-    )]);
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_RESOURCE_RAW, (1 + t0.len()) as u32)]);
     body.extend_from_slice(&t0);
 
     // dcl_resource_structured t1, 16
@@ -2404,8 +2412,10 @@ fn decodes_ld_structured() {
         Swizzle::XXXX,
         OperandModifier::None,
     );
-    let mut ld_structured =
-        vec![opcode_token(OPCODE_LD_STRUCTURED, (1 + 2 + index.len() + offset.len() + 2) as u32)];
+    let mut ld_structured = vec![opcode_token(
+        OPCODE_LD_STRUCTURED,
+        (1 + 2 + index.len() + offset.len() + 2) as u32,
+    )];
     ld_structured.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
     ld_structured.extend_from_slice(&index);
     ld_structured.extend_from_slice(&offset);
@@ -2604,6 +2614,10 @@ fn decodes_emit_stream_and_cut_stream_with_stream_index() {
 
     assert_eq!(
         module.instructions,
-        vec![Sm4Inst::Emit { stream: 2 }, Sm4Inst::Cut { stream: 3 }, Sm4Inst::Ret]
+        vec![
+            Sm4Inst::Emit { stream: 2 },
+            Sm4Inst::Cut { stream: 3 },
+            Sm4Inst::Ret
+        ]
     );
 }

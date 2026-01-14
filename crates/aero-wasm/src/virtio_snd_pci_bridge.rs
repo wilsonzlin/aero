@@ -31,7 +31,9 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_platform::interrupts::msi::MsiMessage;
 
-use aero_virtio::devices::snd::{JACK_ID_MICROPHONE, JACK_ID_SPEAKER, VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
+use aero_virtio::devices::snd::{
+    JACK_ID_MICROPHONE, JACK_ID_SPEAKER, VIRTIO_SND_QUEUE_EVENT, VirtioSnd,
+};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
@@ -644,7 +646,8 @@ impl VirtioSndPciBridge {
                         // restores must be best-effort. If the host allocates a different capacity than
                         // what was captured in the snapshot, clear the field so
                         // `WorkletBridge::restore_state` bypasses its debug-only capacity assertion.
-                        if state.capacity_frames != 0 && state.capacity_frames != ring.capacity_frames()
+                        if state.capacity_frames != 0
+                            && state.capacity_frames != ring.capacity_frames()
                         {
                             state.capacity_frames = 0;
                         }
@@ -830,11 +833,11 @@ impl VirtioSndPciBridge {
 mod tests {
     use super::*;
 
+    use aero_io_snapshot::io::state::SnapshotReader;
+    use aero_io_snapshot::io::virtio::state::VirtioPciTransportState;
     use aero_platform::audio::worklet_bridge::WorkletBridge;
     use aero_virtio::devices::snd::VIRTIO_SND_R_PCM_INFO;
     use aero_virtio::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le};
-    use aero_io_snapshot::io::state::SnapshotReader;
-    use aero_io_snapshot::io::virtio::state::VirtioPciTransportState;
     use aero_virtio::pci::{
         VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1, VIRTIO_STATUS_ACKNOWLEDGE,
         VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
@@ -956,7 +959,10 @@ mod tests {
         // Kick queue 0 via the notify region (BAR0 + 0x1000). With BME clear, this must *not*
         // perform DMA or assert IRQ.
         bridge.mmio_write(0x1000, 4, 0);
-        assert!(!bridge.irq_asserted(), "IRQ should be gated when BME is clear");
+        assert!(
+            !bridge.irq_asserted(),
+            "IRQ should be gated when BME is clear"
+        );
         assert_eq!(
             read_u16_le(&bridge.mem, used + 2).unwrap(),
             0,
@@ -971,7 +977,10 @@ mod tests {
         // `poll()` must also be gated by PCI Bus Master Enable. A JS runtime may call `poll()` even
         // before the guest enables DMA; ensure it cannot touch guest memory in that state.
         bridge.poll();
-        assert!(!bridge.irq_asserted(), "IRQ should remain gated when BME is clear");
+        assert!(
+            !bridge.irq_asserted(),
+            "IRQ should remain gated when BME is clear"
+        );
         assert_eq!(
             read_u16_le(&bridge.mem, used + 2).unwrap(),
             0,
@@ -988,7 +997,10 @@ mod tests {
         bridge.set_pci_command((1u32 << 1) | (1u32 << 2));
         bridge.mmio_write(0x1000, 4, 0);
 
-        assert!(bridge.irq_asserted(), "IRQ should assert once DMA is permitted");
+        assert!(
+            bridge.irq_asserted(),
+            "IRQ should assert once DMA is permitted"
+        );
         assert_eq!(read_u16_le(&bridge.mem, used + 2).unwrap(), 1);
         assert_eq!(
             bridge.mem.get_slice(resp, 4).unwrap(),
@@ -1048,7 +1060,8 @@ mod tests {
         decoded.load_state(&snap2).unwrap();
 
         assert!(
-            decoded.snd.host_sample_rate_hz == 44_100 && decoded.snd.capture_sample_rate_hz == 48_000,
+            decoded.snd.host_sample_rate_hz == 44_100
+                && decoded.snd.capture_sample_rate_hz == 48_000,
             "expected host/capture sample rates to survive snapshot restore"
         );
 

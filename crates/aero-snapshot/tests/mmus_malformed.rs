@@ -50,7 +50,9 @@ fn snapshot_header() -> Vec<u8> {
 
 fn minimal_cpu_section_v2(dst: &mut Vec<u8>) {
     let mut cpu_payload = Vec::new();
-    snapshot::CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    snapshot::CpuState::default()
+        .encode_v2(&mut cpu_payload)
+        .unwrap();
     push_section(dst, snapshot::SectionId::CPU, 2, 0, &cpu_payload);
 }
 
@@ -76,7 +78,10 @@ fn restore_snapshot_rejects_mmus_section_with_zero_entries() {
 
     let mut target = DummyTarget;
     let err = snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
-    assert!(matches!(err, snapshot::SnapshotError::Corrupt("missing MMU entry")));
+    assert!(matches!(
+        err,
+        snapshot::SnapshotError::Corrupt("missing MMU entry")
+    ));
 }
 
 #[test]
@@ -98,4 +103,3 @@ fn restore_snapshot_rejects_truncated_mmus_entry_len_prefix() {
         snapshot::SnapshotError::Corrupt("truncated MMU entry")
     ));
 }
-

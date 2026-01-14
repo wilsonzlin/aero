@@ -201,4 +201,3 @@ fn dns_denied_ip_returns_nxdomain_and_is_not_cached() {
     let actions = backend.drain_actions();
     assert!(matches!(actions.as_slice(), [Action::DnsResolve { .. }]));
 }
-

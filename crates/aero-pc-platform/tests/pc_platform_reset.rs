@@ -13,8 +13,8 @@ use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
-use aero_pci_routing::irq_line_for_intx;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig, ResetEvent};
+use aero_pci_routing::irq_line_for_intx;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -329,10 +329,20 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     );
     let ahci_bdf = SATA_AHCI_ICH9.bdf;
     {
-        let pin_before =
-            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d);
-        let line_before =
-            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c);
+        let pin_before = read_cfg_u8(
+            &mut pc,
+            ahci_bdf.bus,
+            ahci_bdf.device,
+            ahci_bdf.function,
+            0x3d,
+        );
+        let line_before = read_cfg_u8(
+            &mut pc,
+            ahci_bdf.bus,
+            ahci_bdf.device,
+            ahci_bdf.function,
+            0x3c,
+        );
 
         let expected_pin = SATA_AHCI_ICH9
             .interrupt_pin
@@ -348,14 +358,40 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
         assert_eq!(line_before, expected_line);
 
         // Corrupt the fields so reset must restore them.
-        write_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c, 0x5a);
-        write_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d, 0x04);
+        write_cfg_u8(
+            &mut pc,
+            ahci_bdf.bus,
+            ahci_bdf.device,
+            ahci_bdf.function,
+            0x3c,
+            0x5a,
+        );
+        write_cfg_u8(
+            &mut pc,
+            ahci_bdf.bus,
+            ahci_bdf.device,
+            ahci_bdf.function,
+            0x3d,
+            0x04,
+        );
         assert_eq!(
-            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c),
+            read_cfg_u8(
+                &mut pc,
+                ahci_bdf.bus,
+                ahci_bdf.device,
+                ahci_bdf.function,
+                0x3c
+            ),
             0x5a
         );
         assert_eq!(
-            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d),
+            read_cfg_u8(
+                &mut pc,
+                ahci_bdf.bus,
+                ahci_bdf.device,
+                ahci_bdf.function,
+                0x3d
+            ),
             0x04
         );
     }
@@ -416,10 +452,20 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
 
     // AHCI should have been restored back to its deterministic routing.
     {
-        let pin_after =
-            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d);
-        let line_after =
-            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c);
+        let pin_after = read_cfg_u8(
+            &mut pc,
+            ahci_bdf.bus,
+            ahci_bdf.device,
+            ahci_bdf.function,
+            0x3d,
+        );
+        let line_after = read_cfg_u8(
+            &mut pc,
+            ahci_bdf.bus,
+            ahci_bdf.device,
+            ahci_bdf.function,
+            0x3c,
+        );
 
         let expected_pin = SATA_AHCI_ICH9
             .interrupt_pin

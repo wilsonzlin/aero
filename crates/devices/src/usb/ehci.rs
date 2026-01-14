@@ -336,10 +336,7 @@ mod tests {
         // With decoding enabled, writes should reach the controller.
         MmioHandler::write(&mut dev, REG_USBCMD, 4, 0xAABB_CCDD);
         let expected = 0xAABB_CCDD_u32 & USBCMD_WRITE_MASK;
-        assert_eq!(
-            MmioHandler::read(&mut dev, REG_USBCMD, 4) as u32,
-            expected
-        );
+        assert_eq!(MmioHandler::read(&mut dev, REG_USBCMD, 4) as u32, expected);
     }
 
     #[test]
@@ -392,9 +389,11 @@ mod tests {
                     len,
                     size,
                 })?;
-                let end = start
-                    .checked_add(len)
-                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+                let end = start.checked_add(len).ok_or(GuestMemoryError::OutOfRange {
+                    paddr,
+                    len,
+                    size,
+                })?;
 
                 st.reads += 1;
                 dst.copy_from_slice(&st.mem[start..end]);
@@ -416,9 +415,11 @@ mod tests {
                     len,
                     size,
                 })?;
-                let end = start
-                    .checked_add(len)
-                    .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+                let end = start.checked_add(len).ok_or(GuestMemoryError::OutOfRange {
+                    paddr,
+                    len,
+                    size,
+                })?;
 
                 st.writes += 1;
                 st.mem[start..end].copy_from_slice(src);
@@ -436,12 +437,7 @@ mod tests {
         // Program the controller to attempt a periodic schedule DMA.
         dev.config.set_command(0x0002); // MEM enable, bus master disabled.
         MmioHandler::write(&mut dev, REG_PERIODICLISTBASE, 4, 0x2000);
-        MmioHandler::write(
-            &mut dev,
-            REG_USBCMD,
-            4,
-            u64::from(USBCMD_RS | USBCMD_PSE),
-        );
+        MmioHandler::write(&mut dev, REG_USBCMD, 4, u64::from(USBCMD_RS | USBCMD_PSE));
 
         // With bus mastering disabled, the wrapper must prevent any physical memory reads/writes.
         dev.tick_1ms(&mut bus);
@@ -466,12 +462,7 @@ mod tests {
 
         // Enable MMIO decoding so we can program USBINTR.
         dev.config.set_command(0x0002);
-        MmioHandler::write(
-            &mut dev,
-            REG_USBINTR,
-            4,
-            u64::from(USBINTR_USBINT),
-        );
+        MmioHandler::write(&mut dev, REG_USBINTR, 4, u64::from(USBINTR_USBINT));
         dev.controller_mut().set_usbsts_bits(USBSTS_USBINT);
 
         assert!(dev.controller.irq_level());

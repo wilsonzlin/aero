@@ -1,6 +1,5 @@
 mod common;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::binding_model::BINDING_BASE_UAV;
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_d3d11::{
@@ -8,6 +7,7 @@ use aero_d3d11::{
     ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand,
     Swizzle, UavRef, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: u64) -> Vec<u8> {
     let slice = buffer.slice(0..size);
@@ -104,7 +104,10 @@ fn firstbit_shi_ref(x: i32) -> u32 {
 #[test]
 fn compute_bit_utils_produce_expected_results() {
     pollster::block_on(async {
-        const TEST_NAME: &str = concat!(module_path!(), "::compute_bit_utils_produce_expected_results");
+        const TEST_NAME: &str = concat!(
+            module_path!(),
+            "::compute_bit_utils_produce_expected_results"
+        );
 
         let bfrev_in = [1u32, 0x8000_0000, 0x0123_4567, 0];
         let countbits_in = [0u32, 1, 0xffff_ffff, 0x0123_4567];
@@ -297,11 +300,7 @@ fn compute_bit_utils_produce_expected_results() {
         let mut got = [0u32; 20];
         for (i, slot) in got.iter_mut().enumerate() {
             let start = i * 4;
-            *slot = u32::from_le_bytes(
-                data[start..start + 4]
-                    .try_into()
-                    .expect("read 4 bytes"),
-            );
+            *slot = u32::from_le_bytes(data[start..start + 4].try_into().expect("read 4 bytes"));
         }
 
         let expect_block = |block_index: usize, expected: [u32; 4]| {

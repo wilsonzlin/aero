@@ -80,4 +80,3 @@ fn doorbell0_command_ring_continues_processing_on_tick() {
         );
     }
 }
-

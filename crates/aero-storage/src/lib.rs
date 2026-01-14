@@ -77,11 +77,11 @@ mod sparse;
 mod util;
 mod vhd;
 
-pub use backend::{MemBackend, ReadOnlyBackend, StorageBackend};
-#[cfg(not(target_arch = "wasm32"))]
-pub use backend::StdFileBackend;
 #[cfg(not(target_arch = "wasm32"))]
 pub use backend::FileBackend;
+#[cfg(not(target_arch = "wasm32"))]
+pub use backend::StdFileBackend;
+pub use backend::{MemBackend, ReadOnlyBackend, StorageBackend};
 pub use cache::{BlockCacheStats, BlockCachedDisk};
 pub use cow::AeroCowDisk;
 pub use disk::{RawDisk, ReadOnlyDisk, VirtualDisk, SECTOR_SIZE};
@@ -95,12 +95,18 @@ pub use vhd::VhdDisk;
 mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod chunked_streaming;
+#[cfg(not(target_arch = "wasm32"))]
 mod range_set;
 #[cfg(not(target_arch = "wasm32"))]
 mod streaming;
-#[cfg(not(target_arch = "wasm32"))]
-mod chunked_streaming;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use chunked_streaming::{
+    ChunkedDiskManifestV1, ChunkedStreamingDisk, ChunkedStreamingDiskConfig,
+    ChunkedStreamingDiskError, ChunkedStreamingDiskOptions, ChunkedStreamingDiskSync,
+    ChunkedStreamingTelemetrySnapshot,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use range_set::{ByteRange, RangeSet};
 #[cfg(not(target_arch = "wasm32"))]
@@ -108,10 +114,4 @@ pub use streaming::{
     CacheStatus, ChunkManifest, ChunkStore, DirectoryChunkStore, SparseFileChunkStore,
     StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
     StreamingDiskOptions, StreamingTelemetrySnapshot, DEFAULT_CHUNK_SIZE, DEFAULT_SECTOR_SIZE,
-};
-#[cfg(not(target_arch = "wasm32"))]
-pub use chunked_streaming::{
-    ChunkedDiskManifestV1, ChunkedStreamingDisk, ChunkedStreamingDiskConfig,
-    ChunkedStreamingDiskError, ChunkedStreamingDiskOptions, ChunkedStreamingDiskSync,
-    ChunkedStreamingTelemetrySnapshot,
 };

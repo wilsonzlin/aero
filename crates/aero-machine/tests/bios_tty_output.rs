@@ -49,7 +49,10 @@ fn bios_tty_output_exposes_boot_panic_message() {
     m.reset();
 
     // BIOS should panic and halt the CPU.
-    assert!(m.cpu().halted, "CPU should be halted after BIOS boot failure");
+    assert!(
+        m.cpu().halted,
+        "CPU should be halted after BIOS boot failure"
+    );
     let exit = m.run_slice(1);
     assert!(
         matches!(exit, RunExit::Halted { .. }),

@@ -1,4 +1,6 @@
-use aero_devices_input::scancode::{browser_code_to_set2, browser_code_to_set2_bytes, Set2Scancode};
+use aero_devices_input::scancode::{
+    browser_code_to_set2, browser_code_to_set2_bytes, Set2Scancode,
+};
 
 #[test]
 fn common_alphanumerics() {
@@ -11,22 +13,37 @@ fn common_alphanumerics() {
         }
     );
     assert_eq!(browser_code_to_set2_bytes("KeyA", true), Some(vec![0x1C]));
-    assert_eq!(browser_code_to_set2_bytes("KeyA", false), Some(vec![0xF0, 0x1C]));
+    assert_eq!(
+        browser_code_to_set2_bytes("KeyA", false),
+        Some(vec![0xF0, 0x1C])
+    );
 
     assert_eq!(browser_code_to_set2_bytes("Digit1", true), Some(vec![0x16]));
-    assert_eq!(browser_code_to_set2_bytes("Digit1", false), Some(vec![0xF0, 0x16]));
+    assert_eq!(
+        browser_code_to_set2_bytes("Digit1", false),
+        Some(vec![0xF0, 0x16])
+    );
 
     assert_eq!(browser_code_to_set2_bytes("Enter", true), Some(vec![0x5A]));
-    assert_eq!(browser_code_to_set2_bytes("Enter", false), Some(vec![0xF0, 0x5A]));
+    assert_eq!(
+        browser_code_to_set2_bytes("Enter", false),
+        Some(vec![0xF0, 0x5A])
+    );
 }
 
 #[test]
 fn function_keys() {
     assert_eq!(browser_code_to_set2_bytes("F1", true), Some(vec![0x05]));
-    assert_eq!(browser_code_to_set2_bytes("F1", false), Some(vec![0xF0, 0x05]));
+    assert_eq!(
+        browser_code_to_set2_bytes("F1", false),
+        Some(vec![0xF0, 0x05])
+    );
 
     assert_eq!(browser_code_to_set2_bytes("F12", true), Some(vec![0x07]));
-    assert_eq!(browser_code_to_set2_bytes("F12", false), Some(vec![0xF0, 0x07]));
+    assert_eq!(
+        browser_code_to_set2_bytes("F12", false),
+        Some(vec![0xF0, 0x07])
+    );
 }
 
 #[test]
@@ -157,7 +174,10 @@ fn special_multi_byte_sequences() {
 #[test]
 fn non_us_layout_keys_best_effort() {
     // Japanese Yen key is best-effort mapped to the same scancode as the ANSI backslash key.
-    assert_eq!(browser_code_to_set2_bytes("IntlYen", true), Some(vec![0x5D]));
+    assert_eq!(
+        browser_code_to_set2_bytes("IntlYen", true),
+        Some(vec![0x5D])
+    );
     assert_eq!(
         browser_code_to_set2_bytes("IntlYen", false),
         Some(vec![0xF0, 0x5D])
@@ -170,4 +190,3 @@ fn non_us_layout_keys_best_effort() {
         Some(vec![0xF0, 0x61])
     );
 }
-

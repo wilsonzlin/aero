@@ -1098,8 +1098,14 @@ fn ret_inside_if_does_not_break_brace_balancing() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
-    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::Ret)));
-    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::If { .. })));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Ret)));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::If { .. })));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -1219,8 +1225,14 @@ fn ret_inside_if_with_depth_output_validates() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
-    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::If { .. })));
-    assert!(module.instructions.iter().any(|i| matches!(i, Sm4Inst::Ret)));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::If { .. })));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Ret)));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -1466,8 +1478,8 @@ fn decodes_and_translates_depth_output_via_output_depth_operand() {
 }
 
 #[test]
-fn decodes_and_translates_depth_output_via_output_depth_operand_with_overlapping_signature_registers()
-{
+fn decodes_and_translates_depth_output_via_output_depth_operand_with_overlapping_signature_registers(
+) {
     // Minimal ps_5_0:
     //   mov o0, l(1,0,0,1)
     //   mov oDepth.x, l(0.25)

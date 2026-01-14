@@ -434,8 +434,6 @@ mod tests {
         // VGA text mode is word-packed: [char, attr] pairs. Scan only char bytes.
         let vga = mem.read_bytes(0xB8000, 0x8000);
         let chars: Vec<u8> = vga.iter().step_by(2).copied().collect();
-        assert!(chars
-            .windows(msg.len())
-            .any(|window| window == msg));
+        assert!(chars.windows(msg.len()).any(|window| window == msg));
     }
 }

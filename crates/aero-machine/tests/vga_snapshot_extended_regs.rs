@@ -55,4 +55,3 @@ fn vga_snapshot_roundtrip_preserves_extended_vga_regs() {
     vm2.io_write(0x3C0, 1, 0x15);
     assert_eq!(vm2.io_read(0x3C1, 1) as u8, 0x44);
 }
-

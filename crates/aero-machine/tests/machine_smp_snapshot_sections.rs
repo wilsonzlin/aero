@@ -63,4 +63,3 @@ fn smp_snapshot_uses_cpus_and_mmus_sections() {
     let mut restored = Machine::new(cfg).unwrap();
     restored.restore_snapshot_bytes(&snap).unwrap();
 }
-

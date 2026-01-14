@@ -62,4 +62,3 @@ fn tier0_decode_cache_invalidated_when_code_bytes_change() {
     assert_eq!(stats_after_second.hits, 0);
     assert_eq!(stats_after_second.misses, 2);
 }
-

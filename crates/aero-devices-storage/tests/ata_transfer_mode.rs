@@ -81,7 +81,11 @@ fn ide_set_features_set_transfer_mode_updates_snapshot_state() {
     let w63 = identify_word(&id, 63);
     let w88 = identify_word(&id, 88);
     assert_eq!(w63 & 0xFF00, 1 << (8 + 2), "MWDMA2 should be active");
-    assert_eq!(w88 & 0xFF00, 0, "UDMA should be inactive when MWDMA selected");
+    assert_eq!(
+        w88 & 0xFF00,
+        0,
+        "UDMA should be inactive when MWDMA selected"
+    );
 }
 
 #[test]
@@ -256,7 +260,11 @@ fn ata_identify_word88_reflects_negotiated_udma_mode() {
     // Default is UDMA2 enabled.
     let id = drive.identify_sector();
     let w53 = identify_word(id, 53);
-    assert_ne!(w53 & (1 << 2), 0, "word 53 bit 2 should indicate word 88 is valid");
+    assert_ne!(
+        w53 & (1 << 2),
+        0,
+        "word 53 bit 2 should indicate word 88 is valid"
+    );
     let w88 = identify_word(id, 88);
     // Advertise at least UDMA2 support.
     assert_ne!(w88 & (1 << 2), 0, "UDMA2 support bit should be set");

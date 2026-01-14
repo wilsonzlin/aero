@@ -138,7 +138,11 @@ fn build_ps_solid_red_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_ps_solid_green_rgb_only_output_dxbc() -> Vec<u8> {
@@ -191,7 +195,11 @@ fn build_ps_solid_green_rgb_only_output_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_ps_solid_red_with_unused_color_input_dxbc() -> Vec<u8> {
@@ -244,7 +252,11 @@ fn build_ps_solid_red_with_unused_color_input_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_ps_cbuffer0_dxbc() -> Vec<u8> {
@@ -299,7 +311,11 @@ fn build_ps_cbuffer0_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_ps_cbuffer0_sm5_dxbc() -> Vec<u8> {
@@ -339,7 +355,11 @@ fn build_ps_cbuffer0_sm5_dxbc() -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_cbuffer_sm5_dxbc(slot: u32, reg: u32) -> Vec<u8> {
@@ -379,7 +399,11 @@ fn build_ps_cbuffer_sm5_dxbc(slot: u32, reg: u32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_two_constant_buffers_sm5_dxbc() -> Vec<u8> {
@@ -431,7 +455,11 @@ fn build_ps_two_constant_buffers_sm5_dxbc() -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_passthrough_pos_sm5_dxbc() -> Vec<u8> {
@@ -479,7 +507,11 @@ fn build_vs_passthrough_pos_sm5_dxbc() -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_passthrough_pos_sm5_sig_v1_dxbc() -> Vec<u8> {
@@ -521,7 +553,11 @@ fn build_vs_passthrough_pos_sm5_sig_v1_dxbc() -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISG1"), isgn), (FourCC(*b"OSG1"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISG1"), isgn),
+        (FourCC(*b"OSG1"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -581,7 +617,11 @@ fn build_ps_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_sample_l_sm5_dxbc(u: f32, v: f32, tex_slot: u32, sampler_slot: u32) -> Vec<u8> {
@@ -637,7 +677,11 @@ fn build_ps_sample_l_sm5_dxbc(u: f32, v: f32, tex_slot: u32, sampler_slot: u32) 
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_cbuffer0_and_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -709,7 +753,11 @@ fn build_ps_cbuffer0_and_sample_l_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_two_sample_l_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -785,7 +833,11 @@ fn build_ps_two_sample_l_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_ld_t0_sm5_dxbc(x: i32, y: i32, mip: i32) -> Vec<u8> {
@@ -838,7 +890,11 @@ fn build_ps_ld_t0_sm5_dxbc(x: i32, y: i32, mip: i32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_cbuffer0_sm5_sig_v1_dxbc() -> Vec<u8> {
@@ -886,7 +942,11 @@ fn build_ps_cbuffer0_sm5_sig_v1_dxbc() -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISG1"), isgn), (FourCC(*b"OSG1"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISG1"), isgn),
+        (FourCC(*b"OSG1"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ps_passthrough_color_dxbc() -> Vec<u8> {
@@ -937,7 +997,11 @@ fn build_ps_passthrough_color_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_vs_passthrough_pos_and_color_with_rgb_mask_dxbc() -> Vec<u8> {
@@ -1014,7 +1078,11 @@ fn build_vs_passthrough_pos_and_color_with_rgb_mask_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_vs_sample_t0_s0_to_color1_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -1099,7 +1167,11 @@ fn build_vs_sample_t0_s0_to_color1_dxbc(u: f32, v: f32) -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_vs_sample_t0_s0_to_color1_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -1176,7 +1248,11 @@ fn build_vs_sample_t0_s0_to_color1_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_two_sample_l_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -1276,7 +1352,11 @@ fn build_vs_two_sample_l_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_ld_t0_to_color1_sm5_dxbc(x: i32, y: i32, mip: i32) -> Vec<u8> {
@@ -1349,7 +1429,11 @@ fn build_vs_ld_t0_to_color1_sm5_dxbc(x: i32, y: i32, mip: i32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_matrix_sample_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
@@ -1462,7 +1546,11 @@ fn build_vs_matrix_sample_t0_s0_sm5_dxbc(u: f32, v: f32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_matrix_texcoord_dxbc() -> Vec<u8> {
@@ -1581,7 +1669,11 @@ fn build_vs_matrix_texcoord_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHDR"), shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_vs_matrix_pos_cb_slot_sm5_dxbc(cb_slot: u32) -> Vec<u8> {
@@ -1667,7 +1759,11 @@ fn build_vs_matrix_pos_cb_slot_sm5_dxbc(cb_slot: u32) -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_vs_matrix_pos_cb0_and_color_cb1_sm5_dxbc() -> Vec<u8> {
@@ -1773,7 +1869,11 @@ fn build_vs_matrix_pos_cb0_and_color_cb1_sm5_dxbc() -> Vec<u8> {
         shex.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(FourCC(*b"ISGN"), isgn), (FourCC(*b"OSGN"), osgn), (FourCC(*b"SHEX"), shex)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHEX"), shex),
+    ])
 }
 
 fn build_ilay_pos3() -> Vec<u8> {

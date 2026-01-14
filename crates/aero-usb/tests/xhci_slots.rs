@@ -11,7 +11,10 @@ fn enable_slot_fails_without_dcbaap() {
     let mut mem = TestMemory::new(0x1000);
 
     let result = ctrl.enable_slot(&mut mem);
-    assert_eq!(result.completion_code, CommandCompletionCode::ContextStateError);
+    assert_eq!(
+        result.completion_code,
+        CommandCompletionCode::ContextStateError
+    );
     assert_eq!(result.slot_id, 0);
     assert!(ctrl.slot_state(1).is_none());
 }

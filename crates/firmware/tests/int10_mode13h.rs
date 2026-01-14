@@ -66,4 +66,3 @@ fn int10_set_mode_13h_respects_no_clear_bit() {
     assert_eq!(mem.read_u8(VGA_FB_BASE + 1), 0x34);
     assert_eq!(mem.read_u8(VGA_FB_BASE + VGA_FB_SIZE as u64 - 1), 0x56);
 }
-

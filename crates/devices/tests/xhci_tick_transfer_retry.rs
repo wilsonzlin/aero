@@ -34,10 +34,7 @@ impl Alloc {
     fn alloc(&mut self, len: u64, align: u64) -> u64 {
         assert!(align.is_power_of_two());
         let addr = (self.next + (align - 1)) & !(align - 1);
-        self.next = addr
-            .checked_add(len)
-            .expect("alloc end overflow")
-            .max(addr);
+        self.next = addr.checked_add(len).expect("alloc end overflow").max(addr);
         addr
     }
 }
@@ -117,7 +114,8 @@ fn xhci_tick_1ms_retries_active_interrupt_in_without_extra_doorbells() {
     // Enable bus mastering so `tick_1ms` is allowed to DMA (transfer rings + event ring).
     dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
 
-    dev.controller_mut().attach_device(0, Box::new(keyboard.clone()));
+    dev.controller_mut()
+        .attach_device(0, Box::new(keyboard.clone()));
     // Drain the initial port status change event so the guest event ring starts empty.
     while dev.controller_mut().pop_pending_event().is_some() {}
 

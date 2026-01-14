@@ -439,7 +439,11 @@ impl HdaControllerBridge {
 
         set(&root, "afgPowerState", JsValue::from(codec.afg_power_state))?;
 
-        set(&root, "outputStreamId", JsValue::from(codec.output_stream_id))?;
+        set(
+            &root,
+            "outputStreamId",
+            JsValue::from(codec.output_stream_id),
+        )?;
         set(&root, "outputChannel", JsValue::from(codec.output_channel))?;
         set(&root, "outputFormat", JsValue::from(codec.output_format))?;
         set(&root, "outputPinCtl", JsValue::from(codec.pin_ctl))?;

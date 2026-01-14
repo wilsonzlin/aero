@@ -39,4 +39,3 @@ fn smp_vcpu_msr_state_has_correct_bsp_bit_and_optional_tsc_aux() {
         assert_eq!(vcpu1.msr.tsc_aux, 1);
     }
 }
-

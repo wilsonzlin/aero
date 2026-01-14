@@ -313,7 +313,8 @@ pub struct WasmVm {
 impl WasmVm {
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        let guest_size_u64 = crate::validate_shared_guest_ram_layout("WasmVm", guest_base, guest_size)?;
+        let guest_size_u64 =
+            crate::validate_shared_guest_ram_layout("WasmVm", guest_base, guest_size)?;
 
         let cpu = CpuCore::new(CpuMode::Real);
         let assist = AssistContext::default();
@@ -640,9 +641,8 @@ export function installAeroMmioTestShims() {
 
     fn alloc_guest_region_bytes(min_bytes: u32) -> (u32, u32) {
         let page_bytes = crate::guest_layout::WASM_PAGE_BYTES as u32;
-        let reserved_pages =
-            (crate::guest_layout::RUNTIME_RESERVED_BYTES / crate::guest_layout::WASM_PAGE_BYTES)
-                as u32;
+        let reserved_pages = (crate::guest_layout::RUNTIME_RESERVED_BYTES
+            / crate::guest_layout::WASM_PAGE_BYTES) as u32;
         let current_pages = core::arch::wasm32::memory_size(0) as u32;
         if current_pages < reserved_pages {
             let delta = reserved_pages - current_pages;

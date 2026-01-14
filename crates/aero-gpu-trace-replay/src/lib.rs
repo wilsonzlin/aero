@@ -973,7 +973,9 @@ pub fn decode_cmd_stream_listing(
                             v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
                                 Some("R8G8B8X8UnormSrgb")
                             }
-                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => Some("D24UnormS8Uint"),
+                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => {
+                                Some("D24UnormS8Uint")
+                            }
                             v if v == AerogpuFormat::D32Float as u32 => Some("D32Float"),
                             v if v == AerogpuFormat::BC1RgbaUnorm as u32 => Some("BC1RgbaUnorm"),
                             v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
@@ -1034,12 +1036,13 @@ pub fn decode_cmd_stream_listing(
                         );
                     }
                     AerogpuCmdOpcode::UploadResource => {
-                        let (cmd, data) = pkt
-                            .decode_upload_resource_payload_le()
-                            .map_err(|err| CmdStreamDecodeError::Payload {
-                                offset,
-                                opcode,
-                                err,
+                        let (cmd, data) =
+                            pkt.decode_upload_resource_payload_le().map_err(|err| {
+                                CmdStreamDecodeError::Payload {
+                                    offset,
+                                    opcode,
+                                    err,
+                                }
                             })?;
                         // Avoid taking references to packed fields.
                         let resource_handle = cmd.resource_handle;
@@ -1102,12 +1105,13 @@ pub fn decode_cmd_stream_listing(
                         );
                     }
                     AerogpuCmdOpcode::CreateShaderDxbc => {
-                        let (cmd, dxbc) = pkt
-                            .decode_create_shader_dxbc_payload_le()
-                            .map_err(|err| CmdStreamDecodeError::Payload {
-                                offset,
-                                opcode,
-                                err,
+                        let (cmd, dxbc) =
+                            pkt.decode_create_shader_dxbc_payload_le().map_err(|err| {
+                                CmdStreamDecodeError::Payload {
+                                    offset,
+                                    opcode,
+                                    err,
+                                }
                             })?;
                         // Avoid taking references to packed fields.
                         let shader_handle = cmd.shader_handle;
@@ -1123,12 +1127,13 @@ pub fn decode_cmd_stream_listing(
                         );
                     }
                     AerogpuCmdOpcode::CreateInputLayout => {
-                        let (cmd, blob) = pkt
-                            .decode_create_input_layout_payload_le()
-                            .map_err(|err| CmdStreamDecodeError::Payload {
-                                offset,
-                                opcode,
-                                err,
+                        let (cmd, blob) =
+                            pkt.decode_create_input_layout_payload_le().map_err(|err| {
+                                CmdStreamDecodeError::Payload {
+                                    offset,
+                                    opcode,
+                                    err,
+                                }
                             })?;
                         // Avoid taking references to packed fields.
                         let input_layout_handle = cmd.input_layout_handle;
@@ -1280,10 +1285,7 @@ pub fn decode_cmd_stream_listing(
                         }
                         let scanout_id = u32_le_at(pkt.payload, 0).unwrap();
                         let flags = u32_le_at(pkt.payload, 4).unwrap();
-                        let _ = write!(
-                            line,
-                            " scanout_id={scanout_id} flags=0x{flags:08X}"
-                        );
+                        let _ = write!(line, " scanout_id={scanout_id} flags=0x{flags:08X}");
                     }
                     AerogpuCmdOpcode::PresentEx => {
                         if pkt.payload.len() < 12 {
@@ -1302,21 +1304,18 @@ pub fn decode_cmd_stream_listing(
                         );
                     }
                     AerogpuCmdOpcode::BindShaders => {
-                        let (cmd, ex) = pkt
-                            .decode_bind_shaders_payload_le()
-                            .map_err(|err| CmdStreamDecodeError::Payload {
+                        let (cmd, ex) = pkt.decode_bind_shaders_payload_le().map_err(|err| {
+                            CmdStreamDecodeError::Payload {
                                 offset,
                                 opcode,
                                 err,
-                            })?;
+                            }
+                        })?;
                         // Avoid taking references to packed fields.
                         let vs = cmd.vs;
                         let ps = cmd.ps;
                         let cs = cmd.cs;
-                        let _ = write!(
-                            line,
-                            " vs={vs} ps={ps} cs={cs}"
-                        );
+                        let _ = write!(line, " vs={vs} ps={ps} cs={cs}");
                         if let Some(ex) = ex {
                             let gs = ex.gs;
                             let hs = ex.hs;
@@ -1332,10 +1331,10 @@ pub fn decode_cmd_stream_listing(
                         let (cmd, bindings) = pkt
                             .decode_set_shader_resource_buffers_payload_le()
                             .map_err(|err| CmdStreamDecodeError::Payload {
-                                offset,
-                                opcode,
-                                err,
-                            })?;
+                            offset,
+                            opcode,
+                            err,
+                        })?;
                         // Avoid taking references to packed fields.
                         let shader_stage = cmd.shader_stage;
                         let start_slot = cmd.start_slot;

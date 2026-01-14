@@ -1,9 +1,9 @@
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
-    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Module, SrcKind, SrcOperand,
-    Swizzle, WriteMask,
+    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Module, SrcKind,
+    SrcOperand, Swizzle, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");

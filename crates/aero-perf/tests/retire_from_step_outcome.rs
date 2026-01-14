@@ -1,6 +1,4 @@
-use aero_perf::{
-    retire_from_step_outcome, InstructionRetirement, PerfCounters, PerfWorker,
-};
+use aero_perf::{retire_from_step_outcome, InstructionRetirement, PerfCounters, PerfWorker};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

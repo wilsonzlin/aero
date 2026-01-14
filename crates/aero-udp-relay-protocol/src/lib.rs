@@ -144,9 +144,15 @@ impl std::error::Error for DecodeError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncodeError {
-    PayloadTooLarge { len: usize, max: usize },
+    PayloadTooLarge {
+        len: usize,
+        max: usize,
+    },
     V1RequiresIpv4,
-    TransportAddressFamilyMismatch { transport: AddressFamily, ip: AddressFamily },
+    TransportAddressFamilyMismatch {
+        transport: AddressFamily,
+        ip: AddressFamily,
+    },
 }
 
 impl core::fmt::Display for EncodeError {
@@ -245,11 +251,7 @@ pub fn decode_v2_datagram_with_limits<'a>(
     let (address_family, ip_len) = match af {
         UDP_RELAY_V2_AF_IPV4 => (AddressFamily::Ipv4, 4usize),
         UDP_RELAY_V2_AF_IPV6 => (AddressFamily::Ipv6, 16usize),
-        _ => {
-            return Err(DecodeError::V2UnknownAddressFamily {
-                address_family: af,
-            })
-        }
+        _ => return Err(DecodeError::V2UnknownAddressFamily { address_family: af }),
     };
 
     let header_len = 4usize
@@ -269,16 +271,22 @@ pub fn decode_v2_datagram_with_limits<'a>(
     let ip_off = 6usize;
     let remote_ip = match address_family {
         AddressFamily::Ipv4 => {
-            let ip4 = Ipv4Addr::new(frame[ip_off], frame[ip_off + 1], frame[ip_off + 2], frame[ip_off + 3]);
+            let ip4 = Ipv4Addr::new(
+                frame[ip_off],
+                frame[ip_off + 1],
+                frame[ip_off + 2],
+                frame[ip_off + 3],
+            );
             IpAddr::V4(ip4)
         }
         AddressFamily::Ipv6 => {
-            let ip_bytes: [u8; 16] = frame[ip_off..ip_off + 16]
-                .try_into()
-                .map_err(|_e| DecodeError::TooShort {
-                    len: frame.len(),
-                    min: header_len,
-                })?;
+            let ip_bytes: [u8; 16] =
+                frame[ip_off..ip_off + 16]
+                    .try_into()
+                    .map_err(|_e| DecodeError::TooShort {
+                        len: frame.len(),
+                        min: header_len,
+                    })?;
             IpAddr::V6(Ipv6Addr::from(ip_bytes))
         }
     };
@@ -311,7 +319,10 @@ pub fn encode_datagram(d: Datagram<'_>) -> Result<Vec<u8>, EncodeError> {
     encode_datagram_with_limits(d, &Limits::default())
 }
 
-pub fn encode_datagram_with_limits(d: Datagram<'_>, limits: &Limits) -> Result<Vec<u8>, EncodeError> {
+pub fn encode_datagram_with_limits(
+    d: Datagram<'_>,
+    limits: &Limits,
+) -> Result<Vec<u8>, EncodeError> {
     match d.transport.version {
         FramingVersion::V1 => encode_v1_datagram_with_limits(d, limits),
         FramingVersion::V2 => encode_v2_datagram_with_limits(d, limits),
@@ -319,7 +330,10 @@ pub fn encode_datagram_with_limits(d: Datagram<'_>, limits: &Limits) -> Result<V
 }
 
 /// Encode a v1 UDP relay datagram frame (IPv4-only).
-pub fn encode_v1_datagram_with_limits(d: Datagram<'_>, limits: &Limits) -> Result<Vec<u8>, EncodeError> {
+pub fn encode_v1_datagram_with_limits(
+    d: Datagram<'_>,
+    limits: &Limits,
+) -> Result<Vec<u8>, EncodeError> {
     if d.payload.len() > limits.max_payload {
         return Err(EncodeError::PayloadTooLarge {
             len: d.payload.len(),
@@ -342,8 +356,7 @@ pub fn encode_v1_datagram_with_limits(d: Datagram<'_>, limits: &Limits) -> Resul
         IpAddr::V6(_) => return Err(EncodeError::V1RequiresIpv4),
     };
 
-    let mut out =
-        Vec::with_capacity(UDP_RELAY_V1_HEADER_LEN.saturating_add(d.payload.len()));
+    let mut out = Vec::with_capacity(UDP_RELAY_V1_HEADER_LEN.saturating_add(d.payload.len()));
     out.extend_from_slice(&d.guest_port.to_be_bytes());
     out.extend_from_slice(&ip4);
     out.extend_from_slice(&d.remote_port.to_be_bytes());
@@ -352,7 +365,10 @@ pub fn encode_v1_datagram_with_limits(d: Datagram<'_>, limits: &Limits) -> Resul
 }
 
 /// Encode a v2 UDP relay datagram frame (IPv4 or IPv6).
-pub fn encode_v2_datagram_with_limits(d: Datagram<'_>, limits: &Limits) -> Result<Vec<u8>, EncodeError> {
+pub fn encode_v2_datagram_with_limits(
+    d: Datagram<'_>,
+    limits: &Limits,
+) -> Result<Vec<u8>, EncodeError> {
     if d.payload.len() > limits.max_payload {
         return Err(EncodeError::PayloadTooLarge {
             len: d.payload.len(),

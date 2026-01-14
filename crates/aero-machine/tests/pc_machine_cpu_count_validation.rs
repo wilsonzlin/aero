@@ -13,5 +13,8 @@ fn pc_machine_cpu_count_must_be_non_zero() {
     assert!(matches!(err, MachineError::InvalidCpuCount(0)));
 
     let msg = err.to_string();
-    assert!(msg.contains("must be >= 1"), "message should be actionable: {msg}");
+    assert!(
+        msg.contains("must be >= 1"),
+        "message should be actionable: {msg}"
+    );
 }

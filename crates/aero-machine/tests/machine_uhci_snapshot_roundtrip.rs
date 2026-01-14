@@ -188,4 +188,3 @@ fn machine_usb_uhci_snapshot_roundtrip_preserves_regs_and_remainder() {
         (frnum_after_tick.wrapping_add(1)) & 0x07ff
     );
 }
-

@@ -95,7 +95,12 @@ fn setup_controller_with_transfer_ring(
     xhci.mmio_write(mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
     xhci.mmio_write(mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
     xhci.mmio_write(mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    xhci.mmio_write(mem, regs::REG_INTR0_ERDP_HI, 4, (event_ring_base >> 32) as u32);
+    xhci.mmio_write(
+        mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (event_ring_base >> 32) as u32,
+    );
     xhci.mmio_write(mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
@@ -165,8 +170,8 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
     link_trb.write_to(&mut mem, transfer_ring_base + 3 * TRB_LEN as u64);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
@@ -178,7 +183,10 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
     assert_eq!(ev.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev.slot_id(), slot_id);
     assert_eq!(ev.endpoint_id(), 1);
-    assert_eq!(ev.parameter & !0x0f, transfer_ring_base + 2 * TRB_LEN as u64);
+    assert_eq!(
+        ev.parameter & !0x0f,
+        transfer_ring_base + 2 * TRB_LEN as u64
+    );
     assert_eq!(ev.completion_code_raw(), CompletionCode::Success.raw());
     assert_eq!(ev.status & 0x00ff_ffff, 0);
 }
@@ -189,7 +197,11 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
     let mut alloc = Alloc::new(0x1000);
 
     let (mut xhci, slot_id, transfer_ring_base, event_ring_base, _erstba) =
-        setup_controller_with_transfer_ring(&mut mem, &mut alloc, Box::new(ImmediateControlInDevice));
+        setup_controller_with_transfer_ring(
+            &mut mem,
+            &mut alloc,
+            Box::new(ImmediateControlInDevice),
+        );
 
     // SetupStage, DataStage (IN + IDT), StatusStage (OUT), Link.
     let setup = SetupPacket {
@@ -238,8 +250,8 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
     link_trb.write_to(&mut mem, transfer_ring_base + 3 * TRB_LEN as u64);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
@@ -256,8 +268,10 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
     assert_eq!(ev.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev.slot_id(), slot_id);
     assert_eq!(ev.endpoint_id(), 1);
-    assert_eq!(ev.parameter & !0x0f, transfer_ring_base + 2 * TRB_LEN as u64);
+    assert_eq!(
+        ev.parameter & !0x0f,
+        transfer_ring_base + 2 * TRB_LEN as u64
+    );
     assert_eq!(ev.completion_code_raw(), CompletionCode::Success.raw());
     assert_eq!(ev.status & 0x00ff_ffff, 0);
 }
-

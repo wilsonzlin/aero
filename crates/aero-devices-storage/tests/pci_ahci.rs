@@ -4,8 +4,8 @@ use std::sync::Arc;
 use aero_devices::pci::profile;
 use aero_devices::pci::PciDevice as _;
 use aero_devices_storage::ata::{
-    AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT, ATA_STATUS_BSY, ATA_STATUS_DSC,
-    ATA_STATUS_DRDY,
+    AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT, ATA_STATUS_BSY, ATA_STATUS_DRDY,
+    ATA_STATUS_DSC,
 };
 use aero_devices_storage::AhciPciDevice;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -401,7 +401,10 @@ fn mmio_comreset_sequence_restores_link_and_interrupts() {
     assert_eq!(ssts0 & 0xF, 3);
     assert_eq!((ssts0 >> 4) & 0xF, 1);
     assert_eq!((ssts0 >> 8) & 0xF, 1);
-    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_SIG, 4) as u32, SATA_SIG_ATA);
+    assert_eq!(
+        dev.mmio_read(PORT_BASE + PORT_REG_SIG, 4) as u32,
+        SATA_SIG_ATA
+    );
     assert_eq!(
         dev.mmio_read(PORT_BASE + PORT_REG_TFD, 4) as u32 & 0xFF,
         u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC)
@@ -424,7 +427,10 @@ fn mmio_comreset_sequence_restores_link_and_interrupts() {
     assert_eq!(ssts & 0xF, 3);
     assert_eq!((ssts >> 4) & 0xF, 1);
     assert_eq!((ssts >> 8) & 0xF, 1);
-    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_SIG, 4) as u32, SATA_SIG_ATA);
+    assert_eq!(
+        dev.mmio_read(PORT_BASE + PORT_REG_SIG, 4) as u32,
+        SATA_SIG_ATA
+    );
     assert_eq!(
         dev.mmio_read(PORT_BASE + PORT_REG_TFD, 4) as u32 & 0xFF,
         u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC)

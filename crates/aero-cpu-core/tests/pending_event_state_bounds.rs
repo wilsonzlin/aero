@@ -66,7 +66,8 @@ fn interrupt_frame_stack_overflow_triggers_triple_fault() {
 
     // Deliver up to the hard cap.
     for i in 0..PendingEventState::MAX_INTERRUPT_FRAMES {
-        cpu.pending.raise_software_interrupt(0x80, 0x1000 + i as u64);
+        cpu.pending
+            .raise_software_interrupt(0x80, 0x1000 + i as u64);
         cpu.deliver_pending_event(&mut mem)
             .expect("interrupt delivery should succeed below the cap");
     }

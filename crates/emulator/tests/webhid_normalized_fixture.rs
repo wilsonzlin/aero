@@ -34,10 +34,12 @@ fn webhid_normalized_fixtures_roundtrip_and_synthesize_descriptor_via_emulator_r
 
         let descriptor = synthesize_report_descriptor(&collections)
             .unwrap_or_else(|err| panic!("synthesize_report_descriptor ({fixture_name}): {err}"));
-        assert!(!descriptor.is_empty(), "empty report descriptor: {fixture_name}");
+        assert!(
+            !descriptor.is_empty(),
+            "empty report descriptor: {fixture_name}"
+        );
 
         parse_report_descriptor(&descriptor)
             .unwrap_or_else(|err| panic!("parse synthesized descriptor ({fixture_name}): {err}"));
     }
 }
-

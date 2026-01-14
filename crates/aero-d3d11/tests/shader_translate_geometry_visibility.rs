@@ -45,4 +45,3 @@ fn geometry_stage_resource_bindings_use_group3_and_compute_visibility() {
     );
     assert_eq!(cb.group, 3, "geometry-stage bindings should use @group(3)");
 }
-

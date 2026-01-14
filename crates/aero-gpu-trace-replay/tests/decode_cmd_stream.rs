@@ -169,16 +169,12 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("0x000000BC DestroyResource size_bytes=16"));
 
     // New ABI opcodes should also decode their fields.
-    assert!(listing.contains(
-        "0x000000CC SetShaderResourceBuffers size_bytes=40"
-    ));
+    assert!(listing.contains("0x000000CC SetShaderResourceBuffers size_bytes=40"));
     assert!(listing.contains("shader_stage=2"));
     assert!(listing.contains("buffer_count=1"));
     assert!(listing.contains("srv0_buffer=7"));
 
-    assert!(listing.contains(
-        "0x000000F4 SetUnorderedAccessBuffers size_bytes=40"
-    ));
+    assert!(listing.contains("0x000000F4 SetUnorderedAccessBuffers size_bytes=40"));
     assert!(listing.contains("uav_count=1"));
     assert!(listing.contains("uav0_buffer=8"));
     assert!(listing.contains("uav0_initial_count=123"));

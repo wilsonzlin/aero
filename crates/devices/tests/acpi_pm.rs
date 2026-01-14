@@ -166,7 +166,9 @@ fn s1_s3_s4_sleep_requests_callback() {
         let sleep_requests_for_cb = sleep_requests.clone();
 
         let callbacks = AcpiPmCallbacks {
-            request_sleep: Some(Box::new(move |s| sleep_requests_for_cb.borrow_mut().push(s))),
+            request_sleep: Some(Box::new(move |s| {
+                sleep_requests_for_cb.borrow_mut().push(s)
+            })),
             ..Default::default()
         };
 

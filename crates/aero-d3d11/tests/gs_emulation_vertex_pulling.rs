@@ -5,7 +5,9 @@ use aero_d3d11::input_layout::{
     AEROGPU_INPUT_LAYOUT_BLOB_VERSION, D3D11_APPEND_ALIGNED_ELEMENT,
 };
 use aero_d3d11::runtime::aerogpu_resources::AerogpuResourceManager;
-use aero_d3d11::vertex_pulling::{build_vertex_pull_plan, emit_wgsl_pull_table, WGSL_VERTEX_PULLING_HELPERS};
+use aero_d3d11::vertex_pulling::{
+    build_vertex_pull_plan, emit_wgsl_pull_table, WGSL_VERTEX_PULLING_HELPERS,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
 use anyhow::{anyhow, Context, Result};
 
@@ -264,86 +266,92 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
                 source: wgpu::ShaderSource::Wgsl(wgsl.into()),
             });
 
-        let bind_group_layout = resources
+        let bind_group_layout =
+            resources
+                .device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("vertex pulling bgl"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+
+        let pipeline_layout =
+            resources
+                .device()
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("vertex pulling pl"),
+                    bind_group_layouts: &[&bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+
+        let pipeline =
+            resources
+                .device()
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("vertex pulling pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: "cs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
+
+        let bind_group = resources
             .device()
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("vertex pulling bgl"),
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("vertex pulling bg"),
+                layout: &bind_group_layout,
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
+                    wgpu::BindGroupEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                        resource: resources.buffer(1)?.buffer.as_entire_binding(),
                     },
-                    wgpu::BindGroupLayoutEntry {
+                    wgpu::BindGroupEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                        resource: params_buf.as_entire_binding(),
                     },
-                    wgpu::BindGroupLayoutEntry {
+                    wgpu::BindGroupEntry {
                         binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                        resource: resources.buffer(2)?.buffer.as_entire_binding(),
                     },
                 ],
             });
 
-        let pipeline_layout = resources
-            .device()
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("vertex pulling pl"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let pipeline = resources
-            .device()
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("vertex pulling pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: "cs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            });
-
-        let bind_group = resources.device().create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vertex pulling bg"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: resources.buffer(1)?.buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: resources.buffer(2)?.buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        let mut encoder = resources
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("vertex pulling encoder"),
-            });
+        let mut encoder =
+            resources
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("vertex pulling encoder"),
+                });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("vertex pulling pass"),
@@ -375,11 +383,12 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             .queue()
             .write_buffer(&resources.buffer(1)?.buffer, 0, &vb_data);
 
-        let mut encoder = resources
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("vertex pulling encoder (2)"),
-            });
+        let mut encoder =
+            resources
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("vertex pulling encoder (2)"),
+                });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("vertex pulling pass (2)"),
@@ -398,7 +407,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             256,
         )
         .await?;
-        assert_ne!(out_bytes_0, out_bytes_1, "output buffer must change when vertex data changes");
+        assert_ne!(
+            out_bytes_0, out_bytes_1,
+            "output buffer must change when vertex data changes"
+        );
 
         let out_1: &[OutVertex] = bytemuck::cast_slice(&out_bytes_1);
         assert_eq!(out_1[0].color, [0.0, 1.0, 0.0, 1.0]);

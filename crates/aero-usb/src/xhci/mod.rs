@@ -486,7 +486,10 @@ impl XhciController {
     }
 
     pub fn with_port_count(port_count: u8) -> Self {
-        assert!(port_count > 0, "xHCI controller must expose at least one port");
+        assert!(
+            port_count > 0,
+            "xHCI controller must expose at least one port"
+        );
         const DEFAULT_MAX_SLOTS: usize = regs::MAX_SLOTS as usize;
         let slots: Vec<SlotState> = core::iter::repeat_with(SlotState::default)
             .take(DEFAULT_MAX_SLOTS + 1)
@@ -640,8 +643,7 @@ impl XhciController {
             self.slots[slot_id].device_attached = false;
             self.transfer_executors[slot_id] = None;
             let slot_id_u8 = slot_id as u8;
-            self.active_endpoints
-                .retain(|ep| ep.slot_id != slot_id_u8);
+            self.active_endpoints.retain(|ep| ep.slot_id != slot_id_u8);
         }
 
         Ok(())
@@ -658,7 +660,10 @@ impl XhciController {
         if root_port >= self.ports.len() {
             return Err(UsbHubAttachError::InvalidPort);
         }
-        self.attach_device(root_port, Box::new(UsbHubDevice::with_port_count(port_count)));
+        self.attach_device(
+            root_port,
+            Box::new(UsbHubDevice::with_port_count(port_count)),
+        );
         Ok(())
     }
 
@@ -738,7 +743,9 @@ impl XhciController {
             .find(|&id| !self.slots[usize::from(id)].enabled)
         {
             Some(id) => id,
-            None => return CommandCompletion::failure(CommandCompletionCode::NoSlotsAvailableError),
+            None => {
+                return CommandCompletion::failure(CommandCompletionCode::NoSlotsAvailableError)
+            }
         };
 
         let Some(entry_addr) = self.dcbaap_entry_paddr(slot_id) else {
@@ -791,7 +798,11 @@ impl XhciController {
     /// Process up to `max_trbs` command TRBs from the configured command ring.
     ///
     /// Returns `true` when the ring appears empty (cycle mismatch or fatal ring error).
-    pub fn process_command_ring<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, max_trbs: usize) -> bool {
+    pub fn process_command_ring<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        max_trbs: usize,
+    ) -> bool {
         let Some(mut cursor) = self.command_ring else {
             return true;
         };
@@ -826,13 +837,19 @@ impl XhciController {
             TrbType::ConfigureEndpointCommand => self.cmd_configure_endpoint(mem, cmd_paddr, trb),
             TrbType::StopEndpointCommand => self.cmd_stop_endpoint(mem, cmd_paddr, trb),
             TrbType::ResetEndpointCommand => self.cmd_reset_endpoint(mem, cmd_paddr, trb),
-            TrbType::SetTrDequeuePointerCommand => self.cmd_set_tr_dequeue_pointer(mem, cmd_paddr, trb),
+            TrbType::SetTrDequeuePointerCommand => {
+                self.cmd_set_tr_dequeue_pointer(mem, cmd_paddr, trb)
+            }
             TrbType::NoOpCommand => self.queue_command_completion_event(
                 cmd_paddr,
                 CompletionCode::Success,
                 trb.slot_id(),
             ),
-            _ => self.queue_command_completion_event(cmd_paddr, CompletionCode::TrbError, trb.slot_id()),
+            _ => self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::TrbError,
+                trb.slot_id(),
+            ),
         }
     }
 
@@ -842,7 +859,9 @@ impl XhciController {
             CommandCompletionCode::Success => (CompletionCode::Success, result.slot_id),
             CommandCompletionCode::ContextStateError => (CompletionCode::ContextStateError, 0),
             CommandCompletionCode::ParameterError => (CompletionCode::ParameterError, 0),
-            CommandCompletionCode::NoSlotsAvailableError => (CompletionCode::NoSlotsAvailableError, 0),
+            CommandCompletionCode::NoSlotsAvailableError => {
+                (CompletionCode::NoSlotsAvailableError, 0)
+            }
             CommandCompletionCode::Unknown(_) => (CompletionCode::TrbError, 0),
         };
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
@@ -967,7 +986,12 @@ impl XhciController {
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
-    fn cmd_set_tr_dequeue_pointer<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+    fn cmd_set_tr_dequeue_pointer<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        cmd_paddr: u64,
+        trb: Trb,
+    ) {
         let slot_id = trb.slot_id();
         let endpoint_id = trb.endpoint_id();
 
@@ -1057,7 +1081,8 @@ impl XhciController {
         }
 
         let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
-        let mut ep0_ctx = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+        let mut ep0_ctx =
+            EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
 
         let port_id = slot_ctx.root_hub_port_number();
         if port_id == 0 || port_id > self.port_count {
@@ -1071,19 +1096,31 @@ impl XhciController {
         {
             Ok(route) => route,
             Err(_) => {
-                self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
                 return;
             }
         };
 
         let Some(dcbaa_entry) = self.dcbaap_entry_paddr(slot_id) else {
-            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::ContextStateError,
+                slot_id,
+            );
             return;
         };
         let dev_ctx_raw = mem.read_u64(dcbaa_entry);
         let dev_ctx_ptr = dev_ctx_raw & !0x3f;
         if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
-            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::ContextStateError,
+                slot_id,
+            );
             return;
         }
 
@@ -1242,7 +1279,11 @@ impl XhciController {
         let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
             Ok(ptr) => ptr,
             Err(CommandCompletionCode::ParameterError) => {
-                self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
                 return;
             }
             Err(_) => {
@@ -1327,7 +1368,11 @@ impl XhciController {
         let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
             Ok(ptr) => ptr,
             Err(CommandCompletionCode::ParameterError) => {
-                self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
                 return;
             }
             Err(_) => {
@@ -1800,7 +1845,13 @@ impl XhciController {
     /// Configure the guest transfer ring for an endpoint.
     ///
     /// `endpoint_id` is the xHCI Device Context Index (DCI). Endpoint 0 uses DCI=1.
-    pub fn set_endpoint_ring(&mut self, slot_id: u8, endpoint_id: u8, dequeue_ptr: u64, cycle: bool) {
+    pub fn set_endpoint_ring(
+        &mut self,
+        slot_id: u8,
+        endpoint_id: u8,
+        dequeue_ptr: u64,
+        cycle: bool,
+    ) {
         let idx = usize::from(slot_id);
         let Some(slot) = self.slots.get_mut(idx) else {
             return;
@@ -1919,9 +1970,8 @@ impl XhciController {
                     self.pending_events.pop_front();
                     self.interrupter0.set_interrupt_pending(true);
                 }
-                Err(event_ring::EnqueueError::NotConfigured) | Err(event_ring::EnqueueError::RingFull) => {
-                    break
-                }
+                Err(event_ring::EnqueueError::NotConfigured)
+                | Err(event_ring::EnqueueError::RingFull) => break,
                 Err(event_ring::EnqueueError::InvalidConfig) => {
                     // Malformed guest configuration (e.g. ERST points out of bounds) should not
                     // panic; instead surface Host Controller Error as a sticky flag.
@@ -2095,9 +2145,9 @@ impl XhciController {
         //
         // The roothub port range is 1-based, so we expose all ports as a single USB 2.0 range.
         let psic = 3u8; // low/full/high-speed entries.
-        // Next pointer: 0 => end of list.
-        let header0 = (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32)
-            | ((regs::USB_REVISION_2_0 as u32) << 16);
+                        // Next pointer: 0 => end of list.
+        let header0 =
+            (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32) | ((regs::USB_REVISION_2_0 as u32) << 16);
         caps.push(header0);
         caps.push(regs::PROTOCOL_NAME_USB2);
         caps.push((1u32) | ((self.port_count as u32) << 8));
@@ -2107,9 +2157,7 @@ impl XhciController {
         // start of the capability.
         let psio = 4u16;
         caps.push(
-            (psic as u32)
-                | ((regs::USB2_PROTOCOL_SLOT_TYPE as u32) << 8)
-                | ((psio as u32) << 16),
+            (psic as u32) | ((regs::USB2_PROTOCOL_SLOT_TYPE as u32) << 8) | ((psio as u32) << 16),
         );
 
         // Protocol Speed ID descriptors.
@@ -2170,7 +2218,9 @@ impl XhciController {
                 let port = (rel / regs::port::PORTREGS_STRIDE) as usize;
                 let reg_off = rel % regs::port::PORTREGS_STRIDE;
                 match reg_off {
-                    regs::port::PORTSC => self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0),
+                    regs::port::PORTSC => {
+                        self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0)
+                    }
                     _ => 0,
                 }
             }
@@ -2193,11 +2243,10 @@ impl XhciController {
             regs::REG_DBOFF => regs::DBOFF_VALUE,
             regs::REG_RTSOFF => regs::RTSOFF_VALUE,
             regs::REG_HCCPARAMS2 => 0,
-            off
-                if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
-                    && off
-                        < regs::EXT_CAPS_OFFSET_BYTES as u64
-                            + (self.ext_caps.len().saturating_mul(4) as u64) =>
+            off if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
+                && off
+                    < regs::EXT_CAPS_OFFSET_BYTES as u64
+                        + (self.ext_caps.len().saturating_mul(4) as u64) =>
             {
                 let idx = (off - regs::EXT_CAPS_OFFSET_BYTES as u64) / 4;
                 self.ext_caps.get(idx as usize).copied().unwrap_or(0)
@@ -2300,8 +2349,7 @@ impl XhciController {
         };
 
         let portregs_base = regs::REG_USBCMD + regs::port::PORTREGS_BASE;
-        let portregs_end =
-            portregs_base + u64::from(self.port_count) * regs::port::PORTREGS_STRIDE;
+        let portregs_end = portregs_base + u64::from(self.port_count) * regs::port::PORTREGS_STRIDE;
 
         if aligned >= portregs_base && aligned < portregs_end {
             let rel = aligned - portregs_base;
@@ -2551,7 +2599,9 @@ impl XhciController {
             // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
             // Pointer field so guests that inspect the Device Context observe progress.
             let trbs_consumed = if before != after { 1 } else { 0 };
-            if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) = (before, after) {
+            if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) =
+                (before, after)
+            {
                 if before_ptr != after_ptr || before_cycle != after_cycle {
                     self.write_endpoint_dequeue_to_context(
                         mem,
@@ -2589,9 +2639,9 @@ impl XhciController {
 
             // Keep the endpoint active if the next TRB is ready (or we're waiting on an inflight
             // device completion).
-            let keep_active = exec
-                .endpoint_state(ep_addr)
-                .is_some_and(|st| !st.halted && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle);
+            let keep_active = exec.endpoint_state(ep_addr).is_some_and(|st| {
+                !st.halted && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
+            });
 
             self.transfer_executors[slot_idx] = Some(exec);
 
@@ -2606,7 +2656,11 @@ impl XhciController {
             return EndpointOutcome::idle();
         };
 
-        let mut control_td = self.ep0_control_td.get(slot_idx).copied().unwrap_or_default();
+        let mut control_td = self
+            .ep0_control_td
+            .get(slot_idx)
+            .copied()
+            .unwrap_or_default();
 
         // Use the in-flight cursor when a control TD is partially completed (e.g. DATA/STATUS stage
         // is NAKed). Otherwise start from the committed dequeue pointer.
@@ -2621,7 +2675,7 @@ impl XhciController {
                 return EndpointOutcome::idle();
             };
 
-                while trbs_consumed < trb_budget {
+            while trbs_consumed < trb_budget {
                 let item = match ring.peek(mem, RING_STEP_BUDGET) {
                     RingPoll::Ready(item) => item,
                     RingPoll::NotReady => {
@@ -2845,7 +2899,8 @@ impl XhciController {
                             }
                         };
 
-                        let (completion, residue) = if status_completion == CompletionCode::Success {
+                        let (completion, residue) = if status_completion == CompletionCode::Success
+                        {
                             let residue = control_td
                                 .data_expected
                                 .saturating_sub(control_td.data_transferred);
@@ -2948,26 +3003,27 @@ impl XhciController {
         endpoint_id: u8,
         ep_addr: u8,
     ) {
-        let (dequeue_ptr, cycle) = match self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id) {
-            Some(v) => v,
-            None => {
-                // Test/harness helpers like `set_endpoint_ring()` configure controller-local ring
-                // cursors without populating full Endpoint Context state in guest memory. Fall back
-                // to those cursors so deterministic `tick_1ms` polling can still make progress.
-                let slot_idx = usize::from(slot_id);
-                let ring_idx = usize::from(endpoint_id.saturating_sub(1));
-                let Some(ring) = self
-                    .slots
-                    .get(slot_idx)
-                    .and_then(|slot| slot.transfer_rings.get(ring_idx))
-                    .copied()
-                    .flatten()
-                else {
-                    return;
-                };
-                (ring.dequeue_ptr(), ring.cycle_state())
-            }
-        };
+        let (dequeue_ptr, cycle) =
+            match self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id) {
+                Some(v) => v,
+                None => {
+                    // Test/harness helpers like `set_endpoint_ring()` configure controller-local ring
+                    // cursors without populating full Endpoint Context state in guest memory. Fall back
+                    // to those cursors so deterministic `tick_1ms` polling can still make progress.
+                    let slot_idx = usize::from(slot_id);
+                    let ring_idx = usize::from(endpoint_id.saturating_sub(1));
+                    let Some(ring) = self
+                        .slots
+                        .get(slot_idx)
+                        .and_then(|slot| slot.transfer_rings.get(ring_idx))
+                        .copied()
+                        .flatten()
+                    else {
+                        return;
+                    };
+                    (ring.dequeue_ptr(), ring.cycle_state())
+                }
+            };
 
         if let Some(st) = exec.endpoint_state_mut(ep_addr) {
             st.ring.dequeue_ptr = dequeue_ptr;
@@ -3055,7 +3111,9 @@ impl XhciController {
             return;
         }
 
-        let ctx_base = match dev_ctx_ptr.checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64)) {
+        let ctx_base = match dev_ctx_ptr
+            .checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64))
+        {
             Some(v) => v,
             None => return,
         };

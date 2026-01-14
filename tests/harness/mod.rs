@@ -101,7 +101,11 @@ pub fn compare_images(
 
 /// Render a diff image where pixels matching within `cfg.tolerance` keep the expected pixel, and
 /// mismatched pixels are highlighted in red.
-pub fn render_image_diff(actual: &RgbaImage, expected: &RgbaImage, cfg: &ImageMatchConfig) -> RgbaImage {
+pub fn render_image_diff(
+    actual: &RgbaImage,
+    expected: &RgbaImage,
+    cfg: &ImageMatchConfig,
+) -> RgbaImage {
     // We intentionally keep this helper infallible so callers can always get *some* output
     // even if normalization fails (dimension mismatch/crop bounds/etc.). In that case, return
     // the expected image as-is.
@@ -111,12 +115,13 @@ pub fn render_image_diff(actual: &RgbaImage, expected: &RgbaImage, cfg: &ImageMa
     render_image_diff_normalized(&actual, &expected, cfg.tolerance)
 }
 
-fn render_image_diff_normalized(actual: &RgbaImage, expected: &RgbaImage, tolerance: u8) -> RgbaImage {
+fn render_image_diff_normalized(
+    actual: &RgbaImage,
+    expected: &RgbaImage,
+    tolerance: u8,
+) -> RgbaImage {
     let mut out = expected.clone();
-    for (o, (a, e)) in out
-        .pixels_mut()
-        .zip(actual.pixels().zip(expected.pixels()))
-    {
+    for (o, (a, e)) in out.pixels_mut().zip(actual.pixels().zip(expected.pixels())) {
         let mut pixel_diff_max: u8 = 0;
         for ch in 0..4 {
             pixel_diff_max = pixel_diff_max.max(a.0[ch].abs_diff(e.0[ch]));
@@ -318,7 +323,11 @@ fn screenshot_artifact_label(golden: &Path, cfg: &ImageMatchConfig) -> String {
 
     // Not a standard env var set by `cargo test`, but some CI runners / custom harnesses set it.
     // Prefer it over the golden image stem when present so concurrent failures don't collide.
-    for key in ["RUST_TEST_NAME", "NEXTEST_TEST_NAME", "NEXTEST_TEST_FULL_NAME"] {
+    for key in [
+        "RUST_TEST_NAME",
+        "NEXTEST_TEST_NAME",
+        "NEXTEST_TEST_FULL_NAME",
+    ] {
         if let Ok(v) = std::env::var(key) {
             let v = v.trim();
             if !v.is_empty() {
@@ -359,7 +368,9 @@ fn write_screenshot_mismatch_artifacts(
     nonce: u64,
 ) -> ScreenshotMismatchArtifacts {
     let label = screenshot_artifact_label(golden, cfg);
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let ts_ms = now.as_millis() as u64;
     let pid = std::process::id();
     let seq = SCREENSHOT_MISMATCH_ARTIFACT_SEQ.fetch_add(1, Ordering::Relaxed);

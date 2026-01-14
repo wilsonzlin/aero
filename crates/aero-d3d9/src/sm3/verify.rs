@@ -1,7 +1,7 @@
+use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 use crate::sm3::decode::{ResultShift, SrcModifier};
 use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt, TexSampleKind};
 use crate::sm3::types::ShaderStage;
-use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyError {
@@ -90,18 +90,66 @@ fn verify_block(
 
 fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
     match op {
-        IrOp::Mov { dst: _, src, modifiers }
-        | IrOp::Rcp { dst: _, src, modifiers }
-        | IrOp::Rsq { dst: _, src, modifiers }
-        | IrOp::Frc { dst: _, src, modifiers }
-        | IrOp::Abs { dst: _, src, modifiers }
-        | IrOp::Sgn { dst: _, src, modifiers }
-        | IrOp::Exp { dst: _, src, modifiers }
-        | IrOp::Log { dst: _, src, modifiers }
-        | IrOp::Ddx { dst: _, src, modifiers }
-        | IrOp::Ddy { dst: _, src, modifiers }
-        | IrOp::Nrm { dst: _, src, modifiers }
-        | IrOp::Lit { dst: _, src, modifiers } => {
+        IrOp::Mov {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Rcp {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Rsq {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Frc {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Abs {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Sgn {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Exp {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Log {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddx {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddy {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Nrm {
+            dst: _,
+            src,
+            modifiers,
+        }
+        | IrOp::Lit {
+            dst: _,
+            src,
+            modifiers,
+        } => {
             if matches!(op, IrOp::Ddx { .. } | IrOp::Ddy { .. }) && stage != ShaderStage::Pixel {
                 return Err(VerifyError {
                     message: "derivative instructions are only valid in pixel shaders".to_owned(),
@@ -110,7 +158,11 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             verify_src(src)?;
             verify_modifiers(modifiers)?;
         }
-        IrOp::Mova { dst, src, modifiers } => {
+        IrOp::Mova {
+            dst,
+            src,
+            modifiers,
+        } => {
             if dst.reg.file != RegFile::Addr {
                 return Err(VerifyError {
                     message: "mova destination is not an address register".to_owned(),

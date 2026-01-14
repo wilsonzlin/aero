@@ -5,7 +5,10 @@ use aero_usb::ehci::regs::{
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
-use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult, UsbSpeed, UsbWebUsbPassthroughDevice};
+use aero_usb::{
+    ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult, UsbSpeed,
+    UsbWebUsbPassthroughDevice,
+};
 
 mod util;
 
@@ -149,7 +152,11 @@ fn ehci_portsc_reports_device_speed_via_hsp_and_line_status() {
     let portsc0 = ehci.mmio_read(reg_portsc(0), 4);
     assert_ne!(portsc0 & PORTSC_PO, 0);
     assert_eq!(portsc0 & PORTSC_HSP, 0);
-    assert_eq!(portsc0 & PORTSC_LS_MASK, 0, "high-speed should clear LS bits");
+    assert_eq!(
+        portsc0 & PORTSC_LS_MASK,
+        0,
+        "high-speed should clear LS bits"
+    );
 
     // Full-speed device: HSP clear, LS encodes J-state (D+ high).
     let portsc1 = ehci.mmio_read(reg_portsc(1), 4);
@@ -166,7 +173,11 @@ fn ehci_portsc_reports_device_speed_via_hsp_and_line_status() {
     let portsc0 = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(portsc0 & PORTSC_PO, 0);
     assert_ne!(portsc0 & PORTSC_HSP, 0);
-    assert_eq!(portsc0 & PORTSC_LS_MASK, 0, "high-speed should clear LS bits");
+    assert_eq!(
+        portsc0 & PORTSC_LS_MASK,
+        0,
+        "high-speed should clear LS bits"
+    );
 
     // While companion-owned, HSP must remain clear.
     ehci.mmio_write(reg_portsc(0), 4, portsc0 | PORTSC_PO);
@@ -197,7 +208,11 @@ fn ehci_portsc_line_status_flips_to_k_state_during_resume_for_full_speed() {
 
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(portsc & PORTSC_HSP, 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state when idle");
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b10 << 10,
+        "expected J-state when idle"
+    );
 
     // Suspend the port, then force resume and verify line status flips to K state.
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
@@ -212,7 +227,11 @@ fn ehci_portsc_line_status_flips_to_k_state_during_resume_for_full_speed() {
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_FPR);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_ne!(portsc & PORTSC_FPR, 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b01 << 10, "expected K-state while resuming");
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
 
     // After the resume timer expires, the port should exit suspend/resume and return to J state.
     for _ in 0..20 {
@@ -324,7 +343,11 @@ fn ehci_keyboard_remote_wakeup_enters_resume_state() {
         0,
         "expected EHCI port to enter resume state after remote wakeup"
     );
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b01 << 10, "expected K-state while resuming");
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
 
     // After the resume timer expires, the port should exit suspend/resume and return to J state.
     for _ in 0..20 {

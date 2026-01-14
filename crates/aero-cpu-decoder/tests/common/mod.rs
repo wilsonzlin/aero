@@ -26,4 +26,3 @@ impl XorShift64 {
         }
     }
 }
-

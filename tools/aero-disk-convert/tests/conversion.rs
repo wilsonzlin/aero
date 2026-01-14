@@ -3,7 +3,9 @@
 use std::fs::{self, OpenOptions};
 use std::path::Path;
 
-use aero_disk_convert::{convert, ConvertOptions, OutputFormat, DEFAULT_AEROSPARSE_BLOCK_SIZE_BYTES};
+use aero_disk_convert::{
+    convert, ConvertOptions, OutputFormat, DEFAULT_AEROSPARSE_BLOCK_SIZE_BYTES,
+};
 use aero_storage::{
     DiskFormat, DiskImage, FileBackend, MemBackend, RawDisk, StorageBackend, VirtualDisk,
     SECTOR_SIZE,
@@ -57,7 +59,9 @@ fn make_qcow2_with_pattern_bytes() -> (u64, Vec<u8>) {
 
     // L1 points to the single L2 table.
     let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
-    backend.write_at(l1_table_offset, &l1_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+        .unwrap();
 
     // Mark header/refcount/L1/refcount-block/L2/data clusters as in-use.
     for cluster_index in 0u64..6 {
@@ -67,7 +71,9 @@ fn make_qcow2_with_pattern_bytes() -> (u64, Vec<u8>) {
 
     // L2 entry maps guest cluster 0 to the data cluster.
     let l2_entry = data_cluster_offset | QCOW2_OFLAG_COPIED;
-    backend.write_at(l2_table_offset, &l2_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(l2_table_offset, &l2_entry.to_be_bytes())
+        .unwrap();
 
     let mut sector = [0u8; SECTOR_SIZE];
     sector[..12].copy_from_slice(b"hello qcow2!");
@@ -162,7 +168,10 @@ fn raw_to_aerosparse_preserves_bytes_and_sparsity() -> anyhow::Result<()> {
 
     match &out_img {
         DiskImage::AeroSparse(d) => {
-            assert_eq!(d.header().block_size_bytes, DEFAULT_AEROSPARSE_BLOCK_SIZE_BYTES);
+            assert_eq!(
+                d.header().block_size_bytes,
+                DEFAULT_AEROSPARSE_BLOCK_SIZE_BYTES
+            );
             assert_eq!(d.header().allocated_blocks, 2);
         }
         other => panic!("expected AeroSparse output, got {:?}", other.format()),

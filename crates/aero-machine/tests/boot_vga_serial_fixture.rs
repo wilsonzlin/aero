@@ -42,4 +42,3 @@ fn boots_fixture_and_captures_vga_text_and_serial_bytes() {
     let vga = m.read_physical_bytes(0xB8000, boot_vga_serial::EXPECTED_VGA_TEXT_BYTES.len());
     assert_eq!(&vga[..], &boot_vga_serial::EXPECTED_VGA_TEXT_BYTES[..]);
 }
-

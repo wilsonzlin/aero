@@ -57,12 +57,7 @@ fn xhci_mmio_writes_are_ignored_when_mem_disabled() {
     let mut dev = XhciPciDevice::default();
 
     // COMMAND.MEM is clear by default: writes must be ignored.
-    MmioHandler::write(
-        &mut dev,
-        regs::REG_USBCMD,
-        4,
-        u64::from(regs::USBCMD_RUN),
-    );
+    MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable MMIO decoding and verify the earlier write did not take effect.
     dev.config_mut().set_command(1 << 1);
@@ -70,12 +65,7 @@ fn xhci_mmio_writes_are_ignored_when_mem_disabled() {
     assert_eq!(cmd & regs::USBCMD_RUN, 0);
 
     // Writes should apply once MEM is enabled.
-    MmioHandler::write(
-        &mut dev,
-        regs::REG_USBCMD,
-        4,
-        u64::from(regs::USBCMD_RUN),
-    );
+    MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     let cmd = MmioHandler::read(&mut dev, regs::REG_USBCMD, 4) as u32;
     assert_ne!(cmd & regs::USBCMD_RUN, 0);
 }

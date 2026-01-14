@@ -108,10 +108,8 @@ mod native {
         // blob.
         let base_image = args.disk.display().to_string();
         if let Some(overlay) = &args.disk_overlay {
-            machine.set_ahci_port0_disk_overlay_ref(
-                base_image.clone(),
-                overlay.display().to_string(),
-            );
+            machine
+                .set_ahci_port0_disk_overlay_ref(base_image.clone(), overlay.display().to_string());
         } else {
             machine.set_ahci_port0_disk_overlay_ref(base_image.clone(), "");
         }
@@ -243,14 +241,20 @@ mod native {
 
         if let Some(path) = &args.snapshot_save {
             let mut f = File::create(path).with_context(|| {
-                format!("failed to create snapshot file for save: {}", path.display())
+                format!(
+                    "failed to create snapshot file for save: {}",
+                    path.display()
+                )
             })?;
             if let Err(e) = machine
                 .save_snapshot_full_to(&mut f)
                 .map_err(|e| anyhow!("{e}"))
             {
                 if run_error.is_some() {
-                    eprintln!("warning: failed to save snapshot to {}: {e}", path.display());
+                    eprintln!(
+                        "warning: failed to save snapshot to {}: {e}",
+                        path.display()
+                    );
                 } else {
                     return Err(e);
                 }

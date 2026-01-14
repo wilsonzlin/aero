@@ -1,9 +1,9 @@
 mod common;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::runtime::aerogpu_resources::AerogpuResourceManager;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::FourCC;
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 use anyhow::{anyhow, Result};
 

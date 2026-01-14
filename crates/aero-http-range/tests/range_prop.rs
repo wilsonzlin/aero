@@ -50,8 +50,13 @@ fn valid_header() -> impl Strategy<Value = String> {
 }
 
 fn valid_header_with_specs() -> impl Strategy<Value = (Vec<ByteRangeSpec>, String)> {
-    (ows(), prop::collection::vec(valid_spec(), 1..20), ows(), ows()).prop_map(
-        |(ws0, specs, ws1, ws2)| {
+    (
+        ows(),
+        prop::collection::vec(valid_spec(), 1..20),
+        ows(),
+        ows(),
+    )
+        .prop_map(|(ws0, specs, ws1, ws2)| {
             let mut out_specs = Vec::with_capacity(specs.len());
             let mut out_strings = Vec::with_capacity(specs.len());
             for (spec, s) in specs {
@@ -60,14 +65,12 @@ fn valid_header_with_specs() -> impl Strategy<Value = (Vec<ByteRangeSpec>, Strin
             }
             let header = format!("{ws0}bytes{ws1}={ws2}{}", out_strings.join(","));
             (out_specs, header)
-        },
-    )
+        })
 }
 
 fn arbitrary_spec() -> impl Strategy<Value = ByteRangeSpec> {
     prop_oneof![
-        (any::<u64>(), any::<u64>())
-            .prop_map(|(start, end)| ByteRangeSpec::FromTo { start, end }),
+        (any::<u64>(), any::<u64>()).prop_map(|(start, end)| ByteRangeSpec::FromTo { start, end }),
         any::<u64>().prop_map(|start| ByteRangeSpec::From { start }),
         any::<u64>().prop_map(|len| ByteRangeSpec::Suffix { len }),
     ]

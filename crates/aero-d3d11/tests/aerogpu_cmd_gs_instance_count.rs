@@ -6,7 +6,8 @@ use aero_d3d11::FourCC;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuShaderStage, AerogpuShaderStageEx, AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuShaderStage, AerogpuShaderStageEx, AEROGPU_CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -51,7 +52,10 @@ fn build_gs_with_instance_count(count: u32) -> Vec<u8> {
 #[test]
 fn aerogpu_cmd_rejects_gs_instance_count_gt1() {
     pollster::block_on(async {
-        let test_name = concat!(module_path!(), "::aerogpu_cmd_rejects_gs_instance_count_gt1");
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_rejects_gs_instance_count_gt1"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
@@ -87,7 +91,11 @@ fn aerogpu_cmd_rejects_gs_instance_count_gt1() {
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, &build_gs_with_instance_count(2));
+        writer.create_shader_dxbc_ex(
+            GS,
+            AerogpuShaderStageEx::Geometry,
+            &build_gs_with_instance_count(2),
+        );
         writer.bind_shaders_with_gs(VS, GS, PS, 0);
         writer.draw(3, 1, 0, 0);
 

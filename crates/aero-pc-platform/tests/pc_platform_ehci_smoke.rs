@@ -25,7 +25,11 @@ fn write_cfg_u16(pc: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u16) {
     pc.io.write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
     // PCI config writes to 0xCFC always write a dword; the platform will apply byte enables based
     // on the port access size (2 here).
-    pc.io.write(PCI_CFG_DATA_PORT + u16::from(offset & 2), 2, u32::from(value));
+    pc.io.write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 2),
+        2,
+        u32::from(value),
+    );
 }
 
 fn read_bar0_base(pc: &mut PcPlatform, bdf: PciBdf) -> u64 {
@@ -58,7 +62,10 @@ fn pc_platform_ehci_enumerates_and_routes_mmio() {
     write_cfg_u16(&mut pc, bdf, 0x04, cmd);
 
     let bar0_base = read_bar0_base(&mut pc, bdf);
-    assert_ne!(bar0_base, 0, "EHCI BAR0 should be allocated during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "EHCI BAR0 should be allocated during BIOS POST"
+    );
 
     // Capability registers: CAPLENGTH=0x20, HCIVERSION=0x0100.
     assert_eq!(pc.memory.read_u32(bar0_base), 0x0100_0020);
@@ -71,4 +78,3 @@ fn pc_platform_ehci_enumerates_and_routes_mmio() {
     // Tick should be able to advance the platform without panicking when EHCI is present.
     pc.tick(1_000_000);
 }
-

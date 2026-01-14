@@ -320,7 +320,9 @@ mod tests {
 
     impl VecMemory {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
 
         fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {

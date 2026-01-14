@@ -30,10 +30,7 @@ fn resolve_cli_exe(repo_root: &PathBuf) -> PathBuf {
 fn assert_output_contains_boot_banner(output: &std::process::Output) {
     let expected = b"AERO!\r\n";
     assert!(
-        output
-            .stdout
-            .windows(expected.len())
-            .any(|w| w == expected),
+        output.stdout.windows(expected.len()).any(|w| w == expected),
         "stdout did not contain expected serial bytes.\nstdout:\n{:?}\nstderr:\n{}",
         output.stdout,
         String::from_utf8_lossy(&output.stderr)
@@ -157,7 +154,9 @@ fn boots_aerospar_disk_image() {
         },
     )
     .expect("failed to create aerospar disk");
-    aerospar.write_at(0, &bytes).expect("failed to write aerospar");
+    aerospar
+        .write_at(0, &bytes)
+        .expect("failed to write aerospar");
     aerospar.flush().expect("failed to flush aerospar");
 
     let exe = resolve_cli_exe(&repo_root);

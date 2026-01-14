@@ -1011,9 +1011,10 @@ fn parse_real_fixture_ps_2_0_sample() {
 
 #[test]
 fn parse_real_fixture_ps_3_0_math() {
-    let shader =
-        D3d9Shader::parse(include_bytes!("../../../aero-d3d9/tests/fixtures/dxbc/ps_3_0_math.dxbc"))
-            .unwrap();
+    let shader = D3d9Shader::parse(include_bytes!(
+        "../../../aero-d3d9/tests/fixtures/dxbc/ps_3_0_math.dxbc"
+    ))
+    .unwrap();
     assert_eq!(shader.stage, ShaderStage::Pixel);
     assert_eq!(shader.model.major, 3);
     assert_eq!(shader.model.minor, 0);
@@ -1028,9 +1029,10 @@ fn parse_real_fixture_ps_3_0_math() {
 
 #[test]
 fn parse_real_fixture_vs_2_0_simple() {
-    let shader =
-        D3d9Shader::parse(include_bytes!("../../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc"))
-            .unwrap();
+    let shader = D3d9Shader::parse(include_bytes!(
+        "../../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc"
+    ))
+    .unwrap();
     assert_eq!(shader.stage, ShaderStage::Vertex);
     assert_eq!(shader.model.major, 2);
     assert_eq!(shader.model.minor, 0);
@@ -1044,9 +1046,10 @@ fn parse_real_fixture_vs_2_0_simple() {
 
 #[test]
 fn parse_real_fixture_vs_3_0_branch() {
-    let shader =
-        D3d9Shader::parse(include_bytes!("../../../aero-d3d9/tests/fixtures/dxbc/vs_3_0_branch.dxbc"))
-            .unwrap();
+    let shader = D3d9Shader::parse(include_bytes!(
+        "../../../aero-d3d9/tests/fixtures/dxbc/vs_3_0_branch.dxbc"
+    ))
+    .unwrap();
     assert_eq!(shader.stage, ShaderStage::Vertex);
     assert_eq!(shader.model.major, 3);
     assert_eq!(shader.model.minor, 0);

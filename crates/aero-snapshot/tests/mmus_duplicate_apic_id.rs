@@ -124,7 +124,9 @@ fn restore_snapshot_rejects_duplicate_apic_ids_in_mmus_section() {
     bytes.extend_from_slice(&0u32.to_le_bytes());
 
     let mut cpu_payload = Vec::new();
-    snapshot::CpuState::default().encode_v2(&mut cpu_payload).unwrap();
+    snapshot::CpuState::default()
+        .encode_v2(&mut cpu_payload)
+        .unwrap();
     push_section(&mut bytes, snapshot::SectionId::CPU, 2, 0, &cpu_payload);
 
     // MMUS section with 2 entries that both use apic_id=0.
@@ -157,4 +159,3 @@ fn restore_snapshot_rejects_duplicate_apic_ids_in_mmus_section() {
         snapshot::SnapshotError::Corrupt("duplicate APIC ID in MMU list (apic_id must be unique)")
     ));
 }
-

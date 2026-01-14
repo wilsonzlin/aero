@@ -133,4 +133,3 @@ fn restore_snapshot_decodes_mmus_v1_and_sorts_by_apic_id() {
     assert_eq!(mmus[0].mmu.cr3, 0xAAAA);
     assert_eq!(mmus[1].mmu.cr3, 0xBBBB);
 }
-

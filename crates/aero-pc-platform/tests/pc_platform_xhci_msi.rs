@@ -78,4 +78,3 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
         "xHCI INTx should be suppressed while MSI is active"
     );
 }
-

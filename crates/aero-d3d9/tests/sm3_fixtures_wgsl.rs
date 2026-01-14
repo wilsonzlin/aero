@@ -35,4 +35,3 @@ fn sm3_fixtures_lower_to_naga_valid_wgsl() {
         .unwrap_or_else(|e| panic!("wgsl validate failed for {name}: {e}\n{wgsl}"));
     }
 }
-

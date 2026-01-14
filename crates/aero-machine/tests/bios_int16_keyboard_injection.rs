@@ -25,7 +25,11 @@ fn build_int16_read_key_boot_sector(store_addr: u16) -> [u8; 512] {
     code.extend_from_slice(&store_addr.to_le_bytes());
     code.push(0xF4); // hlt
 
-    assert!(code.len() <= 510, "boot sector too large: {} bytes", code.len());
+    assert!(
+        code.len() <= 510,
+        "boot sector too large: {} bytes",
+        code.len()
+    );
 
     let mut sector = [0u8; 512];
     sector[..code.len()].copy_from_slice(&code);
@@ -77,4 +81,3 @@ fn inject_bios_key_is_observable_via_int16_read() {
     let got = m.read_physical_u16(STORE_ADDR);
     assert_eq!(got, key);
 }
-

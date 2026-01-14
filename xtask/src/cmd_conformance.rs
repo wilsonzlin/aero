@@ -177,23 +177,43 @@ fn parse_args(args: Vec<String>) -> Result<ConformanceOpts> {
             }
             "--filter" => {
                 let raw = next_value(&mut iter, &arg)?;
-                opts.filter = if raw.trim().is_empty() { None } else { Some(raw) };
+                opts.filter = if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(raw)
+                };
             }
             val if val.starts_with("--filter=") => {
                 let raw = val["--filter=".len()..].to_string();
-                opts.filter = if raw.trim().is_empty() { None } else { Some(raw) };
+                opts.filter = if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(raw)
+                };
             }
             "--report" | "--report-path" => {
                 let raw = next_value(&mut iter, &arg)?;
-                opts.report_path = if raw.trim().is_empty() { None } else { Some(raw) };
+                opts.report_path = if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(raw)
+                };
             }
             val if val.starts_with("--report=") => {
                 let raw = val["--report=".len()..].to_string();
-                opts.report_path = if raw.trim().is_empty() { None } else { Some(raw) };
+                opts.report_path = if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(raw)
+                };
             }
             val if val.starts_with("--report-path=") => {
                 let raw = val["--report-path=".len()..].to_string();
-                opts.report_path = if raw.trim().is_empty() { None } else { Some(raw) };
+                opts.report_path = if raw.trim().is_empty() {
+                    None
+                } else {
+                    Some(raw)
+                };
             }
             "--reference-isolate" => opts.reference_isolate = Some(true),
             "--no-reference-isolate" => opts.reference_isolate = Some(false),
@@ -244,7 +264,10 @@ fn parse_usize(raw: &str) -> std::result::Result<usize, ()> {
 fn parse_u64(raw: &str) -> std::result::Result<u64, ()> {
     let cleaned = raw.trim().replace('_', "");
     let cleaned = cleaned.as_str();
-    if let Some(hex) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+    if let Some(hex) = cleaned
+        .strip_prefix("0x")
+        .or_else(|| cleaned.strip_prefix("0X"))
+    {
         u64::from_str_radix(hex, 16).map_err(|_| ())
     } else {
         cleaned.parse::<u64>().map_err(|_| ())

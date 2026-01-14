@@ -22,4 +22,3 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("aero-usb"))
         .stdout(predicate::str::contains("--e2e"));
 }
-

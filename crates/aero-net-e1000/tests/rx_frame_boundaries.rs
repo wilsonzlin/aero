@@ -165,12 +165,11 @@ fn rx_accepts_all_frame_lengths_in_model_range() {
     for (idx, len) in (MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).enumerate() {
         let desc_addr = ring_base + (idx as u64) * 16;
         let (desc_len, status, errors) = read_rx_desc_fields(&mut dma, desc_addr);
-        assert_eq!(desc_len as usize, len, "descriptor length mismatch at idx={idx}");
         assert_eq!(
-            status & 0x03,
-            0x03,
-            "DD|EOP should be set at idx={idx}"
+            desc_len as usize, len,
+            "descriptor length mismatch at idx={idx}"
         );
+        assert_eq!(status & 0x03, 0x03, "DD|EOP should be set at idx={idx}");
         assert_eq!(errors, 0, "errors should be clear at idx={idx}");
     }
 
@@ -269,4 +268,3 @@ fn rx_accepts_vlan_and_qinq_frames_at_max_len() {
     assert_eq!(&out1[12..14], &0x88A8u16.to_be_bytes());
     assert_eq!(&out1[16..18], &0x8100u16.to_be_bytes());
 }
-

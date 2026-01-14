@@ -21,7 +21,8 @@ use crate::input_layout::DxgiFormatComponentType;
 use crate::runtime::expansion_scratch::{ExpansionScratchAlloc, ExpansionScratchAllocator};
 use crate::runtime::index_pulling::wgsl_index_pulling_lib;
 use crate::runtime::vertex_pulling::{
-    VertexPullingAttribute, VertexPullingLayout, VERTEX_PULLING_GROUP, VERTEX_PULLING_UNIFORM_BINDING,
+    VertexPullingAttribute, VertexPullingLayout, VERTEX_PULLING_GROUP,
+    VERTEX_PULLING_UNIFORM_BINDING,
 };
 
 /// `@binding` number for [`crate::runtime::index_pulling::IndexPullingParams`] when VS-as-compute
@@ -72,7 +73,11 @@ pub struct VsAsComputePipeline {
 }
 
 impl VsAsComputePipeline {
-    pub fn new(device: &wgpu::Device, vertex_pulling: &VertexPullingLayout, cfg: VsAsComputeConfig) -> Result<Self> {
+    pub fn new(
+        device: &wgpu::Device,
+        vertex_pulling: &VertexPullingLayout,
+        cfg: VsAsComputeConfig,
+    ) -> Result<Self> {
         cfg.validate()?;
 
         let wgsl = build_vs_as_compute_passthrough_wgsl(vertex_pulling, cfg);
@@ -90,12 +95,8 @@ impl VsAsComputePipeline {
             label: Some("aero-d3d11 VS-as-compute empty bgl"),
             entries: &[],
         });
-        let layouts: [&wgpu::BindGroupLayout; 4] = [
-            &empty_bgl,
-            &empty_bgl,
-            &empty_bgl,
-            &bgl_group3,
-        ];
+        let layouts: [&wgpu::BindGroupLayout; 4] =
+            [&empty_bgl, &empty_bgl, &empty_bgl, &bgl_group3];
         debug_assert_eq!(VERTEX_PULLING_GROUP, 3);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -144,7 +145,9 @@ impl VsAsComputePipeline {
     ) -> Result<wgpu::BindGroup> {
         if self.cfg.indexed {
             if index_params.is_none() || index_buffer_words.is_none() {
-                bail!("VS-as-compute: indexed pipeline requires index_params and index_buffer_words");
+                bail!(
+                    "VS-as-compute: indexed pipeline requires index_params and index_buffer_words"
+                );
             }
         }
 
@@ -326,7 +329,10 @@ fn create_vs_as_compute_bind_group_layout(
     })
 }
 
-fn build_vs_as_compute_passthrough_wgsl(vertex_pulling: &VertexPullingLayout, cfg: VsAsComputeConfig) -> String {
+fn build_vs_as_compute_passthrough_wgsl(
+    vertex_pulling: &VertexPullingLayout,
+    cfg: VsAsComputeConfig,
+) -> String {
     // Note: this is a WGSL module containing only the compute entrypoint. The translated D3D vertex
     // shader WGSL is not linked in yet (placeholder pass-through).
     let mut wgsl = String::new();
@@ -407,8 +413,14 @@ fn cs_main(
     //
     // This is enough to validate the binding model and addressing. Later passes will link the
     // translated D3D vertex shader and write its full output register set.
-    let loc0 = vertex_pulling.attributes.iter().any(|a| a.shader_location == 0);
-    let loc1 = vertex_pulling.attributes.iter().any(|a| a.shader_location == 1);
+    let loc0 = vertex_pulling
+        .attributes
+        .iter()
+        .any(|a| a.shader_location == 0);
+    let loc1 = vertex_pulling
+        .attributes
+        .iter()
+        .any(|a| a.shader_location == 1);
 
     for reg in 0..cfg.out_reg_count {
         match reg {
@@ -484,7 +496,10 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
 
     let (load_stmt, expand_stmt) = match (attr.format.component_type, attr.format.component_count) {
         (DxgiFormatComponentType::F32, 1) => (
-            format!("let v: f32 = {load_expr}({slot}u, addr);", slot = attr.pulling_slot),
+            format!(
+                "let v: f32 = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
             "return vec4<f32>(v, 0.0, 0.0, 1.0);".to_owned(),
         ),
         (DxgiFormatComponentType::F32, 2) => (

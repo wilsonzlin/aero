@@ -122,9 +122,10 @@ impl CountingRam {
             len,
             size,
         })?;
-        let end = start
-            .checked_add(len)
-            .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
+        let end =
+            start
+                .checked_add(len)
+                .ok_or(GuestMemoryError::OutOfRange { paddr, len, size })?;
         Ok(start..end)
     }
 }
@@ -163,11 +164,8 @@ fn ehci_tick_dma_is_gated_by_pci_bus_master_enable() {
     dev.controller_mut()
         .mmio_write(regs::REG_PERIODICLISTBASE, 4, 0x2000);
     mem.write_physical(0x2000, &1u32.to_le_bytes());
-    dev.controller_mut().mmio_write(
-        regs::REG_USBCMD,
-        4,
-        regs::USBCMD_RS | regs::USBCMD_PSE,
-    );
+    dev.controller_mut()
+        .mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
 
     // With bus mastering disabled, tick must not touch guest memory.
     dev.config_mut().set_command(0x0002);
@@ -234,5 +232,8 @@ fn ehci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
     assert_eq!(restored.config_mut().read(bar_offset, 4), 0xffff_f000);
 
     // Controller state should restore (compare controller snapshots for an easy equality check).
-    assert_eq!(dev.controller().save_state(), restored.controller().save_state());
+    assert_eq!(
+        dev.controller().save_state(),
+        restored.controller().save_state()
+    );
 }

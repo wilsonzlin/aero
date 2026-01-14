@@ -43,8 +43,12 @@ pub struct ConvertOptions {
 pub fn convert(opts: ConvertOptions) -> anyhow::Result<()> {
     let input_canon = std::fs::canonicalize(&opts.input)
         .with_context(|| format!("failed to canonicalize input path {}", opts.input.display()))?;
-    let output_canon = canonicalize_output_path(&opts.output)
-        .with_context(|| format!("failed to canonicalize output path {}", opts.output.display()))?;
+    let output_canon = canonicalize_output_path(&opts.output).with_context(|| {
+        format!(
+            "failed to canonicalize output path {}",
+            opts.output.display()
+        )
+    })?;
     if input_canon == output_canon {
         bail!("refusing to overwrite input file in-place");
     }
@@ -57,7 +61,13 @@ pub fn convert(opts: ConvertOptions) -> anyhow::Result<()> {
             let backend = create_output_backend(&opts.output, opts.force)?;
             let mut out = RawDisk::create(backend, capacity)?;
             let pb = maybe_progress_bar(opts.progress, capacity, "raw")?;
-            copy_all(&mut input, &mut out, capacity, COPY_CHUNK_BYTES, pb.as_ref())?;
+            copy_all(
+                &mut input,
+                &mut out,
+                capacity,
+                COPY_CHUNK_BYTES,
+                pb.as_ref(),
+            )?;
             out.flush()?;
             if let Some(pb) = pb {
                 pb.finish_and_clear();
@@ -100,10 +110,7 @@ fn create_output_backend(path: &Path, force: bool) -> anyhow::Result<FileBackend
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create output directory {}",
-                    parent.display()
-                )
+                format!("failed to create output directory {}", parent.display())
             })?;
         }
     }
@@ -136,10 +143,10 @@ fn canonicalize_output_path(path: &Path) -> std::io::Result<PathBuf> {
         // based on the current directory.
         Err(_) => return Ok(std::env::current_dir()?.join(path)),
     };
-    Ok(parent.join(
-        path.file_name()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad filename"))?,
-    ))
+    Ok(parent
+        .join(path.file_name().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad filename")
+        })?))
 }
 
 fn maybe_progress_bar(

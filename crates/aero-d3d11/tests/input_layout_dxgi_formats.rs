@@ -1,8 +1,8 @@
 use aero_d3d11::input_layout::{
     dxgi_format_info, fnv1a_32, map_layout_to_shader_locations_compact, DxgiFormatComponentType,
     InputLayoutBinding, InputLayoutDesc, InputLayoutError, VsInputSignatureElement,
-    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
-    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, D3D11_APPEND_ALIGNED_ELEMENT,
+    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    D3D11_APPEND_ALIGNED_ELEMENT,
 };
 
 fn push_u32(buf: &mut Vec<u8>, v: u32) {

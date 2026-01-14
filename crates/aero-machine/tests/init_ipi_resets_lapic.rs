@@ -16,7 +16,9 @@ fn init_ipi_assert_resets_target_lapic_state() {
     let mut m = Machine::new(cfg).unwrap();
 
     // Enable APIC mode so `get_pending_for_apic(1)` reports LAPIC1 vectors.
-    let interrupts = m.platform_interrupts().expect("PC platform should be enabled");
+    let interrupts = m
+        .platform_interrupts()
+        .expect("PC platform should be enabled");
     interrupts
         .borrow_mut()
         .set_mode(PlatformInterruptMode::Apic);
@@ -41,7 +43,11 @@ fn init_ipi_assert_resets_target_lapic_state() {
     assert_eq!(interrupts.borrow().get_pending_for_apic(1), Some(0x55));
     // IRR index for vector 0x55 is word 2 (vectors 0x40..=0x5F) at offset 0x220.
     let irr2 = m.read_lapic_u32(1, 0x220);
-    assert_ne!(irr2 & (1 << (0x55 % 32)), 0, "expected IRR bit for vector 0x55 to be set");
+    assert_ne!(
+        irr2 & (1 << (0x55 % 32)),
+        0,
+        "expected IRR bit for vector 0x55 to be set"
+    );
 
     // ---------------------------------------------------------------------
     // Deliver INIT assert from BSP (APIC ID 0) to APIC ID 1.
@@ -74,4 +80,3 @@ fn init_ipi_assert_resets_target_lapic_state() {
         "expected no pending vectors after INIT"
     );
 }
-

@@ -15,8 +15,8 @@ use std::collections::{BTreeMap, HashMap};
 use crate::binding_model::{BINDING_BASE_INTERNAL, BIND_GROUP_INTERNAL_EMULATION};
 use crate::input_layout::{
     dxgi_format_info, InputLayoutBinding, InputLayoutError, SignatureSemanticKey,
-    VsInputSignatureElement, MAX_WGPU_VERTEX_ATTRIBUTES, MAX_WGPU_VERTEX_BUFFERS,
-    D3D11_APPEND_ALIGNED_ELEMENT,
+    VsInputSignatureElement, D3D11_APPEND_ALIGNED_ELEMENT, MAX_WGPU_VERTEX_ATTRIBUTES,
+    MAX_WGPU_VERTEX_BUFFERS,
 };
 
 /// Reserved bind-group index for IA vertex pulling resources.
@@ -225,11 +225,14 @@ impl VertexPullingLayout {
                 });
             }
 
-            let end = offset.checked_add(fmt.size_bytes).ok_or(InputLayoutError::OffsetOverflow {
-                slot: elem.input_slot,
-                offset,
-                size: fmt.size_bytes,
-            })?;
+            let end =
+                offset
+                    .checked_add(fmt.size_bytes)
+                    .ok_or(InputLayoutError::OffsetOverflow {
+                        slot: elem.input_slot,
+                        offset,
+                        size: fmt.size_bytes,
+                    })?;
             slot.next_offset = end;
             slot.required_stride = slot.required_stride.max(end);
 
@@ -381,7 +384,9 @@ impl VertexPullingLayout {
                 "      let word_count: u32 = arrayLength(&aero_vp_vb{slot});\n"
             ));
             s.push_str("      if (word_index >= word_count) { return 0u; }\n");
-            s.push_str(&format!("      let lo: u32 = aero_vp_vb{slot}[word_index];\n"));
+            s.push_str(&format!(
+                "      let lo: u32 = aero_vp_vb{slot}[word_index];\n"
+            ));
             s.push_str("      if (shift == 0u) { return lo; }\n");
             s.push_str(&format!(
                 "      let hi: u32 = select(0u, aero_vp_vb{slot}[word_index + 1u], (word_index + 1u) < word_count);\n"

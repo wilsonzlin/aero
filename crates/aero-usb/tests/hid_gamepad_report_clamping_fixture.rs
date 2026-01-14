@@ -71,8 +71,11 @@ fn hid_gamepad_report_clamping_vectors_match_fixture() {
         };
         let actual = report.to_bytes();
 
-        let name = if v.name.is_empty() { "<unnamed>" } else { &v.name };
+        let name = if v.name.is_empty() {
+            "<unnamed>"
+        } else {
+            &v.name
+        };
         assert_eq!(actual, v.bytes, "fixture vector {idx} ({name}) mismatch");
     }
 }
-

@@ -33,8 +33,11 @@ fn write_cfg_u16(pc: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u16) {
     pc.io.write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, offset));
     // PCI config writes to 0xCFC always write a dword; the platform will apply byte enables based
     // on the port access size (2 here).
-    pc.io
-        .write(PCI_CFG_DATA_PORT + u16::from(offset & 2), 2, u32::from(value));
+    pc.io.write(
+        PCI_CFG_DATA_PORT + u16::from(offset & 2),
+        2,
+        u32::from(value),
+    );
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bdf: PciBdf, offset: u8, value: u32) {
@@ -76,16 +79,26 @@ fn pc_platform_enumerates_ehci_and_assigns_bar0_and_probe_mask() {
 
     // BIOS POST should allocate BAR0 and enable MEM decoding.
     let command = read_cfg_u16(&mut pc, bdf, 0x04);
-    assert_ne!(command & 0x2, 0, "COMMAND.MEM should be enabled by BIOS POST");
+    assert_ne!(
+        command & 0x2,
+        0,
+        "COMMAND.MEM should be enabled by BIOS POST"
+    );
 
     let bar0_orig = read_cfg_u32(&mut pc, bdf, 0x10);
     let bar0_base = u64::from(bar0_orig & 0xffff_fff0);
-    assert_ne!(bar0_base, 0, "EHCI BAR0 should be assigned during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "EHCI BAR0 should be assigned during BIOS POST"
+    );
     assert_eq!(bar0_base % 0x1000, 0, "EHCI BAR0 should be 4KiB-aligned");
 
     write_cfg_u32(&mut pc, bdf, 0x10, 0xffff_ffff);
     let bar0_probe = read_cfg_u32(&mut pc, bdf, 0x10);
-    assert_eq!(bar0_probe, 0xffff_f000, "BAR0 probe should return 0x1000 size mask");
+    assert_eq!(
+        bar0_probe, 0xffff_f000,
+        "BAR0 probe should return 0x1000 size mask"
+    );
     write_cfg_u32(&mut pc, bdf, 0x10, bar0_orig);
 }
 
@@ -99,9 +112,7 @@ fn pc_platform_routes_ehci_mmio_capability_registers() {
     let caplength = pc.memory.read_u8(bar0_base + REG_CAPLENGTH_HCIVERSION);
     assert_eq!(caplength, CAPLENGTH);
 
-    let hciversion = pc
-        .memory
-        .read_u16(bar0_base + REG_CAPLENGTH_HCIVERSION + 2);
+    let hciversion = pc.memory.read_u16(bar0_base + REG_CAPLENGTH_HCIVERSION + 2);
     assert_eq!(hciversion, HCIVERSION);
 
     let hcsparams = pc.memory.read_u32(bar0_base + REG_HCSPARAMS);
@@ -127,7 +138,10 @@ fn pc_platform_gates_ehci_mmio_on_pci_command_mem_bit() {
     let mut pc = new_pc();
     let bdf = USB_EHCI_ICH9.bdf;
     let bar0_base = read_bar0_base(&mut pc, bdf);
-    assert_ne!(bar0_base, 0, "EHCI BAR0 should be allocated during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "EHCI BAR0 should be allocated during BIOS POST"
+    );
 
     // Enable MEM decoding so BAR0 MMIO is routed (BIOS POST may already do this).
     let cmd = read_cfg_u16(&mut pc, bdf, 0x04) | 0x0002;
@@ -160,7 +174,10 @@ fn pc_platform_routes_ehci_mmio_after_bar0_reprogramming() {
     write_cfg_u16(&mut pc, bdf, 0x04, cmd);
 
     let bar0_base = read_bar0_base(&mut pc, bdf);
-    assert_ne!(bar0_base, 0, "EHCI BAR0 should be allocated during BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "EHCI BAR0 should be allocated during BIOS POST"
+    );
 
     let initial = USBCMD_PSE & USBCMD_WRITE_MASK;
     pc.memory.write_u32(bar0_base + REG_USBCMD, initial);
@@ -191,7 +208,10 @@ struct FixedInDevice {
 
 impl FixedInDevice {
     fn new(report: Vec<u8>) -> Self {
-        Self { sent: false, report }
+        Self {
+            sent: false,
+            report,
+        }
     }
 }
 
@@ -268,13 +288,15 @@ fn pc_platform_ehci_async_schedule_in_transfer_dmas_and_asserts_intx() {
     {
         let ehci = pc.ehci.as_ref().expect("EHCI should be enabled").clone();
         let mut dev = ehci.borrow_mut();
-        dev.controller_mut()
-            .hub_mut()
-            .attach(0, Box::new(FixedInDevice::new(vec![0xde, 0xad, 0xbe, 0xef])));
+        dev.controller_mut().hub_mut().attach(
+            0,
+            Box::new(FixedInDevice::new(vec![0xde, 0xad, 0xbe, 0xef])),
+        );
     }
 
     // Route all ports to EHCI (clear PORT_OWNER) and reset the port so it becomes enabled.
-    pc.memory.write_u32(bar0_base + REG_CONFIGFLAG, CONFIGFLAG_CF);
+    pc.memory
+        .write_u32(bar0_base + REG_CONFIGFLAG, CONFIGFLAG_CF);
     // Preserve PORTSC.PP (port power) while asserting reset.
     pc.memory
         .write_u32(bar0_base + reg_portsc(0), PORTSC_PP | PORTSC_PR);
@@ -289,7 +311,8 @@ fn pc_platform_ehci_async_schedule_in_transfer_dmas_and_asserts_intx() {
     pc.memory.write_u32(QH_ADDR + QH_EPCHAR, ep_char);
     pc.memory.write_u32(QH_ADDR + QH_CUR_QTD, 0);
     pc.memory.write_u32(QH_ADDR + QH_NEXT_QTD, QTD_ADDR as u32);
-    pc.memory.write_u32(QH_ADDR + QH_ALT_NEXT_QTD, LINK_TERMINATE);
+    pc.memory
+        .write_u32(QH_ADDR + QH_ALT_NEXT_QTD, LINK_TERMINATE);
 
     pc.memory.write_u32(QTD_ADDR + QTD_NEXT, LINK_TERMINATE);
     pc.memory.write_u32(QTD_ADDR + QTD_ALT_NEXT, LINK_TERMINATE);
@@ -301,7 +324,8 @@ fn pc_platform_ehci_async_schedule_in_transfer_dmas_and_asserts_intx() {
 
     // Clear any stale W1C bits.
     pc.memory.write_u32(bar0_base + REG_USBSTS, USBSTS_W1C_MASK);
-    pc.memory.write_u32(bar0_base + REG_ASYNCLISTADDR, QH_ADDR as u32);
+    pc.memory
+        .write_u32(bar0_base + REG_ASYNCLISTADDR, QH_ADDR as u32);
     pc.memory.write_u32(bar0_base + REG_USBINTR, USBINTR_USBINT);
     pc.memory
         .write_u32(bar0_base + REG_USBCMD, USBCMD_RS | USBCMD_ASE);

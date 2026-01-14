@@ -27,4 +27,3 @@ fn msi_destination_ff_broadcasts_to_all_lapics() {
     assert_eq!(ints.lapic(0).get_pending_vector(), Some(0x53));
     assert_eq!(ints.lapic(1).get_pending_vector(), Some(0x53));
 }
-

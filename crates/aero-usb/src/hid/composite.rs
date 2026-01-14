@@ -665,7 +665,15 @@ impl IoSnapshot for UsbCompositeHidInput {
             .mouse
             .pending_reports
             .iter()
-            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8, r.hwheel as u8])
+            .map(|r| {
+                vec![
+                    r.buttons,
+                    r.x as u8,
+                    r.y as u8,
+                    r.wheel as u8,
+                    r.hwheel as u8,
+                ]
+            })
             .collect();
         w.field_bytes(
             TAG_MOUSE_PENDING_REPORTS,
@@ -1280,7 +1288,8 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                                 (2, Some(data)) if !data.is_empty() => {
                                     // HID boot keyboard output report defines 5 LED bits and 3
                                     // constant padding bits; ignore the padding.
-                                    self.keyboard.leds = data[0] & super::keyboard::KEYBOARD_LED_MASK;
+                                    self.keyboard.leds =
+                                        data[0] & super::keyboard::KEYBOARD_LED_MASK;
                                     ControlResponse::Ack
                                 }
                                 _ => ControlResponse::Stall,
@@ -1838,9 +1847,7 @@ mod tests {
             );
             w.field_bytes(
                 TAG_KBD_PRESSED_KEYS,
-                Encoder::new()
-                    .u32(MAX_PRESSED_KEYS as u32 + 1)
-                    .finish(),
+                Encoder::new().u32(MAX_PRESSED_KEYS as u32 + 1).finish(),
             );
             w.finish()
         };

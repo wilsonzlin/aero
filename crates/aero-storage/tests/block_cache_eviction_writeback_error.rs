@@ -25,9 +25,7 @@ impl VirtualDisk for FaultyDisk {
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        let offset_usize: usize = offset
-            .try_into()
-            .map_err(|_| DiskError::OffsetOverflow)?;
+        let offset_usize: usize = offset.try_into().map_err(|_| DiskError::OffsetOverflow)?;
         let end = offset_usize
             .checked_add(buf.len())
             .ok_or(DiskError::OffsetOverflow)?;
@@ -49,9 +47,7 @@ impl VirtualDisk for FaultyDisk {
             )));
         }
 
-        let offset_usize: usize = offset
-            .try_into()
-            .map_err(|_| DiskError::OffsetOverflow)?;
+        let offset_usize: usize = offset.try_into().map_err(|_| DiskError::OffsetOverflow)?;
         let end = offset_usize
             .checked_add(buf.len())
             .ok_or(DiskError::OffsetOverflow)?;
@@ -104,4 +100,3 @@ fn block_cache_does_not_lose_dirty_block_on_eviction_writeback_error() {
     disk.inner_mut().read_at(0, &mut persisted).unwrap();
     assert_eq!(persisted, payload);
 }
-

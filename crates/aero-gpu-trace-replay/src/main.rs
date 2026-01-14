@@ -33,33 +33,33 @@ enum Command {
     DecodeCmdStream {
         #[arg(value_name = "PATH")]
         path: PathBuf,
- 
+
         /// Fail on unknown opcodes (default is forward-compatible and prints UNKNOWN).
         #[arg(long)]
         strict: bool,
- 
+
         /// Emit JSON instead of human-readable text (stable schema for automation).
         #[arg(long)]
         json: bool,
     },
- 
+
     /// Decode a raw alloc table dump (from `alloc_table_gpa`) and print entries.
     DecodeAllocTable {
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
- 
+
     /// Decode a cmd stream + alloc table pair (from a submission) and cross-check mappings.
     DecodeSubmit {
         /// Command stream dump (`cmd_gpa`)
         #[arg(long)]
         cmd: PathBuf,
- 
+
         /// Alloc table dump (`alloc_table_gpa`)
         #[arg(long)]
         alloc: PathBuf,
     },
- 
+
     /// Replay a full `.aerogputrace` capture and print presented frame hashes.
     ReplayTrace {
         #[arg(value_name = "TRACE")]
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
         dump_png,
         command,
     } = Cli::parse();
- 
+
     match command {
         Some(Command::DecodeCmdStream { path, strict, json }) => {
             ensure_no_replay_flags(frame, &dump_png)?;
@@ -142,19 +142,22 @@ fn decode_cmd_stream_cmd(path: PathBuf, strict: bool, json: bool) -> Result<()> 
         print!("{listing}");
         return Ok(());
     }
- 
+
     let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, strict)
         .with_context(|| format!("decode cmd stream {}", path.display()))?;
     print!("{listing}");
     Ok(())
 }
 
-fn replay_trace_cmd(path: PathBuf, frame_filter: Option<u32>, dump_png: Option<PathBuf>) -> Result<()> {
+fn replay_trace_cmd(
+    path: PathBuf,
+    frame_filter: Option<u32>,
+    dump_png: Option<PathBuf>,
+) -> Result<()> {
     if let Some(dir) = dump_png.as_ref() {
-        fs::create_dir_all(dir)
-            .with_context(|| format!("create output dir {}", dir.display()))?;
+        fs::create_dir_all(dir).with_context(|| format!("create output dir {}", dir.display()))?;
     }
- 
+
     let file = fs::File::open(&path).with_context(|| format!("open trace {}", path.display()))?;
     let frames = if let Some(frame_idx) = frame_filter {
         aero_gpu_trace_replay::replay_trace_filtered(BufReader::new(file), Some(frame_idx))
@@ -162,13 +165,13 @@ fn replay_trace_cmd(path: PathBuf, frame_filter: Option<u32>, dump_png: Option<P
     } else {
         aero_gpu_trace_replay::replay_trace(BufReader::new(file)).context("replay trace")?
     };
- 
+
     if let Some(frame_idx) = frame_filter {
         if frames.is_empty() {
             bail!("requested frame {frame_idx} was not presented in this trace");
         }
     }
- 
+
     for frame in frames {
         if let Some(dir) = dump_png.as_ref() {
             let out_path = dir.join(format!("frame_{}.png", frame.frame_index));
@@ -215,7 +218,7 @@ fn decode_submit_cmd(cmd_path: PathBuf, alloc_path: PathBuf) -> Result<()> {
         fs::read(&cmd_path).with_context(|| format!("read cmd stream {}", cmd_path.display()))?;
     let alloc_bytes = fs::read(&alloc_path)
         .with_context(|| format!("read alloc table {}", alloc_path.display()))?;
- 
+
     let report = aero_gpu_trace_replay::submit_decode::decode_submit(&cmd_bytes, &alloc_bytes)
         .with_context(|| {
             format!(
@@ -224,7 +227,7 @@ fn decode_submit_cmd(cmd_path: PathBuf, alloc_path: PathBuf) -> Result<()> {
                 alloc_path.display()
             )
         })?;
- 
+
     // Print the alloc references the cmd stream makes, resolved via the alloc table.
     for r in &report.backing_alloc_refs {
         if r.backing_alloc_id == 0 {

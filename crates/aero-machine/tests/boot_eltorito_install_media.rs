@@ -211,10 +211,7 @@ fn boots_eltorito_install_media_iso() {
 
         // Disk Address Packet (DAP) for INT 13h extensions read (AH=42h).
         let dap_off = i;
-        assert!(
-            dap_off + 16 <= ISO_BLOCK_BYTES,
-            "boot image DAP overflow"
-        );
+        assert!(dap_off + 16 <= ISO_BLOCK_BYTES, "boot image DAP overflow");
         // DAP layout:
         // 0: size (0x10)
         // 1: reserved (0)

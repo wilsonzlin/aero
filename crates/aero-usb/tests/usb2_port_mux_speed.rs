@@ -19,8 +19,16 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     // Even before EHCI claims the port, it should still be able to see a physical connection while
     // PORT_OWNER=1 so guests can observe attach state and decide whether to take ownership.
     let portsc = mux.ehci_read_portsc(0);
-    assert_ne!(portsc & EHCI_PORT_OWNER, 0, "expected port to start companion-owned");
-    assert_ne!(portsc & EHCI_PORT_CCS, 0, "expected CCS set when device is attached");
+    assert_ne!(
+        portsc & EHCI_PORT_OWNER,
+        0,
+        "expected port to start companion-owned"
+    );
+    assert_ne!(
+        portsc & EHCI_PORT_CCS,
+        0,
+        "expected CCS set when device is attached"
+    );
     assert_eq!(
         portsc & EHCI_PORT_HSP,
         0,
@@ -32,7 +40,11 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     mux.ehci_write_portsc_masked(0, 0, EHCI_PORT_OWNER);
 
     let portsc = mux.ehci_read_portsc(0);
-    assert_ne!(portsc & EHCI_PORT_HSP, 0, "high-speed device should set HSP");
+    assert_ne!(
+        portsc & EHCI_PORT_HSP,
+        0,
+        "high-speed device should set HSP"
+    );
     assert_eq!(
         portsc & EHCI_PORT_LS_MASK,
         0,
@@ -46,7 +58,11 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     );
 
     let portsc = mux.ehci_read_portsc(0);
-    assert_eq!(portsc & EHCI_PORT_HSP, 0, "full-speed device should clear HSP");
+    assert_eq!(
+        portsc & EHCI_PORT_HSP,
+        0,
+        "full-speed device should clear HSP"
+    );
     assert_eq!(
         (portsc & EHCI_PORT_LS_MASK) >> 10,
         0b10,
@@ -60,7 +76,11 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     );
 
     let portsc = mux.ehci_read_portsc(0);
-    assert_eq!(portsc & EHCI_PORT_HSP, 0, "low-speed device should clear HSP");
+    assert_eq!(
+        portsc & EHCI_PORT_HSP,
+        0,
+        "low-speed device should clear HSP"
+    );
     assert_eq!(
         (portsc & EHCI_PORT_LS_MASK) >> 10,
         0b01,

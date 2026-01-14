@@ -242,13 +242,11 @@ impl ExpansionScratchAllocator {
             lcm_u64(lcm_u64(storage_alignment, uniform_alignment), 16),
         );
 
-        let mut per_frame_capacity = align_up(self.desc.per_frame_size, required_alignment)
-            .max(required_alignment);
+        let mut per_frame_capacity =
+            align_up(self.desc.per_frame_size, required_alignment).max(required_alignment);
 
         let frames_u64 = self.desc.frames_in_flight as u64;
-        let max_per_frame = max_buffer_size
-            .checked_div(frames_u64)
-            .unwrap_or(0);
+        let max_per_frame = max_buffer_size.checked_div(frames_u64).unwrap_or(0);
         let max_per_frame = align_down(max_per_frame, required_alignment);
         if max_per_frame < required_alignment {
             return Err(ExpansionScratchError::BufferTooLarge {
@@ -258,12 +256,12 @@ impl ExpansionScratchAllocator {
         }
         per_frame_capacity = per_frame_capacity.min(max_per_frame);
 
-        let total_size = per_frame_capacity
-            .checked_mul(frames_u64)
-            .ok_or(ExpansionScratchError::BufferTooLarge {
+        let total_size = per_frame_capacity.checked_mul(frames_u64).ok_or(
+            ExpansionScratchError::BufferTooLarge {
                 requested: u64::MAX,
                 max: max_buffer_size,
-            })?;
+            },
+        )?;
         if total_size > max_buffer_size {
             return Err(ExpansionScratchError::BufferTooLarge {
                 requested: total_size,
@@ -279,8 +277,11 @@ impl ExpansionScratchAllocator {
         });
         let buffer = Arc::new(buffer);
 
-        let arenas =
-            SegmentedArena::new(self.desc.frames_in_flight, per_frame_capacity, self.arena_index);
+        let arenas = SegmentedArena::new(
+            self.desc.frames_in_flight,
+            per_frame_capacity,
+            self.arena_index,
+        );
         self.state = Some(ScratchState {
             buffer,
             max_buffer_size,
@@ -291,7 +292,11 @@ impl ExpansionScratchAllocator {
         Ok(())
     }
 
-    fn realloc_buffer(&mut self, device: &wgpu::Device, new_per_frame_capacity: u64) -> Result<(), ExpansionScratchError> {
+    fn realloc_buffer(
+        &mut self,
+        device: &wgpu::Device,
+        new_per_frame_capacity: u64,
+    ) -> Result<(), ExpansionScratchError> {
         let Some(state) = self.state.as_mut() else {
             return Err(ExpansionScratchError::InvalidDescriptor(
                 "internal error: realloc called before init",
@@ -299,12 +304,12 @@ impl ExpansionScratchAllocator {
         };
 
         let frames_u64 = self.desc.frames_in_flight as u64;
-        let total_size = new_per_frame_capacity
-            .checked_mul(frames_u64)
-            .ok_or(ExpansionScratchError::BufferTooLarge {
+        let total_size = new_per_frame_capacity.checked_mul(frames_u64).ok_or(
+            ExpansionScratchError::BufferTooLarge {
                 requested: u64::MAX,
                 max: state.max_buffer_size,
-            })?;
+            },
+        )?;
         if total_size > state.max_buffer_size {
             return Err(ExpansionScratchError::BufferTooLarge {
                 requested: total_size,
@@ -319,7 +324,11 @@ impl ExpansionScratchAllocator {
             mapped_at_creation: false,
         });
         state.buffer = Arc::new(buffer);
-        state.arenas = SegmentedArena::new(self.desc.frames_in_flight, new_per_frame_capacity, self.arena_index);
+        state.arenas = SegmentedArena::new(
+            self.desc.frames_in_flight,
+            new_per_frame_capacity,
+            self.arena_index,
+        );
         Ok(())
     }
 
@@ -359,18 +368,12 @@ impl ExpansionScratchAllocator {
         // current segment. Previously-returned allocations keep their old `Arc<wgpu::Buffer>`.
         //
         // Grow conservatively (double), but always ensure we can fit the current request.
-        let mut new_per_frame_capacity = state
-            .arenas
-            .per_frame_capacity
-            .saturating_mul(2)
-            .max(size);
+        let mut new_per_frame_capacity =
+            state.arenas.per_frame_capacity.saturating_mul(2).max(size);
         new_per_frame_capacity = align_up(new_per_frame_capacity, state.required_alignment);
 
         let frames_u64 = self.desc.frames_in_flight as u64;
-        let max_per_frame = state
-            .max_buffer_size
-            .checked_div(frames_u64)
-            .unwrap_or(0);
+        let max_per_frame = state.max_buffer_size.checked_div(frames_u64).unwrap_or(0);
         let max_per_frame = align_down(max_per_frame, state.required_alignment);
         if new_per_frame_capacity > max_per_frame {
             // Clamp to the maximum possible size if that still fits the requested allocation.

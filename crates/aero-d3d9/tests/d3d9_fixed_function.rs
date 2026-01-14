@@ -1198,7 +1198,6 @@ fn render_alpha_test_with_blending() {
     );
 }
 
-
 #[test]
 fn render_directional_lighting_diffuse_only() {
     let Some((device, queue)) = request_device() else {
@@ -1309,8 +1308,10 @@ fn render_directional_lighting_diffuse_only() {
         lighting: LightingState { enabled: true },
     };
 
-    let shaders_unlit = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_unlit);
-    let shaders_lit = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_lit);
+    let shaders_unlit =
+        aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_unlit);
+    let shaders_lit =
+        aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_lit);
 
     let vs_unlit = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("vs-unlit"),
@@ -1560,7 +1561,11 @@ fn render_directional_lighting_diffuse_only() {
     let pixels_unlit = readback_rgba8(&device, &queue, &target_unlit, width, height);
     let pixels_lit = readback_rgba8(&device, &queue, &target_lit, width, height);
 
-    assert_rgba_approx(pixel_at_rgba(&pixels_unlit, width, 8, 8), [255, 255, 255, 255], 2);
+    assert_rgba_approx(
+        pixel_at_rgba(&pixels_unlit, width, 8, 8),
+        [255, 255, 255, 255],
+        2,
+    );
     assert_rgba_approx(pixel_at_rgba(&pixels_lit, width, 8, 8), [255, 0, 0, 255], 2);
 }
 
@@ -2943,11 +2948,7 @@ fn render_fixed_function_uniform_sources_and_flags() {
         queue.submit([encoder.finish()]);
 
         let pixels = readback_rgba8(&device, &queue, &target, width, height);
-        assert_rgba_approx(
-            pixel_at_rgba(&pixels, width, 1, 1),
-            expected,
-            3,
-        );
+        assert_rgba_approx(pixel_at_rgba(&pixels, width, 1, 1), expected, 3);
     }
 }
 
@@ -3203,7 +3204,8 @@ fn render_texcoord_index_override() {
     let desc_default = mk_desc(None);
     let desc_override = mk_desc(Some(1));
 
-    let shaders_default = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_default);
+    let shaders_default =
+        aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_default);
     let shaders_override =
         aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_override);
 
@@ -3323,8 +3325,16 @@ fn render_texcoord_index_override() {
     let pixels_default = readback_rgba8(&device, &queue, &target_default, width, height);
     let pixels_override = readback_rgba8(&device, &queue, &target_override, width, height);
 
-    assert_rgba_approx(pixel_at_rgba(&pixels_default, width, 1, 1), [255, 0, 0, 255], 2);
-    assert_rgba_approx(pixel_at_rgba(&pixels_override, width, 1, 1), [0, 255, 0, 255], 2);
+    assert_rgba_approx(
+        pixel_at_rgba(&pixels_default, width, 1, 1),
+        [255, 0, 0, 255],
+        2,
+    );
+    assert_rgba_approx(
+        pixel_at_rgba(&pixels_override, width, 1, 1),
+        [0, 255, 0, 255],
+        2,
+    );
 }
 
 #[test]

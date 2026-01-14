@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use aero_platform::audio::worklet_bridge::{frames_available, frames_available_clamped, frames_free};
+use aero_platform::audio::worklet_bridge::{
+    frames_available, frames_available_clamped, frames_free,
+};
 use serde::Deserialize;
 
 /// Shared conformance vectors for AudioWorklet playback ring index math.
@@ -71,4 +73,3 @@ fn audio_worklet_ring_math_matches_shared_vectors() {
         );
     }
 }
-

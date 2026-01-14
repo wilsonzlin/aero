@@ -70,7 +70,10 @@ fn xhci_transfer_executor_rejects_null_link_target() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].completion_code, CompletionCode::TrbError);
     assert!(exec.endpoint_state(0x81).unwrap().halted);
-    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, RING_BASE);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
 }
 
 #[test]
@@ -116,7 +119,10 @@ fn xhci_transfer_executor_halts_on_overlong_td_chain() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].completion_code, CompletionCode::TrbError);
     assert!(exec.endpoint_state(0x81).unwrap().halted);
-    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, RING_BASE);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
 }
 
 #[test]
@@ -138,7 +144,10 @@ fn xhci_transfer_executor_halts_on_dequeue_ptr_overflow() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].completion_code, CompletionCode::TrbError);
     assert!(exec.endpoint_state(0x81).unwrap().halted);
-    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, trb_addr);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        trb_addr
+    );
 }
 
 #[test]
@@ -167,7 +176,10 @@ fn xhci_transfer_executor_halts_on_unexpected_trb_inside_td_chain() {
     assert_eq!(events[0].completion_code, CompletionCode::TrbError);
     assert_eq!(events[0].trb_ptr, RING_BASE + 0x10);
     assert!(exec.endpoint_state(0x81).unwrap().halted);
-    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, RING_BASE);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
 
     // Further ticks must not process additional TRBs while halted.
     exec.tick_1ms(&mut mem);

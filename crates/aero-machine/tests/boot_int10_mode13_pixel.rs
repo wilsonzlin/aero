@@ -81,4 +81,3 @@ fn boot_sector_int10_mode13h_write_pixel_is_visible() {
     // Default VGA palette entry 4 is EGA red (0xAA,0x00,0x00).
     assert_eq!(pixel, 0xFF00_00AA);
 }
-

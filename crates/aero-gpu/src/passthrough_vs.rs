@@ -190,4 +190,3 @@ mod tests {
         assert_eq!(layout.attributes[2].shader_location, 2);
     }
 }
-

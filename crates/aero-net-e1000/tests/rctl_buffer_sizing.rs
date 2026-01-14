@@ -190,12 +190,7 @@ fn rctl_bsize_bsex_variants_control_rx_dma_truncation_behavior() {
 
             let (len, status, errors) = read_rx_desc_fields(&mut dma, 0x2000);
             assert_eq!(len, 0, "descriptor length should be 0 for {}", v.name);
-            assert_eq!(
-                status & 0x03,
-                0x03,
-                "DD|EOP should be set for {}",
-                v.name
-            );
+            assert_eq!(status & 0x03, 0x03, "DD|EOP should be set for {}", v.name);
             assert_eq!(
                 errors & RXD_ERR_RXE,
                 RXD_ERR_RXE,
@@ -220,19 +215,12 @@ fn rctl_bsize_bsex_variants_control_rx_dma_truncation_behavior() {
 
             let (len, status, errors) = read_rx_desc_fields(&mut dma, 0x2000);
             assert_eq!(
-                len as usize,
-                MAX_L2_FRAME_LEN,
+                len as usize, MAX_L2_FRAME_LEN,
                 "descriptor length mismatch for {}",
                 v.name
             );
-            assert_eq!(
-                status & 0x03,
-                0x03,
-                "DD|EOP should be set for {}",
-                v.name
-            );
+            assert_eq!(status & 0x03, 0x03, "DD|EOP should be set for {}", v.name);
             assert_eq!(errors, 0, "unexpected errors for {}", v.name);
         }
     }
 }
-

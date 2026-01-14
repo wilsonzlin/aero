@@ -112,7 +112,10 @@ async fn opfs_attach_ide_primary_master_can_opt_in_to_setting_snapshot_overlay_r
     if let Err(err) = attach_res {
         let msg = err
             .as_string()
-            .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
+            .or_else(|| {
+                err.dyn_ref::<js_sys::Error>()
+                    .and_then(|e| e.message().as_string())
+            })
             .unwrap_or_else(|| format!("{err:?}"));
         if msg.contains("OPFS")
             || msg.contains("backend unavailable")
@@ -197,9 +200,14 @@ async fn opfs_attach_install_media_iso_can_opt_in_to_setting_snapshot_overlay_re
     if let Err(err) = attach_res {
         let msg = err
             .as_string()
-            .or_else(|| err.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())))
+            .or_else(|| {
+                err.dyn_ref::<js_sys::Error>()
+                    .map(|e| String::from(e.message()))
+            })
             .unwrap_or_else(|| format!("{err:?}"));
-        panic!("attach_install_media_iso_opfs_existing_and_set_overlay_ref failed unexpectedly: {msg}");
+        panic!(
+            "attach_install_media_iso_opfs_existing_and_set_overlay_ref failed unexpectedly: {msg}"
+        );
     }
 
     let snap = machine.snapshot_full().expect("snapshot_full");

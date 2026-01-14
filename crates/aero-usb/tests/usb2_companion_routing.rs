@@ -161,7 +161,11 @@ fn usb2_companion_routing_swaps_reachability_between_uhci_and_ehci() {
         let portsc = ehci.mmio_read(reg_portsc(0), 4);
         ehci.mmio_write(reg_portsc(0), 4, portsc & !PORTSC_PED);
         let portsc = ehci.mmio_read(reg_portsc(0), 4);
-        assert_eq!(portsc & PORTSC_PED, 0, "port must be disabled before handoff");
+        assert_eq!(
+            portsc & PORTSC_PED,
+            0,
+            "port must be disabled before handoff"
+        );
         ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_PO);
         uhci_reset_root_port(&mut uhci, &mut mem);
         let desc = uhci_get_device_descriptor(&mut uhci, &mut mem);
@@ -271,7 +275,10 @@ fn usb2_companion_routing_snapshot_roundtrip_is_order_independent() {
         uhci.load_state(&uhci_snapshot)
             .expect("UHCI snapshot restore should succeed");
 
-        assert!(mux.borrow().configflag(), "mux CONFIGFLAG should be restored");
+        assert!(
+            mux.borrow().configflag(),
+            "mux CONFIGFLAG should be restored"
+        );
         assert_eq!(mux.borrow().port_device(0).unwrap().address(), 1);
         assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
         assert!(uhci.hub_mut().device_mut_for_address(1).is_none());
@@ -290,7 +297,10 @@ fn usb2_companion_routing_snapshot_roundtrip_is_order_independent() {
         ehci.load_state(&ehci_snapshot)
             .expect("EHCI snapshot restore should succeed");
 
-        assert!(mux.borrow().configflag(), "mux CONFIGFLAG should be restored");
+        assert!(
+            mux.borrow().configflag(),
+            "mux CONFIGFLAG should be restored"
+        );
         assert_eq!(mux.borrow().port_device(0).unwrap().address(), 1);
         assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
         assert!(uhci.hub_mut().device_mut_for_address(1).is_none());

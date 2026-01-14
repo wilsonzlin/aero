@@ -29,7 +29,9 @@ use memory::MmioHandler;
 
 use crate::irq::IrqLine;
 use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use crate::pci::{profile, MsiCapability, MsixCapability, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use crate::pci::{
+    profile, MsiCapability, MsixCapability, PciConfigSpace, PciConfigSpaceState, PciDevice,
+};
 
 pub use aero_usb::xhci::{regs, XhciController};
 
@@ -266,14 +268,14 @@ impl XhciPciDevice {
         self.controller.service_event_ring(&mut adapter);
         self.service_interrupts();
     }
- 
+
     /// Advance the device by 1ms.
     pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
         // Transfer execution + event ring delivery both perform DMA. Gate them on PCI COMMAND.BME
         // (bit 2) so clearing bus mastering does not interpret guest ERST state via open-bus reads
         // (which would spuriously set USBSTS.HCE and/or drop pending events).
         let dma_enabled = (self.config.command() & (1 << 2)) != 0;
- 
+
         enum TickMemoryBus<'a> {
             Dma(&'a mut MemoryBus),
         }
@@ -302,7 +304,7 @@ impl XhciPciDevice {
         } else {
             self.controller.tick_1ms_no_dma();
         }
- 
+
         self.service_interrupts();
     }
 }
@@ -498,7 +500,10 @@ impl IoSnapshot for XhciPciDevice {
         w.field_bytes(TAG_PCI, pci_enc.finish());
 
         w.field_bytes(TAG_IRQ, Encoder::new().bool(self.irq.level()).finish());
-        w.field_bytes(TAG_LAST_IRQ, Encoder::new().bool(self.last_irq_level).finish());
+        w.field_bytes(
+            TAG_LAST_IRQ,
+            Encoder::new().bool(self.last_irq_level).finish(),
+        );
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
 
         if let Some(msix) = self.config.capability::<MsixCapability>() {
@@ -551,9 +556,11 @@ impl IoSnapshot for XhciPciDevice {
 
         if r.bytes(TAG_MSIX_TABLE).is_some() || r.bytes(TAG_MSIX_PBA).is_some() {
             let Some(msix) = self.config.capability_mut::<MsixCapability>() else {
-                return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
-                    "snapshot contains MSI-X state but device has no MSI-X capability",
-                ));
+                return Err(
+                    aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                        "snapshot contains MSI-X state but device has no MSI-X capability",
+                    ),
+                );
             };
 
             if let Some(buf) = r.bytes(TAG_MSIX_TABLE) {
@@ -647,14 +654,14 @@ fn all_ones(size: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{regs, XhciPciDevice};
-    use aero_platform::address_filter::AddressFilter;
-    use aero_platform::chipset::ChipsetState;
-    use aero_platform::memory::MemoryBus;
-    use aero_io_snapshot::io::state::IoSnapshot;
-    use aero_usb::xhci::trb::{Trb, TrbType};
     use crate::pci::config::PciClassCode;
     use crate::pci::msi::PCI_CAP_ID_MSI;
     use crate::pci::{profile, PciBarDefinition, PciDevice};
+    use aero_io_snapshot::io::state::IoSnapshot;
+    use aero_platform::address_filter::AddressFilter;
+    use aero_platform::chipset::ChipsetState;
+    use aero_platform::memory::MemoryBus;
+    use aero_usb::xhci::trb::{Trb, TrbType};
     use memory::MemoryBus as _;
     use memory::MmioHandler;
     use std::cell::RefCell;
@@ -900,7 +907,10 @@ mod tests {
         mem.read_physical(SEG_PADDR, &mut buf);
         let written = Trb::from_bytes(buf);
         assert_eq!(written.trb_type(), TrbType::PortStatusChangeEvent);
-        assert!(written.cycle(), "event TRB should have cycle bit set on first enqueue");
+        assert!(
+            written.cycle(),
+            "event TRB should have cycle bit set on first enqueue"
+        );
         assert!(dev.irq_level());
     }
 }

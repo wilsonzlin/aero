@@ -307,10 +307,7 @@ mod tests {
         // 0 is reserved by the AeroGPU protocol for "Invalid", so scanout format values must not
         // use custom numbering.
         assert_eq!(AerogpuFormat::Invalid as u32, 0);
-        assert_eq!(
-            SCANOUT_FORMAT_B8G8R8X8,
-            AerogpuFormat::B8G8R8X8Unorm as u32
-        );
+        assert_eq!(SCANOUT_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
     }
 
     #[test]

@@ -1202,7 +1202,10 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 7);
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 9);

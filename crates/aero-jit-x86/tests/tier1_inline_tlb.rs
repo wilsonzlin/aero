@@ -1299,14 +1299,10 @@ fn tier1_inline_tlb_cross_page_load_fastpath_handles_noncontiguous_physical_page
 
     let mut got_mem = vec![0u8; total_len];
     memory.read(&store, 0, &mut got_mem).unwrap();
-    let snap =
-        CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
 
     assert_eq!(snap.rip, 0x3000);
-    assert_eq!(
-        snap.gpr[Gpr::Rax.as_u8() as usize],
-        0x0807_0605_0403_0201
-    );
+    assert_eq!(snap.gpr[Gpr::Rax.as_u8() as usize], 0x0807_0605_0403_0201);
 
     let host_state = *store.data();
     assert_eq!(host_state.mmu_translate_calls, 2);
@@ -1394,7 +1390,9 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_noncontiguous_physical_pag
     let mut table = Vec::new();
     for i in 0..code_version_table_len {
         let off = table_ptr as usize + (i as usize) * 4;
-        table.push(u32::from_le_bytes(got_mem[off..off + 4].try_into().unwrap()));
+        table.push(u32::from_le_bytes(
+            got_mem[off..off + 4].try_into().unwrap(),
+        ));
     }
     assert_eq!(table, vec![1, 0, 1, 0]);
 

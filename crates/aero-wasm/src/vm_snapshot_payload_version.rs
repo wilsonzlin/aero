@@ -111,4 +111,3 @@ mod tests {
         assert_eq!(parse_vm_snapshot_device_version_flags(&bytes), Some((2, 9)));
     }
 }
-

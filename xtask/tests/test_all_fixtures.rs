@@ -154,7 +154,10 @@ fn test_all_fails_fast_when_fixtures_out_of_date() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     // The fixture check itself should tell users how to regenerate.
-    assert!(stderr.contains("run `cargo xtask fixtures`"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("run `cargo xtask fixtures`"),
+        "stderr:\n{stderr}"
+    );
     assert!(
         stderr.contains("boot_vga_serial.bin"),
         "stderr should mention the drifted fixture; got:\n{stderr}"
@@ -162,7 +165,10 @@ fn test_all_fails_fast_when_fixtures_out_of_date() {
 
     // `test-all` should stop after the fixture check and not invoke any `cargo` steps.
     let calls = read_log(&log_path);
-    assert!(calls.is_empty(), "expected no cargo invocations; got: {calls:?}");
+    assert!(
+        calls.is_empty(),
+        "expected no cargo invocations; got: {calls:?}"
+    );
 }
 
 #[test]

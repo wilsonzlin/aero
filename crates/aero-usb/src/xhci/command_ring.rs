@@ -215,7 +215,11 @@ impl CommandRingProcessor {
     ///
     /// - `root_port` is the 1-based Root Hub Port Number from the Slot Context.
     /// - `route` is the decoded Route String, where each element is a 1-based downstream hub port.
-    fn find_device_by_topology(&mut self, root_port: u8, route: &[u8]) -> Option<&mut AttachedUsbDevice> {
+    fn find_device_by_topology(
+        &mut self,
+        root_port: u8,
+        route: &[u8],
+    ) -> Option<&mut AttachedUsbDevice> {
         if root_port == 0 {
             return None;
         }
@@ -377,10 +381,7 @@ impl CommandRingProcessor {
             None => return (CompletionCode::NoSlotsAvailableError, 0),
         };
 
-        let dcbaa_entry_addr = match self
-            .dcbaa_ptr
-            .checked_add(u64::from(slot_id) * 8)
-        {
+        let dcbaa_entry_addr = match self.dcbaa_ptr.checked_add(u64::from(slot_id) * 8) {
             Some(addr) => addr,
             None => return (CompletionCode::ParameterError, 0),
         };
@@ -420,10 +421,7 @@ impl CommandRingProcessor {
             return CompletionCode::ParameterError;
         }
 
-        let dcbaa_entry_addr = match self
-            .dcbaa_ptr
-            .checked_add(u64::from(slot_id) * 8)
-        {
+        let dcbaa_entry_addr = match self.dcbaa_ptr.checked_add(u64::from(slot_id) * 8) {
             Some(addr) => addr,
             None => return CompletionCode::ParameterError,
         };
@@ -467,10 +465,7 @@ impl CommandRingProcessor {
     }
 
     fn address_in_use(&self, addr: u8) -> bool {
-        self.slots
-            .iter()
-            .flatten()
-            .any(|slot| slot.address == addr)
+        self.slots.iter().flatten().any(|slot| slot.address == addr)
     }
 
     fn handle_link_trb(&mut self, _mem: &mut dyn MemoryBus, _addr: u64, trb: Trb) -> bool {
@@ -840,7 +835,9 @@ impl CommandRingProcessor {
         if icc.drop_flags() != 0 {
             return CompletionCode::ParameterError;
         }
-        if (icc.add_flags() & (ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0)) != (ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0) {
+        if (icc.add_flags() & (ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0))
+            != (ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0)
+        {
             return CompletionCode::ParameterError;
         }
         if (icc.add_flags() & !supported_add) != 0 {
@@ -932,7 +929,8 @@ impl CommandRingProcessor {
         // Apply EP0 Context (preserve Endpoint State field).
         let in_ep0_addr = input_ctx_ptr + INPUT_EP0_CTX_OFFSET;
         let out_ep0_addr = dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET;
-        if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_ep0_addr, out_ep0_addr) {
+        if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_ep0_addr, out_ep0_addr)
+        {
             return code;
         }
 
@@ -1018,8 +1016,11 @@ impl CommandRingProcessor {
             return CompletionCode::ParameterError;
         }
 
-        let supported_add =
-            ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0 | ICC_CTX_FLAG_EP1_IN | ICC_CTX_FLAG_EP2_OUT | ICC_CTX_FLAG_EP2_IN;
+        let supported_add = ICC_CTX_FLAG_SLOT
+            | ICC_CTX_FLAG_EP0
+            | ICC_CTX_FLAG_EP1_IN
+            | ICC_CTX_FLAG_EP2_OUT
+            | ICC_CTX_FLAG_EP2_IN;
         let supported_drop = ICC_CTX_FLAG_EP1_IN | ICC_CTX_FLAG_EP2_OUT | ICC_CTX_FLAG_EP2_IN;
 
         if (add_flags & !supported_add) != 0 {
@@ -1155,7 +1156,9 @@ impl CommandRingProcessor {
         if (add_flags & ICC_CTX_FLAG_SLOT) != 0 {
             let in_slot_addr = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
             let out_slot_addr = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
-            if let Err(code) = self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr) {
+            if let Err(code) =
+                self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr)
+            {
                 return code;
             }
         }
@@ -1179,13 +1182,17 @@ impl CommandRingProcessor {
         if (add_flags & bulk_bits) != 0 {
             let in_out_addr = input_ctx_ptr + (5u64 * CONTEXT_SIZE); // input index 5 = dci 4 + 1
             let out_out_addr = dev_ctx_ptr + (4u64 * CONTEXT_SIZE);
-            if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_out_addr, out_out_addr) {
+            if let Err(code) =
+                self.copy_endpoint_context_preserve_state(mem, in_out_addr, out_out_addr)
+            {
                 return code;
             }
 
             let in_in_addr = input_ctx_ptr + (6u64 * CONTEXT_SIZE); // input index 6 = dci 5 + 1
             let out_in_addr = dev_ctx_ptr + (5u64 * CONTEXT_SIZE);
-            if let Err(code) = self.copy_endpoint_context_preserve_state(mem, in_in_addr, out_in_addr) {
+            if let Err(code) =
+                self.copy_endpoint_context_preserve_state(mem, in_in_addr, out_in_addr)
+            {
                 return code;
             }
         }
@@ -1272,7 +1279,11 @@ impl CommandRingProcessor {
         Ok(())
     }
 
-    fn clear_context(&mut self, mem: &mut dyn MemoryBus, ctx_addr: u64) -> Result<(), CompletionCode> {
+    fn clear_context(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        ctx_addr: u64,
+    ) -> Result<(), CompletionCode> {
         for i in 0..8u64 {
             self.write_u32(mem, ctx_addr + i * 4, 0)
                 .map_err(|_| CompletionCode::ParameterError)?;
@@ -1384,7 +1395,9 @@ mod tests {
 
     impl TestMem {
         fn new(size: usize) -> Self {
-            Self { data: vec![0; size] }
+            Self {
+                data: vec![0; size],
+            }
         }
     }
 
@@ -1504,9 +1517,9 @@ mod tests {
             .as_mut()
             .unwrap()
             .endpoints[usize::from(endpoint_id)]
-            .as_mut()
-            .unwrap()
-            .halted = true;
+        .as_mut()
+        .unwrap()
+        .halted = true;
 
         processor.process(&mut mem, 1);
 

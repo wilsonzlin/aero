@@ -104,7 +104,8 @@ fn device_default_version_flags(id: DeviceId) -> (u16, u16) {
 }
 
 fn device_version_flags_from_payload(id: DeviceId, bytes: &[u8]) -> (u16, u16) {
-    parse_vm_snapshot_device_version_flags(bytes).unwrap_or_else(|| device_default_version_flags(id))
+    parse_vm_snapshot_device_version_flags(bytes)
+        .unwrap_or_else(|| device_default_version_flags(id))
 }
 
 fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {

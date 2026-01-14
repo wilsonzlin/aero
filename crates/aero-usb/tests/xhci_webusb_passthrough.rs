@@ -608,7 +608,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
     let (in_id, in_endpoint, in_len) = match actions.pop().unwrap() {
-        UsbHostAction::BulkIn { id, endpoint, length } => (id, endpoint, length),
+        UsbHostAction::BulkIn {
+            id,
+            endpoint,
+            length,
+        } => (id, endpoint, length),
         other => panic!("unexpected action: {other:?}"),
     };
     assert_eq!(in_endpoint, 0x81);
@@ -672,7 +676,11 @@ fn xhci_transfer_executor_bulk_in_naks_until_webusb_completion() {
     exec.add_endpoint(0x81, RING_BASE);
 
     let mut mem = TestMemory::new(0x10000);
-    write_trb(&mut mem, RING_BASE, make_normal_trb(DATA_BUF, 8, true, true));
+    write_trb(
+        &mut mem,
+        RING_BASE,
+        make_normal_trb(DATA_BUF, 8, true, true),
+    );
 
     // Tick #1: TD is pending (NAK) and queues a single host action.
     exec.tick_1ms(&mut mem);
@@ -700,7 +708,10 @@ fn xhci_transfer_executor_bulk_in_naks_until_webusb_completion() {
     exec.tick_1ms(&mut mem);
     assert!(dev.drain_actions().is_empty());
     assert!(exec.take_events().is_empty());
-    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, RING_BASE);
+    assert_eq!(
+        exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
 
     // Provide completion.
     let payload = [0u8, 1, 2, 3, 4, 5, 6, 7];
@@ -782,7 +793,10 @@ fn xhci_transfer_executor_bulk_out_naks_until_webusb_completion() {
     exec.tick_1ms(&mut mem);
     assert!(dev.drain_actions().is_empty());
     assert!(exec.take_events().is_empty());
-    assert_eq!(exec.endpoint_state(0x01).unwrap().ring.dequeue_ptr, RING_BASE);
+    assert_eq!(
+        exec.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        RING_BASE
+    );
 
     dev.push_completion(UsbHostCompletion::BulkOut {
         id,

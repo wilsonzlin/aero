@@ -348,9 +348,9 @@ impl XhciControllerBridge {
                 //
                 // We keep the handle alive across disconnects so action IDs remain monotonic across
                 // reconnects.
-                let dev = self
-                    .webusb
-                    .get_or_insert_with(|| UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High));
+                let dev = self.webusb.get_or_insert_with(|| {
+                    UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High)
+                });
                 // Ensure the device is attached at a stable root port so guest activity routes into
                 // the shared passthrough handle.
                 let _ = attach_device_at_path(&mut self.ctrl, &[root_port], Box::new(dev.clone()));
@@ -521,7 +521,9 @@ impl XhciControllerBridge {
 
         // Replace semantics: detach any existing device at the root port first.
         let _ = self.ctrl.detach_at_path(&[root_port]);
-        self.ctrl.attach_hub(root_port, port_count).map_err(map_attach_error)
+        self.ctrl
+            .attach_hub(root_port, port_count)
+            .map_err(map_attach_error)
     }
 
     /// Detach any USB device attached at the given topology path.

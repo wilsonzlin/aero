@@ -33,9 +33,7 @@ fn bridge_snapshot_ctrl_bytes<'a>(bytes: &'a [u8]) -> &'a [u8] {
 
 fn ctrl_snapshot_time_ms(bytes: &[u8]) -> u64 {
     let r = SnapshotReader::parse(bytes, CTRL_ID).expect("parse XhciController snapshot");
-    r.u64(TAG_CTRL_TIME_MS)
-        .expect("read time_ms")
-        .unwrap_or(0)
+    r.u64(TAG_CTRL_TIME_MS).expect("read time_ms").unwrap_or(0)
 }
 
 fn ctrl_snapshot_last_tick_dma_dword(bytes: &[u8]) -> u32 {

@@ -84,12 +84,11 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     assert_eq!(evt.completion_code_raw(), CompletionCode::Success.as_u8());
     assert_eq!(evt.slot_id(), slot_id);
 
-    assert_eq!(
-        xhci.slot_state(slot_id).and_then(|s| s.port_id()),
-        Some(1)
-    );
+    assert_eq!(xhci.slot_state(slot_id).and_then(|s| s.port_id()), Some(1));
     {
-        let dev = xhci.slot_device_mut(slot_id).expect("slot must resolve to a device");
+        let dev = xhci
+            .slot_device_mut(slot_id)
+            .expect("slot must resolve to a device");
         assert_eq!(dev.address(), slot_id);
     }
 
@@ -162,7 +161,10 @@ fn address_device_invalid_port_fails_gracefully() {
     let evt = xhci.pop_pending_event().expect("address-device completion");
     assert_eq!(evt.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(evt.slot_id(), slot_id);
-    assert_eq!(evt.completion_code_raw(), CompletionCode::ParameterError.as_u8());
+    assert_eq!(
+        evt.completion_code_raw(),
+        CompletionCode::ParameterError.as_u8()
+    );
     assert_eq!(xhci.slot_state(slot_id).and_then(|s| s.port_id()), None);
 }
 
@@ -233,7 +235,10 @@ fn address_device_missing_output_context_does_not_set_address() {
     let evt = xhci.pop_pending_event().expect("address-device completion");
     assert_eq!(evt.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(evt.slot_id(), slot_id);
-    assert_eq!(evt.completion_code_raw(), CompletionCode::ContextStateError.as_u8());
+    assert_eq!(
+        evt.completion_code_raw(),
+        CompletionCode::ContextStateError.as_u8()
+    );
 
     let dev = xhci
         .find_device_by_topology(1, &[])
@@ -312,7 +317,9 @@ fn address_device_bsr_does_not_issue_set_address() {
     assert_eq!(evt.slot_id(), slot_id);
     assert_eq!(evt.completion_code_raw(), CompletionCode::Success.as_u8());
 
-    let dev = xhci.slot_device_mut(slot_id).expect("slot must resolve to a device");
+    let dev = xhci
+        .slot_device_mut(slot_id)
+        .expect("slot must resolve to a device");
     assert_eq!(dev.address(), 0, "BSR blocks SET_ADDRESS side effects");
 
     let out_slot = SlotContext::read_from(&mut mem, dev_ctx);

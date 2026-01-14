@@ -1,5 +1,5 @@
-mod alloc_table;
 mod aerogpu_format_conformance;
+mod alloc_table;
 mod command_processor;
 mod dirty_rect;
 mod frame_source;

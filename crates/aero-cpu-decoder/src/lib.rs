@@ -309,10 +309,7 @@ enum PrefixParseError {
 }
 
 /// Parse legacy/REX/VEX/EVEX/XOP prefixes (best-effort, for metadata only).
-fn parse_prefixes(
-    mode: DecodeMode,
-    bytes: &[u8],
-) -> Result<(Prefixes, usize), PrefixParseError> {
+fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<(Prefixes, usize), PrefixParseError> {
     let mut p = Prefixes::default();
     let mut i = 0usize;
 

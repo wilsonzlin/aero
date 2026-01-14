@@ -54,15 +54,17 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
             let bar_base = cfg
                 .and_then(|cfg| cfg.bar_range(self.bar))
                 .map(|range| range.base);
-            let msi_state = cfg.and_then(|cfg| cfg.capability::<MsiCapability>()).map(|msi| {
-                (
-                    msi.enabled(),
-                    msi.message_address(),
-                    msi.message_data(),
-                    msi.mask_bits(),
-                    msi.pending_bits(),
-                )
-            });
+            let msi_state = cfg
+                .and_then(|cfg| cfg.capability::<MsiCapability>())
+                .map(|msi| {
+                    (
+                        msi.enabled(),
+                        msi.message_address(),
+                        msi.message_data(),
+                        msi.mask_bits(),
+                        msi.pending_bits(),
+                    )
+                });
             let msix_state = cfg
                 .and_then(|cfg| cfg.capability::<MsixCapability>())
                 .map(|msix| (msix.enabled(), msix.function_masked()));
@@ -112,7 +114,11 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
                 //
                 // Only change the MSI Enable bit; preserve read-only capability bits (64-bit,
                 // per-vector masking, etc.).
-                let new_ctrl = if enabled { ctrl | 0x0001 } else { ctrl & !0x0001 };
+                let new_ctrl = if enabled {
+                    ctrl | 0x0001
+                } else {
+                    ctrl & !0x0001
+                };
                 cfg.write(base + 0x02, 2, u32::from(new_ctrl));
             }
         }
@@ -179,8 +185,8 @@ mod tests {
     use super::PciConfigSyncedMmioBar;
     use crate::pci::msi::PCI_CAP_ID_MSI;
     use crate::pci::msix::PCI_CAP_ID_MSIX;
-    use crate::pci::{PciBarDefinition, PciBdf, PciConfigPorts, PciConfigSpace, PciDevice};
     use crate::pci::{MsiCapability, MsixCapability};
+    use crate::pci::{PciBarDefinition, PciBdf, PciConfigPorts, PciConfigSpace, PciDevice};
     use memory::MmioHandler;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -478,7 +484,10 @@ mod tests {
         mmio.read(0, 4);
 
         let dev = dev.borrow();
-        assert!(dev.msi_enabled, "device model should observe MSI enable from platform config");
+        assert!(
+            dev.msi_enabled,
+            "device model should observe MSI enable from platform config"
+        );
         assert_eq!(dev.msi_addr, 0xfee0_0000);
         assert_eq!(dev.msi_data, 0x0045);
     }
@@ -576,8 +585,7 @@ mod tests {
 
             let cap = cfg
                 .find_capability(PCI_CAP_ID_MSI)
-                .expect("canonical config should contain MSI")
-                as u16;
+                .expect("canonical config should contain MSI") as u16;
             cfg.write(cap + 0x04, 4, 0xfee0_0000);
             cfg.write(cap + 0x08, 2, 0x0045);
             let ctrl = cfg.read(cap + 0x02, 2) as u16;
@@ -691,8 +699,7 @@ mod tests {
 
             let cap = cfg
                 .find_capability(PCI_CAP_ID_MSIX)
-                .expect("canonical config should contain MSI-X")
-                as u16;
+                .expect("canonical config should contain MSI-X") as u16;
             let ctrl = cfg.read(cap + 0x02, 2) as u16;
             cfg.write(cap + 0x02, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
         }

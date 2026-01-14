@@ -73,10 +73,7 @@ fn decode_reg(token: u32, stage: ShaderStage, ctx: RegDecodeContext) -> Register
         19 => RegisterType::Predicate,
         other => RegisterType::Unknown(other),
     };
-    Register {
-        ty,
-        num,
-    }
+    Register { ty, num }
 }
 
 pub fn decode_dst_param(token: u32, stage: ShaderStage) -> DstParam {

@@ -967,7 +967,10 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
         resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
         "identity"
     );
-    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        "2"
+    );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
@@ -978,7 +981,10 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
             .unwrap(),
         "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
     );
-    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
@@ -1119,12 +1125,18 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
         resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
         "identity"
     );
-    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        "2"
+    );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
     );
-    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert_eq!(
         resp.headers()["access-control-expose-headers"]
             .to_str()
@@ -1245,7 +1257,10 @@ async fn chunked_chunk_head_has_expected_headers_and_empty_body() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
     );
-    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert_eq!(
         resp.headers()["access-control-expose-headers"]
             .to_str()
@@ -1254,7 +1269,10 @@ async fn chunked_chunk_head_has_expected_headers_and_empty_body() {
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
-    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        "2"
+    );
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -1429,10 +1447,16 @@ async fn versioned_chunked_chunk_head_has_expected_headers_and_empty_body() {
             .unwrap(),
         "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
     );
-    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
-    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        "2"
+    );
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -1864,7 +1888,10 @@ async fn chunked_chunk_endpoint_accepts_non_padded_chunk_names() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
+        "2"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"ab");
 
@@ -1890,9 +1917,12 @@ async fn invalid_chunked_version_is_rejected_without_traversal() {
     tokio::fs::create_dir_all(dir.path().join("chunked/secret"))
         .await
         .expect("create secret dir");
-    tokio::fs::write(dir.path().join("chunked/secret/manifest.json"), b"top secret")
-        .await
-        .expect("write secret manifest");
+    tokio::fs::write(
+        dir.path().join("chunked/secret/manifest.json"),
+        b"top secret",
+    )
+    .await
+    .expect("write secret manifest");
 
     let resp = app
         .oneshot(
@@ -2371,9 +2401,12 @@ async fn chunk_larger_than_limit_is_rejected() {
     tokio::fs::create_dir_all(chunk_root.join("chunks"))
         .await
         .expect("create chunk dirs");
-    tokio::fs::write(chunk_root.join("manifest.json"), b"{\"schema\":\"aero.chunked-disk-image.v1\"}")
-        .await
-        .expect("write chunked manifest.json");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest.json");
 
     // 5 bytes, but set max to 4.
     tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"hello")
@@ -2434,7 +2467,11 @@ async fn chunked_symlink_escape_is_blocked_for_chunk_objects() {
         .await
         .expect("write outside file");
 
-    let chunk_dir = root_dir.path().join("chunked").join(IMAGE_ID).join("chunks");
+    let chunk_dir = root_dir
+        .path()
+        .join("chunked")
+        .join(IMAGE_ID)
+        .join("chunks");
     tokio::fs::create_dir_all(&chunk_dir)
         .await
         .expect("create chunk dirs");
@@ -2591,7 +2628,9 @@ async fn chunked_symlink_escape_is_blocked_for_versioned_chunk_objects() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/images/{IMAGE_ID}/chunked/v1/chunks/00000000.bin"))
+                .uri(format!(
+                    "/v1/images/{IMAGE_ID}/chunked/v1/chunks/00000000.bin"
+                ))
                 .body(Body::empty())
                 .unwrap(),
         )

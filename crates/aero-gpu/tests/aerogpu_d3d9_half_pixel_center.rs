@@ -316,7 +316,7 @@ fn run(exec: &mut AerogpuD3d9Executor, viewport: Option<(f32, f32)>) -> Vec<u8> 
         emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
             push_u32(out, 0); // start_slot
             push_u32(out, 1); // buffer_count
-            // One binding entry.
+                              // One binding entry.
             push_u32(out, VB_HANDLE);
             push_u32(out, 16); // stride_bytes
             push_u32(out, 0); // offset_bytes
@@ -344,7 +344,7 @@ fn run(exec: &mut AerogpuD3d9Executor, viewport: Option<(f32, f32)>) -> Vec<u8> 
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-                           // c0 = green
+                              // c0 = green
             push_f32(out, 0.0);
             push_f32(out, 1.0);
             push_f32(out, 0.0);
@@ -630,7 +630,7 @@ fn d3d9_half_pixel_center_cases() {
         emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
             push_u32(out, 0); // start_slot
             push_u32(out, 1); // buffer_count
-            // One binding entry.
+                              // One binding entry.
             push_u32(out, VB_HANDLE);
             push_u32(out, 16); // stride_bytes
             push_u32(out, 0); // offset_bytes
@@ -658,7 +658,7 @@ fn d3d9_half_pixel_center_cases() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-                            // c0 = green
+                              // c0 = green
             push_f32(out, 0.0);
             push_f32(out, 1.0);
             push_f32(out, 0.0);
@@ -745,7 +745,7 @@ fn d3d9_half_pixel_center_cases() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-                            // c0 = red
+                              // c0 = red
             push_f32(out, 1.0);
             push_f32(out, 0.0);
             push_f32(out, 0.0);

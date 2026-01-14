@@ -70,4 +70,3 @@ fn save_snapshot_rejects_empty_mmu_states_list_for_multi_vcpu_snapshot() {
         snapshot::SnapshotError::Corrupt("missing MMU entry")
     ));
 }
-

@@ -134,10 +134,7 @@ fn doorbell0_processes_command_ring_and_emits_completion_events() {
     assert_eq!(evt1.slot_id(), slot_id);
     assert_eq!(evt1.parameter & !0x0f, (cmd_ring as u64) + TRB_LEN as u64);
 
-    assert_eq!(
-        xhci.slot_state(slot_id).and_then(|s| s.port_id()),
-        Some(1)
-    );
+    assert_eq!(xhci.slot_state(slot_id).and_then(|s| s.port_id()), Some(1));
 
     let out_slot = SlotContext::read_from(&mut mem, dev_ctx as u64);
     assert_eq!(out_slot.root_hub_port_number(), 1);

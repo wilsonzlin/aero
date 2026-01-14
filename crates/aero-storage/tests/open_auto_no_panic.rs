@@ -141,7 +141,8 @@ fn base_qcow2_empty() -> Vec<u8> {
 
     // L1 table: single entry points at the L2 table cluster.
     let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
-    out[l1_table_offset as usize..l1_table_offset as usize + 8].copy_from_slice(&l1_entry.to_be_bytes());
+    out[l1_table_offset as usize..l1_table_offset as usize + 8]
+        .copy_from_slice(&l1_entry.to_be_bytes());
 
     out
 }
@@ -209,21 +210,17 @@ fn bytes_strategy() -> impl Strategy<Value = Vec<u8>> {
 
     let mutations = prop::collection::vec((any::<u32>(), any::<u8>()), 0..=32);
 
-    let qcow2 = (any::<u32>(), mutations.clone()).prop_map(|(truncate, muts)| {
-        apply_mutations(base_qcow2_empty(), truncate, &muts)
-    });
+    let qcow2 = (any::<u32>(), mutations.clone())
+        .prop_map(|(truncate, muts)| apply_mutations(base_qcow2_empty(), truncate, &muts));
 
-    let aerosparse = (any::<u32>(), mutations.clone()).prop_map(|(truncate, muts)| {
-        apply_mutations(base_aerosparse_empty(), truncate, &muts)
-    });
+    let aerosparse = (any::<u32>(), mutations.clone())
+        .prop_map(|(truncate, muts)| apply_mutations(base_aerosparse_empty(), truncate, &muts));
 
-    let vhd_fixed = (any::<u32>(), mutations.clone()).prop_map(|(truncate, muts)| {
-        apply_mutations(base_vhd_fixed(), truncate, &muts)
-    });
+    let vhd_fixed = (any::<u32>(), mutations.clone())
+        .prop_map(|(truncate, muts)| apply_mutations(base_vhd_fixed(), truncate, &muts));
 
-    let vhd_dynamic = (any::<u32>(), mutations).prop_map(|(truncate, muts)| {
-        apply_mutations(base_vhd_dynamic(), truncate, &muts)
-    });
+    let vhd_dynamic = (any::<u32>(), mutations)
+        .prop_map(|(truncate, muts)| apply_mutations(base_vhd_dynamic(), truncate, &muts));
 
     prop_oneof![
         6 => random,

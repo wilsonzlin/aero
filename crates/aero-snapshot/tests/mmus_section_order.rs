@@ -216,4 +216,3 @@ fn mmus_section_order_is_independent_of_cpus_section_order() {
         assert_eq!(mmus[1].mmu.cr3, 0x2000);
     }
 }
-

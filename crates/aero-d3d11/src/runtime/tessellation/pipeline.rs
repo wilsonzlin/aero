@@ -13,4 +13,3 @@ impl TessellationPipelines {
         *self = Self::default();
     }
 }
-

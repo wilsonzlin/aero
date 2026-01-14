@@ -11,7 +11,8 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-const DXBC_VS_PASSTHROUGH: &[u8] = include_bytes!("../../aero-d3d11/tests/fixtures/vs_passthrough.dxbc");
+const DXBC_VS_PASSTHROUGH: &[u8] =
+    include_bytes!("../../aero-d3d11/tests/fixtures/vs_passthrough.dxbc");
 const DXBC_PS_PASSTHROUGH: &[u8] =
     include_bytes!("../../aero-d3d11/tests/fixtures/ps_passthrough.dxbc");
 const ILAY_POS3_COLOR: &[u8] =
@@ -155,4 +156,3 @@ fn aerogpu_cmd_scissor_test_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

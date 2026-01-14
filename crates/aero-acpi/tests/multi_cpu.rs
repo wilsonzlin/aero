@@ -41,10 +41,7 @@ fn multi_cpu_tables_emit_topology_in_madt_and_dsdt() {
         if entry_type == 0 {
             // Processor Local APIC structure:
             // [0] type=0, [1] len=8, [2] ACPI Processor ID, [3] APIC ID, [4..8] flags
-            assert_eq!(
-                entry_len, 8,
-                "Processor Local APIC entry should be 8 bytes"
-            );
+            assert_eq!(entry_len, 8, "Processor Local APIC entry should be 8 bytes");
             let acpi_id = madt[off + 2];
             let apic_id = madt[off + 3];
             let flags = read_u32_le(madt, off + 4);
@@ -73,8 +70,7 @@ fn multi_cpu_tables_emit_topology_in_madt_and_dsdt() {
     }
 
     assert_eq!(
-        lapic_count,
-        cpu_count as usize,
+        lapic_count, cpu_count as usize,
         "MADT should contain exactly cpu_count Processor Local APIC entries"
     );
     assert!(

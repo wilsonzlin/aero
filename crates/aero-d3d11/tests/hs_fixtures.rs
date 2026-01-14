@@ -1,7 +1,9 @@
 use std::fs;
 
 use aero_d3d11::sm4::decode_program;
-use aero_d3d11::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderStage, Sm4Program};
+use aero_d3d11::{
+    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderStage, Sm4Program,
+};
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");

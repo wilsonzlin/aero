@@ -71,7 +71,7 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
     status_trb.control |= Trb::CONTROL_IOC; // request Transfer Event
-    // DIR=0 (Status OUT) for a control read.
+                                            // DIR=0 (Status OUT) for a control read.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     let mut link_trb = Trb::default();
@@ -103,17 +103,27 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     // Configure interrupter 0 to deliver events into our guest event ring.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (event_ring_base >> 32) as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (event_ring_base >> 32) as u32,
+    );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // Endpoint 0 uses DCI=1.
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
     xhci.tick_1ms_and_service_event_ring(&mut mem);
 
@@ -127,7 +137,10 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     assert_eq!(ev.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev.slot_id(), slot_id);
     assert_eq!(ev.endpoint_id(), 1);
-    assert_eq!(ev.parameter & !0x0f, transfer_ring_base + 2 * TRB_LEN as u64);
+    assert_eq!(
+        ev.parameter & !0x0f,
+        transfer_ring_base + 2 * TRB_LEN as u64
+    );
     assert_eq!(ev.completion_code_raw(), CompletionCode::ShortPacket.raw());
 
     let residue = (ev.status & 0x00ff_ffff) as usize;

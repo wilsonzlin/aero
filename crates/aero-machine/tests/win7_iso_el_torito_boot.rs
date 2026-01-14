@@ -331,7 +331,8 @@ fn win7_iso_el_torito_boot_smoke() {
     let expected_entry_paddr = u64::from(boot_info.load_segment) * 16;
 
     assert_eq!(
-        entry_paddr, expected_entry_paddr,
+        entry_paddr,
+        expected_entry_paddr,
         "unexpected boot entrypoint physical address (CS={:04x} IP={:04x})",
         m.cpu().segments.cs.selector,
         m.cpu().rip()
@@ -381,12 +382,21 @@ fn win7_iso_el_torito_boot_smoke() {
         //   cli
         //   hlt
         let code: [u8; 17] = [
-            0x31, 0xC0, // xor ax, ax
-            0x8E, 0xC0, // mov es, ax
-            0xBF, 0x00, 0x05, // mov di, 0x0500
-            0xB8, 0x01, 0x4B, // mov ax, 0x4B01
-            0xBA, EL_TORITO_CD_BOOT_DRIVE, 0x00, // mov dx, 0x00E0
-            0xCD, 0x13, // int 0x13
+            0x31,
+            0xC0, // xor ax, ax
+            0x8E,
+            0xC0, // mov es, ax
+            0xBF,
+            0x00,
+            0x05, // mov di, 0x0500
+            0xB8,
+            0x01,
+            0x4B, // mov ax, 0x4B01
+            0xBA,
+            EL_TORITO_CD_BOOT_DRIVE,
+            0x00, // mov dx, 0x00E0
+            0xCD,
+            0x13, // int 0x13
             0xFA, // cli
             0xF4, // hlt
         ];
@@ -417,9 +427,18 @@ fn win7_iso_el_torito_boot_smoke() {
         assert_eq!(m.read_physical_u8(PACKET_ADDR + 1), 0x00); // no-emulation
         assert_eq!(m.read_physical_u8(PACKET_ADDR + 2), EL_TORITO_CD_BOOT_DRIVE);
         assert_eq!(m.read_physical_u8(PACKET_ADDR + 3), 0); // controller index
-        assert_eq!(m.read_physical_u32(PACKET_ADDR + 4), boot_info.boot_image_lba);
-        assert_eq!(m.read_physical_u32(PACKET_ADDR + 8), boot_info.boot_catalog_lba);
-        assert_eq!(m.read_physical_u16(PACKET_ADDR + 12), boot_info.load_segment);
+        assert_eq!(
+            m.read_physical_u32(PACKET_ADDR + 4),
+            boot_info.boot_image_lba
+        );
+        assert_eq!(
+            m.read_physical_u32(PACKET_ADDR + 8),
+            boot_info.boot_catalog_lba
+        );
+        assert_eq!(
+            m.read_physical_u16(PACKET_ADDR + 12),
+            boot_info.load_segment
+        );
         assert_eq!(
             m.read_physical_u16(PACKET_ADDR + 14),
             boot_info.boot_image_sector_count_512

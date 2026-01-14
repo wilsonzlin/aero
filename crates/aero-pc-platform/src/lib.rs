@@ -3,14 +3,16 @@
 #[cfg(feature = "hda")]
 use aero_audio::hda_pci::HdaPciDevice;
 use aero_devices::a20_gate::{A20Gate, A20_GATE_PORT};
-use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, AcpiSleepState, SharedAcpiPmIo};
+use aero_devices::acpi_pm::{
+    AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, AcpiSleepState, SharedAcpiPmIo,
+};
 use aero_devices::clock::ManualClock;
 use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability,
+    bios_post, msix::PCI_CAP_ID_MSIX, register_pci_config_ports, MsiCapability, MsixCapability,
     PciBarDefinition, PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio,
     PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
     PciResourceAllocatorConfig, SharedPciConfigPorts,
@@ -33,8 +35,8 @@ use aero_net_e1000::E1000Device;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
-use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 use aero_platform::interrupts::mmio::{IoApicMmio, LapicMmio};
+use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
@@ -284,7 +286,10 @@ impl VirtioBlkPciConfigDevice {
         };
 
         let config = profile.build_config_space();
-        Self { config, enable_msix }
+        Self {
+            config,
+            enable_msix,
+        }
     }
 }
 
@@ -691,7 +696,9 @@ impl PciIoBarHandler for E1000PciIoBar {
             return;
         };
 
-        self.e1000.borrow_mut().io_write_reg(offset_u32, size, value);
+        self.e1000
+            .borrow_mut()
+            .io_write_reg(offset_u32, size, value);
     }
 }
 
@@ -883,7 +890,8 @@ fn sync_virtio_msix_from_platform(dev: &mut VirtioPciDevice, enabled: bool, func
         new_ctrl |= 1 << 14;
     }
     if new_ctrl != ctrl {
-        dev.config_mut().write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
+        dev.config_mut()
+            .write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
     }
 }
 
@@ -1644,9 +1652,9 @@ impl PcPlatform {
                         let mut ahci = ahci_for_intx.borrow_mut();
                         ahci.config_mut().set_command(command);
                         if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
-                            if let Some(off) =
-                                ahci.config_mut()
-                                    .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                            if let Some(off) = ahci
+                                .config_mut()
+                                .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
                             {
                                 let base = u16::from(off);
                                 ahci.config_mut().write(base + 0x04, 4, addr_lo);
@@ -1907,9 +1915,10 @@ impl PcPlatform {
                 )
             });
 
-            let interrupts_sink: Box<dyn VirtioInterruptSink> = Box::new(VirtioPlatformInterruptSink {
-                interrupts: interrupts.clone(),
-            });
+            let interrupts_sink: Box<dyn VirtioInterruptSink> =
+                Box::new(VirtioPlatformInterruptSink {
+                    interrupts: interrupts.clone(),
+                });
             let virtio_blk = Rc::new(RefCell::new(VirtioPciDevice::new(
                 Box::new(VirtioBlk::new(backend)),
                 interrupts_sink,

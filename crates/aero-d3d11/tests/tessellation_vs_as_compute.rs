@@ -1,10 +1,18 @@
 mod common;
 
-use aero_d3d11::input_layout::{fnv1a_32, InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
-use aero_d3d11::runtime::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
+use aero_d3d11::input_layout::{
+    fnv1a_32, InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement,
+};
+use aero_d3d11::runtime::expansion_scratch::{
+    ExpansionScratchAllocator, ExpansionScratchDescriptor,
+};
 use aero_d3d11::runtime::index_pulling::{IndexPullingParams, INDEX_FORMAT_U16};
-use aero_d3d11::runtime::tessellation::vs_as_compute::{alloc_vs_out_regs, VsAsComputeConfig, VsAsComputePipeline};
-use aero_d3d11::runtime::vertex_pulling::{VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot};
+use aero_d3d11::runtime::tessellation::vs_as_compute::{
+    alloc_vs_out_regs, VsAsComputeConfig, VsAsComputePipeline,
+};
+use aero_d3d11::runtime::vertex_pulling::{
+    VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot,
+};
 use aero_d3d11::{parse_signatures, DxbcFile};
 use anyhow::{anyhow, Context, Result};
 
@@ -19,8 +27,10 @@ async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
             .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir = std::env::temp_dir()
-                .join(format!("aero-d3d11-vs-as-compute-xdg-runtime-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "aero-d3d11-vs-as-compute-xdg-runtime-{}",
+                std::process::id()
+            ));
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -186,7 +196,9 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         let stride = 28u32;
         let slot_strides = [stride];
         let binding = InputLayoutBinding::new(&layout, &slot_strides);
-        let pulling = VertexPullingLayout::new(&binding, &vs_signature).context("pulling layout").unwrap();
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature)
+            .context("pulling layout")
+            .unwrap();
 
         // Two vertices: pos3 + color4.
         let vertices = [
@@ -238,7 +250,14 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
-        let vs_out_regs = alloc_vs_out_regs(&mut scratch, &device, vertex_count, instance_count, out_reg_count).unwrap();
+        let vs_out_regs = alloc_vs_out_regs(
+            &mut scratch,
+            &device,
+            vertex_count,
+            instance_count,
+            out_reg_count,
+        )
+        .unwrap();
 
         let bg = pipeline
             .create_bind_group_group3(
@@ -265,8 +284,8 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
             vs_out_regs.offset,
             vs_out_regs.size,
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
         let vecs = unpack_vec4_u32_as_f32(&words);
 
@@ -322,7 +341,9 @@ fn vs_as_compute_supports_index_pulling() {
         let stride = 28u32;
         let slot_strides = [stride];
         let binding = InputLayoutBinding::new(&layout, &slot_strides);
-        let pulling = VertexPullingLayout::new(&binding, &vs_signature).context("pulling layout").unwrap();
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature)
+            .context("pulling layout")
+            .unwrap();
 
         // Three vertices.
         let vertices = [
@@ -404,7 +425,14 @@ fn vs_as_compute_supports_index_pulling() {
         let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
-        let vs_out_regs = alloc_vs_out_regs(&mut scratch, &device, index_count, instance_count, out_reg_count).unwrap();
+        let vs_out_regs = alloc_vs_out_regs(
+            &mut scratch,
+            &device,
+            index_count,
+            instance_count,
+            out_reg_count,
+        )
+        .unwrap();
 
         let bg = pipeline
             .create_bind_group_group3(
@@ -431,8 +459,8 @@ fn vs_as_compute_supports_index_pulling() {
             vs_out_regs.offset,
             vs_out_regs.size,
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
         let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
         let vecs = unpack_vec4_u32_as_f32(&words);
 

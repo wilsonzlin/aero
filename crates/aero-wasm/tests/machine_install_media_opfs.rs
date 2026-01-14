@@ -69,7 +69,8 @@ async fn attach_install_media_iso_opfs_works_or_is_not_supported() {
             // Ensure the file exists and has the desired size.
             backend.flush().unwrap();
         }
-        Err(aero_opfs::DiskError::QuotaExceeded) | Err(aero_opfs::DiskError::BackendUnavailable) => {
+        Err(aero_opfs::DiskError::QuotaExceeded)
+        | Err(aero_opfs::DiskError::BackendUnavailable) => {
             return;
         }
         Err(aero_opfs::DiskError::NotSupported(_)) => return,
@@ -99,9 +100,7 @@ async fn attach_install_media_iso_opfs_existing_works_or_is_not_supported() {
         let err = machine
             .attach_install_media_iso_opfs_existing(path.clone())
             .await
-            .expect_err(
-                "expected NotSupported-style error when OPFS sync handles are unavailable",
-            );
+            .expect_err("expected NotSupported-style error when OPFS sync handles are unavailable");
         assert!(
             err.is_instance_of::<js_sys::Error>(),
             "expected a JS Error; got {err:?}"
@@ -121,7 +120,8 @@ async fn attach_install_media_iso_opfs_existing_works_or_is_not_supported() {
             // Ensure the file exists and has the desired size.
             backend.flush().unwrap();
         }
-        Err(aero_opfs::DiskError::QuotaExceeded) | Err(aero_opfs::DiskError::BackendUnavailable) => {
+        Err(aero_opfs::DiskError::QuotaExceeded)
+        | Err(aero_opfs::DiskError::BackendUnavailable) => {
             return;
         }
         Err(aero_opfs::DiskError::NotSupported(_)) => return,

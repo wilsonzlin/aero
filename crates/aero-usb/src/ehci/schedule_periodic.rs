@@ -5,9 +5,9 @@ use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
 use crate::SetupPacket;
 
-use super::RootHub;
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
 use super::schedule::{ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH};
+use super::RootHub;
 
 // -----------------------------------
 // Link pointer helpers (EHCI 3.6)

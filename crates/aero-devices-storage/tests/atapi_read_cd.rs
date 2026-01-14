@@ -31,7 +31,8 @@ fn read_cd_packet(lba: u32, blocks: u32) -> [u8; 12] {
 #[test]
 fn atapi_read_cd_reads_user_data_sectors() {
     let mut disk = RawDisk::create(MemBackend::new(), 2 * AtapiCdrom::SECTOR_SIZE as u64).unwrap();
-    disk.write_at(AtapiCdrom::SECTOR_SIZE as u64, b"HELLO").unwrap();
+    disk.write_at(AtapiCdrom::SECTOR_SIZE as u64, b"HELLO")
+        .unwrap();
 
     let mut cdrom = AtapiCdrom::new_from_virtual_disk(Box::new(disk)).unwrap();
 
@@ -80,4 +81,3 @@ fn atapi_read_cd_rejects_subchannel_requests() {
         other => panic!("unexpected REQUEST SENSE result: {other:?}"),
     }
 }
-

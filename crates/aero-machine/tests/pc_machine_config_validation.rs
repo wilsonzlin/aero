@@ -12,4 +12,3 @@ fn pc_machine_cpu_count_must_be_non_zero() {
         Err(MachineError::InvalidCpuCount(0))
     ));
 }
-

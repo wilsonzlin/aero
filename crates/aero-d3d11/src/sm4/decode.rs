@@ -592,7 +592,8 @@ mod tests {
 
         // customdata block: opcode (extended) + ext token + class token + 4 payload DWORDs
         let customdata_len = 3u32 + 4u32;
-        let customdata_opcode = opcode_token(OPCODE_CUSTOMDATA, customdata_len) | OPCODE_EXTENDED_BIT;
+        let customdata_opcode =
+            opcode_token(OPCODE_CUSTOMDATA, customdata_len) | OPCODE_EXTENDED_BIT;
         let ext_token = 0u32; // terminates extended opcode token chain
 
         let payload = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
@@ -637,8 +638,7 @@ pub fn decode_instruction(
 
     match opcode {
         OPCODE_IF => {
-            let test_raw =
-                (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
+            let test_raw = (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
             let test = match test_raw {
                 0 => Sm4TestBool::Zero,
                 1 => Sm4TestBool::NonZero,
@@ -1116,8 +1116,7 @@ pub fn decode_instruction(
             Ok(Sm4Inst::EmitThenCut { stream })
         }
         OPCODE_DISCARD => {
-            let test_raw =
-                (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
+            let test_raw = (opcode_token >> OPCODE_TEST_BOOLEAN_SHIFT) & OPCODE_TEST_BOOLEAN_MASK;
             let test = match test_raw {
                 0 => Sm4TestBool::Zero,
                 1 => Sm4TestBool::NonZero,
@@ -1169,7 +1168,9 @@ pub fn decode_instruction(
             // could deadlock if used in divergent control flow.
             let sync_flags = (opcode_token >> OPCODE_CONTROL_SHIFT) & OPCODE_CONTROL_MASK;
             if (sync_flags & SYNC_FLAG_THREAD_GROUP_SYNC) == 0 {
-                return Ok(Sm4Inst::Unknown { opcode: OPCODE_SYNC });
+                return Ok(Sm4Inst::Unknown {
+                    opcode: OPCODE_SYNC,
+                });
             }
             r.expect_eof()?;
             Ok(Sm4Inst::WorkgroupBarrier)
@@ -1324,7 +1325,9 @@ fn decode_ld_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4
     };
 
     if !r.is_eof() {
-        return Ok(Sm4Inst::Unknown { opcode: OPCODE_LD_RAW });
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_LD_RAW,
+        });
     }
     Ok(inst)
 }

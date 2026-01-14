@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use aero_usb::xhci::transfer::{write_trb, CompletionCode, Trb, TrbType, TransferEvent, XhciTransferExecutor};
+use aero_usb::xhci::transfer::{
+    write_trb, CompletionCode, TransferEvent, Trb, TrbType, XhciTransferExecutor,
+};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
 mod util;
@@ -85,7 +87,11 @@ fn xhci_td_can_terminate_with_event_data_trb() {
 
     // TD: Normal (CH=1) then Event Data (CH=0, IOC=1). The Event Data TRB does not contribute data
     // bytes, but should be accepted as a TD terminator.
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, true, false));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, true, true, false),
+    );
     write_trb(
         &mut mem,
         event_data_trb_addr,

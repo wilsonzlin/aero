@@ -108,8 +108,7 @@ fn acpi_madt_enumerates_machine_cpu_count() {
         .copied()
         .find(|&addr| {
             let header = m.read_physical_bytes(addr, ACPI_HEADER_SIZE);
-            parse_header(&header)
-                .is_some_and(|hdr| &hdr.signature == b"APIC")
+            parse_header(&header).is_some_and(|hdr| &hdr.signature == b"APIC")
         })
         .expect("XSDT/RSDT should reference a MADT (APIC) table");
 

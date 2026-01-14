@@ -30,8 +30,7 @@ const MAX_JWT_PAYLOAD_B64_LEN: usize = 16 * 1024;
 const MAX_JWT_SIG_B64_LEN: usize = HMAC_SHA256_SIG_B64_LEN;
 const MAX_SESSION_TOKEN_LEN: usize =
     MAX_SESSION_TOKEN_PAYLOAD_B64_LEN + 1 /* '.' */ + MAX_SESSION_TOKEN_SIG_B64_LEN;
-const MAX_JWT_LEN: usize =
-    MAX_JWT_HEADER_B64_LEN + 1 /* '.' */ + MAX_JWT_PAYLOAD_B64_LEN + 1 /* '.' */ + MAX_JWT_SIG_B64_LEN;
+const MAX_JWT_LEN: usize = MAX_JWT_HEADER_B64_LEN + 1 /* '.' */ + MAX_JWT_PAYLOAD_B64_LEN + 1 /* '.' */ + MAX_JWT_SIG_B64_LEN;
 
 fn is_base64url(raw: &str, max_len: usize) -> bool {
     if raw.is_empty() {

@@ -614,8 +614,7 @@ where
                 self.scratch.resize(chunk_len, 0);
                 self.phys
                     .read_bytes(src_paddr, &mut self.scratch[..chunk_len]);
-                self.phys
-                    .write_bytes(dst_paddr, &self.scratch[..chunk_len]);
+                self.phys.write_bytes(dst_paddr, &self.scratch[..chunk_len]);
 
                 remaining -= chunk_len;
             }
@@ -636,8 +635,7 @@ where
                 self.scratch.resize(chunk_len, 0);
                 self.phys
                     .read_bytes(src_paddr, &mut self.scratch[..chunk_len]);
-                self.phys
-                    .write_bytes(dst_paddr, &self.scratch[..chunk_len]);
+                self.phys.write_bytes(dst_paddr, &self.scratch[..chunk_len]);
 
                 offset += chunk_len;
             }
@@ -696,8 +694,7 @@ where
                 }
             }
 
-            self.phys
-                .write_bytes(paddr, &self.scratch[..chunk_len]);
+            self.phys.write_bytes(paddr, &self.scratch[..chunk_len]);
 
             offset += chunk_len;
         }

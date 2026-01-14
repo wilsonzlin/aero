@@ -46,7 +46,9 @@ fn machine_config_explicitly_controls_acpi_publication() {
     })
     .unwrap();
 
-    let rsdp_addr = m.acpi_rsdp_addr().expect("expected ACPI RSDP to be present");
+    let rsdp_addr = m
+        .acpi_rsdp_addr()
+        .expect("expected ACPI RSDP to be present");
     let rsdp = m.read_physical_bytes(rsdp_addr, 36);
     assert_eq!(&rsdp[0..8], b"RSD PTR ");
     assert!(checksum_ok(&rsdp[..20]));
@@ -109,4 +111,3 @@ fn machine_config_explicitly_controls_acpi_publication() {
     let dsdt = read_sdt(&mut m, dsdt_addr);
     assert_eq!(&dsdt[0..4], b"DSDT");
 }
-

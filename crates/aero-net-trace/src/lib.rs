@@ -81,7 +81,11 @@ pub struct TruncateRedactor {
 }
 
 impl TruncateRedactor {
-    pub fn new(max_ethernet_bytes: usize, max_tcp_proxy_bytes: usize, max_udp_proxy_bytes: usize) -> Self {
+    pub fn new(
+        max_ethernet_bytes: usize,
+        max_tcp_proxy_bytes: usize,
+        max_udp_proxy_bytes: usize,
+    ) -> Self {
         Self {
             max_ethernet_bytes,
             max_tcp_proxy_bytes,
@@ -328,9 +332,7 @@ fn ipv6_l3_l4_header_len(frame: &[u8], ip_off: usize) -> Option<usize> {
 
                 let next_after = frame[off];
                 let hdr_ext_len = frame[off + 1] as usize;
-                let ext_len = hdr_ext_len
-                    .checked_add(1)?
-                    .checked_mul(8)?;
+                let ext_len = hdr_ext_len.checked_add(1)?.checked_mul(8)?;
                 let end = off.checked_add(ext_len)?;
                 if frame.len() < end {
                     return None;
@@ -770,14 +772,7 @@ impl NetTracer {
     ) -> Option<Arc<[u8]>> {
         match &self.cfg.redactor {
             Some(redactor) => redactor
-                .redact_udp_proxy(
-                    direction,
-                    transport,
-                    remote_ip,
-                    src_port,
-                    dst_port,
-                    data,
-                )
+                .redact_udp_proxy(direction, transport, remote_ip, src_port, dst_port, data)
                 .map(|data| data.into()),
             None => Some(Arc::from(data)),
         }
@@ -794,17 +789,13 @@ impl NetTracer {
             let mut state = self.state.lock().expect("net trace lock poisoned");
             if state.records.len() >= self.cfg.max_records || state.bytes >= self.cfg.max_bytes {
                 state.dropped_records = state.dropped_records.saturating_add(1);
-                state.dropped_bytes = state
-                    .dropped_bytes
-                    .saturating_add(attempted_len as u64);
+                state.dropped_bytes = state.dropped_bytes.saturating_add(attempted_len as u64);
                 return;
             }
             if strict_precheck && would_exceed_bytes(state.bytes, self.cfg.max_bytes, attempted_len)
             {
                 state.dropped_records = state.dropped_records.saturating_add(1);
-                state.dropped_bytes = state
-                    .dropped_bytes
-                    .saturating_add(attempted_len as u64);
+                state.dropped_bytes = state.dropped_bytes.saturating_add(attempted_len as u64);
                 return;
             }
         }
@@ -1536,12 +1527,7 @@ mod tests {
             fn redact_ethernet(&self, _: FrameDirection, _: &[u8]) -> Option<Vec<u8>> {
                 None
             }
-            fn redact_tcp_proxy(
-                &self,
-                _: ProxyDirection,
-                _: u32,
-                _: &[u8],
-            ) -> Option<Vec<u8>> {
+            fn redact_tcp_proxy(&self, _: ProxyDirection, _: u32, _: &[u8]) -> Option<Vec<u8>> {
                 None
             }
             fn redact_udp_proxy(

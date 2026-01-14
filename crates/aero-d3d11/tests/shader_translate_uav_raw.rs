@@ -51,18 +51,16 @@ fn translates_compute_ld_uav_raw_and_validates() {
         ],
     };
 
-    let translated =
-        translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default()).expect("translate");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
+        .expect("translate");
     assert_wgsl_validates(&translated.wgsl);
 
     // Ensure the UAV is declared as a read-write storage buffer and uses the binding model's base.
     assert!(
-        translated
-            .wgsl
-            .contains(&format!(
-                "@group(2) @binding({}) var<storage, read_write> u0",
-                BINDING_BASE_UAV
-            )),
+        translated.wgsl.contains(&format!(
+            "@group(2) @binding({}) var<storage, read_write> u0",
+            BINDING_BASE_UAV
+        )),
         "expected UAV binding decl in WGSL:\n{}",
         translated.wgsl
     );

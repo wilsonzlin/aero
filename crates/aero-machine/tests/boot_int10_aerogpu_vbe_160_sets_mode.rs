@@ -63,7 +63,10 @@ fn boot_int10_aerogpu_vbe_160_sets_mode_and_lfb_is_visible_via_bar1() {
 
     let bdf = m.aerogpu().expect("AeroGPU should be present");
     let bar1_base = m.pci_bar_base(bdf, AEROGPU_BAR1_VRAM_INDEX).unwrap_or(0);
-    assert_ne!(bar1_base, 0, "AeroGPU BAR1 base should be assigned by BIOS POST");
+    assert_ne!(
+        bar1_base, 0,
+        "AeroGPU BAR1 base should be assigned by BIOS POST"
+    );
 
     run_until_halt(&mut m);
 

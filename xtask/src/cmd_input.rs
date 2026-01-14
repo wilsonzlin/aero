@@ -60,8 +60,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     // `npm ci` from the repo root installs workspace deps under `./node_modules/`, but some
     // setups may install within `web/` directly. Accept either so `cargo xtask input` can still
     // provide a helpful missing-deps hint without being overly strict about layout.
-    let has_node_modules = repo_root.join("node_modules").is_dir()
-        || repo_root.join("web/node_modules").is_dir();
+    let has_node_modules =
+        repo_root.join("node_modules").is_dir() || repo_root.join("web/node_modules").is_dir();
     if !has_node_modules {
         return Err(XtaskError::Message(
             "node_modules is missing; install Node dependencies first (e.g. `npm ci`)".to_string(),
@@ -71,10 +71,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let mut cmd = tools::npm();
     cmd.current_dir(&repo_root)
         .args(["-w", "web", "run", "test:unit", "--", "src/input"]);
-    runner.run_step(
-        "Web: npm -w web run test:unit -- src/input",
-        &mut cmd,
-    )?;
+    runner.run_step("Web: npm -w web run test:unit -- src/input", &mut cmd)?;
 
     if opts.e2e {
         let mut cmd = tools::npm();
@@ -98,10 +95,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         ]);
         cmd.args(&opts.pw_extra_args);
 
-        runner.run_step(
-            "E2E: npm run test:e2e -- <input specs>",
-            &mut cmd,
-        )?;
+        runner.run_step("E2E: npm run test:e2e -- <input specs>", &mut cmd)?;
     } else if !opts.pw_extra_args.is_empty() {
         return Err(XtaskError::Message(
             "extra Playwright args after `--` require `--e2e`".to_string(),

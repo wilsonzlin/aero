@@ -3,13 +3,10 @@ use std::rc::Rc;
 
 use aero_usb::ehci::regs::{
     reg_portsc, PORTSC_PP, PORTSC_PR, REG_ASYNCLISTADDR, REG_USBCMD, REG_USBINTR, REG_USBSTS,
-    USBINTR_USBERRINT,
-    USBINTR_USBINT, USBSTS_USBERRINT, USBSTS_USBINT, USBCMD_ASE, USBCMD_RS,
+    USBCMD_ASE, USBCMD_RS, USBINTR_USBERRINT, USBINTR_USBINT, USBSTS_USBERRINT, USBSTS_USBINT,
 };
 use aero_usb::ehci::EhciController;
-use aero_usb::{
-    ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbSpeed,
-};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbSpeed};
 
 mod util;
 
@@ -44,10 +41,7 @@ const PID_SETUP: u32 = 2;
 
 fn qh_ep_char(dev_addr: u8, endpoint: u8, max_packet: u16) -> u32 {
     let speed_high: u32 = 2;
-    (dev_addr as u32)
-        | ((endpoint as u32) << 8)
-        | (speed_high << 12)
-        | ((max_packet as u32) << 16)
+    (dev_addr as u32) | ((endpoint as u32) << 8) | (speed_high << 12) | ((max_packet as u32) << 16)
 }
 
 fn qtd_token(pid: u32, total_bytes: u16, active: bool, ioc: bool) -> u32 {
@@ -182,8 +176,8 @@ impl UsbDeviceModel for ShortControlInDevice {
         // Return a fixed 18-byte "device descriptor" payload for GET_DESCRIPTOR(Device).
         if setup.b_request == 0x06 && setup.descriptor_type() == 0x01 {
             return ControlResponse::Data(vec![
-                0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00,
-                0x01, 0x01, 0x02, 0x03, 0x01,
+                0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00, 0x01,
+                0x01, 0x02, 0x03, 0x01,
             ]);
         }
         ControlResponse::Stall
@@ -263,7 +257,8 @@ fn ehci_async_executes_control_and_bulk_transfers() {
     let mut mem = TestMemory::new(0x20000);
     let mut ctrl = EhciController::new();
     let state = Rc::new(RefCell::new(DummyState::default()));
-    ctrl.hub_mut().attach(0, Box::new(DummyHsDevice::new(state.clone())));
+    ctrl.hub_mut()
+        .attach(0, Box::new(DummyHsDevice::new(state.clone())));
 
     // Reset + enable the port (EHCI models a deterministic 50ms reset).
     // Preserve PORTSC.PP while asserting reset; the EHCI model treats PP as software-controlled
@@ -559,8 +554,8 @@ fn ehci_async_short_packet_uses_alt_next_to_skip_remaining_qtds() {
     assert_eq!(
         got,
         [
-            0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00,
-            0x01, 0x01, 0x02, 0x03, 0x01
+            0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00, 0x01,
+            0x01, 0x02, 0x03, 0x01
         ]
     );
 }
@@ -569,7 +564,8 @@ fn ehci_async_short_packet_uses_alt_next_to_skip_remaining_qtds() {
 fn ehci_async_in_transfer_spans_five_pages_without_buffer_error() {
     let mut mem = TestMemory::new(0x100000);
     let mut ctrl = EhciController::new();
-    ctrl.hub_mut().attach(0, Box::new(FillInDevice { pattern: 0x5a }));
+    ctrl.hub_mut()
+        .attach(0, Box::new(FillInDevice { pattern: 0x5a }));
 
     ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
     for _ in 0..50 {
@@ -645,7 +641,8 @@ fn ehci_async_in_transfer_spans_five_pages_without_buffer_error() {
 fn ehci_async_invalid_cpage_halts_qtd_with_buffer_error() {
     let mut mem = TestMemory::new(0x40000);
     let mut ctrl = EhciController::new();
-    ctrl.hub_mut().attach(0, Box::new(FillInDevice { pattern: 0xaa }));
+    ctrl.hub_mut()
+        .attach(0, Box::new(FillInDevice { pattern: 0xaa }));
 
     ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
     for _ in 0..50 {
@@ -664,14 +661,7 @@ fn ehci_async_invalid_cpage_halts_qtd_with_buffer_error() {
 
     // Encode an out-of-range CPAGE (7). A robust EHCI engine should treat this as a buffer error.
     let token = qtd_token(PID_IN, 1, true, true) | (7 << 12);
-    write_qtd(
-        &mut mem,
-        qtd,
-        LINK_TERMINATE,
-        LINK_TERMINATE,
-        token,
-        buf,
-    );
+    write_qtd(&mut mem, qtd, LINK_TERMINATE, LINK_TERMINATE, token, buf);
     write_qh(&mut mem, qh_addr, qh_ep_char(0, 1, 64), qtd);
 
     ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
@@ -687,7 +677,11 @@ fn ehci_async_invalid_cpage_halts_qtd_with_buffer_error() {
 
     let sts = ctrl.mmio_read(REG_USBSTS, 4);
     assert_ne!(sts & USBSTS_USBERRINT, 0, "BUFERR should raise USBERRINT");
-    assert_ne!(sts & USBSTS_USBINT, 0, "IOC should raise USBINT even on error");
+    assert_ne!(
+        sts & USBSTS_USBINT,
+        0,
+        "IOC should raise USBINT even on error"
+    );
     assert!(ctrl.irq_level());
 }
 
@@ -696,7 +690,8 @@ fn ehci_async_partial_progress_then_nak_updates_total_bytes_and_retries() {
     let mut mem = TestMemory::new(0x40000);
     let mut ctrl = EhciController::new();
     let state = Rc::new(RefCell::new(ChunkedInState::default()));
-    ctrl.hub_mut().attach(0, Box::new(ChunkedInDevice::new(state)));
+    ctrl.hub_mut()
+        .attach(0, Box::new(ChunkedInDevice::new(state)));
 
     ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
     for _ in 0..50 {
@@ -737,7 +732,11 @@ fn ehci_async_partial_progress_then_nak_updates_total_bytes_and_retries() {
         "qTD token should not be written back while still active"
     );
     let overlay_tok = mem.read_u32(qh_addr + QH_TOKEN);
-    assert_ne!(overlay_tok & QTD_STS_ACTIVE, 0, "overlay should remain active");
+    assert_ne!(
+        overlay_tok & QTD_STS_ACTIVE,
+        0,
+        "overlay should remain active"
+    );
     assert_eq!(
         (overlay_tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
         4,
@@ -772,9 +771,12 @@ fn ehci_async_missing_device_halts_qtd_and_sets_usberrint() {
     let mut mem = TestMemory::new(0x20000);
     let mut ctrl = EhciController::new();
     // Attach a device but do not enumerate it to the target address (default address remains 0).
-    ctrl.hub_mut().attach(0, Box::new(DummyHsDevice::new(Rc::new(RefCell::new(
-        DummyState::default(),
-    )))));
+    ctrl.hub_mut().attach(
+        0,
+        Box::new(DummyHsDevice::new(Rc::new(RefCell::new(
+            DummyState::default(),
+        )))),
+    );
 
     ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
     for _ in 0..50 {
@@ -806,9 +808,17 @@ fn ehci_async_missing_device_halts_qtd_and_sets_usberrint() {
     ctrl.tick_1ms(&mut mem);
 
     let tok = mem.read_u32(qtd + QTD_TOKEN);
-    assert_eq!(tok & QTD_STS_ACTIVE, 0, "missing device should clear Active");
+    assert_eq!(
+        tok & QTD_STS_ACTIVE,
+        0,
+        "missing device should clear Active"
+    );
     assert_ne!(tok & QTD_STS_HALT, 0, "missing device should set Halt");
-    assert_ne!(tok & QTD_STS_XACTERR, 0, "missing device should set XactErr");
+    assert_ne!(
+        tok & QTD_STS_XACTERR,
+        0,
+        "missing device should set XactErr"
+    );
 
     let sts = ctrl.mmio_read(REG_USBSTS, 4);
     assert_ne!(sts & USBSTS_USBERRINT, 0, "USBERRINT should be asserted");

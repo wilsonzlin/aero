@@ -84,11 +84,7 @@ fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     let mut out = vec![0xFFFE0200];
 
     // dcl_position v0
-    out.extend(enc_inst_with_extra_sm3(
-        0x001F,
-        0,
-        &[enc_dst(1, 0, 0xF)],
-    ));
+    out.extend(enc_inst_with_extra_sm3(0x001F, 0, &[enc_dst(1, 0, 0xF)]));
     // dcl_texcoord0 v1.xy
     out.extend(enc_inst_with_extra_sm3(
         0x001F,
@@ -212,15 +208,9 @@ fn assemble_vs3_generic_output_texcoord3_constant_sm3_decoder() -> Vec<u32> {
     ));
 
     // mov oPos, v0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     // mov o0, c0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(6, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(2, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -237,10 +227,7 @@ fn assemble_ps3_input_texcoord3_passthrough_sm3_decoder() -> Vec<u32> {
         &[enc_dst(1, 0, 0xF)],
     ));
     // mov oC0, v0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -354,10 +341,7 @@ fn assemble_ps_with_unknown_opcode() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
     // mov oC0, c0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // Unknown opcode with 0 operands. The legacy translator skips this, while the SM3 decoder
     // errors out with "unsupported opcode".
     out.extend(enc_inst(0x1234, &[]));
@@ -375,11 +359,7 @@ fn assemble_ps_with_unknown_opcode_and_derivatives() -> Vec<u32> {
     // add r0, r0, r1
     out.extend(enc_inst(
         0x0002,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src(0, 0, 0xE4),
-            enc_src(0, 1, 0xE4),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(0, 1, 0xE4)],
     ));
     // Unknown opcode with 0 operands. The legacy translator skips this, while the SM3 decoder
     // errors out with "unsupported opcode".
@@ -803,7 +783,7 @@ fn assemble_ps3_mova_relative_const() -> Vec<u32> {
         0x002E,
         2u32 << 20, // result shift = x2 (no saturate)
         &[
-            enc_dst(3, 0, 0x1), // a0.x (regtype 3)
+            enc_dst(3, 0, 0x1),  // a0.x (regtype 3)
             enc_src(3, 0, 0x00), // t0.x
         ],
     ));
@@ -851,10 +831,7 @@ fn assemble_ps3_relative_const_clamp_low() -> Vec<u32> {
     ));
 
     // mova a0.x, c2.x
-    out.extend(enc_inst(
-        0x002E,
-        &[enc_dst(3, 0, 0x1), enc_src(2, 2, 0x00)],
-    ));
+    out.extend(enc_inst(0x002E, &[enc_dst(3, 0, 0x1), enc_src(2, 2, 0x00)]));
 
     // mov oC0, c1[a0.x]
     // With a0.x = -1000, the index clamps to 0, so we read `c0` (red).
@@ -900,10 +877,7 @@ fn assemble_ps3_relative_const_clamp_high() -> Vec<u32> {
     ));
 
     // mova a0.x, c0.x
-    out.extend(enc_inst(
-        0x002E,
-        &[enc_dst(3, 0, 0x1), enc_src(2, 0, 0x00)],
-    ));
+    out.extend(enc_inst(0x002E, &[enc_dst(3, 0, 0x1), enc_src(2, 0, 0x00)]));
 
     // mov oC0, c254[a0.x]
     // With a0.x = 1000, the index clamps to 255, so we read `c255` (green).
@@ -969,15 +943,9 @@ fn assemble_ps3_dp2_constant() -> Vec<u32> {
         ],
     ));
     // mov r0.w, c2.x
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0x8), enc_src(2, 2, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0x8), enc_src(2, 2, 0x00)]));
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -1137,15 +1105,9 @@ fn assemble_ps3_nrm_sm3_decoder() -> Vec<u32> {
         ],
     ));
     // nrm r0, c0
-    out.extend(enc_inst(
-        0x0024,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0024, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -1165,15 +1127,9 @@ fn assemble_ps3_lit_sm3_decoder() -> Vec<u32> {
         ],
     ));
     // lit r0, c0
-    out.extend(enc_inst(
-        0x0010,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0010, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -1226,15 +1182,9 @@ fn assemble_ps3_sincos_sm3_decoder() -> Vec<u32> {
         ],
     ));
     // mov r0.w, c0.x (set alpha to 1.0)
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0x8), enc_src(2, 0, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0x8), enc_src(2, 0, 0x00)]));
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -1349,16 +1299,10 @@ fn assemble_ps3_exp_components() -> Vec<u32> {
     ));
 
     // exp r0, c0
-    out.extend(enc_inst(
-        0x000E,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x000E, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -1386,10 +1330,7 @@ fn assemble_ps3_log_components_div8() -> Vec<u32> {
     ));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -1427,10 +1368,7 @@ fn assemble_ps3_pow_components() -> Vec<u32> {
     ));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -1520,31 +1458,16 @@ fn assemble_ps3_exp_log_pow_sat_x2_order() -> Vec<u32> {
     ));
 
     // mov r3, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)]));
     // mov r3.y, r1.x
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)]));
     // mov r3.z, r2.x
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)]));
     // mov r3.w, c0.x (alpha = 1.0)
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0x8), enc_src(2, 0, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x8), enc_src(2, 0, 0x00)]));
 
     // mov oC0, r3
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 3, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 3, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -1631,10 +1554,7 @@ fn assemble_ps3_predicated_exp_log_pow_modifiers() -> Vec<u32> {
     ));
 
     // mov oC0, c5 (default blue)
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(2, 5, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 5, 0xE4)]));
 
     // (p0.x) exp_sat_x2 r0, c1
     out.extend(enc_inst_with_extra(
@@ -1669,22 +1589,13 @@ fn assemble_ps3_predicated_exp_log_pow_modifiers() -> Vec<u32> {
     ));
 
     // mov r3, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)]));
     // mov r3.y, r1.x
     out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)]));
     // mov r3.z, r2.x
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)]));
     // mov r3.w, c5.w
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0x8), enc_src(2, 5, 0xFF)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x8), enc_src(2, 5, 0xFF)]));
 
     // (p0.x) mov oC0, r3
     out.extend(enc_inst_with_extra(
@@ -1818,11 +1729,9 @@ fn translate_entrypoint_sm3_supports_texcoord8_vertex_inputs() {
     // translator uses the adaptive semantic mapping and does not fall back to the legacy
     // translator.
     let vs_bytes = to_bytes(&assemble_vs_passthrough_with_texcoord8_dcl_sm3_decoder());
-    let translated = shader_translate::translate_d3d9_shader_to_wgsl(
-        &vs_bytes,
-        shader::WgslOptions::default(),
-    )
-    .unwrap();
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&vs_bytes, shader::WgslOptions::default())
+            .unwrap();
     assert_eq!(
         translated.backend,
         shader_translate::ShaderTranslateBackend::Sm3
@@ -1907,21 +1816,27 @@ fn translate_sm3_vertex_input_semantic_locations_are_exposed() {
 
     // Ensure semantic-based remapping is surfaced for host-side executors (vertex attribute
     // bindings must match the WGSL @location mapping).
-    assert!(translated.semantic_locations.contains(&shader::SemanticLocation {
-        usage: crate::vertex::DeclUsage::Position,
-        usage_index: 0,
-        location: 0,
-    }));
-    assert!(translated.semantic_locations.contains(&shader::SemanticLocation {
-        usage: crate::vertex::DeclUsage::TexCoord,
-        usage_index: 0,
-        location: 8,
-    }));
-    assert!(translated.semantic_locations.contains(&shader::SemanticLocation {
-        usage: crate::vertex::DeclUsage::Color,
-        usage_index: 0,
-        location: 6,
-    }));
+    assert!(translated
+        .semantic_locations
+        .contains(&shader::SemanticLocation {
+            usage: crate::vertex::DeclUsage::Position,
+            usage_index: 0,
+            location: 0,
+        }));
+    assert!(translated
+        .semantic_locations
+        .contains(&shader::SemanticLocation {
+            usage: crate::vertex::DeclUsage::TexCoord,
+            usage_index: 0,
+            location: 8,
+        }));
+    assert!(translated
+        .semantic_locations
+        .contains(&shader::SemanticLocation {
+            usage: crate::vertex::DeclUsage::Color,
+            usage_index: 0,
+            location: 6,
+        }));
 }
 
 #[test]
@@ -1936,7 +1851,11 @@ fn translate_entrypoint_falls_back_on_unsupported_opcode() {
         translated.backend,
         shader_translate::ShaderTranslateBackend::LegacyFallback
     );
-    assert!(translated.fallback_reason.as_deref().unwrap_or("").contains("unsupported"));
+    assert!(translated
+        .fallback_reason
+        .as_deref()
+        .unwrap_or("")
+        .contains("unsupported"));
 
     let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -1979,11 +1898,11 @@ fn translate_entrypoint_rejects_invalid_predicate_modifier() {
     // modifiers other than None/Negate are malformed and should not trigger fallback.
     let mut words = vec![0xFFFF_0300];
     words.extend(enc_inst_with_extra(
-        0x0001,       // mov
-        0x1000_0000,  // predicated flag
+        0x0001,      // mov
+        0x1000_0000, // predicated flag
         &[
-            enc_dst(8, 0, 0xF),             // oC0
-            enc_src(2, 0, 0xE4),            // c0
+            enc_dst(8, 0, 0xF),          // oC0
+            enc_src(2, 0, 0xE4),         // c0
             enc_src_mod(19, 0, 0xE4, 2), // p0 with invalid modifier (bias)
         ],
     ));
@@ -2465,8 +2384,16 @@ fn micro_ps3_defb_if_pixel_compare() {
     let sampler_states = HashMap::new();
 
     for (branch, expected, expected_wgsl) in [
-        (true, [255, 0, 0, 255], "let b0: vec4<f32> = vec4<f32>(1.0);"),
-        (false, [0, 255, 0, 255], "let b0: vec4<f32> = vec4<f32>(0.0);"),
+        (
+            true,
+            [255, 0, 0, 255],
+            "let b0: vec4<f32> = vec4<f32>(1.0);",
+        ),
+        (
+            false,
+            [0, 255, 0, 255],
+            "let b0: vec4<f32> = vec4<f32>(0.0);",
+        ),
     ] {
         let ps = shader::to_ir(&shader::parse(&to_bytes(&assemble_ps3_defb_if(branch))).unwrap());
 
@@ -2653,10 +2580,26 @@ fn sm3_mova_relative_const_pixel_compare() {
     let decl = build_vertex_decl_pos_tex_color();
 
     let quad = [
-        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -2847,10 +2790,26 @@ fn sm3_exp_log_pow_sat_x2_order_pixel_compare() {
     let decl = build_vertex_decl_pos_tex_color();
 
     let quad = [
-        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -3092,10 +3051,26 @@ fn sm3_dp2_constant_pixel_compare() {
     let decl = build_vertex_decl_pos_tex_color();
 
     let quad = [
-        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -3713,7 +3688,10 @@ fn sm3_verify_rejects_texkill_in_vertex_shader() {
     let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
     let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
     let err = crate::sm3::verify_ir(&ir).unwrap_err();
-    assert_eq!(err.message, "discard/texkill is only valid in pixel shaders");
+    assert_eq!(
+        err.message,
+        "discard/texkill is only valid in pixel shaders"
+    );
 }
 
 #[test]
@@ -4003,7 +3981,11 @@ fn legacy_translator_emits_texture_1d_and_x_coords() {
     // texld r0, t0, s0
     words.extend(enc_inst(
         0x0042,
-        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 0, 0xE4),
+        ],
     ));
     // mov oC0, r0
     words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
@@ -4022,7 +4004,11 @@ fn legacy_translator_emits_texture_1d_and_x_coords() {
     .validate(&module)
     .expect("wgsl validate");
 
-    assert!(wgsl.wgsl.contains("texture_1d<f32>"), "wgsl:\n{}", wgsl.wgsl);
+    assert!(
+        wgsl.wgsl.contains("texture_1d<f32>"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
     assert!(
         wgsl.wgsl
             .contains("textureSample(tex0, samp0, (t0.xyzw).x)"),
@@ -4044,7 +4030,11 @@ fn legacy_translator_emits_texture_3d_and_xyz_coords() {
     // texld r0, t0, s0
     words.extend(enc_inst(
         0x0042,
-        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 0, 0xE4),
+        ],
     ));
     // mov oC0, r0
     words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
@@ -4063,7 +4053,11 @@ fn legacy_translator_emits_texture_3d_and_xyz_coords() {
     .validate(&module)
     .expect("wgsl validate");
 
-    assert!(wgsl.wgsl.contains("texture_3d<f32>"), "wgsl:\n{}", wgsl.wgsl);
+    assert!(
+        wgsl.wgsl.contains("texture_3d<f32>"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
     assert!(
         wgsl.wgsl
             .contains("textureSample(tex0, samp0, (t0.xyzw).xyz)"),

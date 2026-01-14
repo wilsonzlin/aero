@@ -1,7 +1,7 @@
 mod common;
 
-use aero_d3d11::binding_model::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 use aero_d3d11::binding_model::D3D11_MAX_CONSTANT_BUFFER_SLOTS;
+use aero_d3d11::binding_model::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -93,10 +93,10 @@ fn aerogpu_cmd_set_constant_buffers_rejects_slot_out_of_range() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // flags
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
- 
+
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetConstantBuffers as u32);
         stream.extend_from_slice(&0u32.to_le_bytes()); // shader_stage = vertex
-        // start_slot (0..D3D11_MAX_CONSTANT_BUFFER_SLOTS-1 supported)
+                                                       // start_slot (0..D3D11_MAX_CONSTANT_BUFFER_SLOTS-1 supported)
         stream.extend_from_slice(&D3D11_MAX_CONSTANT_BUFFER_SLOTS.to_le_bytes());
         stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0

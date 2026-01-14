@@ -3,17 +3,17 @@ pub mod aerogpu_execute;
 pub mod aerogpu_resources;
 pub mod aerogpu_state;
 pub mod bindings;
-pub mod expansion_scratch;
 pub mod execute;
+pub mod expansion_scratch;
 pub mod gs_translate;
-pub mod indirect_args;
 pub mod index_pulling;
+pub mod indirect_args;
 pub mod pipeline_layout_cache;
-pub mod scratch_allocator;
-pub mod tessellator;
-pub mod tessellation;
 mod reflection_bindings;
 pub mod resources;
+pub mod scratch_allocator;
+pub mod tessellation;
+pub mod tessellator;
 // Persistent shader translation cache is only available in the browser/WASM build.
 #[cfg(target_arch = "wasm32")]
 mod shader_cache;
@@ -139,20 +139,20 @@ mod tests {
 
     #[test]
     fn supports_indirect_execution_is_derived_from_downlevel_flags() {
-        assert!(
-            !supports_indirect_execution_from_downlevel_flags(wgpu::DownlevelFlags::empty())
-        );
-        assert!(
-            supports_indirect_execution_from_downlevel_flags(wgpu::DownlevelFlags::INDIRECT_EXECUTION)
-        );
+        assert!(!supports_indirect_execution_from_downlevel_flags(
+            wgpu::DownlevelFlags::empty()
+        ));
+        assert!(supports_indirect_execution_from_downlevel_flags(
+            wgpu::DownlevelFlags::INDIRECT_EXECUTION
+        ));
     }
 
     #[test]
     fn gs_emulation_indirect_execution_policy_errors_when_unsupported() {
-        let err =
-            require_indirect_execution_for_gs_emulation(false).expect_err("should fail fast");
+        let err = require_indirect_execution_for_gs_emulation(false).expect_err("should fail fast");
         assert!(
-            err.to_string().contains("geometry shader emulation requires indirect draws"),
+            err.to_string()
+                .contains("geometry shader emulation requires indirect draws"),
             "unexpected error: {err:#}"
         );
 

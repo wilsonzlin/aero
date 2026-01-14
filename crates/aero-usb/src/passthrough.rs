@@ -407,7 +407,9 @@ impl UsbPassthroughDevice {
 
         self.next_id = d.u32()?;
         if self.next_id == 0 {
-            return Err(SnapshotError::InvalidFieldEncoding("next_id must be non-zero"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "next_id must be non-zero",
+            ));
         }
         let mut total_bytes = 0usize;
 
@@ -423,7 +425,9 @@ impl UsbPassthroughDevice {
             let kind = d.u8()?;
             let id = d.u32()?;
             if id == 0 {
-                return Err(SnapshotError::InvalidFieldEncoding("action id must be non-zero"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "action id must be non-zero",
+                ));
             }
             if !action_ids.insert(id) {
                 return Err(SnapshotError::InvalidFieldEncoding("duplicate action id"));
@@ -466,11 +470,15 @@ impl UsbPassthroughDevice {
                         ));
                     }
                     if (endpoint & 0x0f) == 0 || (endpoint & 0x70) != 0 {
-                        return Err(SnapshotError::InvalidFieldEncoding("invalid endpoint address"));
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "invalid endpoint address",
+                        ));
                     }
                     let length = d.u32()?;
                     if length as usize > MAX_DATA_BYTES {
-                        return Err(SnapshotError::InvalidFieldEncoding("bulkIn length too large"));
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "bulkIn length too large",
+                        ));
                     }
                     UsbHostAction::BulkIn {
                         id,
@@ -486,7 +494,9 @@ impl UsbPassthroughDevice {
                         ));
                     }
                     if (endpoint & 0x0f) == 0 || (endpoint & 0x70) != 0 {
-                        return Err(SnapshotError::InvalidFieldEncoding("invalid endpoint address"));
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "invalid endpoint address",
+                        ));
                     }
                     let data = dec_bytes_limited(
                         &mut d,
@@ -516,7 +526,9 @@ impl UsbPassthroughDevice {
                 ));
             }
             if self.completions.contains_key(&id) {
-                return Err(SnapshotError::InvalidFieldEncoding("duplicate completion id"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "duplicate completion id",
+                ));
             }
             let kind = d.u8()?;
             let result = match kind {
@@ -620,7 +632,9 @@ impl UsbPassthroughDevice {
         for _ in 0..ep_count {
             let endpoint = d.u8()?;
             if (endpoint & 0x0f) == 0 || (endpoint & 0x70) != 0 {
-                return Err(SnapshotError::InvalidFieldEncoding("invalid endpoint address"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "invalid endpoint address",
+                ));
             }
             if self.ep_inflight.contains_key(&endpoint) {
                 return Err(SnapshotError::InvalidFieldEncoding(
@@ -1769,7 +1783,13 @@ mod tests {
     fn snapshot_load_rejects_ep_inflight_count_over_limit() {
         // Intentionally truncate the snapshot after `ep_count`. Without the guard, this would
         // attempt to decode 65 endpoint entries and hit UnexpectedEof.
-        let bytes = Encoder::new().u32(1).u32(0).u32(0).bool(false).u32(65).finish();
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(65)
+            .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
@@ -1785,13 +1805,7 @@ mod tests {
     #[test]
     fn snapshot_load_rejects_invalid_completion_kind_tag() {
         // completion_count=1, invalid completion kind tag (9).
-        let bytes = Encoder::new()
-            .u32(1)
-            .u32(0)
-            .u32(1)
-            .u32(1)
-            .u8(9)
-            .finish();
+        let bytes = Encoder::new().u32(1).u32(0).u32(1).u32(1).u8(9).finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
@@ -2133,7 +2147,13 @@ mod tests {
     fn snapshot_load_rejects_zero_next_id() {
         // Minimal snapshot with next_id=0 is invalid; IDs are expected to be non-zero so they don't
         // become falsy in JS host integrations.
-        let bytes = Encoder::new().u32(0).u32(0).u32(0).bool(false).u32(0).finish();
+        let bytes = Encoder::new()
+            .u32(0)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(0)
+            .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
@@ -2158,7 +2178,13 @@ mod tests {
     #[test]
     fn snapshot_load_rejects_zero_control_inflight_id() {
         // has_control=true but inflight id=0.
-        let bytes = Encoder::new().u32(1).u32(0).u32(0).bool(true).u32(0).finish();
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(0)
+            .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
@@ -2248,7 +2274,10 @@ mod tests {
 
         let mut dev = UsbPassthroughDevice::new();
         dev.snapshot_load(&bytes).unwrap();
-        assert!(dev.pop_action().is_none(), "stale queued action should be dropped");
+        assert!(
+            dev.pop_action().is_none(),
+            "stale queued action should be dropped"
+        );
         assert_eq!(
             dev.handle_in_transfer(0x81, 1),
             UsbInResult::Data(vec![0xaa])
@@ -3012,10 +3041,7 @@ mod tests {
             dev.handle_control_request(setup, Some(&[0xaa])),
             ControlResponse::Nak
         );
-        assert_eq!(
-            dev.handle_out_transfer(0x02, &[0x11]),
-            UsbOutResult::Nak
-        );
+        assert_eq!(dev.handle_out_transfer(0x02, &[0x11]), UsbOutResult::Nak);
         assert_eq!(dev.handle_in_transfer(0x81, 2), UsbInResult::Nak);
         let bulk_in_id = dev.ep_inflight.get(&0x81).expect("ep inflight").id;
         dev.push_completion(UsbHostCompletion::BulkIn {
@@ -3037,8 +3063,9 @@ mod tests {
             let result = res.unwrap_or_else(|_| {
                 panic!("snapshot_load panicked for truncated prefix length {prefix_len}")
             });
-            let err = result
-                .expect_err(&format!("expected snapshot_load to fail for prefix {prefix_len}"));
+            let err = result.expect_err(&format!(
+                "expected snapshot_load to fail for prefix {prefix_len}"
+            ));
             assert_eq!(
                 err,
                 SnapshotError::UnexpectedEof,
@@ -3126,7 +3153,7 @@ mod tests {
         let snap_a = dev_a.snapshot_save();
         let snap_b = dev_b.snapshot_save();
         assert_eq!(snap_a, snap_b);
-        
+
         // The on-wire encoding must also be stable in ordering (not just stable between two
         // instances by chance). Decode the snapshot and ensure HashMap-backed collections are
         // emitted in sorted order.

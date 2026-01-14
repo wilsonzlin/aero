@@ -185,4 +185,3 @@ fn boot_int10_font_cp437_glyph_is_non_blank_and_rom_is_mapped() {
     assert_eq!(cx, 16);
     assert_eq!(bp, VGA_FONT_8X16_OFFSET);
 }
-

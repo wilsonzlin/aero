@@ -422,8 +422,18 @@ mod tests {
         );
 
         stage.clear_dirty();
-        stage.set_srv_buffer(0, Some(BoundBuffer { buffer: 3, offset: 0, size: None }));
-        assert!(stage.is_dirty(), "binding an SRV buffer must dirty the stage");
+        stage.set_srv_buffer(
+            0,
+            Some(BoundBuffer {
+                buffer: 3,
+                offset: 0,
+                size: None,
+            }),
+        );
+        assert!(
+            stage.is_dirty(),
+            "binding an SRV buffer must dirty the stage"
+        );
         assert!(
             stage.texture(0).is_none(),
             "binding a buffer SRV must unbind a texture SRV in the same slot"
@@ -439,8 +449,18 @@ mod tests {
 
         // Redundant bind should not mark the stage dirty again.
         stage.clear_dirty();
-        stage.set_srv_buffer(0, Some(BoundBuffer { buffer: 3, offset: 0, size: None }));
-        assert!(!stage.is_dirty(), "redundant binding should not dirty the stage");
+        stage.set_srv_buffer(
+            0,
+            Some(BoundBuffer {
+                buffer: 3,
+                offset: 0,
+                size: None,
+            }),
+        );
+        assert!(
+            !stage.is_dirty(),
+            "redundant binding should not dirty the stage"
+        );
     }
 
     #[test]
@@ -488,8 +508,22 @@ mod tests {
     fn clear_handles_clears_srv_and_uav_buffers() {
         let mut stage = StageBindings::default();
 
-        stage.set_srv_buffer(0, Some(BoundBuffer { buffer: 5, offset: 0, size: None }));
-        stage.set_uav_buffer(1, Some(BoundBuffer { buffer: 5, offset: 0, size: None }));
+        stage.set_srv_buffer(
+            0,
+            Some(BoundBuffer {
+                buffer: 5,
+                offset: 0,
+                size: None,
+            }),
+        );
+        stage.set_uav_buffer(
+            1,
+            Some(BoundBuffer {
+                buffer: 5,
+                offset: 0,
+                size: None,
+            }),
+        );
         stage.clear_dirty();
 
         stage.clear_srv_buffer_handle(5);
