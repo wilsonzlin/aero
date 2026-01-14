@@ -208,6 +208,21 @@ fn malformed_chunk_offset_out_of_bounds_is_error() {
 }
 
 #[test]
+fn malformed_chunk_offset_truncates_chunk_header_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
+    // Point the chunk offset into the final 4 bytes of the file so that reading
+    // the 8-byte chunk header would run past the end.
+    let bad_off = (bytes.len() as u32) - 4;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("header"));
+    assert!(err.context().contains("outside total_size"));
+}
+
+#[test]
 fn malformed_chunk_size_out_of_bounds_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
 
