@@ -54,19 +54,22 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
     return trimmed ? trimmed : undefined;
   };
   if (isObjectLikeRecord(mountsRaw)) {
-    const raw = mountsRaw as { hddId?: unknown; cdId?: unknown };
-    const hddId = sanitizeMountId(raw.hddId);
+    const raw = mountsRaw as Record<string, unknown>;
+    const hddId = Object.prototype.hasOwnProperty.call(raw, "hddId") ? sanitizeMountId(raw.hddId) : undefined;
     if (hddId) mounts.hddId = hddId;
-    const cdId = sanitizeMountId(raw.cdId);
+    const cdId = Object.prototype.hasOwnProperty.call(raw, "cdId") ? sanitizeMountId(raw.cdId) : undefined;
     if (cdId) mounts.cdId = cdId;
   }
 
   const normalizeDiskMeta = (raw: unknown, expectedKind: "hdd" | "cd"): DiskImageMetadata | null => {
     if (!isObjectLikeRecord(raw)) return null;
-    const meta = raw as { source?: unknown; id?: unknown; kind?: unknown };
-    if (meta.source !== "local" && meta.source !== "remote") return null;
-    if (typeof meta.id !== "string" || !meta.id.trim()) return null;
-    if (meta.kind !== expectedKind) return null;
+    const meta = raw as Record<string, unknown>;
+    const source = Object.prototype.hasOwnProperty.call(meta, "source") ? meta.source : undefined;
+    if (source !== "local" && source !== "remote") return null;
+    const id = Object.prototype.hasOwnProperty.call(meta, "id") ? meta.id : undefined;
+    if (typeof id !== "string" || !id.trim()) return null;
+    const kind = Object.prototype.hasOwnProperty.call(meta, "kind") ? meta.kind : undefined;
+    if (kind !== expectedKind) return null;
     return raw as DiskImageMetadata;
   };
 
