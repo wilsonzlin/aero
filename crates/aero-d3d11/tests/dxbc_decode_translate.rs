@@ -3089,16 +3089,21 @@ fn decodes_integer_compare_ignores_saturate_flag() {
     let mut body = Vec::<u32>::new();
 
     // ult_sat o0, l(1), l(2)
+    let dst = reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW);
     let a = imm32_scalar(1);
     let b = imm32_scalar(2);
-    let len_without_ext = 1u32 + 2 + a.len() as u32 + b.len() as u32;
+    let len_without_ext = 1u32 + dst.len() as u32 + a.len() as u32 + b.len() as u32;
     let inst = opcode_token_with_sat(OPCODE_ULT, len_without_ext);
     assert!(
         (inst[0] & OPCODE_EXTENDED_BIT) != 0,
         "expected ult_sat opcode token to set OPCODE_EXTENDED_BIT"
     );
+    assert!(
+        (inst[1] & (1u32 << 13)) != 0,
+        "expected ult_sat extended opcode token to set saturate bit"
+    );
     body.extend_from_slice(&inst);
-    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&dst);
     body.extend_from_slice(&a);
     body.extend_from_slice(&b);
     body.push(opcode_token(OPCODE_RET, 1));
