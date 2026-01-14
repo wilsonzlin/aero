@@ -1137,7 +1137,7 @@ fn parse_inf_models_section(inf_text: &str, section_name: &str) -> Vec<InfModelL
     let mut current_section: Option<String> = None;
     for raw in inf_text.lines() {
         let stripped = strip_inf_inline_comment(raw);
-        let mut line = stripped.trim();
+        let line = stripped.trim();
         if line.is_empty() {
             continue;
         }
