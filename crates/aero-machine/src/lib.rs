@@ -5416,6 +5416,10 @@ impl Machine {
     /// Eject the canonical install media (IDE secondary master ATAPI) and clear its snapshot
     /// overlay ref (`disk_id=1`).
     pub fn eject_install_media(&mut self) {
+        // Dropping the install media handle is important for browser runtimes using OPFS
+        // `SyncAccessHandle`s: those are exclusive per file, so keeping the handle alive after
+        // "eject" would prevent re-attaching the same ISO path later.
+        self.install_media = None;
         if let Some(ide) = &self.ide {
             ide.borrow_mut()
                 .controller
@@ -11535,6 +11539,10 @@ mod tests {
             m.ide_secondary_master_atapi_overlay.is_none(),
             "install media overlay ref should start unset"
         );
+        assert!(
+            m.install_media.is_none(),
+            "install media backend should start detached"
+        );
 
         let iso_bytes = vec![0u8; 2048 * 16];
         let disk = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
@@ -11548,11 +11556,19 @@ mod tests {
         assert_eq!(overlay.disk_id, Machine::DISK_ID_INSTALL_MEDIA);
         assert_eq!(overlay.base_image, "/state/win7.iso");
         assert_eq!(overlay.overlay_image, "");
+        assert!(
+            m.install_media.is_some(),
+            "install media backend should be attached after attach_install_media_iso_and_set_overlay_ref"
+        );
 
         m.eject_install_media();
         assert!(
             m.ide_secondary_master_atapi_overlay.is_none(),
             "install media overlay ref should be cleared after eject_install_media"
+        );
+        assert!(
+            m.install_media.is_none(),
+            "install media backend should be detached after eject_install_media"
         );
     }
 
