@@ -134,13 +134,15 @@ export interface AeroDebugApi {
 
   /**
    * Returns what firmware actually booted from for the current machine runtime session (CD vs HDD),
-   * or null if unknown/unavailable.
+   * or null if unknown/unavailable (including during reboot/reattach transitions before the CPU
+   * worker re-reports the new boot session).
    */
   getMachineCpuActiveBootDevice?: () => BootDeviceKind | null;
 
   /**
    * Returns the machine CPU worker's BIOS boot configuration (boot drive number + CD-first state),
-   * or null if unknown/unavailable.
+   * or null if unknown/unavailable (including during reboot/reattach transitions before the CPU
+   * worker re-reports the new boot session).
    */
   getMachineCpuBootConfig?: () => MachineCpuBootConfigSnapshot | null;
 }
