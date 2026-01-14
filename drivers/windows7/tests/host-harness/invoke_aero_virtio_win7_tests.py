@@ -4478,6 +4478,12 @@ def main() -> int:
             virtio_blk_msix_marker_carry = b""
             virtio_net_msix_marker_line: Optional[str] = None
             virtio_net_msix_marker_carry = b""
+            virtio_net_marker_line: Optional[str] = None
+            virtio_net_marker_carry = b""
+            virtio_net_udp_marker_line: Optional[str] = None
+            virtio_net_udp_marker_carry = b""
+            virtio_net_udp_dns_marker_line: Optional[str] = None
+            virtio_net_udp_dns_marker_carry = b""
             virtio_net_offload_csum_marker_line: Optional[str] = None
             virtio_net_offload_csum_marker_carry = b""
             virtio_net_diag_marker_line: Optional[str] = None
@@ -4621,6 +4627,24 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|",
                         carry=virtio_net_msix_marker_carry,
+                    )
+                    virtio_net_marker_line, virtio_net_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|",
+                        carry=virtio_net_marker_carry,
+                    )
+                    virtio_net_udp_marker_line, virtio_net_udp_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_udp_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|",
+                        carry=virtio_net_udp_marker_carry,
+                    )
+                    virtio_net_udp_dns_marker_line, virtio_net_udp_dns_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_udp_dns_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|",
+                        carry=virtio_net_udp_dns_marker_carry,
                     )
                     virtio_net_offload_csum_marker_line, virtio_net_offload_csum_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_net_offload_csum_marker_line,
@@ -6701,6 +6725,24 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|",
                             carry=virtio_net_msix_marker_carry,
                         )
+                        virtio_net_marker_line, virtio_net_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|",
+                            carry=virtio_net_marker_carry,
+                        )
+                        virtio_net_udp_marker_line, virtio_net_udp_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_udp_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|",
+                            carry=virtio_net_udp_marker_carry,
+                        )
+                        virtio_net_udp_dns_marker_line, virtio_net_udp_dns_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_udp_dns_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|",
+                            carry=virtio_net_udp_dns_marker_carry,
+                        )
                         virtio_net_offload_csum_marker_line, virtio_net_offload_csum_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_net_offload_csum_marker_line,
                             chunk2,
@@ -8024,6 +8066,30 @@ def main() -> int:
                     virtio_net_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_net_marker_carry:
+            raw = virtio_net_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|"):
+                try:
+                    virtio_net_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_net_udp_marker_carry:
+            raw = virtio_net_udp_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|"):
+                try:
+                    virtio_net_udp_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_net_udp_dns_marker_carry:
+            raw = virtio_net_udp_dns_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|"):
+                try:
+                    virtio_net_udp_dns_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_net_offload_csum_marker_carry:
             raw = virtio_net_offload_csum_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -8071,9 +8137,14 @@ def main() -> int:
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
         _emit_virtio_blk_resize_host_marker(tail, blk_resize_line=virtio_blk_resize_marker_line)
         _emit_virtio_blk_reset_host_marker(tail, blk_reset_line=virtio_blk_reset_marker_line)
-        _emit_virtio_net_large_host_marker(tail)
-        _emit_virtio_net_udp_host_marker(tail)
-        _emit_virtio_net_udp_dns_host_marker(tail)
+        net_large_tail = virtio_net_marker_line.encode("utf-8") if virtio_net_marker_line is not None else tail
+        _emit_virtio_net_large_host_marker(net_large_tail)
+        net_udp_tail = virtio_net_udp_marker_line.encode("utf-8") if virtio_net_udp_marker_line is not None else tail
+        _emit_virtio_net_udp_host_marker(net_udp_tail)
+        net_udp_dns_tail = (
+            virtio_net_udp_dns_marker_line.encode("utf-8") if virtio_net_udp_dns_marker_line is not None else tail
+        )
+        _emit_virtio_net_udp_dns_host_marker(net_udp_dns_tail)
         net_csum_tail = (
             virtio_net_offload_csum_marker_line.encode("utf-8")
             if virtio_net_offload_csum_marker_line is not None
