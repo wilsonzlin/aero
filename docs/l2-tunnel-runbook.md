@@ -176,11 +176,16 @@ cd proxy/webrtc-udp-relay
  # export L2_BACKEND_AUTH_FORWARD_MODE=query        # default
  # export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # offer Sec-WebSocket-Protocol entry aero-l2-token.<credential> alongside aero-l2-tunnel-v1 (credential must be a valid HTTP token / RFC 7230 tchar)
  # If your backend requires a static token (e.g. `AERO_L2_AUTH_MODE=token|jwt` on `crates/aero-l2-proxy`):
- # export L2_BACKEND_TOKEN=sekrit                   # offer Sec-WebSocket-Protocol entry aero-l2-token.<token> alongside aero-l2-tunnel-v1 (token must be a valid HTTP token / RFC 7230 tchar)
- # export L2_BACKEND_AUTH_FORWARD_MODE=none         # don't also forward client creds in ?token=/?apiKey=
- # export L2_BACKEND_ORIGIN_OVERRIDE=https://example.com
- # export L2_BACKEND_ORIGIN=https://example.com # alias for L2_BACKEND_ORIGIN_OVERRIDE
-  go run ./cmd/aero-webrtc-udp-relay
+  # export L2_BACKEND_TOKEN=sekrit                   # offer Sec-WebSocket-Protocol entry aero-l2-token.<token> alongside aero-l2-tunnel-v1 (token must be a valid HTTP token / RFC 7230 tchar)
+  # export L2_BACKEND_AUTH_FORWARD_MODE=none         # don't also forward client creds in ?token=/?apiKey=
+  # export L2_BACKEND_ORIGIN_OVERRIDE=https://example.com
+  # export L2_BACKEND_ORIGIN=https://example.com # alias for L2_BACKEND_ORIGIN_OVERRIDE
+  #
+  # WebRTC relay DoS hardening (optional tuning; defaults are derived and safe):
+  # - WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES (SDP `a=max-message-size` hint; 0 = auto)
+  # - WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES (hard receive-side cap; 0 = auto)
+  # - WEBRTC_SESSION_CONNECT_TIMEOUT (close half-open sessions; default 30s)
+   go run ./cmd/aero-webrtc-udp-relay
 ```
 
 See [`proxy/webrtc-udp-relay/README.md`](../proxy/webrtc-udp-relay/README.md) for TURN/docker-compose
