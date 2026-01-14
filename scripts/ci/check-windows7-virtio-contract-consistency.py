@@ -50,8 +50,10 @@ DEPRECATED_WIN7_TEST_INF_BASENAMES: tuple[str, ...] = (
     "aerovnet.inf",
     # Old virtio-snd INF basename (hyphenated); canonical is now aero_virtio_snd.inf.
     "aero-virtio-snd.inf",
-    # Note: virtio-input retains a legacy filename alias (`virtio-input.inf.disabled` -> `virtio-input.inf`),
-    # so that basename is intentionally *not* treated as deprecated here.
+    # virtio-input retains a legacy filename alias, but tests/instructions should avoid spelling out the
+    # legacy basename (it encourages cargo-culting old names). If the alias is needed in those docs, refer
+    # to it generically (e.g. "the `*.inf.disabled` file; drop the `.disabled` suffix to enable").
+    "virtio-input.inf",
 )
 
 # Guest Tools packager specs that hardcode expected HWID regexes. These should
