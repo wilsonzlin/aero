@@ -6155,7 +6155,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   if (Irp->AssociatedIrp.SystemBuffer == NULL || OutLen < sizeof(ULONG) * 2) {
     Status = STATUS_BUFFER_TOO_SMALL;
     Irp->IoStatus.Status = Status;
-    Irp->IoStatus.Information = 0;
+    Irp->IoStatus.Information = (Ioctl == AEROVNET_IOCTL_QUERY_OFFLOAD_STATS) ? sizeof(OffloadStats) : (sizeof(ULONG) * 2);
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return Status;
   }
@@ -6163,7 +6163,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   if (Ioctl == AEROVNET_IOCTL_QUERY_OFFLOAD_STATS && OutLen < sizeof(OffloadStats)) {
     Status = STATUS_BUFFER_TOO_SMALL;
     Irp->IoStatus.Status = Status;
-    Irp->IoStatus.Information = 0;
+    Irp->IoStatus.Information = sizeof(OffloadStats);
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return Status;
   }
@@ -6289,7 +6289,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     // Only attempt this if:
     //  - we're at PASSIVE_LEVEL (IOCTL path)
     //  - BAR0 is still mapped (not surprise removed / not halted)
-    if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && Adapter->State != AerovNetAdapterStopped && !Adapter->SurpriseRemoved) {
+    if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && !Adapter->SurpriseRemoved) {
       KIRQL OldIrql;
       USHORT MsixConfig;
       USHORT MsixRx;
