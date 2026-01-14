@@ -7229,6 +7229,14 @@ void APIENTRY DrawInstanced(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
+#if defined(AEROGPU_UMD_TRACE_DRAWS)
+  AEROGPU_D3D10_11_LOG("trace_draws: D3D10 DrawInstanced vc_per_inst=%u inst=%u first_vtx=%u first_inst=%u",
+                       static_cast<unsigned>(vertexCountPerInstance),
+                       static_cast<unsigned>(instanceCount),
+                       static_cast<unsigned>(startVertexLocation),
+                       static_cast<unsigned>(startInstanceLocation));
+#endif
+
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
   // The bring-up software renderer does not understand instance data. Draw a
@@ -7283,6 +7291,15 @@ void APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
   if (indexCountPerInstance == 0 || instanceCount == 0) {
     return;
   }
+
+#if defined(AEROGPU_UMD_TRACE_DRAWS)
+  AEROGPU_D3D10_11_LOG("trace_draws: D3D10 DrawIndexedInstanced ic_per_inst=%u inst=%u first_idx=%u base_vtx=%d first_inst=%u",
+                       static_cast<unsigned>(indexCountPerInstance),
+                       static_cast<unsigned>(instanceCount),
+                       static_cast<unsigned>(startIndexLocation),
+                       static_cast<int>(baseVertexLocation),
+                       static_cast<unsigned>(startInstanceLocation));
+#endif
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
