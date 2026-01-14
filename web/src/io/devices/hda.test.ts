@@ -109,6 +109,84 @@ describe("io/devices/HdaPciDevice", () => {
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x4000 }, null, null, null, null, null]);
   });
 
+  it("accepts camelCase HDA bridge exports (backwards compatibility)", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const mmioRead = vi.fn(() => 0);
+    const mmioWrite = vi.fn();
+    const stepFrames = vi.fn();
+    const irqLevel = vi.fn(() => false);
+    const setPciCommand = vi.fn();
+    const setMicRingBuffer = vi.fn();
+    const setCaptureSampleRateHz = vi.fn();
+    const setOutputRateHz = vi.fn();
+    const attachAudioRing = vi.fn();
+    const detachAudioRing = vi.fn();
+    const attachMicRing = vi.fn();
+    const detachMicRing = vi.fn();
+    const free = vi.fn();
+
+    // Simulate an older/newer wasm-bindgen output (or manual shim) that exposes camelCase helpers.
+    const bridge = {
+      mmioRead,
+      mmioWrite,
+      stepFrames,
+      irqLevel,
+      setPciCommand,
+      setMicRingBuffer,
+      setCaptureSampleRateHz,
+      setOutputRateHz,
+      attachAudioRing,
+      detachAudioRing,
+      attachMicRing,
+      detachMicRing,
+      free,
+    };
+
+    const dev = new HdaPciDevice({ bridge: bridge as unknown as HdaControllerBridgeLike, irqSink });
+
+    // Ensure MMIO plumbing uses the resolved methods.
+    dev.mmioRead(0, 0n, 4);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+    dev.mmioWrite(0, 0n, 4, 0x1234);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0x1234);
+
+    // PCI command mirror should pick up `setPciCommand`.
+    dev.onPciCommandWrite?.(0x1_0004);
+    expect(setPciCommand).toHaveBeenCalledTimes(1);
+    expect(setPciCommand).toHaveBeenLastCalledWith(0x0004);
+
+    // With bus mastering enabled, ticking should advance via `stepFrames`.
+    dev.tick(0);
+    dev.tick(1);
+    expect(stepFrames).toHaveBeenCalledTimes(1);
+    expect(stepFrames).toHaveBeenCalledWith(48);
+
+    const ringBuffer =
+      typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
+
+    dev.setAudioRingBuffer({ ringBuffer, capacityFrames: 128, channelCount: 2, dstSampleRateHz: 48_000 });
+    expect(setOutputRateHz).toHaveBeenCalledWith(48_000);
+    expect(attachAudioRing).toHaveBeenCalledWith(ringBuffer, 128, 2);
+
+    // Configure capture, then attach/detach the mic ring. Prefer the explicit attach/detach helpers.
+    dev.setCaptureSampleRateHz(44_100);
+    // Ignore any eager detach calls while the ring is still detached.
+    attachMicRing.mockClear();
+    detachMicRing.mockClear();
+    setMicRingBuffer.mockClear();
+
+    dev.setMicRingBuffer(ringBuffer);
+    expect(attachMicRing).toHaveBeenCalledWith(ringBuffer, 44_100);
+    expect(setMicRingBuffer).not.toHaveBeenCalledWith(ringBuffer);
+
+    dev.setMicRingBuffer(null);
+    expect(detachMicRing).toHaveBeenCalled();
+
+    dev.destroy();
+    expect(detachAudioRing).toHaveBeenCalled();
+    expect(free).toHaveBeenCalled();
+  });
+
   it("forwards PCI command register writes into the WASM bridge when set_pci_command is available", () => {
     const bridge: HdaControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),

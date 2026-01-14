@@ -845,11 +845,17 @@ function snapshotAudioHdaDeviceState(): { kind: string; bytes: Uint8Array } | nu
   if (!bridge) return null;
 
   const save =
-    (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+    (bridge as unknown as { save_state?: unknown }).save_state ??
+    (bridge as unknown as { snapshot_state?: unknown }).snapshot_state ??
+    (bridge as unknown as { saveState?: unknown }).saveState ??
+    (bridge as unknown as { snapshotState?: unknown }).snapshotState;
   if (typeof save !== "function") return null;
 
   const load =
-    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+    (bridge as unknown as { load_state?: unknown }).load_state ??
+    (bridge as unknown as { restore_state?: unknown }).restore_state ??
+    (bridge as unknown as { loadState?: unknown }).loadState ??
+    (bridge as unknown as { restoreState?: unknown }).restoreState;
   const canLoad = typeof load === "function";
   if (!canLoad) {
     // If we restored a snapshot previously and the current bridge can't restore HDA state (older
@@ -885,7 +891,10 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
   }
 
   const load =
-    (bridge as unknown as { load_state?: unknown }).load_state ?? (bridge as unknown as { restore_state?: unknown }).restore_state;
+    (bridge as unknown as { load_state?: unknown }).load_state ??
+    (bridge as unknown as { restore_state?: unknown }).restore_state ??
+    (bridge as unknown as { loadState?: unknown }).loadState ??
+    (bridge as unknown as { restoreState?: unknown }).restoreState;
   if (typeof load !== "function") {
     // The bridge exists but doesn't support snapshot restore yet (older WASM build). Keep the blob
     // cached so it can be applied if a compatible bridge becomes available later (e.g. via a global
@@ -912,13 +921,20 @@ function restoreAudioHdaDeviceState(bytes: Uint8Array): void {
     // attached; it plumbs the current host sample rate and keeps the wrapper's tick
     // clock consistent.
     const dev = hdaDevice;
-    const ctrl = hdaControllerBridge as unknown as { output_sample_rate_hz?: unknown } | null;
+    const ctrl = hdaControllerBridge as unknown as Record<string, unknown> | null;
     // If a host AudioContext is active, it owns the output sample rate.
     // Otherwise (no ring attached), use the restored WASM-side output rate so the wrapper's
     // tick clock stays consistent with the device model.
     let desiredDstSampleRateHz = audioOutDstSampleRate >>> 0;
     if (desiredDstSampleRateHz === 0 && ctrl) {
-      const restoredRate = ctrl.output_sample_rate_hz;
+      let restoredRate = ctrl.output_sample_rate_hz ?? ctrl.outputSampleRateHz;
+      if (typeof restoredRate === "function") {
+        try {
+          restoredRate = (restoredRate as () => unknown).call(hdaControllerBridge);
+        } catch {
+          restoredRate = undefined;
+        }
+      }
       if (typeof restoredRate === "number" && Number.isFinite(restoredRate) && restoredRate > 0) {
         desiredDstSampleRateHz = restoredRate >>> 0;
       }
@@ -2270,14 +2286,11 @@ function maybeInitHdaDevice(): void {
     // `save_state/load_state`; in that case leave `audioHdaBridge` unset so the
     // fallback global hook (`__aeroAudioHdaBridge`, etc.) can still provide snapshot
     // plumbing if present.
-    const anyBridge = bridge as unknown as {
-      save_state?: unknown;
-      snapshot_state?: unknown;
-      load_state?: unknown;
-      restore_state?: unknown;
-    };
-    const canSave = typeof anyBridge.save_state === "function" || typeof anyBridge.snapshot_state === "function";
-    const canLoad = typeof anyBridge.load_state === "function" || typeof anyBridge.restore_state === "function";
+    const anyBridge = bridge as unknown as Record<string, unknown>;
+    const save = anyBridge.save_state ?? anyBridge.snapshot_state ?? anyBridge.saveState ?? anyBridge.snapshotState;
+    const load = anyBridge.load_state ?? anyBridge.restore_state ?? anyBridge.loadState ?? anyBridge.restoreState;
+    const canSave = typeof save === "function";
+    const canLoad = typeof load === "function";
     audioHdaBridge = canSave && canLoad ? (bridge as AudioHdaSnapshotBridgeLike) : null;
     hdaDevice = dev;
     try {

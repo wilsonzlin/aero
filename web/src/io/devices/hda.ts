@@ -126,6 +126,8 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: HDA_MMIO_BAR_SIZE }, null, null, null, null, null];
 
   readonly #bridge: HdaControllerBridgeLike;
+  readonly #mmioRead: (offset: number, size: number) => number;
+  readonly #mmioWrite: (offset: number, size: number, value: number) => void;
   readonly #irqSink: IrqSink;
 
   #clock: AudioFrameClock | null = null;
@@ -147,6 +149,17 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   constructor(opts: { bridge: HdaControllerBridgeLike; irqSink: IrqSink }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
+
+    // Backwards compatibility: accept both snake_case and camelCase MMIO methods.
+    // Pre-resolve these since they're on the hot MMIO path.
+    const bridgeAny = opts.bridge as unknown as Record<string, unknown>;
+    const mmioRead = bridgeAny.mmio_read ?? bridgeAny.mmioRead;
+    const mmioWrite = bridgeAny.mmio_write ?? bridgeAny.mmioWrite;
+    if (typeof mmioRead !== "function" || typeof mmioWrite !== "function") {
+      throw new Error("HDA bridge missing mmio_read/mmio_write exports.");
+    }
+    this.#mmioRead = mmioRead as (offset: number, size: number) => number;
+    this.#mmioWrite = mmioWrite as (offset: number, size: number, value: number) => void;
   }
 
   getTickStats(): {
@@ -173,7 +186,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     let value = defaultReadValue(size);
     try {
-      value = this.#bridge.mmio_read(off >>> 0, size >>> 0) >>> 0;
+      value = this.#mmioRead.call(this.#bridge, off >>> 0, size >>> 0) >>> 0;
     } catch {
       value = defaultReadValue(size);
     }
@@ -192,7 +205,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     if (!Number.isFinite(off) || off < 0 || off + size > HDA_MMIO_BAR_SIZE) return;
 
     try {
-      this.#bridge.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
+      this.#mmioWrite.call(this.#bridge, off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest MMIO
     }
@@ -208,7 +221,8 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     this.#intxDisabled = (cmd & (1 << 10)) !== 0;
 
     // Mirror into the WASM device model (when supported) so it can enforce DMA gating coherently.
-    const setCmd = this.#bridge.set_pci_command;
+    const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
+    const setCmd = bridgeAny.set_pci_command ?? bridgeAny.setPciCommand;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#bridge, cmd >>> 0);
@@ -278,16 +292,26 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     if (frames > 0 && this.#busMasterEnabled) {
       const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
       try {
-        if (typeof bridgeAny.process === "function") {
-          (bridgeAny.process as (frames: number) => void).call(this.#bridge, frames);
-        } else if (typeof bridgeAny.step_frames === "function") {
-          (bridgeAny.step_frames as (frames: number) => void).call(this.#bridge, frames);
-        } else if (typeof bridgeAny.tick === "function") {
-          (bridgeAny.tick as (frames: number) => void).call(this.#bridge, frames);
-        } else if (typeof bridgeAny.step_frame === "function") {
-          // Slow fallback for unexpected/old exports.
-          const step = bridgeAny.step_frame as () => void;
-          for (let i = 0; i < frames; i++) step.call(this.#bridge);
+        const process = bridgeAny.process;
+        if (typeof process === "function") {
+          (process as (frames: number) => void).call(this.#bridge, frames);
+        } else {
+          const stepFrames = bridgeAny.step_frames ?? bridgeAny.stepFrames;
+          if (typeof stepFrames === "function") {
+            (stepFrames as (frames: number) => void).call(this.#bridge, frames);
+          } else {
+            const tick = bridgeAny.tick;
+            if (typeof tick === "function") {
+              (tick as (frames: number) => void).call(this.#bridge, frames);
+            } else {
+              const stepFrame = bridgeAny.step_frame ?? bridgeAny.stepFrame;
+              if (typeof stepFrame === "function") {
+                // Slow fallback for unexpected/old exports.
+                const step = stepFrame as () => void;
+                for (let i = 0; i < frames; i++) step.call(this.#bridge);
+              }
+            }
+          }
         }
       } catch {
         // ignore device errors during tick
@@ -307,13 +331,16 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     const sr = sampleRateHz >>> 0;
     if (sr === 0) return;
+    const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
+    const setCaptureRate = bridgeAny.set_capture_sample_rate_hz ?? bridgeAny.setCaptureSampleRateHz;
+
     // Even if the sample rate is unchanged from the JS wrapper's perspective, the WASM-side
     // controller can drift (e.g. `set_output_rate_hz` may implicitly update the capture rate when
     // it was still tracking the previous output rate). Keep the device model in sync by mirroring
     // the rate into WASM on every call.
     if (sr === this.#micSampleRateHz) {
       try {
-        this.#bridge.set_capture_sample_rate_hz(sr);
+        if (typeof setCaptureRate === "function") (setCaptureRate as (rateHz: number) => void).call(this.#bridge, sr);
       } catch {
         // ignore
       }
@@ -347,14 +374,25 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     // Plumb host output sample rate first so the HDA controller's time base matches
     // the `frames` argument passed via {@link tick}.
-    const setRate = bridgeAny.set_output_rate_hz ?? bridgeAny.set_output_sample_rate_hz;
+    const setRate =
+      bridgeAny.set_output_rate_hz ??
+      bridgeAny.setOutputRateHz ??
+      bridgeAny.set_output_sample_rate_hz ??
+      bridgeAny.setOutputSampleRateHz;
     if (dstSampleRateHz > 0 && typeof setRate === "function") {
       try {
         (setRate as (rateHz: number) => void).call(this.#bridge, dstSampleRateHz);
 
         // Some WASM builds clamp the rate internally (see `MAX_HOST_SAMPLE_RATE_HZ`). Read back the
         // reported output rate when available so our tick clock stays consistent with the device.
-        const reported = (bridgeAny as unknown as { output_sample_rate_hz?: unknown }).output_sample_rate_hz;
+        let reported = bridgeAny.output_sample_rate_hz ?? bridgeAny.outputSampleRateHz;
+        if (typeof reported === "function") {
+          try {
+            reported = (reported as () => unknown).call(this.#bridge);
+          } catch {
+            reported = undefined;
+          }
+        }
         const effectiveRate =
           typeof reported === "number" && Number.isFinite(reported) && reported > 0 ? (reported >>> 0) : dstSampleRateHz;
 
@@ -372,8 +410,9 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
         // attached to the mic ring, keep the capture rate pinned to the host mic AudioContext even
         // when the output rate changes.
         if (this.#micSampleRateHz > 0) {
+          const setCaptureRate = bridgeAny.set_capture_sample_rate_hz ?? bridgeAny.setCaptureSampleRateHz;
           try {
-            this.#bridge.set_capture_sample_rate_hz(this.#micSampleRateHz);
+            if (typeof setCaptureRate === "function") (setCaptureRate as (rateHz: number) => void).call(this.#bridge, this.#micSampleRateHz);
           } catch {
             // ignore
           }
@@ -384,7 +423,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     }
 
     // Prefer a single call if the WASM bridge exposes a combined helper.
-    const setRing = bridgeAny.set_audio_ring_buffer;
+    const setRing = bridgeAny.set_audio_ring_buffer ?? bridgeAny.setAudioRingBuffer;
     if (typeof setRing === "function") {
       try {
         if (ring && capacityFrames > 0 && channelCount > 0) {
@@ -410,7 +449,11 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     // Otherwise use the explicit attach/detach API (or legacy aliases).
     if (ring && capacityFrames > 0 && channelCount > 0) {
-      const attach = bridgeAny.attach_audio_ring ?? bridgeAny.attach_output_ring;
+      const attach =
+        bridgeAny.attach_audio_ring ??
+        bridgeAny.attachAudioRing ??
+        bridgeAny.attach_output_ring ??
+        bridgeAny.attachOutputRing;
       if (typeof attach === "function") {
         try {
           (attach as (sab: SharedArrayBuffer, cap: number, ch: number) => void).call(
@@ -424,7 +467,11 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
         }
       }
     } else {
-      const detach = bridgeAny.detach_audio_ring ?? bridgeAny.detach_output_ring;
+      const detach =
+        bridgeAny.detach_audio_ring ??
+        bridgeAny.detachAudioRing ??
+        bridgeAny.detach_output_ring ??
+        bridgeAny.detachOutputRing;
       if (typeof detach === "function") {
         try {
           (detach as () => void).call(this.#bridge);
@@ -440,18 +487,22 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     // Best-effort detach to ensure no further samples are written into an orphaned ring buffer.
     try {
       const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
-      const detachOut = bridgeAny.detach_audio_ring ?? bridgeAny.detach_output_ring;
+      const detachOut =
+        bridgeAny.detach_audio_ring ??
+        bridgeAny.detachAudioRing ??
+        bridgeAny.detach_output_ring ??
+        bridgeAny.detachOutputRing;
       if (typeof detachOut === "function") (detachOut as () => void).call(this.#bridge);
     } catch {
       // ignore
     }
     try {
       const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
-      const detachMic = bridgeAny.detach_mic_ring;
+      const detachMic = bridgeAny.detach_mic_ring ?? bridgeAny.detachMicRing;
       if (typeof detachMic === "function") {
         (detachMic as () => void).call(this.#bridge);
       } else {
-        const setBuf = bridgeAny.set_mic_ring_buffer;
+        const setBuf = bridgeAny.set_mic_ring_buffer ?? bridgeAny.setMicRingBuffer;
         if (typeof setBuf === "function") (setBuf as (sab?: SharedArrayBuffer) => void).call(this.#bridge, undefined);
       }
     } catch {
@@ -474,13 +525,15 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   #syncIrq(): void {
     let asserted = false;
     try {
-      const bridgeAny = this.#bridge as unknown as { irq_level?: unknown; irq_asserted?: unknown };
+      const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
+      const irqLevel = bridgeAny.irq_level ?? bridgeAny.irqLevel;
+      const irqAsserted = bridgeAny.irq_asserted ?? bridgeAny.irqAsserted;
       if (this.#intxDisabled) {
         asserted = false;
-      } else if (typeof bridgeAny.irq_level === "function") {
-        asserted = Boolean(bridgeAny.irq_level.call(this.#bridge));
-      } else if (typeof bridgeAny.irq_asserted === "function") {
-        asserted = Boolean(bridgeAny.irq_asserted.call(this.#bridge));
+      } else if (typeof irqLevel === "function") {
+        asserted = Boolean((irqLevel as () => unknown).call(this.#bridge));
+      } else if (typeof irqAsserted === "function") {
+        asserted = Boolean((irqAsserted as () => unknown).call(this.#bridge));
       }
     } catch {
       asserted = false;
@@ -497,14 +550,18 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     const ring = this.#micRingBuffer;
     const sr = this.#micSampleRateHz >>> 0;
+    const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
+    const attachMic = bridgeAny.attach_mic_ring ?? bridgeAny.attachMicRing;
+    const detachMic = bridgeAny.detach_mic_ring ?? bridgeAny.detachMicRing;
+    const setMicRing = bridgeAny.set_mic_ring_buffer ?? bridgeAny.setMicRingBuffer;
+    const setCaptureRate = bridgeAny.set_capture_sample_rate_hz ?? bridgeAny.setCaptureSampleRateHz;
 
     // Prefer the newer attach/detach helpers when available so capture sample-rate
     // is applied alongside ring attachment.
     if (ring) {
-      const attach = (this.#bridge as unknown as { attach_mic_ring?: unknown }).attach_mic_ring;
-      if (typeof attach === "function" && sr > 0) {
+      if (typeof attachMic === "function" && sr > 0) {
         try {
-          (attach as (ring: SharedArrayBuffer, sr: number) => void).call(this.#bridge, ring, sr);
+          (attachMic as (ring: SharedArrayBuffer, sr: number) => void).call(this.#bridge, ring, sr);
           return;
         } catch {
           // fall through to legacy path
@@ -513,17 +570,16 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
       // Legacy: attach ring first, then apply sample rate if available.
       try {
-        this.#bridge.set_mic_ring_buffer(ring);
+        if (typeof setMicRing === "function") (setMicRing as (sab?: SharedArrayBuffer) => void).call(this.#bridge, ring);
       } catch {
         // ignore
       }
     } else {
       // Detach.
-      const detach = (this.#bridge as unknown as { detach_mic_ring?: unknown }).detach_mic_ring;
       let detached = false;
-      if (typeof detach === "function") {
+      if (typeof detachMic === "function") {
         try {
-          (detach as () => void).call(this.#bridge);
+          (detachMic as () => void).call(this.#bridge);
           detached = true;
         } catch {
           detached = false;
@@ -532,7 +588,7 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
       if (!detached) {
         try {
-          this.#bridge.set_mic_ring_buffer(undefined);
+          if (typeof setMicRing === "function") (setMicRing as (sab?: SharedArrayBuffer) => void).call(this.#bridge, undefined);
         } catch {
           // ignore
         }
@@ -540,9 +596,9 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
     }
 
     // Keep the capture sample-rate in sync even if the ring is not yet attached.
-    if (sr > 0) {
+    if (sr > 0 && typeof setCaptureRate === "function") {
       try {
-        this.#bridge.set_capture_sample_rate_hz(sr);
+        (setCaptureRate as (rateHz: number) => void).call(this.#bridge, sr);
       } catch {
         // ignore
       }
