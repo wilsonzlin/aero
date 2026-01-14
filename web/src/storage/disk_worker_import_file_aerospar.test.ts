@@ -102,7 +102,7 @@ async function sendImportFile(payload: any, backend: "opfs" | "idb" = "opfs"): P
   return await response;
 }
 
-describe("disk_worker import_file aerospar handling", () => {
+describe("disk_worker import_file content sniffing + validation", () => {
   it("uses logical aerospar disk size (not file size) for sizeBytes", async () => {
     const diskSizeBytes = 1024 * 1024;
     const bytes = makeAerosparBytes({ diskSizeBytes, blockSizeBytes: 4096 });
@@ -144,11 +144,55 @@ describe("disk_worker import_file aerospar handling", () => {
   });
 
   it("rejects qcow2 imports on the IndexedDB backend", async () => {
-    const file = new File([new Uint8Array([1, 2, 3, 4])], "disk.qcow2");
+    const qcow2 = new Uint8Array(72);
+    qcow2.set([0x51, 0x46, 0x49, 0xfb], 0); // "QFI\xfb"
+    new DataView(qcow2.buffer).setUint32(4, 3, false);
+    const file = new File([toArrayBufferUint8(qcow2)], "disk.qcow2");
     const resp = await sendImportFile({ file }, "idb");
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/qcow2/i);
     expect(String(resp.error?.message ?? "")).toMatch(/indexeddb/i);
+  });
+
+  it("detects qcow2 content even when the filename suggests raw", async () => {
+    const qcow2 = new Uint8Array(72);
+    qcow2.set([0x51, 0x46, 0x49, 0xfb], 0); // "QFI\xfb"
+    new DataView(qcow2.buffer).setUint32(4, 3, false);
+    const file = new File([toArrayBufferUint8(qcow2)], "mislabeled.img");
+    const resp = await sendImportFile({ file });
+    expect(resp.ok).toBe(true);
+    expect(resp.result.format).toBe("qcow2");
+    expect(resp.result.kind).toBe("hdd");
+    expect(resp.result.sourceFileName).toBe("mislabeled.img");
+    expect(String(resp.result.fileName)).toMatch(/\.qcow2$/);
+  });
+
+  it("detects VHD content even when the filename suggests raw", async () => {
+    const bytes = new Uint8Array(1024);
+    const footer = new Uint8Array(bytes.buffer, 512, 512);
+    footer.set(new TextEncoder().encode("conectix"), 0);
+    const view = new DataView(bytes.buffer, 512, 512);
+    view.setUint32(12, 0x0001_0000, false);
+    view.setBigUint64(16, 0xffff_ffff_ffff_ffffn, false);
+    view.setBigUint64(48, 512n, false);
+    view.setUint32(60, 2, false);
+    const file = new File([toArrayBufferUint8(bytes)], "mislabeled.img");
+    const resp = await sendImportFile({ file });
+    expect(resp.ok).toBe(true);
+    expect(resp.result.format).toBe("vhd");
+    expect(resp.result.kind).toBe("hdd");
+    expect(String(resp.result.fileName)).toMatch(/\.vhd$/);
+  });
+
+  it("detects ISO9660 content even when the filename suggests raw", async () => {
+    const bytes = new Uint8Array(512 * 65);
+    bytes.set(new TextEncoder().encode("CD001"), 0x8001);
+    const file = new File([toArrayBufferUint8(bytes)], "mislabeled.img");
+    const resp = await sendImportFile({ file });
+    expect(resp.ok).toBe(true);
+    expect(resp.result.format).toBe("iso");
+    expect(resp.result.kind).toBe("cd");
+    expect(String(resp.result.fileName)).toMatch(/\.iso$/);
   });
 
   it("rejects CD imports when format is not ISO", async () => {
@@ -159,11 +203,10 @@ describe("disk_worker import_file aerospar handling", () => {
     expect(String(resp.error?.message ?? "")).toMatch(/iso/i);
   });
 
-  it("rejects HDD imports when format is ISO", async () => {
+  it("rejects explicit ISO imports when the ISO9660 signature is missing", async () => {
     const file = new File([new Uint8Array(512)], "disk.iso");
-    const resp = await sendImportFile({ file, kind: "hdd", format: "iso" });
+    const resp = await sendImportFile({ file, format: "iso" });
     expect(resp.ok).toBe(false);
-    expect(String(resp.error?.message ?? "")).toMatch(/hdd/i);
     expect(String(resp.error?.message ?? "")).toMatch(/iso/i);
   });
 

@@ -66,6 +66,120 @@ const AEROSPARSE_HEADER_SIZE_BYTES = 64;
 const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
 const AEROSPARSE_MAX_BLOCK_SIZE_BYTES = 64 * 1024 * 1024;
 
+const QCOW2_MAGIC = [0x51, 0x46, 0x49, 0xfb] as const; // "QFI\xfb"
+const VHD_COOKIE = [0x63, 0x6f, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x78] as const; // "conectix"
+const ISO9660_PVD_MAGIC = [0x43, 0x44, 0x30, 0x30, 0x31] as const; // "CD001"
+
+async function readFileBytes(file: File, offset: number, length: number): Promise<Uint8Array> {
+  if (length <= 0) return new Uint8Array();
+  const end = offset + length;
+  let buf: ArrayBuffer;
+  const sliceFn = (file as unknown as { slice?: unknown }).slice;
+  if (typeof sliceFn === "function") {
+    buf = await (sliceFn as (start?: number, end?: number) => Blob).call(file, offset, end).arrayBuffer();
+  } else {
+    const arrayBufferFn = (file as unknown as { arrayBuffer?: unknown }).arrayBuffer;
+    if (typeof arrayBufferFn !== "function") {
+      throw new Error("file does not support slice() or arrayBuffer()");
+    }
+    const full = await (arrayBufferFn as () => Promise<ArrayBuffer>).call(file);
+    buf = full.slice(offset, end);
+  }
+  return new Uint8Array(buf);
+}
+
+function bytesEqualPrefix(bytes: Uint8Array, expected: readonly number[]): boolean {
+  if (bytes.byteLength < expected.length) return false;
+  for (let i = 0; i < expected.length; i += 1) {
+    if (bytes[i] !== expected[i]) return false;
+  }
+  return true;
+}
+
+async function looksLikeQcow2FromFile(file: File): Promise<boolean> {
+  // See Rust `detect_format` logic: magic + plausible version, treat truncated qcow2 as qcow2 so
+  // callers surface corruption errors instead of silently treating the header bytes as raw.
+  const len = file.size;
+  if (len < 4) return false;
+
+  const prefix = await readFileBytes(file, 0, Math.min(8, len));
+  if (!bytesEqualPrefix(prefix, QCOW2_MAGIC)) return false;
+  if (len < 72) return true;
+  if (prefix.byteLength < 8) return true;
+
+  const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
+  const version = dv.getUint32(4, false);
+  return version === 2 || version === 3;
+}
+
+function looksLikeVhdFooterBytes(footerBytes: Uint8Array, fileSize: number): boolean {
+  if (footerBytes.byteLength !== 512) return false;
+  if (!bytesEqualPrefix(footerBytes, VHD_COOKIE)) return false;
+  const dv = new DataView(footerBytes.buffer, footerBytes.byteOffset, footerBytes.byteLength);
+
+  // Fixed file format version for VHD footers (big-endian).
+  if (dv.getUint32(12, false) !== 0x0001_0000) return false;
+
+  const currentSizeBig = dv.getBigUint64(48, false);
+  const currentSize = Number(currentSizeBig);
+  if (!Number.isSafeInteger(currentSize) || currentSize <= 0) return false;
+  if (currentSize % 512 !== 0) return false;
+
+  const diskType = dv.getUint32(60, false);
+  if (diskType !== 2 && diskType !== 3 && diskType !== 4) return false;
+
+  const dataOffsetBig = dv.getBigUint64(16, false);
+  if (diskType === 2) {
+    if (dataOffsetBig !== 0xffff_ffff_ffff_ffffn) return false;
+    const requiredLen = currentSize + 512;
+    if (!Number.isSafeInteger(requiredLen) || fileSize < requiredLen) return false;
+  } else {
+    if (dataOffsetBig === 0xffff_ffff_ffff_ffffn) return false;
+    const dataOffset = Number(dataOffsetBig);
+    if (!Number.isSafeInteger(dataOffset) || dataOffset < 512) return false;
+    if (dataOffset % 512 !== 0) return false;
+    const end = dataOffset + 1024;
+    if (!Number.isSafeInteger(end) || end > fileSize) return false;
+  }
+
+  return true;
+}
+
+async function looksLikeVhdFromFile(file: File): Promise<boolean> {
+  // Mirror Rust `detect_format` / `import_convert.detectFormat` behaviour:
+  // treat truncated cookie-only images as VHD so callers surface corruption errors.
+  const len = file.size;
+  if (len < 8) return false;
+  if (len < 512) {
+    const cookie = await readFileBytes(file, 0, 8);
+    return bytesEqualPrefix(cookie, VHD_COOKIE);
+  }
+
+  const footerEnd = await readFileBytes(file, len - 512, 512);
+  if (looksLikeVhdFooterBytes(footerEnd, len)) return true;
+
+  const footer0 = await readFileBytes(file, 0, 512);
+  if (!looksLikeVhdFooterBytes(footer0, len)) return false;
+  const dv = new DataView(footer0.buffer, footer0.byteOffset, footer0.byteLength);
+  const diskType = dv.getUint32(60, false);
+  if (diskType === 2) {
+    // For fixed disks, a valid footer at offset 0 implies a footer copy at EOF too.
+    const currentSize = Number(dv.getBigUint64(48, false));
+    const required = currentSize + 1024;
+    return Number.isSafeInteger(required) && len >= required;
+  }
+  return true;
+}
+
+async function looksLikeIso9660FromFile(file: File): Promise<boolean> {
+  // ISO9660 primary volume descriptor is at 16 * 2048. The "CD001" signature is at offset 1
+  // within the PVD => 0x8001.
+  const ISO_PVD_SIG_OFFSET = 0x8001;
+  if (file.size < ISO_PVD_SIG_OFFSET + 5) return false;
+  const sig = await readFileBytes(file, ISO_PVD_SIG_OFFSET, 5);
+  return bytesEqualPrefix(sig, ISO9660_PVD_MAGIC);
+}
+
 function alignUpBigInt(value: bigint, alignment: bigint): bigint {
   if (alignment <= 0n) return value;
   return ((value + alignment - 1n) / alignment) * alignment;
@@ -955,6 +1069,37 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         aerosparDiskSizeBytes = sniffedAerosparDiskSizeBytes;
       } else if (format === "aerospar") {
         throw new Error("selected format aerospar but the file does not have an aerospar header");
+      }
+
+      if (aerosparDiskSizeBytes === null) {
+        // Content sniffing for common container formats (qcow2/vhd/iso). This prevents mislabelled
+        // images (e.g. a qcow2 file renamed to `.img`) from being treated as raw disks and exposing
+        // container headers to the guest.
+        const looksQcow2 = await looksLikeQcow2FromFile(file);
+        const looksVhd = looksQcow2 ? false : await looksLikeVhdFromFile(file);
+        const looksIso = looksQcow2 || looksVhd ? false : await looksLikeIso9660FromFile(file);
+
+        if (looksQcow2) {
+          kind = "hdd";
+          format = "qcow2";
+        } else if (looksVhd) {
+          kind = "hdd";
+          format = "vhd";
+        } else if (looksIso) {
+          kind = "cd";
+          format = "iso";
+        } else {
+          // Validation for explicitly-selected container formats.
+          if (format === "qcow2") {
+            throw new Error("selected format qcow2 but the file does not have a qcow2 header");
+          }
+          if (format === "vhd") {
+            throw new Error("selected format vhd but the file does not look like a VHD image");
+          }
+          if (format === "iso") {
+            throw new Error("selected format iso but the file does not look like an ISO9660 image");
+          }
+        }
       }
 
       if (backend === "idb") {
