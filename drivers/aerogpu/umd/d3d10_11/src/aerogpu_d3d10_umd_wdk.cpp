@@ -4823,6 +4823,36 @@ static bool DxgiViewFormatTriviallyCompatible(const AeroGpuDevice* dev,
   return res_aer != AEROGPU_FORMAT_INVALID && res_aer == view_aer;
 }
 
+static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
+  bool ok = false;
+  // Prefer DDI-specific enumerators when available.
+  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
+  }
+
+  // Conservative fallback: the AeroGPU portable ABI models Texture2D as 3. If
+  // none of the enumerators above exist in this WDK, assume the same encoding.
+  if (!ok) {
+    ok = (view_dimension == 3u);
+  }
+  return ok;
+}
+
 HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                         D3D10DDI_HRENDERTARGETVIEW hView,
@@ -4894,7 +4924,7 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     }
   }
 
-  if (have_view_dim && view_dim != 3u /* Texture2D */) {
+  if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV dimension=%u (only Texture2D supported)",
                          static_cast<unsigned>(view_dim));
     return E_NOTIMPL;
@@ -5013,7 +5043,7 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
       have_view_dim = true;
     }
   }
-  if (have_view_dim && view_dim != 3u /* Texture2D */) {
+  if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV dimension=%u (only Texture2D supported)",
                          static_cast<unsigned>(view_dim));
     return E_NOTIMPL;
@@ -5142,7 +5172,7 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     }
   }
 
-  if (have_view_dim && view_dim != 3u /* Texture2D */) {
+  if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV dimension=%u (only Texture2D supported)",
                          static_cast<unsigned>(view_dim));
     return E_NOTIMPL;
