@@ -722,6 +722,10 @@ impl PlatformInterrupts {
         self.lapics[0].apic_id()
     }
 
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     /// Inject a fixed interrupt into the LAPIC whose `apic_id()` matches `apic_id`.
     ///
     /// If no LAPIC matches, the interrupt is dropped.
