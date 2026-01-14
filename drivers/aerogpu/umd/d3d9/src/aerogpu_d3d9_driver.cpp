@@ -27283,9 +27283,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t inde
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->lights[index] = *pLight;
   dev->light_valid[index] = true;
-  if (index == 0) {
-    dev->fixedfunc_lighting_dirty = true;
-  }
+  dev->fixedfunc_lighting_dirty = true;
   stateblock_record_light_locked(dev, index, dev->lights[index], dev->light_valid[index]);
   return S_OK;
 }
@@ -27300,9 +27298,7 @@ HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t i
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->light_enabled[index] = enabled ? TRUE : FALSE;
-  if (index == 0) {
-    dev->fixedfunc_lighting_dirty = true;
-  }
+  dev->fixedfunc_lighting_dirty = true;
   stateblock_record_light_enable_locked(dev, index, dev->light_enabled[index]);
   return S_OK;
 }
