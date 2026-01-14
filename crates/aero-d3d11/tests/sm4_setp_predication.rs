@@ -845,8 +845,8 @@ fn decodes_and_translates_predicated_breakc_in_loop() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(
-        translated.wgsl.contains("if (") && translated.wgsl.contains("p0.x"),
-        "expected predicated breakc to lower via WGSL if:\n{}",
+        translated.wgsl.contains("if (p0.x &&") && translated.wgsl.contains("break;"),
+        "expected predicated breakc to lower via if (p0.x && cmp) {{ break; }}:\n{}",
         translated.wgsl
     );
 }
@@ -909,8 +909,8 @@ fn decodes_and_translates_predicated_continuec_in_loop() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(
-        translated.wgsl.contains("if (") && translated.wgsl.contains("continue;"),
-        "expected predicated continuec to lower via WGSL if:\n{}",
+        translated.wgsl.contains("if (p0.x &&") && translated.wgsl.contains("continue;"),
+        "expected predicated continuec to lower via if (p0.x && cmp) {{ continue; }}:\n{}",
         translated.wgsl
     );
 }
@@ -1407,6 +1407,73 @@ fn decodes_and_translates_predicated_continue_in_loop() {
     assert!(
         translated.wgsl.contains("if (p0.x) {") && translated.wgsl.contains("continue;"),
         "expected predicated continue to lower via if (p0.x) {{ continue; }}:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_predicated_break_in_switch_case() {
+    let mut body = Vec::<u32>::new();
+
+    // switch l(0)
+    let selector = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_SWITCH, 1 + selector.len() as u32));
+    body.extend_from_slice(&selector);
+
+    // case 0
+    let case0 = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_CASE, 1 + case0.len() as u32));
+    body.extend_from_slice(&case0);
+
+    // (+p0.x) break
+    let pred_p0x = pred_operand(0, 0);
+    body.push(opcode_token(OPCODE_BREAK, 1 + pred_p0x.len() as u32));
+    body.extend_from_slice(&pred_p0x);
+
+    // default
+    body.push(opcode_token(OPCODE_DEFAULT, 1));
+
+    // endswitch
+    body.push(opcode_token(OPCODE_ENDSWITCH, 1));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(module.instructions[0], Sm4Inst::Switch { .. }));
+    assert!(matches!(module.instructions[1], Sm4Inst::Case { .. }));
+    assert!(matches!(
+        &module.instructions[2],
+        Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Break)
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("switch(")
+            && translated.wgsl.contains("case 0i")
+            && translated.wgsl.contains("if (p0.x) {")
+            && translated.wgsl.contains("break;"),
+        "expected predicated break in switch case to translate to if(p0.x) break:\n{}",
         translated.wgsl
     );
 }
