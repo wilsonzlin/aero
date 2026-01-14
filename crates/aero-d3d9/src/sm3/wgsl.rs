@@ -1392,6 +1392,104 @@ fn emit_stmt_predicated(
 ) -> Result<(), WgslError> {
     let pad = "  ".repeat(indent);
     match stmt {
+        Stmt::Loop { init, body } => {
+            if guard == "true" {
+                emit_loop_stmt(
+                    wgsl,
+                    init,
+                    body,
+                    indent,
+                    depth,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                    "true",
+                )?;
+            } else if block_contains_uniformity_sensitive_ops(body, stage, subroutine_infos) {
+                // If this loop contains uniformity-sensitive ops (derivatives / implicit sampling),
+                // avoid guarding the whole loop with `if (guard) { ... }` which would place those
+                // ops behind non-uniform control flow. Instead, execute the loop unconditionally
+                // and predicate its body.
+                emit_loop_stmt(
+                    wgsl,
+                    init,
+                    body,
+                    indent,
+                    depth,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                    guard,
+                )?;
+            } else {
+                let _ = writeln!(wgsl, "{pad}if ({guard}) {{");
+                emit_loop_stmt(
+                    wgsl,
+                    init,
+                    body,
+                    indent + 1,
+                    depth + 1,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                    "true",
+                )?;
+                let _ = writeln!(wgsl, "{pad}}}");
+            }
+        }
+        Stmt::Rep { count_reg, body } => {
+            if guard == "true" {
+                emit_rep_stmt(
+                    wgsl,
+                    count_reg,
+                    body,
+                    indent,
+                    depth,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                    "true",
+                )?;
+            } else if block_contains_uniformity_sensitive_ops(body, stage, subroutine_infos) {
+                emit_rep_stmt(
+                    wgsl,
+                    count_reg,
+                    body,
+                    indent,
+                    depth,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                    guard,
+                )?;
+            } else {
+                let _ = writeln!(wgsl, "{pad}if ({guard}) {{");
+                emit_rep_stmt(
+                    wgsl,
+                    count_reg,
+                    body,
+                    indent + 1,
+                    depth + 1,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                    subroutine_infos,
+                    state,
+                    "true",
+                )?;
+                let _ = writeln!(wgsl, "{pad}}}");
+            }
+        }
         Stmt::Op(op) => {
             let mut cond = guard.to_owned();
             if let Some(pred) = &op_modifiers(op).predicate {
@@ -2497,6 +2595,206 @@ fn emit_speculative_call_with_rollback(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn emit_loop_stmt(
+    wgsl: &mut String,
+    init: &crate::sm3::ir::LoopInit,
+    body: &Block,
+    indent: usize,
+    depth: usize,
+    stage: ShaderStage,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
+    state: &mut EmitState,
+    body_guard: &str,
+) -> Result<(), WgslError> {
+    // D3D9 SM2/3 `loop aL, i#` has a finite trip count derived from the integer constant register
+    // (i#.x=start, i#.y=end, i#.z=step). We must not emit an unbounded WGSL `loop {}` because it
+    // can hang the GPU on malformed shaders.
+    //
+    // Emit a conservative bounded loop:
+    // - Break if step==0.
+    // - Break if the loop counter moves past the end bound.
+    // - Break if a safety cap is exceeded.
+    const MAX_ITERS: u32 = 1024;
+
+    if init.loop_reg.file != RegFile::Loop {
+        return Err(err("loop init uses a non-loop register"));
+    }
+    if init.ctrl_reg.file != RegFile::ConstInt {
+        return Err(err("loop init uses a non-integer-constant register"));
+    }
+    if init.loop_reg.relative.is_some() || init.ctrl_reg.relative.is_some() {
+        return Err(err("relative addressing is not supported in loop operands"));
+    }
+
+    let pad = "  ".repeat(indent);
+    let loop_reg = reg_var_name(&init.loop_reg)?;
+    let ctrl = reg_var_name(&init.ctrl_reg)?;
+
+    let pad1 = "  ".repeat(indent + 1);
+    let pad2 = "  ".repeat(indent + 2);
+    let loop_id = state.next_loop_id;
+    state.next_loop_id = state.next_loop_id.wrapping_add(1);
+    let saved_loop_reg = format!("_aero_saved_loop_reg_{loop_id}");
+
+    let _ = writeln!(wgsl, "{pad}{{");
+    let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
+    let _ = writeln!(wgsl, "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};");
+    let _ = writeln!(wgsl, "{pad1}let _aero_loop_end: i32 = ({ctrl}).y;");
+    let _ = writeln!(wgsl, "{pad1}let _aero_loop_step: i32 = ({ctrl}).z;");
+    let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = ({ctrl}).x;");
+    let _ = writeln!(wgsl, "{pad1}loop {{");
+
+    let _ = writeln!(
+        wgsl,
+        "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}"
+    );
+    let _ = writeln!(wgsl, "{pad2}if (_aero_loop_step == 0) {{ break; }}");
+    let _ = writeln!(
+        wgsl,
+        "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
+    );
+
+    state.loop_stack.push(LoopRestore {
+        loop_reg: loop_reg.clone(),
+        saved_var: saved_loop_reg.clone(),
+    });
+    if body_guard == "true" {
+        emit_block(
+            wgsl,
+            body,
+            indent + 2,
+            depth + 1,
+            stage,
+            f32_defs,
+            sampler_types,
+            subroutine_infos,
+            state,
+        )?;
+    } else {
+        emit_block_predicated(
+            wgsl,
+            body,
+            body_guard,
+            indent + 2,
+            depth + 1,
+            stage,
+            f32_defs,
+            sampler_types,
+            subroutine_infos,
+            state,
+        )?;
+    }
+    state.loop_stack.pop();
+
+    let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
+    let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
+    let _ = writeln!(wgsl, "{pad1}}}");
+    let _ = writeln!(wgsl, "{pad1}{loop_reg} = {saved_loop_reg};");
+    let _ = writeln!(wgsl, "{pad}}}");
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_rep_stmt(
+    wgsl: &mut String,
+    count_reg: &RegRef,
+    body: &Block,
+    indent: usize,
+    depth: usize,
+    stage: ShaderStage,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
+    state: &mut EmitState,
+    body_guard: &str,
+) -> Result<(), WgslError> {
+    // D3D9 SM2/3 `rep i#` repeats the block `i#.x` times using `aL.x` as the loop counter.
+    //
+    // Emit a bounded WGSL loop to avoid hanging the GPU on malformed shaders.
+    const MAX_ITERS: u32 = 1024;
+
+    if count_reg.file != RegFile::ConstInt {
+        return Err(err("rep init uses a non-integer-constant register"));
+    }
+    if count_reg.relative.is_some() {
+        return Err(err("relative addressing is not supported in rep count operands"));
+    }
+
+    let pad = "  ".repeat(indent);
+    let loop_reg = reg_var_name(&RegRef {
+        file: RegFile::Loop,
+        index: 0,
+        relative: None,
+    })?;
+    let count = reg_var_name(count_reg)?;
+
+    let pad1 = "  ".repeat(indent + 1);
+    let pad2 = "  ".repeat(indent + 2);
+    let loop_id = state.next_loop_id;
+    state.next_loop_id = state.next_loop_id.wrapping_add(1);
+    let saved_loop_reg = format!("_aero_saved_loop_reg_{loop_id}");
+
+    let _ = writeln!(wgsl, "{pad}{{");
+    let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
+    let _ = writeln!(wgsl, "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};");
+    let _ = writeln!(wgsl, "{pad1}let _aero_rep_count: i32 = ({count}).x;");
+    let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = 0;");
+    let _ = writeln!(wgsl, "{pad1}loop {{");
+
+    let _ = writeln!(
+        wgsl,
+        "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}"
+    );
+    let _ = writeln!(
+        wgsl,
+        "{pad2}if ({loop_reg}.x >= _aero_rep_count) {{ break; }}"
+    );
+
+    state.loop_stack.push(LoopRestore {
+        loop_reg: loop_reg.clone(),
+        saved_var: saved_loop_reg.clone(),
+    });
+    if body_guard == "true" {
+        emit_block(
+            wgsl,
+            body,
+            indent + 2,
+            depth + 1,
+            stage,
+            f32_defs,
+            sampler_types,
+            subroutine_infos,
+            state,
+        )?;
+    } else {
+        emit_block_predicated(
+            wgsl,
+            body,
+            body_guard,
+            indent + 2,
+            depth + 1,
+            stage,
+            f32_defs,
+            sampler_types,
+            subroutine_infos,
+            state,
+        )?;
+    }
+    state.loop_stack.pop();
+
+    let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + 1;");
+    let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
+    let _ = writeln!(wgsl, "{pad1}}}");
+    let _ = writeln!(wgsl, "{pad1}{loop_reg} = {saved_loop_reg};");
+    let _ = writeln!(wgsl, "{pad}}}");
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_stmt(
     wgsl: &mut String,
     stmt: &Stmt,
@@ -2928,142 +3226,34 @@ fn emit_stmt(
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Loop { init, body } => {
-            // D3D9 SM2/3 `loop aL, i#` has a finite trip count derived from the integer constant
-            // register (i#.x=start, i#.y=end, i#.z=step). We must not emit an unbounded WGSL `loop {}`
-            // because it can hang the GPU on malformed shaders.
-            //
-            // Emit a conservative bounded loop:
-            // - Break if step==0.
-            // - Break if the loop counter moves past the end bound.
-            // - Break if a safety cap is exceeded.
-            const MAX_ITERS: u32 = 1024;
-
-            if init.loop_reg.file != RegFile::Loop {
-                return Err(err("loop init uses a non-loop register"));
-            }
-            if init.ctrl_reg.file != RegFile::ConstInt {
-                return Err(err("loop init uses a non-integer-constant register"));
-            }
-            if init.loop_reg.relative.is_some() || init.ctrl_reg.relative.is_some() {
-                return Err(err("relative addressing is not supported in loop operands"));
-            }
-
-            let loop_reg = reg_var_name(&init.loop_reg)?;
-            let ctrl = reg_var_name(&init.ctrl_reg)?;
-
-            let pad1 = "  ".repeat(indent + 1);
-            let pad2 = "  ".repeat(indent + 2);
-            let loop_id = state.next_loop_id;
-            state.next_loop_id = state.next_loop_id.wrapping_add(1);
-            let saved_loop_reg = format!("_aero_saved_loop_reg_{loop_id}");
-
-            let _ = writeln!(wgsl, "{pad}{{");
-            let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
-            let _ = writeln!(wgsl, "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};");
-            let _ = writeln!(wgsl, "{pad1}let _aero_loop_end: i32 = ({ctrl}).y;");
-            let _ = writeln!(wgsl, "{pad1}let _aero_loop_step: i32 = ({ctrl}).z;");
-            let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = ({ctrl}).x;");
-            let _ = writeln!(wgsl, "{pad1}loop {{");
-
-            let _ = writeln!(
+            emit_loop_stmt(
                 wgsl,
-                "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}"
-            );
-            let _ = writeln!(wgsl, "{pad2}if (_aero_loop_step == 0) {{ break; }}");
-            let _ = writeln!(
-                wgsl,
-                "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
-            );
-
-            state.loop_stack.push(LoopRestore {
-                loop_reg: loop_reg.clone(),
-                saved_var: saved_loop_reg.clone(),
-            });
-            emit_block(
-                wgsl,
+                init,
                 body,
-                indent + 2,
-                depth + 1,
+                indent,
+                depth,
                 stage,
                 f32_defs,
                 sampler_types,
                 subroutine_infos,
                 state,
+                "true",
             )?;
-            state.loop_stack.pop();
-
-            let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
-            let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
-            let _ = writeln!(wgsl, "{pad1}}}");
-            let _ = writeln!(wgsl, "{pad1}{loop_reg} = {saved_loop_reg};");
-            let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Rep { count_reg, body } => {
-            // D3D9 SM2/3 `rep i#` repeats the block `i#.x` times using `aL.x` as the loop counter.
-            //
-            // Emit a bounded WGSL loop to avoid hanging the GPU on malformed shaders.
-            const MAX_ITERS: u32 = 1024;
-
-            if count_reg.file != RegFile::ConstInt {
-                return Err(err("rep init uses a non-integer-constant register"));
-            }
-            if count_reg.relative.is_some() {
-                return Err(err(
-                    "relative addressing is not supported in rep count operands",
-                ));
-            }
-
-            let loop_reg = reg_var_name(&RegRef {
-                file: RegFile::Loop,
-                index: 0,
-                relative: None,
-            })?;
-            let count = reg_var_name(count_reg)?;
-
-            let pad1 = "  ".repeat(indent + 1);
-            let pad2 = "  ".repeat(indent + 2);
-            let loop_id = state.next_loop_id;
-            state.next_loop_id = state.next_loop_id.wrapping_add(1);
-            let saved_loop_reg = format!("_aero_saved_loop_reg_{loop_id}");
-
-            let _ = writeln!(wgsl, "{pad}{{");
-            let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
-            let _ = writeln!(wgsl, "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};");
-            let _ = writeln!(wgsl, "{pad1}let _aero_rep_count: i32 = ({count}).x;");
-            let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = 0;");
-            let _ = writeln!(wgsl, "{pad1}loop {{");
-
-            let _ = writeln!(
+            emit_rep_stmt(
                 wgsl,
-                "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}"
-            );
-            let _ = writeln!(
-                wgsl,
-                "{pad2}if ({loop_reg}.x >= _aero_rep_count) {{ break; }}"
-            );
-
-            state.loop_stack.push(LoopRestore {
-                loop_reg: loop_reg.clone(),
-                saved_var: saved_loop_reg.clone(),
-            });
-            emit_block(
-                wgsl,
+                count_reg,
                 body,
-                indent + 2,
-                depth + 1,
+                indent,
+                depth,
                 stage,
                 f32_defs,
                 sampler_types,
                 subroutine_infos,
                 state,
+                "true",
             )?;
-            state.loop_stack.pop();
-
-            let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + 1;");
-            let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
-            let _ = writeln!(wgsl, "{pad1}}}");
-            let _ = writeln!(wgsl, "{pad1}{loop_reg} = {saved_loop_reg};");
-            let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Break => {
             let _ = writeln!(wgsl, "{pad}break;");
