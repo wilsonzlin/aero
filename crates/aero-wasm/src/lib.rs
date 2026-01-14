@@ -20,9 +20,6 @@ pub use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
 mod guest_layout;
 
 #[cfg(target_arch = "wasm32")]
-mod wasm_guest_memory;
-
-#[cfg(target_arch = "wasm32")]
 mod runtime_alloc;
 
 #[cfg(target_arch = "wasm32")]
@@ -3575,7 +3572,9 @@ impl Machine {
             crate::validate_shared_guest_ram_layout("Machine.new_shared", guest_base, guest_size)?;
         let cfg = aero_machine::MachineConfig::browser_defaults(guest_size_u64);
 
-        let mem = crate::wasm_guest_memory::WasmLinearGuestMemory::new(guest_base, guest_size);
+        let mem = memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
+            js_error(format!("Machine.new_shared: failed to init shared guest RAM backend: {e}"))
+        })?;
         let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
