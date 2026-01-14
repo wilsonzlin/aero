@@ -4,7 +4,7 @@
 //! `docs/abi/aerogpu-pci-identity.md` and defined in
 //! `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`.
 //!
-//! The legacy model uses the deprecated PCI identity `VID=0x1AED, DID=0x0001`.
+//! The legacy model uses the deprecated PCI identity `VID=0x1A_ED, DID=0x0001`.
 
 use memory::MemoryBus;
 use std::time::{Duration, Instant};
