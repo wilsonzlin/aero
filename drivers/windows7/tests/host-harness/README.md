@@ -853,6 +853,17 @@ The host harness mirrors this into a stable host-side marker for log scraping:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|...`
 
+### virtio-snd negotiated mix format (VIO-020)
+
+Newer guest selftest binaries emit an informational marker surfacing the virtio-snd endpoint mix formats selected by
+Windows (shared-mode) / the driver negotiation logic:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
+
+Both the Python and PowerShell harnesses mirror this into a stable host-side marker for log scraping:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=<...>|capture=<...>`
+
 ### Why `x-pci-revision=0x01`?
 
 The Aero Windows 7 virtio device contract encodes the **contract major version** in the PCI
