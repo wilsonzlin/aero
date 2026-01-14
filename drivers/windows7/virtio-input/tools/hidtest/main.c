@@ -335,6 +335,7 @@ typedef struct SELECTED_DEVICE {
 static void free_selected_device(SELECTED_DEVICE *dev);
 static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out);
 static int run_selftest_json(const OPTIONS *opt);
+static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWORD *err_out, DWORD *ioctl_out);
 
 static volatile LONG g_stop_requested = 0;
 static HANDLE g_stop_event = NULL;
@@ -1559,13 +1560,26 @@ static int selftest_validate_device(const wchar_t *device_name, const SELECTED_D
     {
         DWORD coll_len = 0;
         DWORD coll_err = 0;
-        if (query_collection_descriptor_length(dev->handle, &coll_len, &coll_err)) {
+        DWORD coll_ioctl = 0;
+        if (query_collection_descriptor_length(dev->handle, &coll_len, &coll_err, &coll_ioctl)) {
             if (coll_len == expected_desc_len) {
-                selftest_logf(device_name, L"CollectionDescriptorLength", L"PASS", L"expected=%lu got=%lu",
-                              (unsigned long)expected_desc_len, (unsigned long)coll_len);
+                selftest_logf(
+                    device_name,
+                    L"CollectionDescriptorLength",
+                    L"PASS",
+                    L"expected=%lu got=%lu ioctl=0x%08lX",
+                    (unsigned long)expected_desc_len,
+                    (unsigned long)coll_len,
+                    (unsigned long)coll_ioctl);
             } else {
-                selftest_logf(device_name, L"CollectionDescriptorLength", L"FAIL", L"expected=%lu got=%lu",
-                              (unsigned long)expected_desc_len, (unsigned long)coll_len);
+                selftest_logf(
+                    device_name,
+                    L"CollectionDescriptorLength",
+                    L"FAIL",
+                    L"expected=%lu got=%lu ioctl=0x%08lX",
+                    (unsigned long)expected_desc_len,
+                    (unsigned long)coll_len,
+                    (unsigned long)coll_ioctl);
                 ok = 0;
             }
         } else if (coll_err == ERROR_INVALID_FUNCTION || coll_err == ERROR_NOT_SUPPORTED) {
@@ -1728,11 +1742,12 @@ static int query_report_descriptor_length(HANDLE handle, DWORD *len_out)
     return 1;
 }
 
-static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWORD *err_out)
+static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWORD *err_out, DWORD *ioctl_out)
 {
     BYTE buf[4096];
     DWORD bytes = 0;
     BOOL ok;
+    DWORD err;
 
     if (len_out == NULL) {
         return 0;
@@ -1741,24 +1756,40 @@ static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWO
     if (err_out != NULL) {
         *err_out = 0;
     }
+    if (ioctl_out != NULL) {
+        *ioctl_out = 0;
+    }
 
     ZeroMemory(buf, sizeof(buf));
 
+    err = 0;
+    SetLastError(ERROR_SUCCESS);
     ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
     if (ok && bytes != 0) {
         *len_out = bytes;
+        if (ioctl_out != NULL) {
+            *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR;
+        }
         return 1;
     }
+    err = ok ? ERROR_NO_DATA : GetLastError();
 
     bytes = 0;
+    SetLastError(ERROR_SUCCESS);
     ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
     if (ok && bytes != 0) {
         *len_out = bytes;
+        if (ioctl_out != NULL) {
+            *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT;
+        }
         return 1;
     }
 
     if (err_out != NULL) {
-        *err_out = GetLastError();
+        *err_out = ok ? ERROR_NO_DATA : GetLastError();
+    }
+    if (ioctl_out != NULL) {
+        *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT;
     }
     return 0;
 }
@@ -1990,6 +2021,10 @@ typedef struct SELFTEST_DEVICE_INFO {
     int report_desc_valid;
     DWORD hid_report_desc_len;
     int hid_report_desc_valid;
+    DWORD collection_desc_len;
+    int collection_desc_valid;
+    DWORD collection_desc_ioctl;
+    DWORD collection_desc_err;
 } SELFTEST_DEVICE_INFO;
 
 typedef struct SELFTEST_FAILURE {
@@ -2090,6 +2125,24 @@ static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
     } else {
         wprintf(L"null");
     }
+    wprintf(L",\"collectionDescLen\":");
+    if (info->collection_desc_valid) {
+        wprintf(L"%lu", info->collection_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"collectionDescIoctl\":");
+    if (info->collection_desc_valid) {
+        wprintf(L"%lu", (unsigned long)info->collection_desc_ioctl);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"collectionDescErr\":");
+    if (!info->collection_desc_valid && info->collection_desc_err != 0) {
+        wprintf(L"%lu", (unsigned long)info->collection_desc_err);
+    } else {
+        wprintf(L"null");
+    }
     wprintf(L"}");
 }
 
@@ -2143,6 +2196,10 @@ static int run_selftest_json(const OPTIONS *opt)
         int report_desc_valid = 0;
         DWORD hid_report_desc_len = 0;
         int hid_report_desc_valid = 0;
+        DWORD collection_desc_len = 0;
+        DWORD collection_desc_ioctl = 0;
+        DWORD collection_desc_err = 0;
+        int collection_desc_valid = 0;
         int is_virtio = 0;
         int is_keyboard = 0;
         int is_mouse = 0;
@@ -2193,6 +2250,7 @@ static int run_selftest_json(const OPTIONS *opt)
 
         report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
         hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
+        collection_desc_valid = query_collection_descriptor_length(handle, &collection_desc_len, &collection_desc_err, &collection_desc_ioctl);
 
         CloseHandle(handle);
 
@@ -2227,6 +2285,10 @@ static int run_selftest_json(const OPTIONS *opt)
             kbd.report_desc_valid = report_desc_valid;
             kbd.hid_report_desc_len = hid_report_desc_len;
             kbd.hid_report_desc_valid = hid_report_desc_valid;
+            kbd.collection_desc_len = collection_desc_len;
+            kbd.collection_desc_valid = collection_desc_valid;
+            kbd.collection_desc_ioctl = collection_desc_ioctl;
+            kbd.collection_desc_err = collection_desc_err;
         } else if (is_virtio && is_mouse && need_mouse && !mouse.found) {
             mouse.found = 1;
             mouse.index = iface_index;
@@ -2239,6 +2301,10 @@ static int run_selftest_json(const OPTIONS *opt)
             mouse.report_desc_valid = report_desc_valid;
             mouse.hid_report_desc_len = hid_report_desc_len;
             mouse.hid_report_desc_valid = hid_report_desc_valid;
+            mouse.collection_desc_len = collection_desc_len;
+            mouse.collection_desc_valid = collection_desc_valid;
+            mouse.collection_desc_ioctl = collection_desc_ioctl;
+            mouse.collection_desc_err = collection_desc_err;
         }
 
         free(detail);
@@ -2300,6 +2366,20 @@ static int run_selftest_json(const OPTIONS *opt)
                                  kbd.hid_report_desc_len);
             pass = 0;
         }
+
+        if (kbd.collection_desc_valid) {
+            if (kbd.collection_desc_len != VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN) {
+                selftest_add_failure(failures, &failure_count, L"keyboard", L"collectionDescLen", NULL, 1,
+                                     VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN, 1, kbd.collection_desc_len);
+                pass = 0;
+            }
+        } else if (kbd.collection_desc_err == ERROR_INVALID_FUNCTION || kbd.collection_desc_err == ERROR_NOT_SUPPORTED) {
+            // IOCTL not supported on this OS/stack (common on Win7). Treat as informational.
+        } else if (kbd.collection_desc_err != 0) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"collectionDescLen",
+                                 L"IOCTL_HID_GET_COLLECTION_DESCRIPTOR failed", 0, 0, 1, kbd.collection_desc_err);
+            pass = 0;
+        }
     }
 
     if (need_mouse && mouse.found) {
@@ -2339,6 +2419,20 @@ static int run_selftest_json(const OPTIONS *opt)
             selftest_add_failure(failures, &failure_count, L"mouse", L"reportDescLenConsistency",
                                  L"IOCTL vs HID descriptor report length mismatch", 1, mouse.report_desc_len, 1,
                                  mouse.hid_report_desc_len);
+            pass = 0;
+        }
+
+        if (mouse.collection_desc_valid) {
+            if (mouse.collection_desc_len != VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN) {
+                selftest_add_failure(failures, &failure_count, L"mouse", L"collectionDescLen", NULL, 1,
+                                     VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN, 1, mouse.collection_desc_len);
+                pass = 0;
+            }
+        } else if (mouse.collection_desc_err == ERROR_INVALID_FUNCTION || mouse.collection_desc_err == ERROR_NOT_SUPPORTED) {
+            // IOCTL not supported on this OS/stack (common on Win7). Treat as informational.
+        } else if (mouse.collection_desc_err != 0) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"collectionDescLen",
+                                 L"IOCTL_HID_GET_COLLECTION_DESCRIPTOR failed", 0, 0, 1, mouse.collection_desc_err);
             pass = 0;
         }
     }
