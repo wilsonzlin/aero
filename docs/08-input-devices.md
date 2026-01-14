@@ -109,6 +109,8 @@ For the full-system `Machine` wrapper, synthetic USB HID injection is available 
   - motion: `Machine.inject_usb_hid_mouse_move(dx, dy)` (`dy > 0` = down)
   - buttons: `Machine.inject_usb_hid_mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `Machine.inject_usb_hid_mouse_wheel(delta)` (`delta > 0` = wheel up)
+  - horizontal wheel: `Machine.inject_usb_hid_mouse_hwheel(delta)` (`delta > 0` = wheel right)
+  - combined: `Machine.inject_usb_hid_mouse_wheel2(wheel, hwheel)` (single report)
 - Gamepad: `Machine.inject_usb_hid_gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
 
 In the production worker runtime, input is typically translated into USB HID reports using the WASM export `UsbHidBridge`:
@@ -119,6 +121,7 @@ In the production worker runtime, input is typically translated into USB HID rep
   - motion: `UsbHidBridge.mouse_move(dx, dy)` (`dy > 0` = down)
   - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `UsbHidBridge.mouse_wheel(delta)` (`delta > 0` = wheel up)
+  - horizontal wheel: `UsbHidBridge.mouse_hwheel(delta)` (`delta > 0` = wheel right; optional for older WASM builds)
 - Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
 
 See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible external hub topology + reserved ports.

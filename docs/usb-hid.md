@@ -238,18 +238,36 @@ When wiring browser events to the device model, invert as needed:
 hid_wheel_step = -WheelEvent.deltaY.signum()
 ```
 
+### Horizontal wheel (`WheelEvent.deltaX`)
+
+Many mice and trackpads can also generate **horizontal scroll** events, which are exposed by browsers
+as `WheelEvent.deltaX`.
+
+In Aero's synthetic USB mouse, horizontal scroll is modeled using the HID **AC Pan** usage (Consumer
+page `0x0C`, usage `0x0238`), encoded as a signed 8-bit relative value in the **report protocol**
+input report.
+
+- `deltaX > 0` (scroll right) should typically map to a **positive** AC Pan value.
+- Unlike `deltaY`, horizontal scroll usually does **not** need sign inversion:
+
+```
+hid_hwheel_step = WheelEvent.deltaX.signum()
+```
+
 ### Report model
 
-The modeled mouse uses a 4-byte report in **HID report protocol**:
+The modeled mouse uses a 5-byte report in **HID report protocol**:
 
 ```
 Byte 0: buttons (bits 0..4), remaining bits padding
 Byte 1: X delta (i8)
 Byte 2: Y delta (i8)
 Byte 3: wheel delta (i8)
+Byte 4: horizontal wheel delta / AC Pan (i8)
 ```
 
-It also supports **HID boot protocol** (host-selectable via `SET_PROTOCOL`), which omits the wheel byte:
+It also supports **HID boot protocol** (host-selectable via `SET_PROTOCOL`), which omits the wheel
+bytes:
 
 ```
 Byte 0: buttons
