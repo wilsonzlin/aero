@@ -23,7 +23,7 @@ Currently:
   - Useful for stressing the keyboard LED/statusq path when `StatusQDropOnFull` is enabled:
     - `hidtest.exe --keyboard --led-spam 10000`
     - `hidtest.exe --keyboard --reset-counters` (start from a clean monotonic-counter baseline; requires write access, rerun elevated if needed)
-    - `hidtest.exe --keyboard --counters` (watch `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
+    - `hidtest.exe --keyboard --counters` (watch `LedWritesRequested` vs `LedWritesSubmitted`/`StatusQSubmits`, `StatusQCompletions`, and `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
   - Useful for diagnosing buffered input when there are no pending `IOCTL_HID_READ_REPORT` IRPs:
     - `hidtest.exe --counters`
       - watch `PendingRingDepth`/`PendingRingDrops` (READ_REPORT backlog in `PendingReportRing[]`)

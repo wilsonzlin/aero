@@ -496,6 +496,14 @@ else
   echo "warning: python3 not found; skipping Win7 virtio-input HID descriptor sync check" >&2
 fi
 
+# Win7 virtio-input guardrail: ensure the driver diagnostics ABI stays in sync
+# between the driver source (log.h) and user-mode tooling (hidtest).
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/ci/check-win7-virtio-input-diagnostics-abi-sync.py
+else
+  echo "warning: python3 not found; skipping Win7 virtio-input diagnostics ABI sync check" >&2
+fi
+
 # Win7 test suite docs: keep the README's "Expected results" list in sync with the
 # test manifest so newly-added tests stay documented.
 if command -v python3 >/dev/null 2>&1; then
