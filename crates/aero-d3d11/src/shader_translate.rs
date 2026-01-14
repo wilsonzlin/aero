@@ -1432,10 +1432,12 @@ impl IoMaps {
                     // than a numeric `f32(...)` conversion.
                     return Ok(expand_to_vec4("bitcast<f32>(input.instance_id)", p));
                 }
-                let p = self.inputs.get(&reg).ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "input",
-                    register: reg,
-                })?;
+                let p = self.inputs.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
+                        io: "input",
+                        register: reg,
+                    },
+                )?;
                 if p.sys_value.is_some() {
                     return Err(ShaderTranslateError::UnsupportedSystemValue {
                         stage,
@@ -1895,7 +1897,9 @@ impl ResourceUsage {
             // Geometry shaders are executed via a compute emulation path, but still use their own
             // stage-scoped bind group (`@group(3)`) so they don't collide with true compute shader
             // resources (`@group(2)`).
-            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => wgpu::ShaderStages::COMPUTE,
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                wgpu::ShaderStages::COMPUTE
+            }
             _ => wgpu::ShaderStages::empty(),
         };
         let group = Self::stage_bind_group(stage);
@@ -2978,29 +2982,27 @@ fn emit_instructions(
                 w.line("} else {");
                 w.indent();
             }
-            Sm4Inst::EndIf => {
-                match blocks.last() {
-                    Some(BlockKind::If { .. }) => {
-                        blocks.pop();
-                        w.dedent();
-                        w.line("}");
-                    }
-                    Some(other) => {
-                        return Err(ShaderTranslateError::MalformedControlFlow {
-                            inst_index,
-                            expected: "if".to_owned(),
-                            found: other.describe(),
-                        });
-                    }
-                    None => {
-                        return Err(ShaderTranslateError::MalformedControlFlow {
-                            inst_index,
-                            expected: "if".to_owned(),
-                            found: "none".to_owned(),
-                        });
-                    }
+            Sm4Inst::EndIf => match blocks.last() {
+                Some(BlockKind::If { .. }) => {
+                    blocks.pop();
+                    w.dedent();
+                    w.line("}");
                 }
-            }
+                Some(other) => {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "if".to_owned(),
+                        found: other.describe(),
+                    });
+                }
+                None => {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "if".to_owned(),
+                        found: "none".to_owned(),
+                    });
+                }
+            },
             Sm4Inst::Loop => {
                 w.line("loop {");
                 w.indent();
@@ -3666,9 +3668,7 @@ fn emit_instructions(
                 // Output packing:
                 // - x = total byte size
                 // - yzw = 0
-                let expr = format!(
-                    "bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))"
-                );
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::BufInfoStructured {
@@ -3684,9 +3684,8 @@ fn emit_instructions(
                 // - x = element count
                 // - y = stride (bytes)
                 // - zw = 0
-                let expr = format!(
-                    "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
-                );
+                let expr =
+                    format!("bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::WorkgroupBarrier => {
@@ -5002,7 +5001,9 @@ mod tests {
 
     #[test]
     fn malformed_control_flow_endif_without_if_triggers_error() {
-        let isgn = DxbcSignature { parameters: Vec::new() };
+        let isgn = DxbcSignature {
+            parameters: Vec::new(),
+        };
         let osgn = DxbcSignature {
             parameters: vec![DxbcSignatureParameter {
                 semantic_name: "SV_Target".to_owned(),
