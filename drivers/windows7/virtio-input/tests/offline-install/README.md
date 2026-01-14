@@ -10,8 +10,8 @@ test images where you want input working immediately).
 >
 > - Keyboard/mouse (`aero_virtio_input.inf`):
 >   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4`
->   - plus fallback: `PCI\VEN_1AF4&DEV_1052&REV_01` (when subsystem IDs are not exposed)
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
+> - Optional legacy alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`): fallback `PCI\VEN_1AF4&DEV_1052&REV_01` (when subsystem IDs are not exposed)
 
 The commands below assume you already have a **built driver package directory** containing:
 
