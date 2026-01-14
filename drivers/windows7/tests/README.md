@@ -33,6 +33,12 @@ drivers/windows7/tests/
 `guest-selftest/` builds `aero-virtio-selftest.exe`, a Win7 user-mode console tool that:
 - Detects virtio devices via SetupAPI (hardware IDs like `VEN_1AF4` / `VIRTIO`).
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
+- Includes an opt-in virtio-blk runtime resize test (`virtio-blk-resize`) that validates **dynamic capacity change**
+  support (Windows should observe a larger disk size after the host grows the backing device at runtime).
+  - By default the guest selftest reports `virtio-blk-resize|SKIP|flag_not_set`; provision the guest to run the selftest
+    with `--test-blk-resize` / env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1` to enable it.
+  - When the host harness is run with `--with-blk-resize` / `-WithBlkResize`, it waits for the guest `READY` marker,
+    issues a QMP resize (`blockdev-resize` with fallback to legacy `block_resize`), and requires `virtio-blk-resize|PASS`.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Emits a `virtio-input-events` marker that can be used to validate **end-to-end input report delivery** when the host
@@ -72,14 +78,20 @@ drivers/windows7/tests/
   - `COM1` (serial)
 
  The selftest emits machine-parseable markers:
- 
- ```
- # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields:
-  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
-    AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-    AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
-    AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
-    AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
+  
+  ```
+  # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields:
+   AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
+
+   # Optional: virtio-blk runtime resize (requires `--test-blk-resize` in the guest and host-side QMP resize):
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
+
+     AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+     AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+     AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
+     AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
 
   # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
@@ -119,6 +131,8 @@ When the harness is run with:
 - `-WithVirtioSnd` / `--with-virtio-snd`, `virtio-snd`, `virtio-snd-capture`, and `virtio-snd-duplex` must `PASS` (not `SKIP`).
 - `-WithSndBufferLimits` / `--with-snd-buffer-limits`, `virtio-snd-buffer-limits` must `PASS` (and a guest `SKIP|flag_not_set`
   or missing marker is treated as a hard failure).
+- `-WithBlkResize` / `--with-blk-resize`, `virtio-blk-resize` must `PASS` (and a guest `SKIP|flag_not_set` or missing marker
+  is treated as a hard failure). This path also triggers a runtime QMP resize.
 
 Note:
 - The guest selftest also emits standalone IRQ diagnostic lines for `virtio-net` / `virtio-snd` / `virtio-input`:
