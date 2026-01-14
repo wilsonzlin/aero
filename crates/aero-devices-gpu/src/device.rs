@@ -3,6 +3,7 @@ use memory::MemoryBus;
 use crate::executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::regs::{irq_bits, mmio, AeroGpuRegs, FEATURE_VBLANK};
 use crate::scanout::AeroGpuFormat;
+use crate::vblank::{period_ns_from_hz, period_ns_to_reg};
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuBar0MmioDeviceConfig {
@@ -41,18 +42,11 @@ pub struct AeroGpuBar0MmioDevice {
 
 impl AeroGpuBar0MmioDevice {
     pub fn new(cfg: AeroGpuBar0MmioDeviceConfig) -> Self {
-        let vblank_period_ns = cfg.vblank_hz.and_then(|hz| {
-            if hz == 0 {
-                return None;
-            }
-            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to
-            // 16_666_666).
-            Some(1_000_000_000u64.div_ceil(hz as u64))
-        });
+        let vblank_period_ns = period_ns_from_hz(cfg.vblank_hz);
 
         let mut regs = AeroGpuRegs::default();
         if let Some(period_ns) = vblank_period_ns {
-            regs.scanout0_vblank_period_ns = period_ns.min(u64::from(u32::MAX)) as u32;
+            regs.scanout0_vblank_period_ns = period_ns_to_reg(period_ns);
         } else {
             // If vblank is disabled by configuration, also clear the advertised feature bit so
             // guests don't wait on a vblank that will never arrive.
