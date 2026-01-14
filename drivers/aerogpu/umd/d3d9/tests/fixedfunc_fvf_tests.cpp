@@ -833,7 +833,7 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
-  const size_t len = dev->cmd.bytes_used();
+  size_t len = dev->cmd.bytes_used();
   if (!Check(ValidateStream(buf, len), "ValidateStream(XYZRHW|DIFFUSE)")) {
     return false;
   }
@@ -4322,6 +4322,377 @@ bool TestApplyStateBlockFogRenderStateAffectsNextDraw() {
                "ps_consts_f contains fog params from state block (B)")) {
       DeleteSb();
       return false;
+    }
+  }
+
+  DeleteSb();
+  return true;
+}
+
+bool TestApplyStateBlockFogDoesNotSelectFogPsInVsOnlyInterop() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateShader != nullptr, "pfnCreateShader is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShader != nullptr, "pfnSetShader is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Use a trivial fixed-function stage chain (diffuse passthrough) so the only
+  // difference between shader variants is fog. Also ensure ALPHAOP is valid to
+  // avoid spurious INVALIDCALL failures.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaDiffuse, "stage0 COLORARG1=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u},
+  };
+
+  // Pre-create both the fog-off and fog-on fixed-function pixel shaders in full
+  // fixed-function mode so the VS-only interop ApplyStateBlock path can be
+  // validated without shader creation noise.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(seed fog-off PS)")) {
+    return false;
+  }
+
+  Shader* ps_off = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_off = dev->ps;
+  }
+  if (!Check(ps_off != nullptr, "fog off: PS bound")) {
+    return false;
+  }
+
+  constexpr float fog_start = 0.25f;
+  constexpr float fog_end = 0.75f;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(seed fog-on PS)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* fog_buf = dev->cmd.data();
+  const size_t fog_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(fog_buf, fog_len), "ValidateStream(fog-on seed draw)")) {
+    return false;
+  }
+
+  Shader* ps_fog = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_fog = dev->ps;
+  }
+  if (!Check(ps_fog != nullptr, "fog on: PS bound")) {
+    return false;
+  }
+  if (!Check(ps_fog != ps_off, "fog toggle selects distinct fixed-function PS variant")) {
+    return false;
+  }
+
+  // Switch back to fog-off baseline before entering VS-only interop mode.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0 restore)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0 restore)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(return to fog-off baseline)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_off, "fog-off baseline reuses fog-off PS variant")) {
+      return false;
+    }
+  }
+
+  // Bind only a user VS (PS stays NULL) to enter VS-only interop. Fog must not
+  // affect the fixed-function PS selection in this mode (it would require fog
+  // coordinates that user VS output layouts can't guarantee).
+  D3D9DDI_HSHADER hUserVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStageVs,
+                                            fixedfunc::kVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor)),
+                                            &hUserVs);
+  if (!Check(hr == S_OK, "CreateShader(user VS)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hUserVs);
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hUserVs);
+  if (!Check(hr == S_OK, "SetShader(VS=user)")) {
+    return false;
+  }
+
+  Shader* user_vs = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    user_vs = dev->user_vs;
+    if (!Check(user_vs != nullptr, "user VS bound")) {
+      return false;
+    }
+    if (!Check(dev->vs == user_vs, "VS-only interop binds the user VS")) {
+      return false;
+    }
+    if (!Check(dev->ps == ps_off, "VS-only interop uses fog-off PS variant (baseline)")) {
+      return false;
+    }
+  }
+
+  // Record a state block that enables fog.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(fog enable)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1 recorded)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR recorded)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red recorded)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART recorded)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND recorded)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(fog enable)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore baseline fog-off render state before applying the block.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0 restore before apply)")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0 restore before apply)")) {
+    DeleteSb();
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_off, "pre-apply: PS is fog-off variant")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  // Apply the fog state block in VS-only interop mode. The fixed-function PS must
+  // remain the fog-off variant.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(fog enable; VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs == user_vs, "ApplyStateBlock preserves user VS (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->ps == ps_off, "ApplyStateBlock does not select fog PS (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock fog; VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    DeleteSb();
+    return false;
+  }
+
+  // Fog constants must not be uploaded because the fog PS variant must not be
+  // selected when a user VS is bound.
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1u && sc->vec4_count == 2u) {
+      DeleteSb();
+      return Check(false, "ApplyStateBlock must not upload fog constants in VS-only interop");
+    }
+  }
+
+  // Any shader rebinds must keep the fog-off PS bound.
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!binds.empty()) {
+    const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+    if (!Check(last_bind->vs == user_vs->handle, "ApplyStateBlock binds user VS (if rebinding)")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(last_bind->ps == ps_off->handle, "ApplyStateBlock binds fog-off PS (if rebinding)")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  // Draw once: PS must still be fog-off and must not upload fog constants.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after ApplyStateBlock fog; VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs == user_vs, "draw preserves user VS (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->ps == ps_off, "draw preserves fog-off PS (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(draw after ApplyStateBlock fog; VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "draw after ApplyStateBlock emits no CREATE_SHADER_DXBC (VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1u && sc->vec4_count == 2u) {
+      DeleteSb();
+      return Check(false, "draw must not upload fog constants in VS-only interop");
     }
   }
 
@@ -17605,6 +17976,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockFogRenderStateAffectsNextDraw()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockFogDoesNotSelectFogPsInVsOnlyInterop()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
