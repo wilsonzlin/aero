@@ -85,6 +85,18 @@ struct HasPfnSetShaderConstB<T, std::void_t<decltype(&T::pfnSetShaderConstB)>>
     : std::true_type {};
 
 template <typename T, typename = void>
+struct HasPfnGetShaderConstI : std::false_type {};
+template <typename T>
+struct HasPfnGetShaderConstI<T, std::void_t<decltype(&T::pfnGetShaderConstI)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
+struct HasPfnGetShaderConstB : std::false_type {};
+template <typename T>
+struct HasPfnGetShaderConstB<T, std::void_t<decltype(&T::pfnGetShaderConstB)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
 struct HasPfnCaptureStateBlock : std::false_type {};
 template <typename T>
 struct HasPfnCaptureStateBlock<T, std::void_t<decltype(&T::pfnCaptureStateBlock)>>
@@ -14486,6 +14498,211 @@ bool TestSetShaderConstIBSkipsRedundantCommandsImpl() {
 
 bool TestSetShaderConstIBSkipsRedundantCommands() {
   return TestSetShaderConstIBSkipsRedundantCommandsImpl<D3D9DDI_DEVICEFUNCS>();
+}
+
+template <typename DeviceFuncsT>
+bool TestGetShaderConstIBRoundTripImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value ||
+                !HasPfnGetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnGetShaderConstB<DeviceFuncsT>::value) {
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      bool has_adapter = false;
+      bool has_device = false;
+
+      ~Cleanup() {
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!Check(cleanup.device_funcs.pfnSetShaderConstI != nullptr, "SetShaderConstI must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnSetShaderConstB != nullptr, "SetShaderConstB must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnGetShaderConstI != nullptr, "GetShaderConstI must be available")) {
+      return false;
+    }
+    if (!Check(cleanup.device_funcs.pfnGetShaderConstB != nullptr, "GetShaderConstB must be available")) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(4096, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    // Round-trip VS/PS int constants: ensure the stages are independent.
+    const uint32_t i_start = 5;
+    const int32_t vs_i5[4] = {100, 101, 102, 103};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStageVs, i_start, vs_i5, 1);
+    if (!Check(hr == S_OK, "SetShaderConstI(VS, i5)")) {
+      return false;
+    }
+
+    const uint32_t ps_i_count = 2;
+    const int32_t ps_i5_i6[ps_i_count * 4] = {1, 2, 3, 4, 5, 6, 7, 8};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kD3d9ShaderStagePs, i_start, ps_i5_i6, ps_i_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(PS, i5..i6)")) {
+      return false;
+    }
+
+    using PfnGetI = decltype(cleanup.device_funcs.pfnGetShaderConstI);
+    using GetIStageT = typename FnTraits<PfnGetI>::template Arg<1>;
+    using GetIStartT = typename FnTraits<PfnGetI>::template Arg<2>;
+    using GetIDataPtrT = typename FnTraits<PfnGetI>::template Arg<3>;
+    using GetIDataT = std::remove_pointer_t<GetIDataPtrT>;
+    using GetICountT = typename FnTraits<PfnGetI>::template Arg<4>;
+
+    std::array<GetIDataT, 4> out_vs_i{};
+    hr = cleanup.device_funcs.pfnGetShaderConstI(create_dev.hDevice,
+                                                 static_cast<GetIStageT>(kD3d9ShaderStageVs),
+                                                 static_cast<GetIStartT>(i_start),
+                                                 out_vs_i.data(),
+                                                 static_cast<GetICountT>(1));
+    if (!Check(hr == S_OK, "GetShaderConstI(VS, i5)")) {
+      return false;
+    }
+    for (size_t i = 0; i < out_vs_i.size(); ++i) {
+      if (!Check(static_cast<int32_t>(out_vs_i[i]) == vs_i5[i], "GetShaderConstI(VS) returns set values")) {
+        return false;
+      }
+    }
+
+    std::array<GetIDataT, ps_i_count * 4> out_ps_i{};
+    hr = cleanup.device_funcs.pfnGetShaderConstI(create_dev.hDevice,
+                                                 static_cast<GetIStageT>(kD3d9ShaderStagePs),
+                                                 static_cast<GetIStartT>(i_start),
+                                                 out_ps_i.data(),
+                                                 static_cast<GetICountT>(ps_i_count));
+    if (!Check(hr == S_OK, "GetShaderConstI(PS, i5..i6)")) {
+      return false;
+    }
+    for (size_t i = 0; i < out_ps_i.size(); ++i) {
+      if (!Check(static_cast<int32_t>(out_ps_i[i]) == ps_i5_i6[i], "GetShaderConstI(PS) returns set values")) {
+        return false;
+      }
+    }
+
+    // Round-trip PS bool constants: setters normalize non-zero inputs to 1.
+    const uint32_t b_start = 7;
+    const uint32_t b_count = 3;
+    const BOOL b_in[b_count] = {0, static_cast<BOOL>(0xFFFF'FFFFu), 0};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kD3d9ShaderStagePs, b_start, b_in, b_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(PS, b7..b9)")) {
+      return false;
+    }
+
+    using PfnGetB = decltype(cleanup.device_funcs.pfnGetShaderConstB);
+    using GetBStageT = typename FnTraits<PfnGetB>::template Arg<1>;
+    using GetBStartT = typename FnTraits<PfnGetB>::template Arg<2>;
+    using GetBDataPtrT = typename FnTraits<PfnGetB>::template Arg<3>;
+    using GetBDataT = std::remove_pointer_t<GetBDataPtrT>;
+    using GetBCountT = typename FnTraits<PfnGetB>::template Arg<4>;
+
+    std::array<GetBDataT, b_count> out_b{};
+    hr = cleanup.device_funcs.pfnGetShaderConstB(create_dev.hDevice,
+                                                 static_cast<GetBStageT>(kD3d9ShaderStagePs),
+                                                 static_cast<GetBStartT>(b_start),
+                                                 out_b.data(),
+                                                 static_cast<GetBCountT>(b_count));
+    if (!Check(hr == S_OK, "GetShaderConstB(PS, b7..b9)")) {
+      return false;
+    }
+    const uint32_t expected_b[b_count] = {0u, 1u, 0u};
+    for (size_t i = 0; i < out_b.size(); ++i) {
+      if (!Check(static_cast<uint32_t>(out_b[i]) == expected_b[i], "GetShaderConstB returns normalized values")) {
+        return false;
+      }
+    }
+
+    // Stage normalization: any non-VS stage should behave like PS.
+    constexpr uint32_t kWeirdStage = 42u;
+    const uint32_t i_norm_start = 10;
+    const int32_t i_norm[4] = {-9, -8, -7, -6};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kWeirdStage, i_norm_start, i_norm, 1);
+    if (!Check(hr == S_OK, "SetShaderConstI(weird stage)")) {
+      return false;
+    }
+    std::array<GetIDataT, 4> out_i_norm{};
+    hr = cleanup.device_funcs.pfnGetShaderConstI(create_dev.hDevice,
+                                                 static_cast<GetIStageT>(kD3d9ShaderStagePs),
+                                                 static_cast<GetIStartT>(i_norm_start),
+                                                 out_i_norm.data(),
+                                                 static_cast<GetICountT>(1));
+    if (!Check(hr == S_OK, "GetShaderConstI(PS, normalized)")) {
+      return false;
+    }
+    for (size_t i = 0; i < out_i_norm.size(); ++i) {
+      if (!Check(static_cast<int32_t>(out_i_norm[i]) == i_norm[i], "GetShaderConstI reads normalized stage values")) {
+        return false;
+      }
+    }
+
+    const uint32_t b_norm_start = 20;
+    const BOOL b_norm[1] = {static_cast<BOOL>(1)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kWeirdStage, b_norm_start, b_norm, 1);
+    if (!Check(hr == S_OK, "SetShaderConstB(weird stage)")) {
+      return false;
+    }
+    std::array<GetBDataT, 1> out_b_norm{};
+    hr = cleanup.device_funcs.pfnGetShaderConstB(create_dev.hDevice,
+                                                 static_cast<GetBStageT>(kD3d9ShaderStagePs),
+                                                 static_cast<GetBStartT>(b_norm_start),
+                                                 out_b_norm.data(),
+                                                 static_cast<GetBCountT>(1));
+    if (!Check(hr == S_OK, "GetShaderConstB(PS, normalized)")) {
+      return false;
+    }
+    return Check(static_cast<uint32_t>(out_b_norm[0]) == 1u, "GetShaderConstB reads normalized stage values");
+  }
+}
+
+bool TestGetShaderConstIBRoundTrip() {
+  return TestGetShaderConstIBRoundTripImpl<D3D9DDI_DEVICEFUNCS>();
 }
 
 template <typename DeviceFuncsT, uint32_t D3dStage, uint32_t ExpectedStage>
@@ -40824,6 +41041,7 @@ int main() {
   RUN_TEST(TestSetShaderConstIBEmitsCommands);
   RUN_TEST(TestSetShaderConstIBSkipsRedundantCommands);
   RUN_TEST(TestSetShaderConstIBNormalizesStage);
+  RUN_TEST(TestGetShaderConstIBRoundTrip);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIB);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIB);
