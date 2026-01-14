@@ -9215,9 +9215,10 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 &index_params.to_le_bytes(),
             );
 
-            let index_gen = super::tessellation::tri_domain_integer::TriDomainIntegerIndexGen::new(
-                &self.device,
-            );
+            let index_gen = self
+                .tessellation
+                .pipelines_mut()
+                .tri_domain_integer_index_gen(&self.device);
             let out_i_size = wgpu::BufferSize::new(tess_index_alloc.size)
                 .expect("tessellation expanded index alloc must be non-empty");
             let index_params_binding = wgpu::BufferBinding {

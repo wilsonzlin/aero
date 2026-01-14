@@ -20,6 +20,7 @@ use crate::binding_model::{
 
 use super::layout_pass;
 use super::tessellator;
+use super::tri_domain_integer;
 use super::vs_as_compute::{VsAsComputeConfig, VsAsComputePipeline};
 use crate::runtime::expansion_scratch::ExpansionScratchAlloc;
 use crate::runtime::vertex_pulling::VertexPullingLayout;
@@ -87,6 +88,7 @@ pub(crate) struct TessellationPipelines {
     vs_as_compute: HashMap<VsAsComputePipelineKey, VsAsComputePipeline>,
     hs_passthrough: Option<HsPassthroughPipeline>,
     layout_pass: Option<LayoutPassPipeline>,
+    tri_domain_integer_index_gen: Option<tri_domain_integer::TriDomainIntegerIndexGen>,
     #[allow(dead_code)]
     ds_passthrough: Option<DsPassthroughPipeline>,
 }
@@ -146,6 +148,19 @@ impl TessellationPipelines {
             self.layout_pass = Some(LayoutPassPipeline::new(device)?);
         }
         Ok(self.layout_pass.as_ref().expect("pipeline inserted above"))
+    }
+
+    pub(crate) fn tri_domain_integer_index_gen(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> &tri_domain_integer::TriDomainIntegerIndexGen {
+        if self.tri_domain_integer_index_gen.is_none() {
+            self.tri_domain_integer_index_gen =
+                Some(tri_domain_integer::TriDomainIntegerIndexGen::new(device));
+        }
+        self.tri_domain_integer_index_gen
+            .as_ref()
+            .expect("pipeline inserted above")
     }
 
     #[allow(dead_code)]
