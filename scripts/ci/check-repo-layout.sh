@@ -692,7 +692,8 @@ cmake_allowed_extras = {
 extra_cmake = sorted((cmake_targets - cmake_allowed_extras) - set(manifest_tests))
 if extra_cmake:
     raise SystemExit(
-        f"{cmake_path}: aerogpu_add_win7_test target(s) not present in tests_manifest.txt: {', '.join(extra_cmake)}"
+        f"{cmake_path}: aerogpu_add_win7_test target(s) not present in tests_manifest.txt: {', '.join(extra_cmake)}\n"
+        "Tip: add the new test(s) to tests_manifest.txt (or remove/rename the extra CMake targets)"
     )
 
 # Ensure the built-in fallback list stays in sync with the manifest. This is used
@@ -700,11 +701,17 @@ if extra_cmake:
 runner_text = runner_path.read_text(encoding="utf-8", errors="replace")
 m = re.search(r"const\s+char\*\s+const\s+kFallbackTests\[\]\s*=\s*\{(.*?)\};", runner_text, re.S)
 if not m:
-    raise SystemExit(f"{runner_path}: could not find kFallbackTests[] fallback list")
+    raise SystemExit(
+        f"{runner_path}: could not find kFallbackTests[] fallback list\n"
+        "Tip: keep a built-in kFallbackTests[] array for binary-only distributions that do not bundle tests_manifest.txt"
+    )
 fallback_tests_list = re.findall(r'"([a-z0-9_]+)"', m.group(1))
 fallback_tests_set = set(fallback_tests_list)
 if len(fallback_tests_set) != len(fallback_tests_list):
-    raise SystemExit(f"{runner_path}: kFallbackTests[] contains duplicate entries")
+    raise SystemExit(
+        f"{runner_path}: kFallbackTests[] contains duplicate entries\n"
+        "Tip: run 'python3 scripts/sync-aerogpu-win7-test-runner-fallback-tests.py' to regenerate the list from tests_manifest.txt"
+    )
 missing_fallback = [t for t in manifest_tests if t not in fallback_tests_set]
 extra_fallback = [t for t in fallback_tests_list if t not in set(manifest_tests)]
 if missing_fallback or extra_fallback:
