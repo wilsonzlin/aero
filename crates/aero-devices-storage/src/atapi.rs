@@ -594,7 +594,10 @@ impl AtapiCdrom {
         // We only advertise the "Media" event class.
         const EVENT_CLASS_MEDIA: u8 = 0x08;
 
-        if request == 0 {
+        // If the guest requests event classes we don't implement, still return a valid header that
+        // advertises the supported classes. (Windows probes supported classes first, then polls
+        // only the Media class.)
+        if request == 0 || (request & EVENT_CLASS_MEDIA) == 0 {
             // Return just the event header so the guest can learn which classes are supported.
             let mut out = vec![0u8; 4];
             // Event Data Length is the number of bytes following the first two bytes.
@@ -738,10 +741,10 @@ fn write_ata_string(dst_words: &mut [u16], src: &str, byte_len: usize) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+    mod tests {
+        use super::*;
 
-    fn gesn_packet(request: u8, alloc_len: u16) -> [u8; 12] {
+        fn gesn_packet(request: u8, alloc_len: u16) -> [u8; 12] {
         let mut pkt = [0u8; 12];
         pkt[0] = 0x4A;
         pkt[4] = request;
@@ -757,10 +760,10 @@ mod tests {
     }
 
     #[test]
-    fn get_event_status_notification_succeeds_without_media_request_0() {
-        let mut dev = AtapiCdrom::new(None);
+        fn get_event_status_notification_succeeds_without_media_request_0() {
+            let mut dev = AtapiCdrom::new(None);
 
-        let pkt = gesn_packet(0, 0xFFFF);
+            let pkt = gesn_packet(0, 0xFFFF);
         let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
             panic!("expected DataIn for GET EVENT STATUS NOTIFICATION");
         };
@@ -768,13 +771,30 @@ mod tests {
         assert_eq!(data.len(), 4);
         assert_eq!(&data[0..2], &2u16.to_be_bytes());
         assert_eq!(data[2], 0x00, "notification class should be 0 (no event)");
-        assert_eq!(data[3] & 0x08, 0x08, "media event class should be advertised");
-    }
+            assert_eq!(data[3] & 0x08, 0x08, "media event class should be advertised");
+        }
 
-    #[test]
-    fn get_event_status_notification_succeeds_without_media_and_preserves_sense() {
-        let mut dev = AtapiCdrom::new(None);
-        dev.set_sense(0x05, 0xDE, 0xAD);
+        #[test]
+        fn get_event_status_notification_request_unsupported_class_returns_header_only() {
+            let mut dev = AtapiCdrom::new(None);
+
+            // Request an unsupported class (Operation Change). We should still succeed and return
+            // the 4-byte header advertising the Media class.
+            let pkt = gesn_packet(0x01, 0xFFFF);
+            let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
+                panic!("expected DataIn for GET EVENT STATUS NOTIFICATION");
+            };
+
+            assert_eq!(data.len(), 4);
+            assert_eq!(&data[0..2], &2u16.to_be_bytes());
+            assert_eq!(data[2], 0x00, "notification class should be 0 (no event)");
+            assert_eq!(data[3] & 0x08, 0x08, "media event class should be advertised");
+        }
+
+        #[test]
+        fn get_event_status_notification_succeeds_without_media_and_preserves_sense() {
+            let mut dev = AtapiCdrom::new(None);
+            dev.set_sense(0x05, 0xDE, 0xAD);
 
         let pkt = gesn_packet(0x08, 0xFFFF);
         let PacketResult::DataIn(data) = dev.handle_packet(&pkt, false) else {
