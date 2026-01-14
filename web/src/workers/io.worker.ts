@@ -2320,6 +2320,12 @@ function maybeInitSyntheticUsbHidDevices(): void {
       "usb-hid-passthrough",
       syntheticUsbGamepad,
     );
+    xhciHidTopology.attachDevice(
+      SYNTHETIC_USB_HID_CONSUMER_CONTROL_DEVICE_ID,
+      SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH,
+      "usb-hid-passthrough",
+      syntheticUsbConsumerControl,
+    );
     syntheticUsbHidAttached = true;
   }
 }
