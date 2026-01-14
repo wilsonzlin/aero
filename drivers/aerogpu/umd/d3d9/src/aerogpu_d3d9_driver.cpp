@@ -12028,6 +12028,71 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
   return trace.ret(S_OK);
 }
 
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t value) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetTextureStageState,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(stage, state),
+                      static_cast<uint64_t>(value),
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (stage >= 16 || state >= 256) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  dev->texture_stage_states[stage][state] = value;
+  stateblock_record_texture_stage_state_locked(dev, stage, state, value);
+
+  // If the fixed-function fallback path is active, stage0 COLOROP/ALPHAOP changes
+  // must affect rendering. Select an internal PS variant that approximates the
+  // fixed-function texture combiner for the supported subset.
+  if (stage == 0 &&
+      (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
+       state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&
+      fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fixedfunc_ps : &dev->fixedfunc_ps_tex1;
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+    if (FAILED(ps_hr)) {
+      return trace.ret(ps_hr);
+    }
+  }
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t* pValue) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetTextureStageState,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      d3d9_trace_pack_u32_u32(stage, state),
+                      d3d9_trace_arg_ptr(pValue),
+                      0);
+  if (pValue) {
+    *pValue = 0u;
+  }
+  if (!hDevice.pDrvPrivate || !pValue) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (stage >= 16 || state >= 256) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  *pValue = dev->texture_stage_states[stage][state];
+  return trace.ret(S_OK);
+}
+
 HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
     D3DDDI_HDEVICE hDevice,
     uint32_t stage,
@@ -22306,6 +22371,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnSetViewport = device_set_viewport;
   pDeviceFuncs->pfnSetScissorRect = device_set_scissor;
   pDeviceFuncs->pfnSetTexture = device_set_texture;
+  pDeviceFuncs->pfnSetTextureStageState = device_set_texture_stage_state;
+  pDeviceFuncs->pfnGetTextureStageState = device_get_texture_stage_state;
   pDeviceFuncs->pfnSetSamplerState = device_set_sampler_state;
   pDeviceFuncs->pfnSetRenderState = device_set_render_state;
   if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {

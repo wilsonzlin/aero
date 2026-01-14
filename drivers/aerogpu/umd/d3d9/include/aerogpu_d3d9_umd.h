@@ -1338,6 +1338,8 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETDEPTHSTENCIL)(D3DDDI_HDEVICE hD
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETVIEWPORT)(D3DDDI_HDEVICE hDevice, const D3DDDIVIEWPORTINFO* pViewport);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSCISSORRECT)(D3DDDI_HDEVICE hDevice, const RECT* pRect, BOOL enabled);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETTEXTURE)(D3DDDI_HDEVICE hDevice, uint32_t stage, D3DDDI_HRESOURCE hTexture);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETTEXTURESTAGESTATE)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t state, uint32_t value);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_GETTEXTURESTAGESTATE)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t state, uint32_t* pValue);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSAMPLERSTATE)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t state, uint32_t value);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETRENDERSTATE)(D3DDDI_HDEVICE hDevice, uint32_t state, uint32_t value);
 // Fixed-function transform state (WORLD/VIEW/PROJECTION).
@@ -1496,6 +1498,12 @@ struct _D3D9DDI_DEVICEFUNCS {
   // Optional D3D9Ex/DDI helper entrypoints (present in some WDK vintages and
   // relied on by apps that use D3DUSAGE_AUTOGENMIPMAP).
   PFND3D9DDI_GENERATEMIPSUBLEVELS pfnGenerateMipSubLevels;
+
+  // Optional fixed-function/DDI entrypoints (present in WDK builds). These are
+  // used by the UMD to keep a cache of D3DTSS_* stage state, and stage0 is
+  // consumed by the minimal fixed-function fallback path for shader selection.
+  PFND3D9DDI_SETTEXTURESTAGESTATE pfnSetTextureStageState;
+  PFND3D9DDI_GETTEXTURESTAGESTATE pfnGetTextureStageState;
 
   // Legacy fixed-function transform entrypoints. These are part of the Win7 D3D9
   // UMD DDI, but are only included in the portable ABI when needed by host-side

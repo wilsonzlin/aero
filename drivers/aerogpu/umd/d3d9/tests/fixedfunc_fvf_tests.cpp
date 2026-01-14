@@ -1397,15 +1397,35 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
-  // Ensure a known starting point for stage0 state (matches D3D9 defaults).
-  {
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      const HRESULT hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      return Check(hr2 == S_OK, msg);
+    }
+    // Fallback for minimal portable builds that don't expose SetTextureStageState.
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    dev->texture_stage_states[stage][state] = value;
+    return true;
+  };
+
+  // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "SetTextureStageState(COLOROP=MODULATE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "SetTextureStageState(COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg2, kD3dTaDiffuse, "SetTextureStageState(ALPHAARG2=DIFFUSE)")) {
+    return false;
   }
 
   const VertexXyzrhwDiffuseTex1 tri[3] = {
@@ -1440,9 +1460,8 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = TEXTURE * DIFFUSE, ALPHAOP = DISABLE (alpha from diffuse/current).
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopDisable;
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "SetTextureStageState(ALPHAOP=DISABLE)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(second)")) {
     return false;
@@ -1452,11 +1471,14 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = TEXTURE * DIFFUSE, ALPHA = TEXTURE * DIFFUSE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopModulate, "SetTextureStageState(ALPHAOP=MODULATE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE) (modulate)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg2, kD3dTaDiffuse, "SetTextureStageState(ALPHAARG2=DIFFUSE) (modulate)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(third)")) {
     return false;
@@ -1467,10 +1489,11 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = TEXTURE, ALPHA = TEXTURE * DIFFUSE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "SetTextureStageState(COLORARG1=TEXTURE) (select)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(fourth)")) {
     return false;
@@ -1480,10 +1503,11 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = TEXTURE, ALPHA = TEXTURE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE) (select)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(fifth)")) {
     return false;
@@ -1493,9 +1517,8 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = TEXTURE, ALPHAOP = DISABLE (alpha from diffuse/current).
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopDisable;
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "SetTextureStageState(ALPHAOP=DISABLE) (texture)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(sixth)")) {
     return false;
@@ -1505,11 +1528,14 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = DIFFUSE, ALPHA = TEXTURE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaDiffuse, "SetTextureStageState(COLORARG1=DIFFUSE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1) (diffuse)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE) (diffuse)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(seventh)")) {
     return false;
@@ -1519,11 +1545,14 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOR = DIFFUSE, ALPHA = TEXTURE * DIFFUSE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopModulate, "SetTextureStageState(ALPHAOP=MODULATE) (diffuse)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE) (diffuse modulate)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg2, kD3dTaDiffuse, "SetTextureStageState(ALPHAARG2=DIFFUSE) (diffuse modulate)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(eighth)")) {
     return false;
@@ -1533,11 +1562,14 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Stage0: COLOROP=DISABLE disables the entire stage, so alpha comes from diffuse/current.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopDisable;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopDisable, "SetTextureStageState(COLOROP=DISABLE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1) (disable)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE) (disable)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(ninth)")) {
     return false;
@@ -1547,14 +1579,23 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   }
 
   // Restore default stage0 and ensure the shader rebinds back to texturing.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "SetTextureStageState(COLOROP=MODULATE) (restore)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "SetTextureStageState(COLORARG1=TEXTURE) (restore)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "SetTextureStageState(COLORARG2=DIFFUSE) (restore)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1) (restore)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE) (restore)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg2, kD3dTaDiffuse, "SetTextureStageState(ALPHAARG2=DIFFUSE) (restore)")) {
+    return false;
   }
   if (!DrawTri("DrawPrimitiveUP(tenth)")) {
     return false;
