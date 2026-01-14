@@ -3306,7 +3306,8 @@ mod tests {
         backing[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
         backing[8..12].copy_from_slice(&huge_size_bytes.to_le_bytes());
         backing[12..16].copy_from_slice(&0u32.to_le_bytes()); // entry_count
-        backing[16..20].copy_from_slice(&(ring::AerogpuAllocEntry::SIZE_BYTES as u32).to_le_bytes());
+        backing[16..20]
+            .copy_from_slice(&(ring::AerogpuAllocEntry::SIZE_BYTES as u32).to_le_bytes());
         backing[20..24].copy_from_slice(&0u32.to_le_bytes());
 
         let mut mem = TestMem::default();

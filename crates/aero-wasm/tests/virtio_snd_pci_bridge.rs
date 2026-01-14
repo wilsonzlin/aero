@@ -1763,8 +1763,8 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_into_indirect_eventq_descri
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_eventq_writes_event_across_multiple_descriptors_without_overwriting_extra_bytes(
-) {
+fn virtio_snd_pci_bridge_eventq_writes_event_across_multiple_descriptors_without_overwriting_extra_bytes()
+ {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -1848,7 +1848,15 @@ fn virtio_snd_pci_bridge_eventq_writes_event_across_multiple_descriptors_without
         VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
         1,
     );
-    write_desc(&guest, desc_table, 1, buf2 as u64, 12, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        &guest,
+        desc_table,
+        1,
+        buf2 as u64,
+        12,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 1);
@@ -1863,10 +1871,7 @@ fn virtio_snd_pci_bridge_eventq_writes_event_across_multiple_descriptors_without
     );
     let mic_header =
         Uint32Array::new_with_byte_offset_and_length(&mic_sab, 0, mic_ring::HEADER_U32_LEN as u32);
-    mic_header.set_index(
-        mic_ring::CAPACITY_SAMPLES_INDEX as u32,
-        capacity_samples,
-    );
+    mic_header.set_index(mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
     bridge
         .set_mic_ring_buffer(Some(mic_sab))
         .expect("set_mic_ring_buffer(Some)");
