@@ -1100,7 +1100,28 @@ pub fn parse(bytes: &[u8]) -> Result<ShaderProgram, ShaderError> {
         });
     }
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
-    parse_token_stream(token_stream)
+    match parse_token_stream(token_stream) {
+        Ok(program) => Ok(program),
+        Err(err) => {
+            // Some historical shader blobs encode opcode token length as the number of operand
+            // tokens rather than the total instruction length. `parse_token_stream` expects the
+            // SM2/SM3 spec's total-length encoding, so retry parsing after normalizing legacy
+            // operand-count streams.
+            let normalized =
+                match crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream) {
+                    Ok(normalized) => normalized,
+                    Err(_) => return Err(err),
+                };
+
+            // Avoid re-running the parser when normalization concluded that the stream already uses
+            // total-length encoding.
+            if matches!(normalized, std::borrow::Cow::Borrowed(_)) {
+                return Err(err);
+            }
+
+            parse_token_stream(normalized.as_ref())
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

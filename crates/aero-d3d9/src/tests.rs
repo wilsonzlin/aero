@@ -3441,6 +3441,18 @@ fn translate_entrypoint_fallback_accepts_operand_count_length_encoding() {
 }
 
 #[test]
+fn shader_parse_accepts_operand_count_length_encoding() {
+    // `aero_d3d9::shader::parse` is used by tooling/tests and should accept the operand-count
+    // instruction-length encoding used by some historical shaders.
+    let ps_bytes = to_bytes(&assemble_ps2_unknown_opcode_operand_count_len());
+    let program = shader::parse(&ps_bytes).unwrap();
+    assert_eq!(program.version.stage, shader::ShaderStage::Pixel);
+    assert_eq!(program.version.model.major, 2);
+    assert_eq!(program.version.model.minor, 0);
+    assert!(program.const_defs_f32.contains_key(&0));
+}
+
+#[test]
 fn translate_entrypoint_accepts_operand_count_length_encoding_in_dxbc_container() {
     // Ensure operand-count-encoded raw token streams remain supported when wrapped in a DXBC
     // container (the runtime commonly receives DXBC blobs from D3DCompile).
