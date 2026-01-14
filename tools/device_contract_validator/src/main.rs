@@ -2406,6 +2406,29 @@ fn eq_case_insensitive(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn validate_temp_virtio_inf(inf_text: &str, hwid_patterns: Vec<&str>) -> Result<()> {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let inf_dir = tmp.path().join("drivers/windows7/virtio-test/inf");
+        fs::create_dir_all(&inf_dir).expect("create drivers/windows7/virtio-test/inf");
+        fs::write(inf_dir.join("test.inf"), inf_text).expect("write test.inf");
+
+        let dev = DeviceEntry {
+            device: "virtio-test".to_string(),
+            pci_vendor_id: "0x1AF4".to_string(),
+            pci_device_id: "0x1041".to_string(), // virtio-net modern: 0x1040 + 1
+            pci_device_id_transitional: Some("0x1000".to_string()),
+            hardware_id_patterns: hwid_patterns.into_iter().map(|s| s.to_string()).collect(),
+            driver_service_name: "testsvc".to_string(),
+            inf_name: "test.inf".to_string(),
+            virtio_device_type: Some(1),
+        };
+
+        let mut devices = BTreeMap::new();
+        devices.insert(dev.device.clone(), dev);
+        validate_in_tree_infs(tmp.path(), &devices)
+    }
+
     #[test]
     fn validator_passes_on_repo_contracts() -> Result<()> {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -2461,6 +2484,144 @@ Signature="$Windows NT$"
                 "PCI\\VEN_1AF4&DEV_1042&REV_01".to_string(),
             ])
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn virtio_inf_family_gating_accepts_subsys_rev_only() -> Result<()> {
+        // Regression: virtio-input's canonical INF binds via SUBSYS+REV-only entries, and the
+        // validator should accept that policy (do not require a literal `{base}&REV_01` HWID).
+        //
+        // Use a non-input virtio device here to keep this test narrowly focused on the HWID gating
+        // logic (virtio-input has additional DeviceDesc split checks).
+        let inf = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg% = Aero,NTx86
+
+[Aero.NTx86]
+%DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
+
+[Install.Services]
+AddService = testsvc, 0x00000002, ServiceInst
+
+[Strings]
+Mfg = "Test"
+DeviceDesc = "Test Device"
+"#;
+        validate_temp_virtio_inf(
+            inf,
+            vec![
+                r"PCI\VEN_1AF4&DEV_1041",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
+            ],
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn virtio_inf_family_gating_rejects_revless_match() {
+        let inf = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg% = Aero,NTx86
+
+[Aero.NTx86]
+%DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4
+
+[Install.Services]
+AddService = testsvc, 0x00000002, ServiceInst
+
+[Strings]
+Mfg = "Test"
+DeviceDesc = "Test Device"
+"#;
+        let err = validate_temp_virtio_inf(
+            inf,
+            vec![
+                r"PCI\VEN_1AF4&DEV_1041",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
+            ],
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("without revision gating"), "{msg}");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn virtio_inf_family_gating_rejects_wrong_rev_in_family() {
+        let inf = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg% = Aero,NTx86
+
+[Aero.NTx86]
+%DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
+%OtherDesc%  = Install, PCI\VEN_1AF4&DEV_1041&REV_02
+
+[Install.Services]
+AddService = testsvc, 0x00000002, ServiceInst
+
+[Strings]
+Mfg = "Test"
+DeviceDesc = "Test Device"
+OtherDesc = "Other Device"
+"#;
+        let err = validate_temp_virtio_inf(
+            inf,
+            vec![
+                r"PCI\VEN_1AF4&DEV_1041",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
+            ],
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("REV_ qualifier"), "{msg}");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn virtio_inf_family_gating_rejects_transitional_device_id() {
+        let inf = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg% = Aero,NTx86
+
+[Aero.NTx86]
+%DeviceDesc% = Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
+%TransDesc%  = Install, PCI\VEN_1AF4&DEV_1000&REV_01
+
+[Install.Services]
+AddService = testsvc, 0x00000002, ServiceInst
+
+[Strings]
+Mfg = "Test"
+DeviceDesc = "Test Device"
+TransDesc = "Transitional Device"
+"#;
+        let err = validate_temp_virtio_inf(
+            inf,
+            vec![
+                r"PCI\VEN_1AF4&DEV_1041",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
+                r"PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
+            ],
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("transitional virtio-pci"), "{msg}");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
