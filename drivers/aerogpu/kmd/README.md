@@ -307,13 +307,39 @@ transitions:
 - `DxgkDdiStopDeviceAndReleasePostDisplayOwnership`
 - `DxgkDdiAcquirePostDisplayOwnership`
 
-The AeroGPU KMD implements **minimal, safe** behavior:
+The AeroGPU KMD implements **minimal, safe** behavior with additional robustness for Win7 boot and
+display-driver transitions:
 
-- On **release**, it disables scanout and disables vblank IRQ delivery (so the device stops
-  continuously reading guest memory during the handoff).
-- On **acquire**, it re-programs scanout registers using the last cached mode + framebuffer address
-  (from `DxgkDdiSetVidPnSourceAddress`) and restores vblank IRQ enable state if it was previously
-  enabled by dxgkrnl.
+- `DxgkDdiStartDevice` snapshots any pre-existing scanout programming (width/height/pitch/format +
+  framebuffer GPA) instead of clobbering it. This allows `AcquirePostDisplayOwnership` to report a
+  coherent mode even when dxgkrnl maps the existing framebuffer without immediately performing a
+  full modeset.
+- On **release** (`StopDeviceAndReleasePostDisplayOwnership`):
+  - Best-effort snapshot the scanout configuration and fill the caller-provided
+    `DXGK_DISPLAY_INFORMATION` / `DXGK_FRAMEBUFFER_INFORMATION` output structs so dxgkrnl can hand
+    off to the next owner cleanly.
+  - Disable scanout DMA, disable vblank IRQ delivery, and disable the hardware cursor (clearing its
+    programmed GPA) so the device stops touching guest memory during the handoff.
+  - Then run the regular `DxgkDdiStopDevice` teardown so BAR mappings/ring/ISR state is released
+    consistently.
+- On **acquire** (`AcquirePostDisplayOwnership`):
+  - Best-effort snapshot scanout configuration (used to populate output structs and refresh cached
+    mode state).
+  - Re-program scanout from the cached mode + framebuffer GPA, guarding against enabling scanout
+    with a zero framebuffer address.
+  - If this is a reacquire after a release, restore vblank IRQ enable state (and ensure the ISR has
+    a valid `DXGK_INTERRUPT_TYPE_CRTC_VSYNC` type even if dxgkrnl skips `ControlInterrupt` during
+    the transition).
+
+Safety/robustness:
+
+- The post-display DDIs avoid touching MMIO while the adapter is not in D0 (MMIO accesses while
+  powered down can hang).
+- Scanout and cursor enabling are gated on `!PostDisplayOwnershipReleased` to avoid accidental DMA
+  while another owner is active.
+- If the scanout MMIO snapshot reports a plausible mode but `FbPa==0` (common after StopDevice
+  clears FB GPA regs to stop DMA), the KMD preserves the cached non-zero framebuffer GPA so scanout
+  can be restored on reacquire without requiring an immediate `SetVidPnSourceAddress`.
 
 Limitations:
 
