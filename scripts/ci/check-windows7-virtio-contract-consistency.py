@@ -740,16 +740,15 @@ def parse_inf_hardware_ids(path: Path) -> set[str]:
         line = _strip_inf_inline_comment(raw).strip()
         if not line:
             continue
-        parts = [p.strip() for p in line.split(",")]
-        if not parts:
-            continue
+        parts = _split_inf_csv_fields(line)
         # Model lines can optionally include additional IDs after the primary HWID.
         # Collect every comma-separated field that looks like a PCI HWID so we don't
         # accidentally miss the strict REV-qualified match (and so we can fail fast
         # if any extra IDs violate revision gating policy).
         for part in parts:
-            if part.upper().startswith("PCI\\VEN_"):
-                out.add(part)
+            token = _unquote_inf_token(part).strip()
+            if token.upper().startswith("PCI\\VEN_"):
+                out.add(token)
     return out
 
 
@@ -791,11 +790,14 @@ def parse_inf_model_entries(path: Path) -> list[InfModelEntry]:
         device_desc, rhs = (s.strip() for s in line.split("=", 1))
         if not device_desc or not rhs:
             continue
-        rhs_parts = [p.strip() for p in rhs.split(",") if p.strip()]
+        rhs_parts = [p.strip() for p in _split_inf_csv_fields(rhs) if p.strip()]
         if not rhs_parts:
             continue
-        install = rhs_parts[0]
-        hwid = next((p for p in rhs_parts[1:] if p.upper().startswith("PCI\\VEN_")), None)
+        install = _unquote_inf_token(rhs_parts[0]).strip()
+        hwid = next(
+            (_unquote_inf_token(p).strip() for p in rhs_parts[1:] if _unquote_inf_token(p).strip().upper().startswith("PCI\\VEN_")),
+            None,
+        )
         if not hwid:
             continue
         entries.append(
@@ -958,7 +960,7 @@ Signature="$WINDOWS NT$"
 %Mfg% = Mfg,NTx86
 
 [Mfg.NTx86]
-%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01 ; trailing comment
+%Dev% = Install, "PCI\VEN_1AF4&DEV_1041&REV_01" ; trailing comment
 
 [Install.Services]
 ; AddService = ignored, 0x00000002, IgnoredSection
