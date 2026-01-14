@@ -419,10 +419,10 @@ Supported FVF combinations (bring-up subset):
 
 Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 
-- `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
-  `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
-  `kSupportedFvfXyzTex1` / `kSupportedFvfXyzNormal` / `kSupportedFvfXyzNormalTex1` /
-  `kSupportedFvfXyzNormalDiffuse` / `kSupportedFvfXyzNormalDiffuseTex1`
+- Fixed-function FVF → internal variant/decl mapping (table-driven; `src/aerogpu_d3d9_objects.h`):
+  - `enum class FixedFuncVariant`
+  - `kFixedFuncVariantDeclTable` (canonical FVF + canonical vertex-declaration signature)
+  - `fixedfunc_variant_from_fvf()` / `fixedfunc_fvf_from_variant()` / `fixedfunc_decl_desc()`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_shader_bindings_locked()`
 - Fixed-function PS generation from texture stage state (stages 0..3): `fixedfunc_ps_key_locked()` + `ensure_fixedfunc_pixel_shader_locked()` (`fixedfunc_ps20` token builder)
