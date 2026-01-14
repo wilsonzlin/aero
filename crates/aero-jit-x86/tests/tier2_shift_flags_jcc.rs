@@ -114,6 +114,54 @@ fn tier2_shl8_updates_of_observed_by_jo() {
 }
 
 #[test]
+fn tier2_shl8_count_eq_operand_width_sets_cf_from_old_lsb() {
+    // mov al, 1
+    // shl al, 8         ; result=0, CF=old LSB (1)
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x08, // shl al, 8
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl16_count_eq_operand_width_sets_cf_from_old_lsb() {
+    // 66 mov ax, 1
+    // 66 shl ax, 16     ; result=0, CF=old LSB (1)
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
+        0x66, 0xC1, 0xE0, 0x10, // shl ax, 16
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shift_count_0_leaves_cf_unchanged() {
     // mov al, 0x12
     // shl al, 0
