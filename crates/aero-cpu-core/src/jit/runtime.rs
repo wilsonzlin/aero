@@ -558,7 +558,11 @@ where
         self.page_versions.bump_write(paddr, len);
     }
 
-    /// Ensure the internal page-version table is a dense array of at least `len` `u32` entries.
+    /// Ensure the internal page-version table has at least `len` `u32` entries.
+    ///
+    /// This is a *check* (not a resize): the table length is fixed at construction time via
+    /// [`JitConfig::code_version_max_pages`]. If `len` exceeds the configured length, this method
+    /// panics.
     ///
     /// When exposing the table to generated JIT code (e.g. WASM inline stores / code-version
     /// guards), callers should size the table up-front (via
@@ -570,7 +574,8 @@ where
 
     /// Returns the raw pointer/length of the page-version table.
     ///
-    /// See [`Self::ensure_code_version_table_len`] for the stability contract.
+    /// The pointer/length are stable for the lifetime of the runtime (no reallocations), including
+    /// across [`Self::reset`] which clears the table in place.
     pub fn code_version_table_ptr_len(&mut self) -> (*mut u32, usize) {
         self.page_versions.table_ptr_len()
     }
