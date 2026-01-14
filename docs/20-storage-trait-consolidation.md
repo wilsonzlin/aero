@@ -34,7 +34,9 @@ See also:
   Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
 - `aero_storage::ReadOnlyBackend` (sync, read-only wrapper for `aero_storage::StorageBackend`)\
   Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
-- `aero_storage::VirtualDisk` (sync, fixed-capacity virtual disk; byte addressing + sector helpers)\
+- `aero_storage::VirtualDiskSend` (sync, helper trait: `Send` on native, empty on wasm32; used to make `VirtualDisk` conditionally `Send`)\
+  Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
+- `aero_storage::VirtualDisk` (sync, fixed-capacity virtual disk; byte addressing + sector helpers; `Send` on native, may be `!Send` on wasm32)\
   Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
 - `aero_storage::ReadOnlyDisk` (sync, read-only wrapper for `aero_storage::VirtualDisk`)\
   Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
