@@ -330,6 +330,8 @@ The current implementation targets:
     cube resources (it may be `Depth == 1`); the UMD normalizes `D3DRTYPE_CUBETEXTURE` resources to 6 layers. Cube
     textures must be square; invalid descriptors are rejected at `CreateResource` time. Volume textures (`D3DRTYPE_VOLUME`
     / `D3DRTYPE_VOLUMETEXTURE`) are not supported.
+  - Compatibility: some D3D9 runtimes/WDK header vintages may pass `Type == 0` for non-buffer surface resources; the UMD
+    treats it as a non-array 2D surface descriptor (`Depth == 1`) rather than rejecting it as an unknown type.
   - On the Win7/WDDM path, multi-subresource textures currently fall back to **host-backed storage** (no guest allocation /
     `alloc_id`), because guest-backed allocations are single-subresource today (see `force_host_backing` in
     `device_create_resource()`).
