@@ -573,12 +573,15 @@ mod tests {
     #[test]
     fn opcode_name_includes_switch_and_loop_ops() {
         assert_eq!(opcode_name(OPCODE_BREAK), Some("break"));
+        assert_eq!(opcode_name(OPCODE_BREAKC), Some("breakc"));
         assert_eq!(opcode_name(OPCODE_SWITCH), Some("switch"));
         assert_eq!(opcode_name(OPCODE_CASE), Some("case"));
         assert_eq!(opcode_name(OPCODE_DEFAULT), Some("default"));
         assert_eq!(opcode_name(OPCODE_ENDSWITCH), Some("endswitch"));
         assert_eq!(opcode_name(OPCODE_LOOP), Some("loop"));
         assert_eq!(opcode_name(OPCODE_ENDLOOP), Some("endloop"));
+        assert_eq!(opcode_name(OPCODE_CONTINUE), Some("continue"));
+        assert_eq!(opcode_name(OPCODE_CONTINUEC), Some("continuec"));
     }
 
     #[test]
