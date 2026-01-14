@@ -76,12 +76,27 @@ const PORT_IS_TFES: u32 = 1 << 30;
 /// SATA drive signature (PxSIG) for an ATA device.
 const SATA_SIG_ATA: u32 = 0x0000_0101;
 
+// PxSSTS DET field values.
+const SSTS_DET_MASK: u32 = 0x0F;
+const SSTS_DET_NO_DEVICE: u32 = 0;
+const SSTS_DET_DEVICE_PRESENT_NO_PHY: u32 = 1;
+const SSTS_DET_DEVICE_PRESENT_PHY: u32 = 3;
+
+// PxSSTS SPD/IPM "plausible defaults" for a present device.
+const SSTS_SPD_GEN1: u32 = 1 << 4;
+const SSTS_IPM_ACTIVE: u32 = 1 << 8;
+
 // PxSCTL.DET (Device Detection Initialization) values.
 const SCTL_DET_MASK: u32 = 0x0F;
 const SCTL_DET_COMRESET: u32 = 1;
 const SCTL_DET_DISABLE: u32 = 4;
 // Some guests use DET=2 for "disable" even though DET=4 is the commonly-implemented value.
 const SCTL_DET_DISABLE_ALT: u32 = 2;
+
+// PxSERR bits (SATA SError). We only model a couple of bits to help guests that expect
+// reset/abort events to latch some error condition.
+const SERR_ERR_PROTOCOL: u32 = 1 << 4;
+const SERR_DIAG_PHYRDY_CHANGE: u32 = 1 << 16;
 
 #[derive(Debug, Clone, Copy)]
 struct HbaRegs {
@@ -138,7 +153,7 @@ impl PortRegs {
     fn new(present: bool) -> Self {
         let (sig, ssts, tfd) = if present {
             // DET=3 (device present), SPD=1 (Gen1), IPM=1 (active).
-            let ssts = (1 << 8) | (1 << 4) | 3;
+            let ssts = SSTS_IPM_ACTIVE | SSTS_SPD_GEN1 | SSTS_DET_DEVICE_PRESENT_PHY;
             let status = ATA_STATUS_DRDY | ATA_STATUS_DSC;
             (SATA_SIG_ATA, ssts, status as u32)
         } else {
@@ -181,6 +196,10 @@ impl PortRegs {
         if running {
             self.cmd |= PORT_CMD_CR;
         }
+    }
+
+    fn sctl_det(&self) -> u32 {
+        self.sctl & SCTL_DET_MASK
     }
 }
 
@@ -428,26 +447,32 @@ impl AhciController {
                 //   Poll PxSSTS/PxTFD for device present/ready.
                 //
                 // We emulate this synchronously: DET=1 immediately forces the port into a
-                // transient "resetting" view (DET=1 with no negotiated speed/power state, and
-                // PxTFD.BSY set when a drive is present). A subsequent transition back to DET=0
-                // immediately completes the reset, restoring the link status and task file status
-                // for any attached drive.
+                // transient "resetting" view. A subsequent transition back to DET=0 immediately
+                // completes the reset, restoring link status/task-file status for any attached
+                // drive.
                 let old_det = port.regs.sctl & SCTL_DET_MASK;
                 let new_det = val & SCTL_DET_MASK;
 
                 port.regs.sctl = val;
 
-                // COMRESET asserted: drop link status and mark device busy.
+                // COMRESET asserted: drop link status and mark the device busy.
                 if new_det == SCTL_DET_COMRESET {
                     // A link reset aborts any in-flight commands and clears transient status.
                     port.regs.ci = 0;
                     port.regs.sact = 0;
                     port.regs.is = 0;
-                    port.regs.serr = 0;
+
+                    // Clear old SERR state, but latch a basic diagnostic bit so guests can observe
+                    // that a reset event occurred. PxSERR is W1C (handled in PORT_REG_SERR).
+                    port.regs.serr = SERR_DIAG_PHYRDY_CHANGE;
+
                     // Report a transient "device present but no communication" state if a drive is
-                    // attached. This better matches real hardware behaviour during COMRESET and
-                    // avoids guests interpreting the reset as a hot-unplug.
-                    port.regs.ssts = if port.present { 1 } else { 0 };
+                    // attached. This avoids guests interpreting the reset as a hot-unplug.
+                    port.regs.ssts = if port.present {
+                        SSTS_DET_DEVICE_PRESENT_NO_PHY
+                    } else {
+                        SSTS_DET_NO_DEVICE
+                    };
                     port.regs.sig = 0;
                     port.regs.tfd = if port.present {
                         u32::from(ATA_STATUS_BSY)
@@ -456,8 +481,8 @@ impl AhciController {
                     };
                 }
 
-                // DET=4 disables the port (PHY offline). Model it as an immediate link-down state
-                // while preserving the fact that a drive is still physically attached.
+                // DET=4 disables the port (PHY offline). Some guests use DET=2 for this too; treat
+                // it as an alias.
                 if matches!(new_det, SCTL_DET_DISABLE | SCTL_DET_DISABLE_ALT) {
                     port.regs.ci = 0;
                     port.regs.sact = 0;
@@ -473,14 +498,15 @@ impl AhciController {
                 if old_det == SCTL_DET_COMRESET && new_det == 0 {
                     if port.present {
                         // DET=3 (device present), SPD=1 (Gen1), IPM=1 (active).
-                        port.regs.ssts = (1 << 8) | (1 << 4) | 3;
+                        port.regs.ssts =
+                            SSTS_IPM_ACTIVE | SSTS_SPD_GEN1 | SSTS_DET_DEVICE_PRESENT_PHY;
                         port.regs.sig = SATA_SIG_ATA;
                         port.regs.tfd = u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC);
 
                         // Signal that the device-to-host register FIS has been received.
                         port.regs.is |= PORT_IS_DHRS;
                     } else {
-                        port.regs.ssts = 0;
+                        port.regs.ssts = SSTS_DET_NO_DEVICE;
                         port.regs.sig = 0;
                         port.regs.tfd = 0;
                     }
@@ -490,12 +516,13 @@ impl AhciController {
                 // synchronously (similar to COMRESET completion).
                 if matches!(old_det, SCTL_DET_DISABLE | SCTL_DET_DISABLE_ALT) && new_det == 0 {
                     if port.present {
-                        port.regs.ssts = (1 << 8) | (1 << 4) | 3;
+                        port.regs.ssts =
+                            SSTS_IPM_ACTIVE | SSTS_SPD_GEN1 | SSTS_DET_DEVICE_PRESENT_PHY;
                         port.regs.sig = SATA_SIG_ATA;
                         port.regs.tfd = u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC);
                         port.regs.is |= PORT_IS_DHRS;
                     } else {
-                        port.regs.ssts = 0;
+                        port.regs.ssts = SSTS_DET_NO_DEVICE;
                         port.regs.sig = 0;
                         port.regs.tfd = 0;
                     }
@@ -509,6 +536,18 @@ impl AhciController {
             PORT_REG_CI => {
                 // Writing to CI sets command issue bits.
                 port.regs.ci |= val;
+
+                // If the port is operational, reflect that work is pending via PxTFD.BSY.
+                // This helps guests that poll TFD rather than relying exclusively on interrupts.
+                if val != 0
+                    && port.present
+                    && port.regs.running()
+                    && port.regs.fis_receive_enabled()
+                    && port.regs.sctl_det() != SCTL_DET_COMRESET
+                    && (port.regs.ssts & SSTS_DET_MASK) == SSTS_DET_DEVICE_PRESENT_PHY
+                {
+                    port.regs.tfd = u32::from(ATA_STATUS_BSY);
+                }
             }
             _ => {}
         }
@@ -528,6 +567,15 @@ impl AhciController {
         let Some(port) = self.ports.get_mut(port_idx) else {
             return;
         };
+
+        // If COMRESET is asserted (PxSCTL.DET=1), commands must not execute.
+        if port.regs.sctl_det() == SCTL_DET_COMRESET {
+            return;
+        }
+        // Only execute commands when the PHY is established.
+        if (port.regs.ssts & SSTS_DET_MASK) != SSTS_DET_DEVICE_PRESENT_PHY {
+            return;
+        }
         let Some(drive) = port.drive.as_mut() else {
             return;
         };
@@ -535,12 +583,6 @@ impl AhciController {
             return;
         }
         if port.regs.clb == 0 || port.regs.fb == 0 {
-            return;
-        }
-        // If the SATA link is down/resetting or the device is still busy, commands must not run.
-        // Drivers (notably Windows' AHCI miniports) will COMRESET a port by toggling PxSCTL.DET and
-        // only start issuing commands once PxSSTS reports DET=3 and PxTFD.BSY is clear.
-        if (port.regs.ssts & 0xF) != 3 || (port.regs.tfd & (ATA_STATUS_BSY as u32)) != 0 {
             return;
         }
 
@@ -552,12 +594,16 @@ impl AhciController {
                 continue;
             }
 
+            // Mark the task file as busy while we process the command.
+            port.regs.tfd = u32::from(ATA_STATUS_BSY);
+
             match process_command_slot(drive, &mut port.regs, slot, mem) {
                 Ok(()) => {}
                 Err(_) => {
                     // Report an aborted command via task file status/error.
                     let status = ATA_STATUS_DRDY | ATA_STATUS_DSC | ATA_STATUS_ERR;
                     port.regs.tfd = (status as u32) | ((ATA_ERROR_ABRT as u32) << 8);
+                    port.regs.serr |= SERR_ERR_PROTOCOL;
                     write_d2h_fis(mem, port.regs.fb, status, ATA_ERROR_ABRT);
                     port.regs.is |= PORT_IS_DHRS | PORT_IS_TFES;
                 }
@@ -1362,7 +1408,10 @@ mod tests {
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SACT), 0);
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_IS), 0);
-        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SERR), 0);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_SERR),
+            SERR_DIAG_PHYRDY_CHANGE
+        );
 
         // Link should be in the transient "present, no communication" state with the device busy.
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 1);
@@ -2028,5 +2077,74 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
         assert_eq!(err.to_string(), "PRDT too small for DMA read");
+    }
+
+    #[test]
+    fn comreset_allows_reidentify_and_updates_ssts_det() {
+        let (mut ctl, irq, mut mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        // Program HBA and port.
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+        let data_buf = 0x4000;
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CLBU, 0);
+        ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_FBU, 0);
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+        let run_identify = |ctl: &mut AhciController, mem: &mut TestMemory| {
+            write_cmd_header(mem, clb, 0, ctba, 1, false);
+            write_cfis(mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+            write_prdt(mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
+
+            ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+            ctl.process(mem);
+
+            assert!(irq.level(), "IDENTIFY should assert IRQ");
+            assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
+
+            let mut out = [0u8; SECTOR_SIZE];
+            mem.read_physical(data_buf, &mut out);
+            assert_eq!(out[0], 0x40);
+
+            // Clear the interrupt.
+            ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+            assert!(!irq.level());
+        };
+
+        // Initial IDENTIFY should succeed with DET=3.
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & SSTS_DET_MASK,
+            SSTS_DET_DEVICE_PRESENT_PHY
+        );
+        run_identify(&mut ctl, &mut mem);
+
+        // Issue COMRESET (DET=1) then release it back to DET=0.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, SCTL_DET_COMRESET);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & u32::from(ATA_STATUS_BSY),
+            u32::from(ATA_STATUS_BSY)
+        );
+        // While reset is asserted, report device present but PHY not established.
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & SSTS_DET_MASK,
+            SSTS_DET_DEVICE_PRESENT_NO_PHY
+        );
+
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 0);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & SSTS_DET_MASK,
+            SSTS_DET_DEVICE_PRESENT_PHY
+        );
+
+        // Port reset stops the command/FIS engines; re-enable and IDENTIFY again.
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+        run_identify(&mut ctl, &mut mem);
     }
 }
