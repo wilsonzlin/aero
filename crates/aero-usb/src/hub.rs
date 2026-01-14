@@ -54,6 +54,8 @@ pub trait UsbHub {
 
 const MAX_USB_DEVICE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(test)]
+mod remote_wakeup_tests;
+#[cfg(test)]
 mod reset_tests;
 
 struct Port {
