@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.12"
+         version = "2.5.13"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -3963,11 +3963,13 @@ try {
             $installedVersion = $null
             $installedInf = $null
             $installedSigner = $null
+            $installedIsSigned = $null
             if ($sd) {
                 $installedProvider = "" + $sd.driver_provider_name
                 $installedVersion = "" + $sd.driver_version
                 $installedInf = "" + $sd.inf_name
                 $installedSigner = "" + $sd.signer
+                if ($sd.ContainsKey("is_signed")) { $installedIsSigned = $sd.is_signed }
             }
 
             $assessment = "NO_MEDIA_MATCH"
@@ -4024,6 +4026,7 @@ try {
             if ($installedInf) { $line += ", INF=" + $installedInf }
             if ($installedProvider) { $line += ", Provider=" + $installedProvider }
             if ($installedVersion) { $line += ", Version=" + $installedVersion }
+            if ($installedIsSigned -ne $null) { $line += ", IsSigned=" + $installedIsSigned }
             if ($installedSigner) { $line += ", Signer=" + $installedSigner }
             if ($best) { $line += " | MediaINF=" + $best.inf_rel_path }
             $details += $line
