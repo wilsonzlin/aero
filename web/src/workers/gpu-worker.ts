@@ -5011,6 +5011,21 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           const includeCursor = req.includeCursor === true;
 
+          // Similar to the deterministic `screenshot` path, ensure we run a present pass when scanout is
+          // WDDM/VBE-owned so the presented output (canvas pixels) reflects the latest scanout bytes
+          // before we attempt readback.
+          const scanoutSource = (() => {
+            const words = scanoutState;
+            if (!words) return wddmOwnsScanoutFallback ? SCANOUT_SOURCE_WDDM : null;
+            try {
+              return Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+            } catch {
+              return null;
+            }
+          })();
+          const scanoutWantsTickForScreenshot =
+            scanoutSource === SCANOUT_SOURCE_WDDM || scanoutSource === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+
           if (frameState) {
             if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
@@ -5019,14 +5034,27 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             }
 
             // Best-effort: ensure the worker has presented the latest dirty frame before readback.
-            if (!isDeviceLost && aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState()) {
-              await handleTick();
+            if (!isDeviceLost) {
+              const shouldForceTick =
+                scanoutWantsTickForScreenshot ||
+                (aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState());
+              if (shouldForceTick) {
+                await handleTick();
+              }
             }
 
             if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
               postStub(typeof seqNow === "number" ? seqNow : undefined);
               return;
+            }
+          }
+
+          if (includeCursor) {
+            // CursorState polling normally happens on `tick()`. Ensure the presented screenshot uses the
+            // latest cursor image/state even if this request races with the frame scheduler.
+            if (!presenting) {
+              syncHardwareCursorFromState();
             }
           }
 
