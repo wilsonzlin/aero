@@ -5,6 +5,7 @@ import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
 } from "./src/ipc/gpu-protocol";
+import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "./src/ipc/scanout_state";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./src/runtime/shared_layout";
@@ -22,6 +23,7 @@ declare global {
       expectedSourceHash?: string;
       pass?: boolean;
       cursorOk?: boolean;
+      sharedDirtyCleared?: boolean;
       metrics?: any;
       samplePixels?: () => Promise<{
         backend: string;
@@ -311,6 +313,15 @@ async function main(): Promise<void> {
     const backend = backendKind ?? "unknown";
     if (backendEl) backendEl.textContent = backend;
 
+    // Ensure WDDM scanout presentation also clears any pending legacy shared framebuffer dirty flag.
+    // This prevents legacy output from "flashing back" once WDDM owns scanout.
+    const sharedHeader = new Int32Array(
+      segments.sharedFramebuffer,
+      segments.sharedFramebufferOffsetBytes,
+      SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+    );
+    Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
+
     // Trigger a few ticks without ever marking the legacy shared framebuffer DIRTY.
     //
     // This validates that WDDM scanout presentation is not gated on the legacy
@@ -349,6 +360,9 @@ async function main(): Promise<void> {
         await sleep(5);
       }
     }
+
+    const sharedDirtyAfter = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) >>> 0;
+    const sharedDirtyCleared = sharedDirtyAfter === 0;
 
     const requestScreenshot = (): Promise<any> => {
       const requestId = nextRequestId++;
@@ -436,15 +450,20 @@ async function main(): Promise<void> {
     log(`backend=${backend}`);
     log(`hash=${hash} expected=${expectedHash} ${pass ? "PASS" : "FAIL"}`);
     log(`sourceHash=${sourceHash} expectedSource=${expectedSourceHash}`);
+    log(`shared.frame_dirty.cleared=${sharedDirtyCleared}`);
 
     window.__aeroTest = {
       ready: true,
       backend,
+      ...(sharedDirtyCleared
+        ? {}
+        : { error: `shared framebuffer frame_dirty was not cleared under WDDM scanout (got ${sharedDirtyAfter})` }),
       hash,
       expectedHash,
       sourceHash,
       expectedSourceHash,
       pass,
+      sharedDirtyCleared,
       metrics: lastMetrics,
       samplePixels: async () => ({
         backend,
