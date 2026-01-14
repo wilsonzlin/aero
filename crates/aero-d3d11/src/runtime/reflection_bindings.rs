@@ -795,7 +795,12 @@ pub(super) fn build_bind_group(
                 let (id, view) = provider
                     .uav_texture2d(*slot)
                     .or_else(|| provider.texture2d(*slot))
-                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "missing UAV texture binding for u{} (storage textures must be explicitly bound)",
+                            slot
+                        )
+                    })?;
 
                 entries.push(BindGroupCacheEntry {
                     binding: binding.binding,
