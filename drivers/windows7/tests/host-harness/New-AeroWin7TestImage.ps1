@@ -485,7 +485,20 @@ $($installBlocks -join "`r`n")
 $blkArg = ""
 if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   # schtasks /TR quoting: use backslash-escaped quotes (\"...\") so paths with spaces are safe.
-  $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
+  #
+  # Note: Windows command-line parsing treats a backslash before a closing quote specially. If the
+  # caller provides a BlkRoot that ends with one or more backslashes (common for directory paths,
+  # e.g. "D:\aero-test\"), those backslashes can escape the closing quote and break parsing.
+  #
+  # We need to handle two layers of parsing:
+  #  1) `schtasks /Create ... /TR "<cmdline>"` must parse the /TR argument correctly.
+  #  2) Later, when the scheduled task runs, Windows parses the stored command line into argv for
+  #     `aero-virtio-selftest.exe`.
+  #
+  # To ensure the stored /TR command line contains the required *doubled* trailing backslashes (so
+  # the selftest sees the intended `\`), we must expand the caller's trailing backslashes by 4x here.
+  $blkRootEscaped = [regex]::Replace($BlkRoot, "\\+$", { param($m) $m.Value + $m.Value + $m.Value + $m.Value })
+  $blkArg = " --blk-root " + '\"' + $blkRootEscaped + '\"'
 }
 
 $udpArg = ""
