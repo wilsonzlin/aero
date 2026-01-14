@@ -547,6 +547,7 @@ pub enum MachineError {
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
+    AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
