@@ -288,6 +288,26 @@ pub const SYNC_FLAG_THREAD_GROUP_SYNC: u32 = 0x4;
 // Values are sourced from the D3D10/11 tokenized shader format opcode table in the
 // Windows SDK headers `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`.
 
+/// `dcl_input v#` (register input declaration).
+///
+/// Upstream: `D3D10_SB_OPCODE_DCL_INPUT`.
+pub const OPCODE_DCL_INPUT: u32 = 0x100;
+/// `dcl_output o#` (register output declaration).
+///
+/// Upstream: `D3D10_SB_OPCODE_DCL_OUTPUT`.
+pub const OPCODE_DCL_OUTPUT: u32 = 0x101;
+/// `dcl_resource` (typed SRV resource; e.g. `Texture2D t#`).
+///
+/// Typed resources include an extra dimension token after the resource operand (e.g. `2` for
+/// `Texture2D`).
+///
+/// Upstream: `D3D10_SB_OPCODE_DCL_RESOURCE`.
+pub const OPCODE_DCL_RESOURCE: u32 = 0x102;
+/// `dcl_sampler s#` (sampler declaration).
+///
+/// Upstream: `D3D10_SB_OPCODE_DCL_SAMPLER`.
+pub const OPCODE_DCL_SAMPLER: u32 = 0x103;
+
 /// `dcl_inputprimitive` (geometry shader input primitive).
 pub const OPCODE_DCL_GS_INPUT_PRIMITIVE: u32 = 0x10c;
 /// `dcl_outputtopology` (geometry shader output topology).
@@ -348,14 +368,6 @@ pub const OPCODE_DCL_TESS_OUTPUT_PRIMITIVE: u32 = 0x115;
 ///
 /// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.
 pub const OPCODE_DCL_THREAD_GROUP: u32 = 0x11f;
-
-/// `dcl_resource` (typed SRV resource; e.g. `Texture2D t#`).
-///
-/// Typed resources include an extra dimension token after the resource operand (e.g. `2` for
-/// `Texture2D`).
-///
-/// Upstream: `D3D10_SB_OPCODE_DCL_RESOURCE`.
-pub const OPCODE_DCL_RESOURCE: u32 = 0x102;
 
 /// `dcl_resource_raw t#` (raw SRV buffer; `ByteAddressBuffer`).
 ///
@@ -571,8 +583,11 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_FIRSTBIT_LO => Some("firstbit_lo"),
         OPCODE_FIRSTBIT_SHI => Some("firstbit_shi"),
         OPCODE_SYNC => Some("sync"),
+        OPCODE_DCL_INPUT => Some("dcl_input"),
+        OPCODE_DCL_OUTPUT => Some("dcl_output"),
         OPCODE_DCL_THREAD_GROUP => Some("dcl_thread_group"),
         OPCODE_DCL_RESOURCE => Some("dcl_resource"),
+        OPCODE_DCL_SAMPLER => Some("dcl_sampler"),
         OPCODE_DCL_GS_INPUT_PRIMITIVE => Some("dcl_gs_input_primitive"),
         OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
         OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),
@@ -669,6 +684,14 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_FTOU), Some("ftou"));
         assert_eq!(opcode_name(OPCODE_F32TOF16), Some("f32tof16"));
         assert_eq!(opcode_name(OPCODE_F16TOF32), Some("f16tof32"));
+    }
+
+    #[test]
+    fn opcode_name_includes_basic_decls() {
+        assert_eq!(opcode_name(OPCODE_DCL_INPUT), Some("dcl_input"));
+        assert_eq!(opcode_name(OPCODE_DCL_OUTPUT), Some("dcl_output"));
+        assert_eq!(opcode_name(OPCODE_DCL_SAMPLER), Some("dcl_sampler"));
+        assert_eq!(opcode_name(OPCODE_DCL_THREAD_GROUP), Some("dcl_thread_group"));
     }
 
     #[test]

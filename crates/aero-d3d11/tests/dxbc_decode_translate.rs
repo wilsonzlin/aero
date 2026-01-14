@@ -363,17 +363,13 @@ fn translates_packed_signature_params_by_merging_masks() {
 
 #[test]
 fn decodes_and_translates_sample_shader_from_dxbc() {
-    const DCL_INPUT: u32 = 0x100;
-    const DCL_OUTPUT: u32 = 0x101;
-    const DCL_SAMPLER: u32 = 0x103;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_input v0.xy
-    body.push(opcode_token(DCL_INPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_INPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask(0b0011)));
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
     // dcl_resource_texture2d t0 (dimension token identifies Texture2D)
     let tex_decl = reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW);
@@ -385,7 +381,7 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
     body.push(2);
     // dcl_sampler s0
     let samp_decl = reg_src(OPERAND_TYPE_SAMPLER, &[0], Swizzle::XYZW);
-    body.push(opcode_token(DCL_SAMPLER, 1 + samp_decl.len() as u32));
+    body.push(opcode_token(OPCODE_DCL_SAMPLER, 1 + samp_decl.len() as u32));
     body.extend_from_slice(&samp_decl);
 
     // sample r0, v0, t0, s0
@@ -483,16 +479,13 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
 
 #[test]
 fn decodes_and_translates_ld_shader_from_dxbc() {
-    const DCL_INPUT: u32 = 0x100;
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_input v0.xy
-    body.push(opcode_token(DCL_INPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_INPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask(0b0011)));
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
     // dcl_resource_texture2d t0 (dimension token identifies Texture2D)
     let tex_decl = reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW);
@@ -786,16 +779,13 @@ fn decodes_and_translates_compute_shader_with_srv_and_uav_buffers() {
 
 #[test]
 fn decodes_and_translates_switch_shader_from_dxbc() {
-    const DCL_INPUT: u32 = 0x100;
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_input v0.x
-    body.push(opcode_token(DCL_INPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_INPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // switch v0.x
@@ -903,16 +893,13 @@ fn decodes_and_translates_switch_shader_from_dxbc() {
 
 #[test]
 fn switch_groups_consecutive_case_labels() {
-    const DCL_INPUT: u32 = 0x100;
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_input v0.x
-    body.push(opcode_token(DCL_INPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_INPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // switch v0.x
@@ -987,16 +974,13 @@ fn switch_groups_consecutive_case_labels() {
 
 #[test]
 fn switch_falls_through_when_break_is_omitted() {
-    const DCL_INPUT: u32 = 0x100;
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_input v0.x
-    body.push(opcode_token(DCL_INPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_INPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // switch v0.x
@@ -1075,16 +1059,13 @@ fn switch_falls_through_when_break_is_omitted() {
 
 #[test]
 fn decodes_and_translates_breakc_in_switch_case() {
-    const DCL_INPUT: u32 = 0x100;
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_input v0.x
-    body.push(opcode_token(DCL_INPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_INPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // switch v0.x
@@ -1884,12 +1865,10 @@ fn decodes_and_translates_usubb_shader_from_dxbc() {
 
 #[test]
 fn decodes_and_translates_ifc_with_else() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // ifc lt, l(0.0), l(1.0)
@@ -1971,12 +1950,10 @@ fn decodes_and_translates_ifc_with_else_encoded_via_if_opcode_token() {
     // Some toolchains encode `ifc_*` using `OPCODE_IF` with the comparison operator in the opcode
     // token's `OPCODE_TEST` field (rather than using the distinct `OPCODE_IFC` opcode ID). Ensure
     // we handle that form even when the `ifc` has an `else` block.
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // ifc lt, l(0.0), l(1.0) -- encoded using OPCODE_IF + TEST=lt.
@@ -2055,12 +2032,10 @@ fn decodes_and_translates_ifc_with_else_encoded_via_if_opcode_token() {
 
 #[test]
 fn decodes_and_translates_breakc_in_loop() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // loop
@@ -2125,12 +2100,10 @@ fn decodes_and_translates_breakc_in_loop() {
 
 #[test]
 fn decodes_and_translates_continuec_in_loop() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // loop
@@ -3058,12 +3031,10 @@ fn rejects_clip_in_vertex_shader() {
 
 #[test]
 fn decodes_and_translates_itof_conversion() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // mov r0, l(1, 2, 3, 4)  (raw integer bits stored in the untyped register file)
@@ -3129,12 +3100,10 @@ fn decodes_and_translates_itof_conversion() {
 
 #[test]
 fn decodes_and_translates_utof_conversion() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // mov r0, l(1, 2, 3, 4)  (raw unsigned integer bits stored in the untyped register file)
@@ -3200,12 +3169,10 @@ fn decodes_and_translates_utof_conversion() {
 
 #[test]
 fn decodes_and_translates_ftoi_conversion() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // mov r0, l(1.5, 2.5, 3.0, -4.0)
@@ -3280,12 +3247,10 @@ fn decodes_and_translates_ftoi_conversion() {
 
 #[test]
 fn decodes_and_translates_ftou_conversion() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // mov r0, l(1.5, 2.5, 3.0, -4.0)
@@ -3538,12 +3503,10 @@ fn decodes_and_translates_umul_multi_dst_hi_lo_from_dxbc() {
 
 #[test]
 fn decodes_and_translates_half_float_conversions() {
-    const DCL_OUTPUT: u32 = 0x101;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_output o0.xyzw
-    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
 
     // mov r0, l(1, 2, 3, 4)

@@ -2623,8 +2623,11 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
             assert_ne!(opcode, other, "duplicate compare opcode {opcode:#x}");
         }
     }
+    assert_eq!(OPCODE_DCL_INPUT, 0x100);
+    assert_eq!(OPCODE_DCL_OUTPUT, 0x101);
     assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
     assert_eq!(OPCODE_DCL_RESOURCE, 0x102);
+    assert_eq!(OPCODE_DCL_SAMPLER, 0x103);
     assert_eq!(OPCODE_DCL_RESOURCE_RAW, 0x205);
     assert_eq!(OPCODE_DCL_RESOURCE_STRUCTURED, 0x206);
     assert_eq!(OPCODE_DCL_UAV_RAW, 0x207);
