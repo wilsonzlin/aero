@@ -1038,7 +1038,10 @@ function Try-EmitAeroVirtioBlkIrqMarker {
     & $addLineFields $irqMatches[$irqMatches.Count - 1].Value
   }
 
-  if ($fields.Count -eq 0 -and (-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+  $sawBlkLineInTail = ($blkMatches.Count -gt 0)
+  $sawBlkIrqLineInTail = ($irqMatches.Count -gt 0)
+
+  if ((-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath) -and (-not ($sawBlkLineInTail -and $sawBlkIrqLineInTail))) {
     # Tail truncation fallback: scan the full serial log line-by-line and keep the last blk markers we care about.
     $lastBlkLine = $null
     $lastBlkIrqLine = $null
@@ -1065,7 +1068,7 @@ function Try-EmitAeroVirtioBlkIrqMarker {
       }
     } catch { }
 
-    if ($null -ne $lastBlkLine) {
+    if ($null -eq $blkLine -and $null -ne $lastBlkLine) {
       $blkLine = $lastBlkLine
       & $addLineFields $lastBlkLine
     }
