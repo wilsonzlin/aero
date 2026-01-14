@@ -119,6 +119,11 @@ fn jit_metrics_totals_helpers_saturate_on_overflow() {
     let totals = JitMetricsTotals {
         cache_lookup_hit_total: u64::MAX,
         cache_lookup_miss_total: u64::MAX,
+        cache_install_total: 0,
+        cache_evict_total: 0,
+        cache_invalidate_total: 0,
+        cache_stale_install_reject_total: 0,
+        compile_request_total: 0,
         tier1_blocks_compiled_total: u64::MAX,
         tier2_blocks_compiled_total: u64::MAX,
         tier1_compile_ns_total: u64::MAX,

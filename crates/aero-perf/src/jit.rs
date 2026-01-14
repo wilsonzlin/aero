@@ -64,6 +64,13 @@ pub struct JitMetrics {
     cache_used_bytes: AtomicU64,
     cache_lookup_hit_total: AtomicU64,
     cache_lookup_miss_total: AtomicU64,
+    cache_install_total: AtomicU64,
+    cache_evict_total: AtomicU64,
+    cache_invalidate_total: AtomicU64,
+    cache_stale_install_reject_total: AtomicU64,
+
+    // Runtime compilation requests (requested by the runtime due to hotness or invalidation).
+    compile_request_total: AtomicU64,
 
     // Deopts / guard failures.
     deopt_total: AtomicU64,
@@ -85,6 +92,11 @@ impl JitMetrics {
             cache_used_bytes: AtomicU64::new(0),
             cache_lookup_hit_total: AtomicU64::new(0),
             cache_lookup_miss_total: AtomicU64::new(0),
+            cache_install_total: AtomicU64::new(0),
+            cache_evict_total: AtomicU64::new(0),
+            cache_invalidate_total: AtomicU64::new(0),
+            cache_stale_install_reject_total: AtomicU64::new(0),
+            compile_request_total: AtomicU64::new(0),
             deopt_total: AtomicU64::new(0),
             guard_fail_total: AtomicU64::new(0),
         }
@@ -109,6 +121,47 @@ impl JitMetrics {
             return;
         }
         self.cache_lookup_miss_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn record_cache_install(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.cache_install_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn record_cache_evict(&self, n: u64) {
+        if !self.enabled {
+            return;
+        }
+        self.cache_evict_total.fetch_add(n, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn record_cache_invalidate(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.cache_invalidate_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn record_cache_stale_install_reject(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.cache_stale_install_reject_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn record_compile_request(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.compile_request_total.fetch_add(1, Ordering::Relaxed);
     }
 
     #[inline]
@@ -199,6 +252,13 @@ impl JitMetrics {
         JitMetricsTotals {
             cache_lookup_hit_total: self.cache_lookup_hit_total.load(Ordering::Relaxed),
             cache_lookup_miss_total: self.cache_lookup_miss_total.load(Ordering::Relaxed),
+            cache_install_total: self.cache_install_total.load(Ordering::Relaxed),
+            cache_evict_total: self.cache_evict_total.load(Ordering::Relaxed),
+            cache_invalidate_total: self.cache_invalidate_total.load(Ordering::Relaxed),
+            cache_stale_install_reject_total: self
+                .cache_stale_install_reject_total
+                .load(Ordering::Relaxed),
+            compile_request_total: self.compile_request_total.load(Ordering::Relaxed),
             tier1_blocks_compiled_total: self.tier1_blocks_compiled_total.load(Ordering::Relaxed),
             tier2_blocks_compiled_total: self.tier2_blocks_compiled_total.load(Ordering::Relaxed),
             tier1_compile_ns_total: self.tier1_compile_ns_total.load(Ordering::Relaxed),
@@ -220,6 +280,11 @@ impl JitMetrics {
 pub struct JitMetricsTotals {
     pub cache_lookup_hit_total: u64,
     pub cache_lookup_miss_total: u64,
+    pub cache_install_total: u64,
+    pub cache_evict_total: u64,
+    pub cache_invalidate_total: u64,
+    pub cache_stale_install_reject_total: u64,
+    pub compile_request_total: u64,
     pub tier1_blocks_compiled_total: u64,
     pub tier2_blocks_compiled_total: u64,
     pub tier1_compile_ns_total: u64,
@@ -367,4 +432,3 @@ pub fn format_hud_line(jit: &JitExport) -> String {
         cap = jit.totals.cache.capacity_bytes,
     )
 }
-

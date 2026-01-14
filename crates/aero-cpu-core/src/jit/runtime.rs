@@ -19,6 +19,52 @@ pub trait JitMetricsSink {
     fn set_cache_bytes(&self, used: u64, capacity: u64);
 }
 
+// Allow embedders to directly reuse `aero_perf::Telemetry` / `aero_perf::jit::JitMetrics` as the
+// runtime metrics sink without introducing a dependency cycle (cpu-core already depends on
+// aero-perf, but aero-perf does not depend on cpu-core).
+impl JitMetricsSink for aero_perf::jit::JitMetrics {
+    #[inline]
+    fn record_cache_hit(&self) {
+        aero_perf::jit::JitMetrics::record_cache_hit(self);
+    }
+
+    #[inline]
+    fn record_cache_miss(&self) {
+        aero_perf::jit::JitMetrics::record_cache_miss(self);
+    }
+
+    #[inline]
+    fn record_install(&self) {
+        aero_perf::jit::JitMetrics::record_cache_install(self);
+    }
+
+    #[inline]
+    fn record_evict(&self, n: u64) {
+        aero_perf::jit::JitMetrics::record_cache_evict(self, n);
+    }
+
+    #[inline]
+    fn record_invalidate(&self) {
+        aero_perf::jit::JitMetrics::record_cache_invalidate(self);
+    }
+
+    #[inline]
+    fn record_stale_install_reject(&self) {
+        aero_perf::jit::JitMetrics::record_cache_stale_install_reject(self);
+    }
+
+    #[inline]
+    fn record_compile_request(&self) {
+        aero_perf::jit::JitMetrics::record_compile_request(self);
+    }
+
+    #[inline]
+    fn set_cache_bytes(&self, used: u64, capacity: u64) {
+        aero_perf::jit::JitMetrics::set_cache_used_bytes(self, used);
+        aero_perf::jit::JitMetrics::set_cache_capacity_bytes(self, capacity);
+    }
+}
+
 pub const PAGE_SIZE: u64 = 4096;
 pub const PAGE_SHIFT: u32 = 12;
 
@@ -971,6 +1017,47 @@ mod tests {
 
         assert_eq!(metrics.stale_reject(), 1);
         assert_eq!(metrics.install(), 0);
+    }
+
+    #[test]
+    fn aero_perf_jit_metrics_can_be_used_as_runtime_metrics_sink() {
+        let mut rt = make_runtime(JitConfig {
+            hot_threshold: 1,
+            cache_max_bytes: 10,
+            ..Default::default()
+        });
+        let metrics = Arc::new(aero_perf::jit::JitMetrics::new(true));
+        rt.set_metrics_sink(Some(metrics.clone()));
+
+        // 1) Cache miss + compile request (hot_threshold=1).
+        assert!(rt.prepare_block(0x1000).is_none());
+
+        // 2) Install two blocks; the second forces eviction due to max_bytes.
+        rt.install_block(0x1000, 0, 0, 6);
+        rt.install_block(0x2000, 1, 0, 6);
+
+        // 3) Explicit invalidation.
+        assert!(rt.invalidate_block(0x2000));
+
+        // 4) Stale install reject triggers another compile request.
+        let meta = rt.snapshot_meta(0x3000, 1);
+        rt.on_guest_write(0x3000, 1);
+        rt.install_handle(CompiledBlockHandle {
+            entry_rip: 0x3000,
+            table_index: 0,
+            meta,
+        });
+
+        let totals = metrics.snapshot_totals();
+        assert_eq!(totals.cache_lookup_hit_total, 0);
+        assert_eq!(totals.cache_lookup_miss_total, 1);
+        assert_eq!(totals.cache_install_total, 2);
+        assert_eq!(totals.cache_evict_total, 1);
+        assert_eq!(totals.cache_invalidate_total, 1);
+        assert_eq!(totals.cache_stale_install_reject_total, 1);
+        assert_eq!(totals.compile_request_total, 2);
+        assert_eq!(totals.code_cache_used_bytes, 0);
+        assert_eq!(totals.code_cache_capacity_bytes, 10);
     }
 
     #[test]
