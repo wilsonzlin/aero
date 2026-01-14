@@ -17,8 +17,8 @@ references one of Aero's contract-v1 modern virtio PCI device IDs:
   - `PCI\VEN_1AF4&DEV_1052` (virtio-input)
   - `PCI\VEN_1AF4&DEV_1059` (virtio-snd)
 
-The check ignores comment lines (starting with ';') so documentation inside INFs can
-still mention these IDs.
+The check ignores comments (lines starting with ';' and inline `; ...` comments) so
+documentation inside INFs can still mention these IDs.
 
 Additionally, enforce that there is only one MSBuild driver project under `drivers/`
 that produces `aero_virtio_blk.sys` (TargetName = aero_virtio_blk) and only one
@@ -42,6 +42,90 @@ function Get-RepoRoot {
     throw "Unable to determine script directory (PSScriptRoot is empty)."
   }
   return (Resolve-Path (Join-Path $ciDir '..')).Path
+}
+
+# INF files in the wild are commonly UTF-16LE (sometimes with no BOM). `Get-Content` does not
+# reliably detect BOM-less UTF-16, causing this guardrail to silently miss HWIDs. Read the file
+# as bytes and apply our own decoding:
+#   - BOM detection for UTF-8 / UTF-16LE / UTF-16BE
+#   - heuristic for BOM-less UTF-16 (even length + high NUL-byte ratio) with endianness guess
+#   - fallback to UTF-8 (ASCII-safe for the IDs we care about)
+function Read-InfText {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path
+  )
+
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if (-not $bytes -or $bytes.Length -eq 0) { return '' }
+
+  # UTF-8 BOM: EF BB BF
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+  }
+
+  # UTF-16 LE BOM: FF FE
+  if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+    return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+  }
+
+  # UTF-16 BE BOM: FE FF
+  if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+    return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+  }
+
+  # Heuristic for BOM-less UTF-16: ASCII INF text encoded in UTF-16 typically has ~50% NUL bytes.
+  # If we see a high NUL ratio, treat as UTF-16 and guess endianness by whether NULs are mostly in
+  # even (BE) or odd (LE) byte positions.
+  if (($bytes.Length % 2) -eq 0) {
+    $nulCount = 0
+    $nulEven = 0
+    $nulOdd = 0
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+      if ($bytes[$i] -eq 0) {
+        $nulCount++
+        if (($i % 2) -eq 0) { $nulEven++ } else { $nulOdd++ }
+      }
+    }
+    $nulRatio = $nulCount / [double]$bytes.Length
+
+    # Threshold chosen to be comfortably below typical UTF-16LE/BE ASCII (0.5) while rejecting UTF-8/ANSI.
+    if ($nulRatio -ge 0.30) {
+      if ($nulOdd -ge $nulEven) {
+        return [System.Text.Encoding]::Unicode.GetString($bytes)
+      } else {
+        return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+      }
+    }
+  }
+
+  # Default: treat as UTF-8. Even for legacy ANSI, this is ASCII-safe for the `PCI\VEN_...` IDs.
+  return [System.Text.Encoding]::UTF8.GetString($bytes)
+}
+
+# Optional unit-like selftest:
+#   $env:AERO_CHECK_VIRTIO_UNIQUENESS_SELFTEST=1; powershell -File ci/check-virtio-driver-uniqueness.ps1
+if ($env:AERO_CHECK_VIRTIO_UNIQUENESS_SELFTEST -eq '1') {
+  $sample = "[Version]`r`nPCI\VEN_1AF4&DEV_1042`r`n"
+  $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("aero-virtio-inf-encoding-" + [System.Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $tmpDir | Out-Null
+  try {
+    $pathLe = Join-Path $tmpDir 'utf16le_no_bom.inf'
+    [System.IO.File]::WriteAllBytes($pathLe, [System.Text.Encoding]::Unicode.GetBytes($sample))
+    if ((Read-InfText $pathLe) -ne $sample) {
+      throw "Read-InfText selftest failed (UTF-16LE no BOM)."
+    }
+
+    $pathBe = Join-Path $tmpDir 'utf16be_no_bom.inf'
+    [System.IO.File]::WriteAllBytes($pathBe, [System.Text.Encoding]::BigEndianUnicode.GetBytes($sample))
+    if ((Read-InfText $pathBe) -ne $sample) {
+      throw "Read-InfText selftest failed (UTF-16BE no BOM)."
+    }
+  } finally {
+    Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  Write-Host "OK: Read-InfText selftest passed."
 }
 
 $repoRoot = Get-RepoRoot
@@ -72,7 +156,8 @@ foreach ($p in $hwidPatterns) {
 }
 
 foreach ($inf in $infFiles) {
-  $lines = @(Get-Content -LiteralPath $inf.FullName -ErrorAction Stop)
+  $text = Read-InfText $inf.FullName
+  $lines = @($text -split "`r?`n")
   for ($i = 0; $i -lt $lines.Count; $i++) {
     $line = [string]$lines[$i]
     # INF comments start with ';' and run to end-of-line. Strip any inline comment
