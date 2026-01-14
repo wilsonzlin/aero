@@ -875,7 +875,7 @@ Useful tooling in this repo:
   - `aero_storage::StreamingDisk` (HTTP `Range` + persistent cache)
   - `aero_storage::ChunkedStreamingDisk` (chunked manifest + per-chunk `GET`, no `Range`)
 - Chunked disk publisher (no-`Range` delivery): [`tools/image-chunker/`](../tools/image-chunker/README.md)
-  - `publish --format <raw|qcow2|vhd|aerospar|auto>`: publish the **logical disk byte stream** for common container formats, not just raw `.img` files.
+  - `publish --format <raw|qcow2|vhd|aerosparse|auto>`: publish the **logical disk byte stream** for common container formats, not just raw `.img` files.
   - `verify`: validate uploaded `manifest.json` + `chunks/*.bin` end-to-end (schema, existence, sizes, optional per-chunk sha256).
 
 ```rust
