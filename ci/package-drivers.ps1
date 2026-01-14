@@ -1184,19 +1184,17 @@ function New-IsoFromFolder {
         Remove-Item -Force $IsoPath
     }
 
-    # Deterministic ISO creation uses the Rust ISO writer (`aero_iso`).
-    # This requires `cargo` and works cross-platform.
+    # Prefer the deterministic Rust ISO writer (`aero_iso`) when `cargo` is available.
+    # - Works cross-platform.
+    # - Produces bit-identical outputs across runs/hosts (given identical input dir + SOURCE_DATE_EPOCH).
     #
-    # Use `-LegacyIso` to force the legacy Windows IMAPI2 implementation (not deterministic).
+    # Fallback behavior:
+    # - On Windows only, if `cargo` is missing (or `-LegacyIso` is set), fall back to the legacy
+    #   IMAPI2 implementation. This fallback is NOT deterministic.
     $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
-    if (-not $LegacyIso) {
-        if ([string]::IsNullOrWhiteSpace($cargoExe)) {
-            $msg = "ISO creation requires Rust/cargo for deterministic, cross-platform builds. Install Rust/cargo, or re-run with -NoIso."
-            if (Get-IsWindows) {
-                $msg += " (On Windows, you may pass -LegacyIso to use IMAPI2, but the ISO will not be deterministic.)"
-            }
-            throw $msg
-        }
+    $hasCargo = -not [string]::IsNullOrWhiteSpace($cargoExe)
+
+    if (-not $LegacyIso -and $hasCargo) {
 
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
         $manifestPath = Join-Path $repoRoot "tools/packaging/aero_packager/Cargo.toml"
@@ -1225,7 +1223,19 @@ function New-IsoFromFolder {
         }
     } else {
         if (-not (Get-IsWindows)) {
-            throw "ISO creation with -LegacyIso requires Windows (IMAPI2)."
+            if ($LegacyIso) {
+                throw "ISO creation with -LegacyIso requires Windows (IMAPI2)."
+            }
+            throw "ISO creation requires either cargo (deterministic, cross-platform) or Windows IMAPI2. Install Rust/cargo, re-run with -NoIso, or run this script on Windows."
+        }
+
+        $inCi = (-not [string]::IsNullOrWhiteSpace($env:CI)) -or (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTIONS))
+        if (-not $LegacyIso -and -not $hasCargo -and $inCi) {
+            throw "ISO creation requires cargo in CI for deterministic artifacts. Install Rust/cargo, or re-run with -NoIso."
+        }
+
+        if (-not $LegacyIso -and -not $hasCargo) {
+            Write-Warning "cargo not found; falling back to legacy Windows IMAPI2 ISO creation (NOT deterministic). Install Rust/cargo for deterministic ISO outputs."
         }
 
         $helper = Join-Path $PSScriptRoot "lib/New-IsoFile.ps1"
@@ -1235,13 +1245,13 @@ function New-IsoFromFolder {
 
         $powershellExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
         if ($powershellExe) {
-            & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel -SourceDateEpoch $SourceDateEpoch -LegacyIso:$LegacyIso
+            & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel -SourceDateEpoch $SourceDateEpoch -LegacyIso:$true
             if ($LASTEXITCODE -ne 0) {
                 throw "ISO creation failed (exit code $LASTEXITCODE)."
             }
         } else {
             . $helper
-            New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel -SourceDateEpoch $SourceDateEpoch -LegacyIso:$LegacyIso
+            New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel -SourceDateEpoch $SourceDateEpoch -LegacyIso:$true
         }
     }
 
@@ -1637,8 +1647,9 @@ function Invoke-DeterminismSelfTest {
     $out1 = Join-Path $tempBase "run1"
     $out2 = Join-Path $tempBase "run2"
 
-    # Only test ISO determinism when we can create an ISO (requires cargo).
-    # If cargo is unavailable, the self-test disables ISO creation via -NoIso.
+    # Only test ISO determinism when we can create a deterministic ISO (requires cargo).
+    # If cargo is unavailable, Windows would fall back to IMAPI2 (not deterministic), so the self-test
+    # disables ISO creation via -NoIso.
     $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
     $canTestIso = -not [string]::IsNullOrWhiteSpace($cargoExe)
     $noIso = -not $canTestIso
