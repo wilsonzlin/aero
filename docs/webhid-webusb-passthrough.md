@@ -466,6 +466,12 @@ Caching / coalescing behaviour (device model):
 - At most **one in-flight** feature report request is tracked per reportId. While a request is
   pending, subsequent guest polls NAK until the host responds (no duplicate host reads are issued).
 
+Snapshot/restore note:
+
+- Feature report reads are backed by async host operations (Promises). After restoring a VM snapshot,
+  any in-flight host-side feature report bookkeeping must be discarded (the guest will retry the
+  control transfer and the device model will re-emit a fresh host request).
+
 ## Security and UX constraints
 
 Passing through a physical device is **powerful and risky**. The UX must make

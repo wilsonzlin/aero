@@ -350,3 +350,60 @@ fn snapshot_restore_clears_ehci_webhid_feature_report_host_state() {
         .expect("expected feature report request after restore");
     assert_eq!(req2.request_id, 2);
 }
+
+#[test]
+fn snapshot_restore_clears_webhid_feature_report_host_state_behind_hub() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Attach a hub at UHCI root port 0, then attach a WebHID passthrough device behind that hub to
+    // ensure `AttachedUsbDevice::reset_host_state_for_restore()` recurses through nested hubs.
+    vm.usb_attach_root(0, Box::new(UsbHubDevice::with_port_count(4)))
+        .expect("attach hub behind UHCI root port 0");
+
+    let webhid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_hid_report_descriptor_input_2_bytes(),
+        false,
+        None,
+        None,
+        None,
+    );
+    vm.usb_attach_at_path(&[0, 1], Box::new(webhid.clone()))
+        .expect("attach WebHID passthrough device behind hub port 1");
+
+    queue_webhid_feature_report_request(&webhid);
+    let req = webhid
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+    assert_eq!(req.request_id, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // After restore, in-flight host-side feature report operations cannot be resumed and must be
+    // cleared so the guest's retries will re-emit a fresh request.
+    assert!(webhid.pop_feature_report_request().is_none());
+
+    queue_webhid_feature_report_request(&webhid);
+    let req2 = webhid
+        .pop_feature_report_request()
+        .expect("expected feature report request after restore");
+    assert_eq!(req2.request_id, 2);
+}
