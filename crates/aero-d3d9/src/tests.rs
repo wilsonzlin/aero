@@ -129,11 +129,11 @@ fn assemble_vs3_generic_output_texcoord3_constant_sm3_decoder() -> Vec<u32> {
     let mut out = vec![0xFFFE0300];
 
     // dcl_position v0
-    out.extend(enc_inst_with_extra(0x001F, 0, &[enc_dst(1, 0, 0xF)]));
+    out.extend(enc_inst_with_extra_sm3(0x001F, 0, &[enc_dst(1, 0, 0xF)]));
     // dcl_position oPos
-    out.extend(enc_inst_with_extra(0x001F, 0, &[enc_dst(4, 0, 0xF)]));
+    out.extend(enc_inst_with_extra_sm3(0x001F, 0, &[enc_dst(4, 0, 0xF)]));
     // dcl_texcoord3 o0
-    out.extend(enc_inst_with_extra(
+    out.extend(enc_inst_with_extra_sm3(
         0x001F,
         (5u32 << 16) | (3u32 << 20),
         &[enc_dst(6, 0, 0xF)],
@@ -171,7 +171,7 @@ fn assemble_ps3_input_texcoord3_passthrough_sm3_decoder() -> Vec<u32> {
     let mut out = vec![0xFFFF0300];
 
     // dcl_texcoord3 v0
-    out.extend(enc_inst_with_extra(
+    out.extend(enc_inst_with_extra_sm3(
         0x001F,
         (5u32 << 16) | (3u32 << 20),
         &[enc_dst(1, 0, 0xF)],

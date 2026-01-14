@@ -64,6 +64,7 @@ fn wgsl_ps3_texldp_is_valid() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
+    // Textures/samplers are bound in their own bind group (separate from constants).
     assert!(wgsl.contains("@group(2) @binding(0) var tex0"), "{wgsl}");
     assert!(wgsl.contains("@group(2) @binding(1) var samp0"), "{wgsl}");
 

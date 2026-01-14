@@ -667,3 +667,175 @@ fn d3d9_packed16_cube_upload_and_sample() {
 
     assert!(rm.destroy_texture(TEX));
 }
+
+#[test]
+fn d3d9_packed16_managed_eviction_reuploads_shadow_data() {
+    let (device, queue) = match pollster::block_on(request_device()) {
+        Some(device) => device,
+        None => {
+            skip_or_panic(module_path!(), "wgpu adapter/device not available");
+            return;
+        }
+    };
+
+    let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
+    rm.begin_frame();
+
+    let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("packed16 sample shader (managed eviction)"),
+        source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
+    });
+
+    let bgl = rm
+        .device()
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            }],
+        });
+
+    let pipeline_layout = rm.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pl"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = rm
+        .device()
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sample pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+    const TEX: GuestResourceId = 1234;
+    rm.create_texture(
+        TEX,
+        TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 2,
+                height: 2,
+                levels: 1,
+            },
+            format: D3DFormat::R5G6B5,
+            pool: D3DPool::Managed,
+            usage: TextureUsageKind::Sampled,
+        },
+    )
+    .unwrap();
+
+    // Upload red, green, blue, white.
+    let pixels: [u16; 4] = [0xF800, 0x07E0, 0x001F, 0xFFFF];
+    let mut packed = Vec::with_capacity(pixels.len() * 2);
+    for p in pixels {
+        packed.extend_from_slice(&p.to_le_bytes());
+    }
+    {
+        let locked = rm.lock_texture_rect(TEX, 0, 0, LockFlags::empty()).unwrap();
+        assert_eq!(locked.pitch, 4);
+        locked.data.copy_from_slice(&packed);
+    }
+    rm.unlock_texture_rect(TEX).unwrap();
+
+    // Flush the initial upload so we don't have stale upload ops referencing the soon-to-be-evicted
+    // GPU texture.
+    {
+        let mut encoder = rm
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        rm.encode_uploads(&mut encoder);
+        rm.submit(encoder);
+    }
+
+    // Evict the GPU texture backing; this must keep the shadow copy for managed textures.
+    assert!(rm.texture_mut(TEX).unwrap().evict_gpu());
+
+    // Re-acquire view (recreates texture + reuploads from shadow).
+    let view = rm.texture_view(TEX).unwrap();
+    let bg = rm.device().create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bg"),
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
+    });
+
+    let out_tex = rm.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("out"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut encoder = rm
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    rm.encode_uploads(&mut encoder);
+
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &out_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    rm.submit(encoder);
+
+    let pixels = readback_rgba8(rm.device(), rm.queue(), &out_tex, 2, 2);
+    // Allow a tiny tolerance; main correctness is that the content survives eviction via shadow
+    // reupload.
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 0, 0), [255, 0, 0, 255], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 1, 0), [0, 255, 0, 255], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 0, 1), [0, 0, 255, 255], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 1, 1), [255, 255, 255, 255], 2);
+}
