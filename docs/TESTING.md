@@ -651,6 +651,22 @@ In CI we run a shorter benchmark configuration to keep PR runtime low:
 AERO_BENCH_PROFILE=ci cargo bench --locked -p aero-cpu-core --bench emulator_critical --features legacy-interp -- --noplot
 ```
 
+### Run the JIT bookkeeping microbenchmarks
+
+`jit_bookkeeping` benchmarks core JIT runtime bookkeeping overhead (CodeCache LRU maintenance,
+HotnessProfile under capacity pressure, and PageVersionTracker snapshotting).
+
+```bash
+# Default profile (moderate; good for local runs)
+cargo bench --locked -p aero-cpu-core --bench jit_bookkeeping -- --noplot
+
+# CI/PR profile (fast)
+AERO_BENCH_PROFILE=ci cargo bench --locked -p aero-cpu-core --bench jit_bookkeeping -- --noplot
+
+# Full profile (slower, more stable)
+AERO_BENCH_PROFILE=full cargo bench --locked -p aero-cpu-core --bench jit_bookkeeping -- --noplot
+```
+
 ## Benchmark regression CI
 
 The workflow `.github/workflows/bench.yml` runs these microbenchmarks and fails
