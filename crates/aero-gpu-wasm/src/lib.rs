@@ -18,7 +18,7 @@ mod drain_queue;
 //
 // Keep this in sync with:
 // - `crates/aero-guest-phys/src/lib.rs`
-// - `web/src/runtime/shared_layout.ts`
+// - `web/src/arch/guest_ram_translate.ts` (and its wrapper `web/src/runtime/shared_layout.ts`)
 #[cfg(any(test, target_arch = "wasm32"))]
 mod guest_phys {
     pub use aero_guest_phys::{HIGH_RAM_START, LOW_RAM_END};
