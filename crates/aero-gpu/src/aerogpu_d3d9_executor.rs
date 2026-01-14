@@ -483,7 +483,7 @@ impl PersistentShaderStage {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u16) {
+fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
     // The D3D9 translator declares sampler bindings using stable names:
     //   var tex{s}: texture_2d<f32> / texture_cube<f32>
     //   var samp{s}: sampler
@@ -495,7 +495,7 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u16) {
     // When cached reflection is stale/corrupt, the masks can become inconsistent with the cached
     // WGSL. Derive masks from WGSL declarations for validation on persistent cache hits.
     let mut used = 0u16;
-    let mut cube = 0u16;
+    let mut sampler_dim_key = 0u32;
 
     for line in wgsl.lines() {
         let Some(pos) = line.find("var tex") else {
@@ -521,12 +521,20 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u16) {
         }
         let bit = 1u16 << idx;
         used |= bit;
-        if line.contains("texture_cube<f32>") {
-            cube |= bit;
-        }
+
+        let dim_code = if line.contains("texture_cube<f32>") {
+            1u32
+        } else if line.contains("texture_3d<f32>") {
+            2u32
+        } else if line.contains("texture_1d<f32>") {
+            3u32
+        } else {
+            0u32
+        };
+        sampler_dim_key |= dim_code << (idx * 2);
     }
 
-    (used, cube)
+    (used, sampler_dim_key)
 }
 
 #[derive(Debug)]
@@ -2865,17 +2873,17 @@ impl AerogpuD3d9Executor {
             };
 
             if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
-                let (wgsl_used_samplers_mask, wgsl_cube_samplers_mask) =
+                let (wgsl_used_samplers_mask, wgsl_sampler_dim_key) =
                     derive_sampler_masks_from_wgsl(wgsl.as_str());
                 if wgsl_used_samplers_mask != reflection.used_samplers_mask
-                    || wgsl_cube_samplers_mask != reflection.cube_samplers_mask
+                    || wgsl_sampler_dim_key != reflection.sampler_dim_key
                 {
                     debug!(
                         shader_handle,
                         expected_used = reflection.used_samplers_mask,
-                        expected_cube = reflection.cube_samplers_mask,
+                        expected_sampler_dim_key = reflection.sampler_dim_key,
                         derived_used = wgsl_used_samplers_mask,
-                        derived_cube = wgsl_cube_samplers_mask,
+                        derived_sampler_dim_key = wgsl_sampler_dim_key,
                         "cached shader sampler mask metadata does not match WGSL; invalidating and retranslating"
                     );
                     if !invalidated_once {
