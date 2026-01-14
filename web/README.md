@@ -13,6 +13,7 @@ When serving the repo-root harness (`npm run dev` / `npm run dev:harness`) these
 
 - `web/wddm-scanout-debug.html` — interactive WDDM scanoutState validation (base_paddr/pitch/XRGB alpha forcing)
 - `web/wddm-scanout-smoke.html` — non-interactive smoke harness used by Playwright (`tests/e2e/wddm_scanout_smoke.spec.ts`)
+- `web/wddm-scanout-vram-smoke.html` — WDDM scanout smoke harness for BAR1/VRAM-backed scanout buffers (`tests/e2e/wddm_scanout_vram_smoke.spec.ts`)
 
 ## Commands
 
