@@ -41,7 +41,9 @@ Goal for Win7 UX: **the same virtual GPU** should provide *both* boot VGA/VBE ou
     `crates/aero-machine/tests/boot_int10_aerogpu_vbe_115_sets_mode.rs`)
   - BAR0 implements a minimal MMIO + ring/fence transport stub (no-op command execution; enough for
     Win7 KMD init + fence progress)
-  - Still missing: full BAR0 command execution + scanout + vblank model + scanout handoff once the Win7 driver loads
+    - Code: `crates/aero-machine/src/aerogpu.rs`
+    - Guard test: `crates/aero-machine/tests/aerogpu_ring_noop_fence.rs`
+  - Still missing: full BAR0 command execution + vblank model + WDDM scanout presentation, plus scanout handoff once the Win7 driver loads
   - Design doc: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md)
 - [ ] Seamless handoff: boot framebuffer → WDDM scanout without losing display or forcing mode resets
 
@@ -65,9 +67,7 @@ Goal for Win7 UX: the Win7 driver package binds to one stable identity and the e
 ### Missing / still required for Win7
 
 - [ ] Wire the full AeroGPU BAR0 WDDM/MMIO/ring device model into the canonical `aero_machine::Machine` path
-  - Today `aero_machine::Machine` exposes the PCI identity plus BAR1-backed VRAM/legacy VGA decode
-    and a minimal BAR0 ring/fence transport stub, but it does not yet execute commands or drive the
-    WDDM scanout/vblank path.
+  - Today `aero_machine::Machine` exposes the PCI identity plus BAR1-backed VRAM/legacy VGA decode and a minimal BAR0 ring/fence transport stub, but it does not yet execute commands or drive the WDDM scanout/vblank path.
 
 ---
 

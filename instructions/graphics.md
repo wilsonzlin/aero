@@ -34,7 +34,8 @@ Quick reality check (as of this repo revision):
   `0xE000_0000`).
 - ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` / `MachineConfig::win7_graphics(...)`
   exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM**, legacy VGA window aliasing (`0xA0000..0xC0000`),
-  minimal BAR0 ring/fence transport (no-op command execution), and BIOS VBE LFB scanout/text-mode fallback (see `crates/aero-machine/src/lib.rs` and
+  **minimal BAR0 MMIO + ring/fence transport** (no-op command execution; no vblank tick / WDDM scanout output yet),
+  and BIOS VBE LFB scanout/text-mode fallback (see `crates/aero-machine/src/{lib.rs,aerogpu.rs}` and
   `crates/aero-machine/tests/{aerogpu_*,boot_int10_aerogpu_vbe_115_sets_mode}.rs`).
 - ✅ AeroGPU ABI/protocol: `emulator/protocol/` (crate `aero-protocol`) contains Rust **and**
   TypeScript mirrors + ABI drift tests; it’s consumed by both Rust (`crates/aero-gpu/`, `crates/emulator/`)
@@ -44,8 +45,9 @@ Quick reality check (as of this repo revision):
 - ✅ D3D9 + D3D11 translation: substantial implementations exist (`crates/aero-d3d9/`,
   `crates/aero-d3d11/`) with extensive host-side tests.
 - ✅ WebGPU backend: `crates/aero-webgpu/` + `crates/aero-gpu/` provide WebGPU/wgpu-backed execution and present paths.
-- 🚧 Missing: `aero_machine` still lacks the **BAR0 WDDM/MMIO/ring protocol + WebGPU execution** path for AeroGPU,
-  so there is not yet an end-to-end “boot VGA/VBE → WDDM scanout” handoff in the canonical browser machine.
+- 🚧 Missing: `aero_machine` still lacks the **full BAR0 WDDM/MMIO/ring/vblank + WebGPU command execution** path for
+  AeroGPU (beyond today’s minimal ring/fence transport), so there is not yet an end-to-end “boot VGA/VBE → WDDM
+  scanout” handoff in the canonical browser machine.
 
 ## Overview
 
@@ -160,10 +162,10 @@ Legend:
 
 | ID | Status | Task | Where | How to test |
 |----|--------|------|-------|-------------|
-| AGPU-MACHINE-001 | Partial (in `crates/aero-machine/`) | Canonical AeroGPU identity at `00:07.0` with BAR1 VRAM aperture + legacy VGA window aliasing + BIOS VBE LFB scanout/text fallback + **minimal BAR0 ring/fence transport stub** (no command execution/scanout yet) | `crates/aero-machine/src/lib.rs` (AeroGpuDevice + `display_present_aerogpu_*`) + `crates/aero-machine/src/aerogpu.rs` (BAR0 stub) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked` |
-| AGPU-DEV-001 | Implemented (in `crates/emulator/`, not yet `aero_machine`) | AeroGPU PCI function (A3A0:0001): BAR0 MMIO, rings, IRQs, vblank tick, scanout regs | `crates/emulator/src/devices/pci/aerogpu.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_device --locked` |
+| AGPU-MACHINE-001 | Partial (in `crates/aero-machine/`) | `A3A0:0001` @ `00:07.0`: BAR1 VRAM + VGA aliasing + BIOS VBE LFB/text fallback; minimal BAR0 MMIO + ring/fence/IRQ transport (no cmd exec/vblank/WDDM scanout yet) | `crates/aero-machine/src/{lib.rs,aerogpu.rs}` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked`<br>`bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked` |
+| AGPU-DEV-001 | Implemented (in `crates/emulator/`, not yet `aero_machine`) | Full AeroGPU PCI function (A3A0:0001): BAR0 MMIO, rings, IRQs, vblank tick, scanout regs | `crates/emulator/src/devices/pci/aerogpu.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_device --locked` |
 | AGPU-DEV-002 | Implemented | WebGPU-backed command execution + readback for tests | `crates/emulator/src/gpu_worker/aerogpu_wgpu_backend.rs` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked` |
-| AGPU-WIRE-001 | **Remaining (P0)** | Implement AeroGPU **BAR0** MMIO/ring/IRQ/vblank protocol in `crates/aero-machine` (port/reuse logic from `crates/emulator/src/devices/pci/aerogpu.rs`) | Start at: `crates/aero-machine/src/lib.rs` (currently BAR1-only AeroGpuDevice) + `crates/emulator/src/devices/pci/aerogpu.rs` (reference) + `emulator/protocol/aerogpu/` (ABI) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --locked` |
+| AGPU-WIRE-001 | **Remaining (P0)** | Expand `crates/aero-machine` AeroGPU from **minimal BAR0 ring/fence** → **full** device model (cmd exec + vblank + BAR0 scanout present), reusing the reference impl in `crates/emulator/` | Start: `crates/aero-machine/src/aerogpu.rs` • Wiring/present: `crates/aero-machine/src/lib.rs` • Reference: `crates/emulator/src/devices/pci/aerogpu.rs`, `crates/emulator/src/gpu_worker/` • ABI: `emulator/protocol/aerogpu/` | Guard transport: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked`<br>Then: `bash ./scripts/safe-run.sh cargo test -p aero-machine --locked` |
 | AGPU-WIRE-002 | **Remaining (P0)** | Implement **boot VGA/VBE → WDDM scanout handoff** rules (once BAR0 scanout is enabled, stop presenting BIOS VBE/text; follow the contract in `docs/16-aerogpu-vga-vesa-compat.md`) | `crates/aero-machine/src/lib.rs` (`display_present`, `display_present_aerogpu_vbe_lfb`) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --locked` |
 | AGPU-WIRE-003 | **Remaining (P0)** | Canonical scanout → browser presentation path for AeroGPU (WDDM scanout should drive the canvas, not VGA) | `crates/aero-wasm/` (machine exports), `web/src/gpu/`, `web/src/workers/gpu-worker.ts` | `npm run test:webgpu` (Playwright WebGPU project) |
 | AGPU-WIRE-004 | **Remaining (P0)** | Validate Win7 vblank + vsynced present behavior against the documented contract (DWM stability) | Spec: `docs/graphics/win7-vblank-present-requirements.md` • Guest tests: `drivers/aerogpu/tests/win7/*` | In Win7 guest: `cd drivers\\aerogpu\\tests\\win7 && build_all_vs2010.cmd && run_all.cmd` |
@@ -266,7 +268,7 @@ npm run test:protocol
 # Run emulator-side AeroGPU device model tests
 bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked
 
-# Run aero_machine AeroGPU BAR1/VBE + BAR0 ring/fence stub smoke tests
+# Run aero_machine AeroGPU boot display + BAR0 ring/fence transport smoke tests
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_vram_alias --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
