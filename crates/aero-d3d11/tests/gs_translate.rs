@@ -9,8 +9,9 @@ use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
     BufferKind, BufferRef, DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier,
-    RegFile, RegisterRef, SamplerRef, ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst,
-    Sm4Module, Sm4Program, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef,
+    ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool,
+    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
@@ -2030,4 +2031,125 @@ fn sm4_gs_half_float_conversions_translate_via_pack_unpack() {
         wgsl.contains("unpack2x16float"),
         "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
     );
+}
+
+#[test]
+fn gs_translate_supports_setp_and_predicated_emit_cut() {
+    const D3D_NAME_PRIMITIVE_ID: u32 = 7;
+
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle(3),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(3),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_PRIMITIVE_ID,
+            },
+        ],
+        instructions: vec![
+            // Set up outputs (required by emit).
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0, 0, 0, 0x3f800000]), // (0,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000, 0, 0, 0x3f800000]), // (1,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            // setp p0.x, primitive_id, 0 (unsigned raw-bit compare)
+            Sm4Inst::Setp {
+                dst: PredicateDstOperand {
+                    reg: PredicateRef { index: 0 },
+                    mask: WriteMask::X,
+                },
+                op: Sm4CmpOp::NeU,
+                a: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                b: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            // (+p0.x) emit; (-p0.x) cut
+            Sm4Inst::Predicated {
+                pred: PredicateOperand {
+                    reg: PredicateRef { index: 0 },
+                    component: 0,
+                    invert: false,
+                },
+                inner: Box::new(Sm4Inst::Emit { stream: 0 }),
+            },
+            Sm4Inst::Predicated {
+                pred: PredicateOperand {
+                    reg: PredicateRef { index: 0 },
+                    component: 0,
+                    invert: true,
+                },
+                inner: Box::new(Sm4Inst::Cut { stream: 0 }),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("var p0: vec4<bool>"),
+        "expected translated WGSL to declare predicate register p0:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("if (p0.x) {"),
+        "expected translated WGSL to wrap predicated emit in an if:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("if (!(p0.x)) {"),
+        "expected translated WGSL to wrap inverted predicated cut in an if:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("gs_emit(o0, o1"),
+        "expected translated WGSL to still call gs_emit:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("gs_cut(&strip_len)"),
+        "expected translated WGSL to still call gs_cut:\n{wgsl}"
+    );
+
+    assert_wgsl_validates(&wgsl);
 }

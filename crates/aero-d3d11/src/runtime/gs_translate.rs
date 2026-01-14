@@ -43,8 +43,9 @@ use crate::binding_model::{
 };
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    BufferKind, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef,
-    Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
+    BufferKind, GsInputPrimitive, GsOutputTopology, OperandModifier, PredicateDstOperand,
+    PredicateOperand, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool,
+    SrcKind, Swizzle, WriteMask,
 };
 
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.
@@ -165,6 +166,7 @@ impl std::error::Error for GsTranslateError {}
 
 fn opcode_name(inst: &Sm4Inst) -> &'static str {
     match inst {
+        Sm4Inst::Predicated { .. } => "predicated",
         Sm4Inst::If { .. } => "if",
         Sm4Inst::IfC { .. } => "ifc",
         Sm4Inst::Else => "else",
@@ -181,6 +183,7 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::EndSwitch => "endswitch",
         Sm4Inst::Mov { .. } => "mov",
         Sm4Inst::Movc { .. } => "movc",
+        Sm4Inst::Setp { .. } => "setp",
         Sm4Inst::Itof { .. } => "itof",
         Sm4Inst::Utof { .. } => "utof",
         Sm4Inst::Ftoi { .. } => "ftoi",
@@ -475,12 +478,20 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     let mut max_temp_reg: i32 = -1;
     let mut max_output_reg: i32 = -1;
     let mut max_gs_input_reg: i32 = -1;
+    let mut max_pred_reg: i32 = -1;
     let mut used_cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
     let mut used_textures: BTreeSet<u32> = BTreeSet::new();
     let mut used_samplers: BTreeSet<u32> = BTreeSet::new();
     let mut used_srv_buffers: BTreeSet<u32> = BTreeSet::new();
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
+        // Unwrap instruction-level predication so register scanning sees the underlying opcode.
+        let mut inst = inst;
+        while let Sm4Inst::Predicated { pred, inner } = inst {
+            max_pred_reg = max_pred_reg.max(pred.reg.index as i32);
+            inst = inner.as_ref();
+        }
+
         match inst {
             Sm4Inst::If { cond, .. } => {
                 scan_src_operand(
@@ -591,6 +602,23 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 )?;
             }
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {}
+            Sm4Inst::Setp { dst, a, b, .. } => {
+                max_pred_reg = max_pred_reg.max(dst.reg.index as i32);
+                for src in [a, b] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "setp",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+            }
             Sm4Inst::Mov { dst, src } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
                 scan_src_operand(
@@ -1071,6 +1099,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     let temp_reg_count = (max_temp_reg + 1).max(0) as u32;
     let output_reg_count = (max_output_reg + 1).max(0) as u32;
     let gs_input_reg_count = (max_gs_input_reg + 1).max(1) as u32;
+    let pred_reg_count = (max_pred_reg + 1).max(0) as u32;
 
     let mut w = WgslWriter::new();
 
@@ -1364,6 +1393,9 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     for i in 0..temp_reg_count {
         w.line(&format!("var r{i}: vec4<f32> = vec4<f32>(0.0);"));
     }
+    for i in 0..pred_reg_count {
+        w.line(&format!("var p{i}: vec4<bool> = vec4<bool>(false);"));
+    }
     for i in 0..output_reg_count {
         w.line(&format!("var o{i}: vec4<f32> = vec4<f32>(0.0);"));
     }
@@ -1555,8 +1587,23 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     gs_emit_args.push_str(", &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow");
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
+        // Unwrap instruction-level predication (`(+p0.x) mov ...`).
+        let mut inst = inst;
+        let mut predicates: Vec<PredicateOperand> = Vec::new();
+        while let Sm4Inst::Predicated { pred, inner } = inst {
+            predicates.push(*pred);
+            inst = inner.as_ref();
+        }
+
         match inst {
             Sm4Inst::Case { value } => {
+                if !predicates.is_empty() {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_case",
+                    });
+                }
+
                 close_case_body(&mut w, &mut cf_stack)?;
 
                 let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
@@ -1570,6 +1617,13 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 continue;
             }
             Sm4Inst::Default => {
+                if !predicates.is_empty() {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_default",
+                    });
+                }
+
                 close_case_body(&mut w, &mut cf_stack)?;
 
                 let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
@@ -1584,6 +1638,13 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 continue;
             }
             Sm4Inst::EndSwitch => {
+                if !predicates.is_empty() {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_endswitch",
+                    });
+                }
+
                 // Close any open case body. If the clause falls through naturally (no `break;`),
                 // reaching the end of the final clause still exits the `switch`.
                 close_case_body(&mut w, &mut cf_stack)?;
@@ -1632,7 +1693,72 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             flush_pending_labels(&mut w, &mut cf_stack, inst_index)?;
         }
 
-        match inst {
+        // Emit predicated instructions as an `if` wrapper around the inner opcode.
+        if !predicates.is_empty() {
+            match inst {
+                Sm4Inst::If { .. } => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_if",
+                    })
+                }
+                Sm4Inst::IfC { .. } => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_ifc",
+                    })
+                }
+                Sm4Inst::Else => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_else",
+                    })
+                }
+                Sm4Inst::EndIf => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_endif",
+                    })
+                }
+                Sm4Inst::Loop => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_loop",
+                    })
+                }
+                Sm4Inst::EndLoop => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_endloop",
+                    })
+                }
+                Sm4Inst::Switch { .. } => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_switch",
+                    })
+                }
+                Sm4Inst::Ret => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "predicated_ret",
+                    })
+                }
+                Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {
+                    unreachable!("switch label opcodes handled above")
+                }
+                _ => {}
+            }
+
+            for pred in &predicates {
+                let cond = emit_test_predicate_scalar(pred);
+                w.line(&format!("if ({cond}) {{"));
+                w.indent();
+            }
+        }
+
+        let r = (|| -> Result<(), GsTranslateError> {
+            match inst {
             // ---- Structured control flow ----
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(inst_index, "if", cond, &input_sivs)?;
@@ -1808,6 +1934,37 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     });
                 }
                 w.line("continue;");
+            }
+            Sm4Inst::Setp { dst, op, a, b } => {
+                let unsigned = matches!(
+                    op,
+                    Sm4CmpOp::EqU
+                        | Sm4CmpOp::NeU
+                        | Sm4CmpOp::LtU
+                        | Sm4CmpOp::GeU
+                        | Sm4CmpOp::LeU
+                        | Sm4CmpOp::GtU
+                );
+                let a_expr = if unsigned {
+                    emit_src_vec4_u32(inst_index, "setp", a, &input_sivs)?
+                } else {
+                    emit_src_vec4(inst_index, "setp", a, &input_sivs)?
+                };
+                let b_expr = if unsigned {
+                    emit_src_vec4_u32(inst_index, "setp", b, &input_sivs)?
+                } else {
+                    emit_src_vec4(inst_index, "setp", b, &input_sivs)?
+                };
+                let cmp = match op {
+                    Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
+                    Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
+                    Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
+                    Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
+                    Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
+                    Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
+                };
+                let expr = format!("({a_expr}) {cmp} ({b_expr})");
+                emit_write_masked_bool(&mut w, *dst, expr)?;
             }
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;
@@ -2099,13 +2256,24 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {
                 unreachable!("switch label instructions handled at top of loop")
             }
-            other => {
-                return Err(GsTranslateError::UnsupportedInstruction {
-                    inst_index,
-                    opcode: opcode_name(other),
-                });
+                other => {
+                    return Err(GsTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: opcode_name(other),
+                    });
+                }
+            }
+            Ok(())
+        })();
+
+        if !predicates.is_empty() {
+            for _ in &predicates {
+                w.dedent();
+                w.line("}");
             }
         }
+
+        r?;
     }
 
     if let Some(open) = blocks.last() {
@@ -2345,6 +2513,37 @@ fn emit_write_masked(
         }
     }
     Ok(())
+}
+
+fn emit_write_masked_bool(
+    w: &mut WgslWriter,
+    dst: PredicateDstOperand,
+    rhs: String,
+) -> Result<(), GsTranslateError> {
+    let dst_expr = format!("p{}", dst.reg.index);
+
+    // Mask is 4 bits.
+    let mask_bits = dst.mask.0 & 0xF;
+    if mask_bits == 0 {
+        return Ok(());
+    }
+
+    let comps = [('x', 1u8), ('y', 2u8), ('z', 4u8), ('w', 8u8)];
+    for (c, bit) in comps {
+        if (mask_bits & bit) != 0 {
+            w.line(&format!("{dst_expr}.{c} = ({rhs}).{c};"));
+        }
+    }
+    Ok(())
+}
+
+fn emit_test_predicate_scalar(pred: &PredicateOperand) -> String {
+    let base = format!("p{}.{}", pred.reg.index, component_char(pred.component));
+    if pred.invert {
+        format!("!({base})")
+    } else {
+        base
+    }
 }
 
 fn emit_src_vec4(
