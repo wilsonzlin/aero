@@ -217,6 +217,9 @@ complete transfer-plane coverage, and large parts of the xHCI spec), so treat th
     - device endpoint doorbells are latched and can drive bounded transfer execution:
       - endpoint 0 control transfers (Setup/Data/Status TRBs), and
       - bulk/interrupt endpoints via Normal TRBs (via `transfer::XhciTransferExecutor`).
+      In the guest-visible MMIO path, ringing a non-zero doorbell also triggers an immediate bounded
+      `tick()` + event-ring service so transfers can make forward progress even if the outer
+      integration does not model a periodic controller tick.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
@@ -456,6 +459,7 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_extcaps.rs`
 - `crates/aero-usb/tests/xhci_supported_protocol.rs`
 - `crates/aero-usb/tests/xhci_ports.rs`
+- `crates/aero-usb/tests/xhci_snapshot_roundtrip.rs`
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
 - `crates/aero-usb/tests/xhci_control_get_descriptor.rs`
 - `crates/aero-usb/tests/xhci_control_set_configuration.rs`
