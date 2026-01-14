@@ -12,6 +12,12 @@ This document describes the intended architecture for contributors: **pass seque
 layouts**, the **bind group + ABI model**, the initial **supported subset**, and the **testing
 strategy**.
 
+> Current repo status: tessellation (HS/DS) execution is **not** wired up yet in the host-side
+> D3D11 executor. Patchlist topologies are accepted by `SET_PRIMITIVE_TOPOLOGY`, but binding HS/DS
+> currently hits a `todo!` at draw time, and the GS/HS/DS compute-prepass path is still a placeholder
+> (no real tessellation output). Treat the rest of this document as the target design until HS/DS
+> execution lands; see [`docs/graphics/status.md`](./status.md).
+>
 > Related:
 > - [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D11→WebGPU mapping)
 > - [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (compute expansion pattern + indirect draw)

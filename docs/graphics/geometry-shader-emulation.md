@@ -112,6 +112,7 @@ Test pointers:
 - Placeholder compute-prepass smoke: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
 - In-progress GS translator unit tests (not wired into the executor yet): `crates/aero-d3d11/tests/gs_translate.rs`
 - Future end-to-end semantics (once wired): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- DXBC tooling (opcode discovery / token shapes): `cargo run -p aero-d3d11 --bin dxbc_dump -- <gs_*.dxbc>`
 
 ---
 

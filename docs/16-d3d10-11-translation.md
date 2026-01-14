@@ -508,7 +508,7 @@ GS/HS/DS emulation requires the underlying WebGPU device/backend to support:
 Geometry shader failures are often “silent” (nothing draws) because the expansion pass can legally
 emit zero primitives. Recommended debug workflow:
 
-1. Use the `sm4_dump` tool (GS-TOOL-016) on the DXBC to confirm:
+1. Use the in-repo DXBC dump tools (`dxbc_dump` or `sm4_dump`) on the DXBC to confirm:
    - declared input primitive type and output topology
    - `maxvertexcount`
    - input/output signatures (semantics + component masks)
