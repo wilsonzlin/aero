@@ -199,6 +199,18 @@ or:
 Note: some clients send both `apiKey` and `token` for compatibility. If both are
 provided, they must match.
 
+### Keepalive / idle timeouts (after authentication)
+
+After authentication completes, the relay applies an idle timeout and sends keepalive pings:
+
+- Config:
+  - `UDP_WS_IDLE_TIMEOUT` / `--udp-ws-idle-timeout` (default `60s`)
+  - `UDP_WS_PING_INTERVAL` / `--udp-ws-ping-interval` (default `20s`; must be **<** `UDP_WS_IDLE_TIMEOUT`)
+- The relay sends WebSocket **ping control frames** at `UDP_WS_PING_INTERVAL`.
+- Any received frame (including WebSocket **pong** control frames) extends the idle deadline.
+- If the connection is idle for `UDP_WS_IDLE_TIMEOUT`, the relay closes the WebSocket with close code **1000** (normal closure) and reason `"idle timeout"`.
+- If the relay fails to write a ping (e.g. the peer is gone), it closes the WebSocket with close code **1001** (going away).
+
 ### Control messages (WebSocket text frames)
 
 Text messages are reserved for control-plane signaling:
@@ -580,6 +592,18 @@ WebSocket credentials can be provided via either:
    ```
 
 If `AUTH_MODE != none`, the client MUST authenticate within `SIGNALING_AUTH_TIMEOUT`. If the timeout is hit, credentials are invalid, or if the client sends `offer`/`candidate` before authenticating, the server closes the WebSocket with close code **1008** (policy violation). The server may send a `{type:"error", code:"unauthorized"}` message immediately before closing.
+
+#### Keepalive / idle timeouts (after authentication)
+
+After authentication completes, the relay applies an idle timeout and sends keepalive pings:
+
+- Config:
+  - `SIGNALING_WS_IDLE_TIMEOUT` / `--signaling-ws-idle-timeout` (default `60s`)
+  - `SIGNALING_WS_PING_INTERVAL` / `--signaling-ws-ping-interval` (default `20s`; must be **<** `SIGNALING_WS_IDLE_TIMEOUT`)
+- The relay sends WebSocket **ping control frames** at `SIGNALING_WS_PING_INTERVAL`.
+- Any received message (including WebSocket **pong** control frames) extends the idle deadline.
+- If the connection is idle for `SIGNALING_WS_IDLE_TIMEOUT`, the relay closes the WebSocket with close code **1000** (normal closure) and reason `"idle timeout"`.
+- If the relay fails to write a ping (e.g. the peer is gone), it closes the WebSocket with close code **1001** (going away).
 
 All signaling messages are JSON objects with a required `type` field.
 
