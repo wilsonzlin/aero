@@ -2708,6 +2708,91 @@ fn tier1_inline_tlb_store_bumps_code_page_version() {
 }
 
 #[test]
+fn tier1_inline_tlb_store_mmio_exit_does_not_bump_code_page_version() {
+    // Ensure an MMIO exit does not bump the code-version table (even if the target physical page
+    // index is in-bounds).
+    let addr = 0x0u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0xccu8; 0x1000];
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram.clone(),
+        0,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: true,
+            ..Default::default()
+        },
+        1,
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, ram);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(table, vec![0]);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_exit_does_not_bump_code_page_versions() {
+    // Like the single-page case above, but ensure a cross-page MMIO exit doesn't bump either page.
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0xccu8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram.clone(),
+        // Only the first page is RAM; the second page is MMIO.
+        0x1000,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: true,
+            ..Default::default()
+        },
+        2,
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, ram);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(table, vec![0, 0]);
+}
+
+#[test]
 fn tier1_inline_tlb_store_code_version_bump_skips_out_of_bounds_page() {
     let addr = 0x1000u64;
 
