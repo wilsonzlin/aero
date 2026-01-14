@@ -3034,8 +3034,16 @@ function renderDisksPanel(): HTMLElement {
     // Legacy `activeDiskImage` compat: if present, try to resolve it to an existing disk and
     // apply it to DiskManager mounts (once). This keeps `?disk=...` links functional even though
     // disk selection is now driven by mounts + `setBootDisks` (not by config).
-    const legacyActiveDiskImage = configManager.getState().effective.activeDiskImage;
-    if (legacyActiveDiskImage && appliedActiveDiskImage !== legacyActiveDiskImage) {
+    //
+    // IMPORTANT: Avoid letting a stale stored/static `activeDiskImage` override user-selected mounts
+    // in DiskManager. Only apply it automatically when:
+    // - the user explicitly set it via URL query param (locked key), OR
+    // - mounts are currently empty (fresh profile / first-run migration).
+    const legacyConfigState = configManager.getState();
+    const legacyActiveDiskImage = legacyConfigState.effective.activeDiskImage;
+    const legacyActiveDiskImageLocked = legacyConfigState.lockedKeys.has("activeDiskImage");
+    const mountsEmpty = !mounts.hddId && !mounts.cdId;
+    if (legacyActiveDiskImage && appliedActiveDiskImage !== legacyActiveDiskImage && (legacyActiveDiskImageLocked || mountsEmpty)) {
       const trimmed = legacyActiveDiskImage.trim();
       if (trimmed) {
         // Try to match by disk ID, name, or local filename (supports legacy OPFS `images/` adoptions).
