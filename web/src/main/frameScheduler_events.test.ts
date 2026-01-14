@@ -92,6 +92,21 @@ describe("main/frameScheduler (telemetry)", () => {
     gpuWorker.dispatch({
       protocol: GPU_PROTOCOL_NAME,
       protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "metrics",
+      framesReceived: 1,
+      framesPresented: 1,
+      framesDropped: 0,
+      telemetry: { hello: "world" },
+    });
+
+    const snapAfterFirstMetrics = overlay.getSnapshot?.() as any;
+    expect(snapAfterFirstMetrics.hello).toBe("world");
+    expect(snapAfterFirstMetrics.framesReceived).toBe(1);
+    expect(snapAfterFirstMetrics.gpuEvents).toBeUndefined();
+
+    gpuWorker.dispatch({
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
       type: "events",
       version: 1,
       events: [
@@ -108,6 +123,8 @@ describe("main/frameScheduler (telemetry)", () => {
     const snapAfterEvents = overlay.getSnapshot?.() as any;
     expect(Array.isArray(snapAfterEvents?.gpuEvents)).toBe(true);
     expect(snapAfterEvents.gpuEvents).toHaveLength(1);
+    expect(snapAfterEvents.hello).toBe("world");
+    expect(console.error).toHaveBeenCalled();
 
     gpuWorker.dispatch({
       protocol: GPU_PROTOCOL_NAME,
@@ -116,11 +133,11 @@ describe("main/frameScheduler (telemetry)", () => {
       framesReceived: 1,
       framesPresented: 1,
       framesDropped: 0,
-      telemetry: { hello: "world" },
+      telemetry: { hello: "world2" },
     });
 
     const snapAfterMetrics = overlay.getSnapshot?.() as any;
-    expect(snapAfterMetrics.hello).toBe("world");
+    expect(snapAfterMetrics.hello).toBe("world2");
     expect(snapAfterMetrics.framesReceived).toBe(1);
     expect(Array.isArray(snapAfterMetrics?.gpuEvents)).toBe(true);
     expect(snapAfterMetrics.gpuEvents).toHaveLength(1);
