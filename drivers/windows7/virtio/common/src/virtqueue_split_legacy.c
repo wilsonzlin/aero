@@ -558,21 +558,29 @@ int virtqueue_split_add_sg(virtqueue_split_t *vq,
 virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq)
 {
     uint16_t new_idx;
+    uint16_t old_idx;
 
     if (vq == NULL) {
         return VIRTIO_FALSE;
     }
 
     new_idx = vq->avail_idx;
-    if (new_idx == vq->last_kick_avail) {
+    old_idx = vq->last_kick_avail;
+    if (new_idx == old_idx) {
         return VIRTIO_FALSE;
     }
+    /*
+     * Record the new avail index regardless of whether we actually kick.
+     *
+     * This matches the virtio spec / Linux behaviour: the EVENT_IDX check needs
+     * the previous value observed by the driver (old_idx) rather than the last
+     * index that happened to be kicked.
+     */
+    vq->last_kick_avail = new_idx;
 
     if (vq->event_idx != VIRTIO_FALSE && vq->avail_event != NULL) {
         uint16_t event;
-        uint16_t old;
 
-        old = vq->last_kick_avail;
         /*
          * Full barrier: ensure our avail ring updates are visible to the device
          * before we read the device's notification threshold (avail_event).
@@ -583,20 +591,15 @@ virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq)
          */
         virtio_mb(vq->os, vq->os_ctx);
         event = *vq->avail_event;
-        if (virtqueue_split_need_event(event, new_idx, old) != VIRTIO_FALSE) {
-            vq->last_kick_avail = new_idx;
-            return VIRTIO_TRUE;
-        }
-        return VIRTIO_FALSE;
+        return virtqueue_split_need_event(event, new_idx, old_idx);
     }
 
     /* Ensure avail ring stores are visible before reading used->flags. */
     virtio_mb(vq->os, vq->os_ctx);
-    if ((vq->used->flags & VRING_USED_F_NO_NOTIFY) != 0) {
+    if (vq->used != NULL && (vq->used->flags & VRING_USED_F_NO_NOTIFY) != 0) {
         return VIRTIO_FALSE;
     }
 
-    vq->last_kick_avail = new_idx;
     return VIRTIO_TRUE;
 }
 
