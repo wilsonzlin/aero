@@ -2,15 +2,30 @@ import { expect, test } from "@playwright/test";
 
 const fixtureUrl = "/tests/e2e/fixtures/input_capture_io_worker.html";
 
-test("IO worker receives batched input events", async ({ page }) => {
-  await page.goto(fixtureUrl);
-
-  await page.waitForFunction(() => {
+async function waitForIoReady(page: import("@playwright/test").Page): Promise<void> {
+  const handle = await page.waitForFunction(() => {
+    const fixtureErr = (globalThis as any).__fixtureError;
+    if (fixtureErr) return { ok: false, err: { message: fixtureErr, filename: "fixture", lineno: 0, colno: 0 } };
+    const err = (globalThis as any).__ioWorkerError;
+    if (err) return { ok: false, err };
     const status = (globalThis as any).__ioStatus as Int32Array | undefined;
     const idx = (globalThis as any).__ioReadyIndex as number | undefined;
     if (!status || idx === undefined) return false;
-    return Atomics.load(status, idx) === 1;
+    return Atomics.load(status, idx) === 1 ? { ok: true } : false;
   });
+  const res = (await handle.jsonValue()) as { ok: boolean; err?: any };
+  if (!res.ok) {
+    const err = res.err ?? {};
+    throw new Error(
+      `io.worker failed to reach READY: ${String(err.message ?? err)} (${String(err.filename ?? "")}:${String(err.lineno ?? "")}:${String(err.colno ?? "")})`,
+    );
+  }
+}
+
+test("IO worker receives batched input events", async ({ page }) => {
+  await page.goto(fixtureUrl);
+
+  await waitForIoReady(page);
 
   await page.click("#emu");
 
@@ -40,12 +55,7 @@ test("IO worker receives batched input events", async ({ page }) => {
 test("IO worker receives Consumer Control (media key) events", async ({ page }) => {
   await page.goto(fixtureUrl);
 
-  await page.waitForFunction(() => {
-    const status = (globalThis as any).__ioStatus as Int32Array | undefined;
-    const idx = (globalThis as any).__ioReadyIndex as number | undefined;
-    if (!status || idx === undefined) return false;
-    return Atomics.load(status, idx) === 1;
-  });
+  await waitForIoReady(page);
 
   await page.click("#emu");
 

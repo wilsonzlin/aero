@@ -19,136 +19,159 @@
   </head>
   <body>
     <canvas id="emu" width="640" height="480"></canvas>
-      <script type="module">
-         import { InputCapture } from "/web/src/input/input_capture.ts";
-         import { allocateHarnessSharedMemorySegments } from "/web/src/runtime/harness_shared_memory.ts";
-         import { createIoIpcSab, createSharedMemoryViews, StatusIndex } from "/web/src/runtime/shared_layout.ts";
-         import { emptySetBootDisksMessage } from "/web/src/runtime/boot_disks_protocol.ts";
+    <script type="module">
+      import { InputCapture } from "/web/src/input/input_capture.ts";
+      import { allocateHarnessSharedMemorySegments } from "/web/src/runtime/harness_shared_memory.ts";
+      import { createIoIpcSab, createSharedMemoryViews, StatusIndex } from "/web/src/runtime/shared_layout.ts";
+      import { emptySetBootDisksMessage } from "/web/src/runtime/boot_disks_protocol.ts";
 
       const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("emu"));
+      window.__fixtureError = null;
+      window.__ioWorkerError = null;
 
-      // Deterministic pointer lock shim for headless tests.
-      let plElement = null;
-      Object.defineProperty(document, "pointerLockElement", {
-        configurable: true,
-        get() {
-          return plElement;
-        },
-      });
+      const main = async () => {
+        // Deterministic pointer lock shim for headless tests.
+        let plElement = null;
+        Object.defineProperty(document, "pointerLockElement", {
+          configurable: true,
+          get() {
+            return plElement;
+          },
+        });
 
-      canvas.requestPointerLock = () => {
-        window.__plRequestCount = (window.__plRequestCount || 0) + 1;
-        plElement = canvas;
-        document.dispatchEvent(new Event("pointerlockchange"));
-      };
+        canvas.requestPointerLock = () => {
+          window.__plRequestCount = (window.__plRequestCount || 0) + 1;
+          plElement = canvas;
+          document.dispatchEvent(new Event("pointerlockchange"));
+        };
 
-      document.exitPointerLock = () => {
-        plElement = null;
-        document.dispatchEvent(new Event("pointerlockchange"));
-      };
+        document.exitPointerLock = () => {
+          plElement = null;
+          document.dispatchEvent(new Event("pointerlockchange"));
+        };
 
-       // Create a real IO worker and expose its shared status view so Playwright can assert receipt.
-       //
-       // Use the harness allocator to keep memory usage low (avoid the full runtime's large wasm32
-       // reserved region + default VRAM allocation).
-       const segments = allocateHarnessSharedMemorySegments({
-         guestRamBytes: 1 * 1024 * 1024,
-         sharedFramebuffer: new SharedArrayBuffer(8),
-         sharedFramebufferOffsetBytes: 0,
-         ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
-         vramBytes: 0,
-       });
-       const views = createSharedMemoryViews(segments);
-       window.__ioStatus = views.status;
-       window.__ioReadyIndex = StatusIndex.IoReady;
+        // Create a real IO worker and expose its shared status view so Playwright can assert receipt.
+        //
+        // Use the harness allocator to keep memory usage low (avoid the full runtime's large wasm32
+        // reserved region + default VRAM allocation).
+        const segments = allocateHarnessSharedMemorySegments({
+          guestRamBytes: 1 * 1024 * 1024,
+          sharedFramebuffer: new SharedArrayBuffer(8),
+          sharedFramebufferOffsetBytes: 0,
+          // No network/HID rings needed; keep the AIPC SAB tiny.
+          ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
+          vramBytes: 0,
+        });
+        const views = createSharedMemoryViews(segments);
+        window.__ioStatus = views.status;
+        window.__ioReadyIndex = StatusIndex.IoReady;
         window.__ioInputBatchCounterIndex = StatusIndex.IoInputBatchCounter;
         window.__ioInputEventCounterIndex = StatusIndex.IoInputEventCounter;
 
-       // Capture the most recent input batch payload (decoded) so Playwright tests can assert that
-       // specific event types (e.g. consumer/media keys) are present, while still exercising the
-       // real IO worker as the receiver.
-       window.__lastInputBatchEvents = null;
-       const onBeforeSendBatch = (_buffer, words, count, _recycle) => {
-         const out = [];
-         const base = 2;
-         for (let i = 0; i < count; i++) {
-           const off = base + i * 4;
-           out.push([words[off] >>> 0, words[off + 1] >>> 0, words[off + 2] | 0, words[off + 3] | 0]);
-         }
-         window.__lastInputBatchEvents = out;
-       };
+        // Capture the most recent input batch payload (decoded) so Playwright tests can assert that
+        // specific event types (e.g. consumer/media keys) are present, while still exercising the
+        // real IO worker as the receiver.
+        window.__lastInputBatchEvents = null;
+        const onBeforeSendBatch = (_buffer, words, count, _recycle) => {
+          const out = [];
+          const base = 2;
+          for (let i = 0; i < count; i++) {
+            const off = base + i * 4;
+            out.push([words[off] >>> 0, words[off + 1] >>> 0, words[off + 2] | 0, words[off + 3] | 0]);
+          }
+          window.__lastInputBatchEvents = out;
+        };
 
-          // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
-          // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
-          // blob-based module worker and import the real worker from there for cross-browser stability.
-          const ioWorkerEntrypoint = new URL("/web/src/workers/io.worker.ts", location.href).toString();
-          const ioWorkerWrapperUrl = URL.createObjectURL(
-            new Blob(
-              [
-                `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
-              ],
-              { type: "text/javascript" },
-            ),
-          );
-          const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
+        // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
+        // (it emits an `error` event without useful details). Wrap the module entrypoint in a tiny
+        // blob-based module worker and import the real worker from there for cross-browser stability.
+        const ioWorkerEntrypoint = new URL("/web/src/workers/io.worker.ts", location.href).toString();
+        const ioWorkerWrapperUrl = URL.createObjectURL(
+          new Blob(
+            [
+              `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+            ],
+            { type: "text/javascript" },
+          ),
+        );
+        const ioWorker = new Worker(ioWorkerWrapperUrl, { type: "module" });
+        ioWorker.addEventListener("error", (ev) => {
+          window.__ioWorkerError = {
+            message: ev.message,
+            filename: ev.filename,
+            lineno: ev.lineno,
+            colno: ev.colno,
+          };
+        });
+        ioWorker.addEventListener("messageerror", () => {
+          window.__ioWorkerError = { message: "messageerror", filename: "", lineno: 0, colno: 0 };
+        });
 
-          const ioWorkerImported = new Promise((resolve, reject) => {
-            let timer = 0;
-            const cleanup = () => {
-              if (timer) clearTimeout(timer);
-              ioWorker.removeEventListener("message", onMessage);
-              ioWorker.removeEventListener("error", onError);
-            };
-            const onMessage = (ev) => {
-              const data = ev.data;
-              if (!data || typeof data !== "object") return;
-              if (data.type === "__aero_io_worker_imported") {
-                cleanup();
-                resolve();
-                return;
-              }
-              if (data.type === "__aero_io_worker_import_failed") {
-                cleanup();
-                reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
-              }
-            };
-            const onError = (ev) => {
+        // Avoid dropping early messages by waiting until the imported worker module has run.
+        const ioWorkerImported = new Promise((resolve, reject) => {
+          let timer = 0;
+          const cleanup = () => {
+            if (timer) clearTimeout(timer);
+            ioWorker.removeEventListener("message", onMessage);
+            ioWorker.removeEventListener("error", onError);
+          };
+          const onMessage = (ev) => {
+            const data = ev.data;
+            if (!data || typeof data !== "object") return;
+            if (data.type === "__aero_io_worker_imported") {
               cleanup();
-              reject(new Error(`io.worker wrapper error during import: ${ev?.message || "worker error"}`));
-            };
-            ioWorker.addEventListener("message", onMessage);
-            ioWorker.addEventListener("error", onError);
-            timer = setTimeout(() => {
+              resolve();
+              return;
+            }
+            if (data.type === "__aero_io_worker_import_failed") {
               cleanup();
-              reject(new Error("Timed out waiting for io.worker import marker"));
-            }, 20_000);
-          });
+              reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
+            }
+          };
+          const onError = (ev) => {
+            cleanup();
+            reject(new Error(`io.worker wrapper error during import: ${ev?.message || "worker error"}`));
+          };
+          ioWorker.addEventListener("message", onMessage);
+          ioWorker.addEventListener("error", onError);
+          timer = setTimeout(() => {
+            cleanup();
+            reject(new Error("Timed out waiting for io.worker import marker"));
+          }, 20_000);
+        });
 
-          await ioWorkerImported;
+        await ioWorkerImported;
+        URL.revokeObjectURL(ioWorkerWrapperUrl);
 
-          // io.worker waits for an initial boot disk selection message before reporting READY.
-          // This fixture doesn't mount any disks, but it still needs the worker to reach READY so
-          // input batching can be tested deterministically.
-          ioWorker.postMessage(emptySetBootDisksMessage());
-          ioWorker.postMessage({
-            kind: "init",
-            role: "io",
-            controlSab: segments.control,
-            guestMemory: segments.guestMemory,
-            ioIpcSab: segments.ioIpc,
-            sharedFramebuffer: segments.sharedFramebuffer,
-            sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-            scanoutState: segments.scanoutState,
-            scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
-          });
+        // io.worker waits for an initial boot disk selection message before reporting READY.
+        // This fixture doesn't mount any disks, but it still needs the worker to reach READY so
+        // input batching can be tested deterministically.
+        ioWorker.postMessage(emptySetBootDisksMessage());
+        ioWorker.postMessage({
+          kind: "init",
+          role: "io",
+          controlSab: segments.control,
+          guestMemory: segments.guestMemory,
+          ioIpcSab: segments.ioIpc,
+          sharedFramebuffer: segments.sharedFramebuffer,
+          sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+          scanoutState: segments.scanoutState,
+          scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        });
 
-       window.__capture = new InputCapture(canvas, ioWorker, {
-         flushHz: 1000,
-         mouseSensitivity: 1.0,
-         onBeforeSendBatch,
-       });
+        window.__capture = new InputCapture(canvas, ioWorker, {
+          flushHz: 1000,
+          mouseSensitivity: 1.0,
+          onBeforeSendBatch,
+        });
 
-      window.__capture.start();
+        window.__capture.start();
+      };
+
+      main().catch((err) => {
+        window.__fixtureError = err instanceof Error ? err.message : String(err);
+        console.error(err);
+      });
     </script>
   </body>
 </html>
