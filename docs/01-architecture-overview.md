@@ -251,7 +251,9 @@ Note on boot display vs AeroGPU:
     LFB base.
   - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
     PCI function (currently `00:0c.0`) so the VBE LFB is reachable via PCI BAR0 inside the PCI MMIO
-    window / BAR router.
+    window / BAR router. BAR0 is assigned by BIOS POST / the PCI allocator (and may be relocated when
+    other PCI devices are present); the machine mirrors the assigned BAR base into the BIOS VBE
+    `PhysBasePtr` and the VGA device model so guests observe a coherent LFB base.
 - With `MachineConfig::enable_aerogpu=true`, the canonical machine exposes the AeroGPU PCI identity
   (`A3A0:0001`) at `00:07.0` with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture) for
   stable Windows driver binding. In `aero_machine` today BAR1 is backed by a dedicated VRAM buffer

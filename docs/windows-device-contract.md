@@ -134,7 +134,9 @@ Current canonical machine note:
     LFB base.
   - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
     PCI function (currently `00:0c.0`) so the LFB can be reached via PCI BAR0 inside the PCI MMIO
-    window / BAR router.
+    window / BAR router. BAR0 is assigned by BIOS POST / the PCI allocator (and may be relocated when
+    other PCI devices are present); the machine mirrors the assigned BAR base into the BIOS VBE
+    `PhysBasePtr` and the VGA device model so guests observe a coherent LFB base.
 
 Legacy bring-up ABI note:
 
