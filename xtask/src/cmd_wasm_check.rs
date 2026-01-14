@@ -9,7 +9,7 @@ pub fn print_help() {
 Compile-check wasm32 compatibility for selected crates.
 
 Usage:
-  cargo xtask wasm-check
+  cargo xtask wasm-check [--locked]
 
 Currently checked:
   - aero-devices-gpu
@@ -24,16 +24,22 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         print_help();
         return Ok(());
     }
-    if !args.is_empty() {
-        return Err(XtaskError::Message(
-            "unexpected arguments (run `cargo xtask wasm-check --help`)".to_string(),
-        ));
+    let mut force_locked = false;
+    for arg in args {
+        match arg.as_str() {
+            "--locked" => force_locked = true,
+            other => {
+                return Err(XtaskError::Message(format!(
+                    "unexpected argument for `wasm-check`: `{other}` (run `cargo xtask wasm-check --help`)"
+                )));
+            }
+        }
     }
 
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
 
-    let cargo_locked = repo_root.join("Cargo.lock").is_file();
+    let cargo_locked = force_locked || repo_root.join("Cargo.lock").is_file();
     {
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&repo_root)
