@@ -10936,8 +10936,9 @@ impl Machine {
                 let _ = scanout_state.try_publish(update);
             } else {
                 // If the shared scanout descriptor currently indicates WDDM scanout but the device
-                // itself has not claimed WDDM ownership (e.g. after a reset/restore mismatch),
-                // revert the shared scanout descriptor back to the legacy BIOS source.
+                // itself no longer claims WDDM ownership (e.g. `SCANOUT0_ENABLE=0` or after a
+                // reset/restore mismatch), revert the shared scanout descriptor back to the legacy
+                // BIOS source.
                 //
                 // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
                 // to BIOS VBE state (for correct legacy mode reporting).

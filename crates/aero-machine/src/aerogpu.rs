@@ -2158,7 +2158,6 @@ impl AeroGpuMmioDevice {
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
-
                 if !self.scanout0_enable && new_enable {
                     if let Some(interval_ns) = self.vblank_interval_ns {
                         self.next_vblank_ns = Some(self.now_ns.saturating_add(interval_ns));
