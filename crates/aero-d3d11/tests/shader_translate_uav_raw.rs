@@ -41,8 +41,13 @@ fn translates_compute_ld_uav_raw_and_validates() {
                     saturate: false,
                 },
                 addr: SrcOperand {
-                    // Use a numeric `f32` literal (`16.0`) for the byte address. The translator
-                    // should apply the float-to-u32 heuristic and treat it as `16u` (byte offset).
+                    // Use a numeric `f32` literal (`16.0`) for the byte address.
+                    //
+                    // DXBC register lanes are untyped 32-bit values. Integer-ish operands
+                    // (including raw UAV addresses) must consume raw lane bits rather than attempt
+                    // float->int heuristics. This should therefore lower to a `u32` constant with
+                    // the raw bits `0x41800000` (the IEEE encoding of 16.0), not the numeric
+                    // integer `16`.
                     kind: SrcKind::ImmediateF32([16.0f32.to_bits(); 4]),
                     swizzle: Swizzle::XXXX,
                     modifier: OperandModifier::None,
@@ -58,22 +63,26 @@ fn translates_compute_ld_uav_raw_and_validates() {
     assert_wgsl_validates(&translated.wgsl);
 
     // The raw UAV address is a byte offset, so the translator should divide by 4 to index the
-    // underlying `array<u32>`. Ensure we used the `16.0` immediate as `16u`.
+    // underlying `array<u32>`. Ensure the `16.0` immediate is treated as raw bits, and ensure no
+    // float->int heuristic code appears in the output.
     assert!(
         translated.wgsl.contains("ld_uav_raw_base0"),
         "expected ld_uav_raw base index calculation:\n{}",
         translated.wgsl
     );
     assert!(
-        translated
-            .wgsl
-            .contains("let ld_uav_raw_base0: u32 = (16u) / 4u;"),
-        "expected float immediate address to be treated as 16u:\n{}",
+        translated.wgsl.contains("0x41800000u"),
+        "expected float immediate address to be treated as raw bits (0x41800000):\n{}",
         translated.wgsl
     );
     assert!(
         translated.wgsl.contains("/ 4u;"),
         "expected byte-to-word address conversion:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("floor("),
+        "unexpected float->int heuristic in WGSL:\n{}",
         translated.wgsl
     );
 

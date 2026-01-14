@@ -524,10 +524,10 @@ fn translates_compute_buffer_uav_load_structured() {
         swizzle: Swizzle::XXXX,
         modifier: aero_d3d11::OperandModifier::None,
     };
-    let one_f32 = SrcOperand {
-        // Use a numeric `f32` literal for the structured index. The translator should treat it as
-        // `1u` (element index) when computing the word address.
-        kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+    let one_u32 = SrcOperand {
+        // Structured buffer indices are integer-typed. The DXBC register file is untyped, so encode
+        // an integer `1` as raw lane bits.
+        kind: SrcKind::ImmediateF32([1; 4]),
         swizzle: Swizzle::XXXX,
         modifier: aero_d3d11::OperandModifier::None,
     };
@@ -553,7 +553,7 @@ fn translates_compute_buffer_uav_load_structured() {
                     mask: WriteMask::XYZW,
                     saturate: false,
                 },
-                index: one_f32,
+                index: one_u32,
                 offset: zero,
                 uav: aero_d3d11::UavRef { slot: 0 },
             },
@@ -570,10 +570,8 @@ fn translates_compute_buffer_uav_load_structured() {
         translated.wgsl
     );
     assert!(
-        translated
-            .wgsl
-            .contains("let ld_uav_struct_base0: u32 = ((1u) * 16u + (0u)) / 4u;"),
-        "expected float immediate index to be treated as 1u:\n{}",
+        translated.wgsl.contains("0x00000001u"),
+        "expected raw integer bits 0x00000001 to be used for structured index:\n{}",
         translated.wgsl
     );
     assert!(
