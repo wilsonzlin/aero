@@ -22,8 +22,8 @@ Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../do
 > that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
 >
 > The alias INF is checked in disabled-by-default; rename it to `virtio-input.inf` to enable it.
-> From the first section header (`[Version]`) onward, it is expected to stay in sync with the canonical keyboard/mouse INF
-> (`inf/aero_virtio_input.inf`); only the leading banner/comment block may differ. CI enforces this via
+> From the first section header (`[Version]`) onward, it is expected to be **byte-for-byte identical** to the canonical
+> keyboard/mouse INF (`inf/aero_virtio_input.inf`); only the leading banner/comment block may differ. CI enforces this via
 > `scripts/ci/check-windows7-virtio-contract-consistency.py` and `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
 >
 > Do not ship/install the alias alongside `aero_virtio_input.inf`: they match the same HWIDs and overlapping INFs can
