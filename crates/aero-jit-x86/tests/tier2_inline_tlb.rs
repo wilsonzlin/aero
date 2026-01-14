@@ -2077,6 +2077,52 @@ fn tier2_inline_tlb_dynamic_w32_store_cross_page_check_boundary() {
 }
 
 #[test]
+fn tier2_inline_tlb_dynamic_w32_same_page_on_nonzero_page_uses_fast_path() {
+    // Ensure the runtime cross-page check masks the page offset (`vaddr & 0xFFF`) rather than
+    // comparing the full address. If the mask is missing, any address >= 0x1000 would incorrectly
+    // be treated as cross-page for W16/W32/W64 accesses.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: Gpr::Rax,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(0)),
+                src: Operand::Const(0x1122_3344),
+                width: Width::W32,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(ValueId(1)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let addr: u64 = 0x1000;
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+
+    let (ret, got_ram, gpr, host) =
+        run_trace_with_init_gprs(&trace, ram, cpu_ptr, 0x20_000, &[(Gpr::Rax, addr)]);
+
+    assert_eq!(ret, 0x1000);
+    assert_eq!(read_u32_le(&got_ram, addr as usize), 0x1122_3344);
+    assert_eq!(gpr[Gpr::Rbx.as_u8() as usize] as u32, 0x1122_3344);
+
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_dynamic_w16_load_cross_page_check_boundary() {
     // Dynamic (non-constant) addresses emit a runtime cross-page check. Ensure the boundary
     // condition is correct for W16 accesses: offset 0xFFE stays in-page, 0xFFF crosses.
