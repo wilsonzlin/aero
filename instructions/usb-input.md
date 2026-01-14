@@ -245,27 +245,31 @@ cargo test -p aero-machine --lib
 cargo test -p aero-usb --lib
 
 # Optional: also run a small input-focused Playwright subset.
+# (Defaults to Chromium + 1 worker; sets `AERO_WASM_PACKAGES=core` unless already configured.)
 cargo xtask input --e2e
 
- # If you're running in a constrained sandbox, consider using safe-run:
- bash ./scripts/safe-run.sh cargo xtask input
- bash ./scripts/safe-run.sh cargo xtask input --rust-only
- 
- # Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
- # `cargo xtask input` can exceed this. Bump the timeout if you see a timeout kill:
- AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
- 
- # --- Manual / debugging (run pieces individually) ---
+# If you're running in a constrained sandbox, consider using safe-run:
+bash ./scripts/safe-run.sh cargo xtask input
+bash ./scripts/safe-run.sh cargo xtask input --rust-only
 
- # Rust device-model tests
- bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
- bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
- 
- # WASM integration sanity (routes input through the same public WASM APIs used by the web runtime).
- bash ./scripts/safe-run.sh cargo test -p aero-wasm --test machine_input_backends --locked
+# Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
+# `cargo xtask input` can exceed this. Bump the timeout if you see a timeout kill:
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 
- # Web unit tests (full suite)
- npm -w web run test:unit
+# You can also limit web wasm-pack builds to the core runtime package (useful for Playwright E2E):
+AERO_WASM_PACKAGES=core npm -w web run wasm:build
+
+# --- Manual / debugging (run pieces individually) ---
+
+# Rust device-model tests
+bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
+bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+
+# WASM integration sanity (routes input through the same public WASM APIs used by the web runtime).
+bash ./scripts/safe-run.sh cargo test -p aero-wasm --test machine_input_backends --locked
+
+# Web unit tests (full suite)
+npm -w web run test:unit
 
 # Playwright E2E suite (repo root)
 npm run test:e2e
