@@ -419,7 +419,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
     const usbLoad = vi.fn();
 
-    await restoreIoWorkerVmSnapshotFromOpfs({
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
       api,
       path: "state/test.snap",
       guestBase: 0,
@@ -435,6 +435,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     });
 
     expect(usbLoad).toHaveBeenCalledWith(canonicalBytes);
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb"]);
+    const cachedUsb = res.restoredDevices.filter((d) => d.kind === "usb");
+    expect(cachedUsb).toHaveLength(1);
+    expect(cachedUsb[0]!.bytes).toBe(canonicalBytes);
   });
 
   it("restores legacy raw UHCI USB blobs into UHCI when available (even if xHCI exists)", async () => {

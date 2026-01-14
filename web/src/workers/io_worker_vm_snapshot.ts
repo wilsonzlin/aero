@@ -1132,6 +1132,34 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
 
+    // Defensive dedupe: some historical/buggy snapshot producers may emit multiple USB entries
+    // (e.g. both `usb` and legacy `usb.uhci`). Ensure the cached/restored device list contains
+    // exactly one `usb` entry so restore→save merges preserve the chosen USB bytes deterministically.
+    if (usbBytes) {
+      let firstUsb = -1;
+      for (let i = 0; i < restoredDevices.length; i += 1) {
+        if (restoredDevices[i]!.kind !== VM_SNAPSHOT_DEVICE_USB_KIND) continue;
+        if (firstUsb < 0) {
+          firstUsb = i;
+          restoredDevices[i] = { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: usbBytes };
+        } else {
+          restoredDevices.splice(i, 1);
+          i -= 1;
+        }
+      }
+      firstUsb = -1;
+      for (let i = 0; i < devices.length; i += 1) {
+        if (devices[i]!.kind !== VM_SNAPSHOT_DEVICE_USB_KIND) continue;
+        if (firstUsb < 0) {
+          firstUsb = i;
+          devices[i] = { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: copyU8ToArrayBuffer(usbBytes) };
+        } else {
+          devices.splice(i, 1);
+          i -= 1;
+        }
+      }
+    }
+
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
       mmu: copyU8ToArrayBuffer(rec.mmu),
@@ -1193,6 +1221,34 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
+
+    // Defensive dedupe: snapshots should not contain multiple entries for the same outer device id,
+    // but be robust if they do. Keep exactly one `usb` entry in the cached/restored device list so
+    // restore→save merges preserve deterministic USB bytes.
+    if (usbBytes) {
+      let firstUsb = -1;
+      for (let i = 0; i < restoredDevices.length; i += 1) {
+        if (restoredDevices[i]!.kind !== VM_SNAPSHOT_DEVICE_USB_KIND) continue;
+        if (firstUsb < 0) {
+          firstUsb = i;
+          restoredDevices[i] = { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: usbBytes };
+        } else {
+          restoredDevices.splice(i, 1);
+          i -= 1;
+        }
+      }
+      firstUsb = -1;
+      for (let i = 0; i < devices.length; i += 1) {
+        if (devices[i]!.kind !== VM_SNAPSHOT_DEVICE_USB_KIND) continue;
+        if (firstUsb < 0) {
+          firstUsb = i;
+          devices[i] = { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: copyU8ToArrayBuffer(usbBytes) };
+        } else {
+          devices.splice(i, 1);
+          i -= 1;
+        }
+      }
+    }
 
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
