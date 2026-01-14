@@ -1269,7 +1269,6 @@ only if you explicitly want the base image to be mutated.
       `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...` (and `tx_csum > 0`)
     - (only when link flap is enabled via `-WithNetLinkFlap` / `--with-net-link-flap`) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS`
-    - (only when `-WithNetLinkFlap` / `--with-net-link-flap` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
 
 The Python/PowerShell harnesses may also emit additional host-side markers after the run for log scraping/diagnostics:
 
