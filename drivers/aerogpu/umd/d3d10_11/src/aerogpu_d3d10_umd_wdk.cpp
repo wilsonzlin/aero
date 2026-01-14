@@ -2273,10 +2273,34 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return;
     }
 
-    std::vector<D3DKMT_HANDLE> km_allocs;
-    km_allocs.reserve(res->wddm.km_allocation_handles.size());
-    for (uint64_t h : res->wddm.km_allocation_handles) {
-      km_allocs.push_back(static_cast<D3DKMT_HANDLE>(h));
+    constexpr size_t kInlineKmtAllocs = 16;
+    std::array<D3DKMT_HANDLE, kInlineKmtAllocs> km_allocs_stack{};
+    std::vector<D3DKMT_HANDLE> km_allocs_heap;
+    D3DKMT_HANDLE* km_allocs = nullptr;
+    UINT km_alloc_count = 0;
+
+    const size_t handle_count = res->wddm.km_allocation_handles.size();
+    if (handle_count != 0) {
+      if (handle_count <= km_allocs_stack.size()) {
+        for (size_t i = 0; i < handle_count; ++i) {
+          km_allocs_stack[i] = static_cast<D3DKMT_HANDLE>(res->wddm.km_allocation_handles[i]);
+        }
+        km_allocs = km_allocs_stack.data();
+        km_alloc_count = static_cast<UINT>(handle_count);
+      } else {
+        try {
+          km_allocs_heap.reserve(handle_count);
+          for (uint64_t h : res->wddm.km_allocation_handles) {
+            km_allocs_heap.push_back(static_cast<D3DKMT_HANDLE>(h));
+          }
+          km_allocs = km_allocs_heap.data();
+          km_alloc_count = static_cast<UINT>(km_allocs_heap.size());
+        } catch (...) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          km_allocs = nullptr;
+          km_alloc_count = 0;
+        }
+      }
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
@@ -2287,13 +2311,13 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
     __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
-      dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
+      dealloc.NumAllocations = km_alloc_count;
     }
     __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
-      dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.HandleList = km_alloc_count ? km_allocs : nullptr;
     }
     __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
-      dealloc.phAllocations = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.phAllocations = km_alloc_count ? km_allocs : nullptr;
     }
     CallCbMaybeHandle(dev->callbacks.pfnDeallocateCb, dev->hrt_device, &dealloc);
     res->wddm.km_allocation_handles.clear();
@@ -3631,10 +3655,34 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   }
 
   if (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty()) {
-    std::vector<D3DKMT_HANDLE> km_allocs;
-    km_allocs.reserve(res->wddm.km_allocation_handles.size());
-    for (uint64_t h : res->wddm.km_allocation_handles) {
-      km_allocs.push_back(static_cast<D3DKMT_HANDLE>(h));
+    constexpr size_t kInlineKmtAllocs = 16;
+    std::array<D3DKMT_HANDLE, kInlineKmtAllocs> km_allocs_stack{};
+    std::vector<D3DKMT_HANDLE> km_allocs_heap;
+    D3DKMT_HANDLE* km_allocs = nullptr;
+    UINT km_alloc_count = 0;
+
+    const size_t handle_count = res->wddm.km_allocation_handles.size();
+    if (handle_count != 0) {
+      if (handle_count <= km_allocs_stack.size()) {
+        for (size_t i = 0; i < handle_count; ++i) {
+          km_allocs_stack[i] = static_cast<D3DKMT_HANDLE>(res->wddm.km_allocation_handles[i]);
+        }
+        km_allocs = km_allocs_stack.data();
+        km_alloc_count = static_cast<UINT>(handle_count);
+      } else {
+        try {
+          km_allocs_heap.reserve(handle_count);
+          for (uint64_t h : res->wddm.km_allocation_handles) {
+            km_allocs_heap.push_back(static_cast<D3DKMT_HANDLE>(h));
+          }
+          km_allocs = km_allocs_heap.data();
+          km_alloc_count = static_cast<UINT>(km_allocs_heap.size());
+        } catch (...) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          km_allocs = nullptr;
+          km_alloc_count = 0;
+        }
+      }
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
@@ -3645,13 +3693,13 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
     __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
-      dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
+      dealloc.NumAllocations = km_alloc_count;
     }
     __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
-      dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.HandleList = km_alloc_count ? km_allocs : nullptr;
     }
     __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
-      dealloc.phAllocations = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.phAllocations = km_alloc_count ? km_allocs : nullptr;
     }
     const HRESULT hr = CallCbMaybeHandle(dev->callbacks.pfnDeallocateCb, dev->hrt_device, &dealloc);
     if (FAILED(hr)) {

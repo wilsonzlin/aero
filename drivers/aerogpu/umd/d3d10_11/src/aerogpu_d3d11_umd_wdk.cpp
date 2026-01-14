@@ -15,6 +15,7 @@
 #include <d3d11.h>
 #include <d3dkmthk.h>
 
+#include <array>
 #include <algorithm>
 #include <atomic>
 #include <cassert>
@@ -2525,10 +2526,34 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return;
     }
 
-    std::vector<D3DKMT_HANDLE> km_allocs;
-    km_allocs.reserve(res->wddm.km_allocation_handles.size());
-    for (uint64_t h : res->wddm.km_allocation_handles) {
-      km_allocs.push_back(static_cast<D3DKMT_HANDLE>(h));
+    constexpr size_t kInlineKmtAllocs = 16;
+    std::array<D3DKMT_HANDLE, kInlineKmtAllocs> km_allocs_stack{};
+    std::vector<D3DKMT_HANDLE> km_allocs_heap;
+    D3DKMT_HANDLE* km_allocs = nullptr;
+    UINT km_alloc_count = 0;
+
+    const size_t handle_count = res->wddm.km_allocation_handles.size();
+    if (handle_count != 0) {
+      if (handle_count <= km_allocs_stack.size()) {
+        for (size_t i = 0; i < handle_count; ++i) {
+          km_allocs_stack[i] = static_cast<D3DKMT_HANDLE>(res->wddm.km_allocation_handles[i]);
+        }
+        km_allocs = km_allocs_stack.data();
+        km_alloc_count = static_cast<UINT>(handle_count);
+      } else {
+        try {
+          km_allocs_heap.reserve(handle_count);
+          for (uint64_t h : res->wddm.km_allocation_handles) {
+            km_allocs_heap.push_back(static_cast<D3DKMT_HANDLE>(h));
+          }
+          km_allocs = km_allocs_heap.data();
+          km_alloc_count = static_cast<UINT>(km_allocs_heap.size());
+        } catch (...) {
+          SetError(dev, E_OUTOFMEMORY);
+          km_allocs = nullptr;
+          km_alloc_count = 0;
+        }
+      }
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
@@ -2539,13 +2564,13 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
     __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
-      dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
+      dealloc.NumAllocations = km_alloc_count;
     }
     __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
-      dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.HandleList = km_alloc_count ? km_allocs : nullptr;
     }
     __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
-      dealloc.phAllocations = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.phAllocations = km_alloc_count ? km_allocs : nullptr;
     }
     CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &dealloc);
 
@@ -3783,10 +3808,34 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
   if (callbacks && callbacks->pfnDeallocateCb && dev->runtime_device &&
       (res->wddm.km_resource_handle != 0 || !res->wddm.km_allocation_handles.empty())) {
-    std::vector<D3DKMT_HANDLE> km_allocs;
-    km_allocs.reserve(res->wddm.km_allocation_handles.size());
-    for (uint64_t h : res->wddm.km_allocation_handles) {
-      km_allocs.push_back(static_cast<D3DKMT_HANDLE>(h));
+    constexpr size_t kInlineKmtAllocs = 16;
+    std::array<D3DKMT_HANDLE, kInlineKmtAllocs> km_allocs_stack{};
+    std::vector<D3DKMT_HANDLE> km_allocs_heap;
+    D3DKMT_HANDLE* km_allocs = nullptr;
+    UINT km_alloc_count = 0;
+
+    const size_t handle_count = res->wddm.km_allocation_handles.size();
+    if (handle_count != 0) {
+      if (handle_count <= km_allocs_stack.size()) {
+        for (size_t i = 0; i < handle_count; ++i) {
+          km_allocs_stack[i] = static_cast<D3DKMT_HANDLE>(res->wddm.km_allocation_handles[i]);
+        }
+        km_allocs = km_allocs_stack.data();
+        km_alloc_count = static_cast<UINT>(handle_count);
+      } else {
+        try {
+          km_allocs_heap.reserve(handle_count);
+          for (uint64_t h : res->wddm.km_allocation_handles) {
+            km_allocs_heap.push_back(static_cast<D3DKMT_HANDLE>(h));
+          }
+          km_allocs = km_allocs_heap.data();
+          km_alloc_count = static_cast<UINT>(km_allocs_heap.size());
+        } catch (...) {
+          SetError(dev, E_OUTOFMEMORY);
+          km_allocs = nullptr;
+          km_alloc_count = 0;
+        }
+      }
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
@@ -3797,13 +3846,13 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
     __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
-      dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
+      dealloc.NumAllocations = km_alloc_count;
     }
     __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
-      dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.HandleList = km_alloc_count ? km_allocs : nullptr;
     }
     __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
-      dealloc.phAllocations = km_allocs.empty() ? nullptr : km_allocs.data();
+      dealloc.phAllocations = km_alloc_count ? km_allocs : nullptr;
     }
     const HRESULT hr = CallCbMaybeHandle(callbacks->pfnDeallocateCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &dealloc);
     if (FAILED(hr)) {
