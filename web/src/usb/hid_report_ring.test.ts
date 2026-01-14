@@ -6,6 +6,7 @@ import {
   HID_REPORT_RING_CTRL_BYTES,
   HID_REPORT_RING_CTRL_WORDS,
   HidReportType,
+  type HidReportPayloadType,
 } from "./hid_report_ring";
 
 describe("HidReportRing", () => {
@@ -69,10 +70,10 @@ describe("HidReportRing", () => {
     const ring = new HidReportRing(sab);
 
     expect(ring.dropped()).toBe(0);
-    expect(ring.push(1, HidReportType.WrapMarker, 1, new Uint8Array([1]))).toBe(false);
+    expect(ring.push(1, HidReportType.WrapMarker as unknown as HidReportPayloadType, 1, new Uint8Array([1]))).toBe(false);
     expect(ring.dropped()).toBe(1);
 
-    expect(ring.push(1, 0x42 as HidReportType, 1, new Uint8Array([1]))).toBe(false);
+    expect(ring.push(1, 0x42 as unknown as HidReportPayloadType, 1, new Uint8Array([1]))).toBe(false);
     expect(ring.dropped()).toBe(2);
 
     expect(ring.isEmpty()).toBe(true);

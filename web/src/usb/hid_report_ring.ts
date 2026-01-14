@@ -40,9 +40,11 @@ export const HidReportType = {
 
 export type HidReportType = (typeof HidReportType)[keyof typeof HidReportType];
 
+export type HidReportPayloadType = Exclude<HidReportType, typeof HidReportType.WrapMarker>;
+
 export type HidReportRingRecord = {
   deviceId: number;
-  reportType: HidReportType;
+  reportType: HidReportPayloadType;
   reportId: number;
   payload: Uint8Array;
 };
@@ -153,7 +155,7 @@ export class HidReportRing {
     return this.#corruptionReason() !== null;
   }
 
-  push(deviceId: number, reportType: HidReportType, reportId: number, payload: Uint8Array): boolean {
+  push(deviceId: number, reportType: HidReportPayloadType, reportId: number, payload: Uint8Array): boolean {
     if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
       // `WrapMarker` is an internal sentinel; allowing callers to inject it would corrupt the ring.
       // Treat any unknown tag as a dropped record to keep the ring state consistent.
@@ -284,14 +286,23 @@ export class HidReportRing {
         continue;
       }
 
-      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
-      if (reportType === HidReportType.WrapMarker) {
+      if (reportTypeRaw === HidReportType.WrapMarker) {
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
+      if (
+        reportTypeRaw !== HidReportType.Input &&
+        reportTypeRaw !== HidReportType.Output &&
+        reportTypeRaw !== HidReportType.Feature
+      ) {
+        // Corruption; do not advance head.
+        return null;
+      }
+      const reportType = reportTypeRaw as HidReportPayloadType;
 
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > remaining) {
@@ -334,18 +345,23 @@ export class HidReportRing {
         continue;
       }
 
-      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
-      if (reportType === HidReportType.WrapMarker) {
+      if (reportTypeRaw === HidReportType.WrapMarker) {
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
 
-      if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
-        throw hidReportRingCorruption(`unknown report type tag: ${String(reportType)}`);
+      if (
+        reportTypeRaw !== HidReportType.Input &&
+        reportTypeRaw !== HidReportType.Output &&
+        reportTypeRaw !== HidReportType.Feature
+      ) {
+        throw hidReportRingCorruption(`unknown report type tag: ${String(reportTypeRaw)}`);
       }
+      const reportType = reportTypeRaw as HidReportPayloadType;
 
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > this.#cap) throw hidReportRingCorruption("record larger than ring capacity");
@@ -386,14 +402,23 @@ export class HidReportRing {
         continue;
       }
 
-      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
-      if (reportType === HidReportType.WrapMarker) {
+      if (reportTypeRaw === HidReportType.WrapMarker) {
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
+      if (
+        reportTypeRaw !== HidReportType.Input &&
+        reportTypeRaw !== HidReportType.Output &&
+        reportTypeRaw !== HidReportType.Feature
+      ) {
+        // Corruption.
+        return false;
+      }
+      const reportType = reportTypeRaw as HidReportPayloadType;
 
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > remaining) return false;
@@ -429,18 +454,23 @@ export class HidReportRing {
         continue;
       }
 
-      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const reportTypeRaw = this.#view.getUint8(headIndex + 4) as HidReportType;
       const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
       const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
 
-      if (reportType === HidReportType.WrapMarker) {
+      if (reportTypeRaw === HidReportType.WrapMarker) {
         Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
         continue;
       }
 
-      if (reportType !== HidReportType.Input && reportType !== HidReportType.Output && reportType !== HidReportType.Feature) {
-        throw hidReportRingCorruption(`unknown report type tag: ${String(reportType)}`);
+      if (
+        reportTypeRaw !== HidReportType.Input &&
+        reportTypeRaw !== HidReportType.Output &&
+        reportTypeRaw !== HidReportType.Feature
+      ) {
+        throw hidReportRingCorruption(`unknown report type tag: ${String(reportTypeRaw)}`);
       }
+      const reportType = reportTypeRaw as HidReportPayloadType;
 
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > this.#cap) throw hidReportRingCorruption("record larger than ring capacity");
