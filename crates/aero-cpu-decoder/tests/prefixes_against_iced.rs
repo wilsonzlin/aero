@@ -149,15 +149,21 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
 
     // --- Group 1 prefix semantics (LOCK/REP/REPNE) ---
     // `Instruction::{has_rep_prefix,has_repne_prefix}` exclude *mandatory* `F3`/`F2`
-    // prefix bytes (e.g. `PAUSE` and many SSE instructions). Since our prefix
-    // parser is byte-based, we treat those mandatory bytes as present.
+    // prefix bytes in legacy encodings (e.g. `PAUSE` and many SSE instructions).
+    // Since our prefix parser is byte-based, we treat those mandatory bytes as
+    // present *only when they're actually encoded as separate legacy prefix
+    // bytes*. For VEX/EVEX/XOP, the mandatory prefix is encoded inside the
+    // modern prefix itself, so it must not affect our expected group1 flags.
     //
     // We also avoid comparing HLE/XACQUIRE/XRELEASE cases since iced can report
     // multiple group1 flags simultaneously there, while our metadata enforces a
     // single "effective" group1 prefix ("last prefix wins").
     let expected_lock = iced.has_lock_prefix();
-    let expected_rep = iced.has_rep_prefix() || mandatory == MandatoryPrefix::PF3;
-    let expected_repne = iced.has_repne_prefix() || mandatory == MandatoryPrefix::PF2;
+    let mandatory_group1_is_byte = encoding == EncodingKind::Legacy;
+    let expected_rep =
+        iced.has_rep_prefix() || (mandatory_group1_is_byte && mandatory == MandatoryPrefix::PF3);
+    let expected_repne = iced.has_repne_prefix()
+        || (mandatory_group1_is_byte && mandatory == MandatoryPrefix::PF2);
     let expected_group1_count = expected_lock as u8 + expected_rep as u8 + expected_repne as u8;
     if expected_group1_count <= 1 {
         assert_eq!(
