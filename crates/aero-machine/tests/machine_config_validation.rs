@@ -151,6 +151,27 @@ fn enable_xhci_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_synthetic_usb_hid_requires_enable_uhci() {
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_uhci: false,
+        enable_synthetic_usb_hid: true,
+        ..Default::default()
+    };
+
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("synthetic USB HID without UHCI must be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MachineError::SyntheticUsbHidRequiresUhci));
+    assert!(
+        err.to_string()
+            .contains("enable_synthetic_usb_hid requires enable_uhci=true"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
 fn enable_aerogpu_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,

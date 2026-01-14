@@ -7644,37 +7644,6 @@ impl Machine {
                 None
             };
  
-            // If enabled, attach an external USB hub with a fixed set of synthetic HID devices.
-            //
-            // This mirrors the browser runtime topology described in `docs/08-input-devices.md`.
-            if self.cfg.enable_synthetic_usb_hid {
-                let keyboard = self
-                    .usb_hid_keyboard
-                    .get_or_insert_with(aero_usb::hid::UsbHidKeyboardHandle::new)
-                    .clone();
-                let mouse = self
-                    .usb_hid_mouse
-                    .get_or_insert_with(aero_usb::hid::UsbHidMouseHandle::new)
-                    .clone();
-                let gamepad = self
-                    .usb_hid_gamepad
-                    .get_or_insert_with(aero_usb::hid::UsbHidGamepadHandle::new)
-                    .clone();
-
-                if let Some(uhci) = uhci.as_ref() {
-                    let mut hub = aero_usb::hub::UsbHubDevice::new();
-                    hub.attach(1, Box::new(keyboard));
-                    hub.attach(2, Box::new(mouse));
-                    hub.attach(3, Box::new(gamepad));
-
-                    // Attach hub to UHCI root port 0.
-                    uhci.borrow_mut()
-                        .controller_mut()
-                        .hub_mut()
-                        .attach(0, Box::new(hub));
-                }
-            }
-
             if attach_usb2_mux {
                 if let (Some(uhci), Some(ehci)) = (&uhci, &ehci) {
                     // UHCI exposes two root hub ports. EHCI defaults to six; mux the first two so
@@ -7691,6 +7660,75 @@ impl Machine {
                         let hub = ehci_dev.controller_mut().hub_mut();
                         hub.attach_usb2_port_mux(0, mux.clone(), 0);
                         hub.attach_usb2_port_mux(1, mux.clone(), 1);
+                    }
+                }
+            }
+
+            // If enabled, attach an external USB hub with a fixed set of synthetic HID devices.
+            //
+            // This mirrors the browser runtime topology described in `docs/08-input-devices.md`.
+            //
+            // Note: this is intentionally best-effort and does not overwrite any host-attached
+            // devices. If the relevant ports are already occupied, synthetic devices are not
+            // attached.
+            if self.cfg.enable_synthetic_usb_hid {
+                if let Some(uhci) = uhci.as_ref() {
+                    let mut uhci_dev = uhci.borrow_mut();
+                    let root = uhci_dev.controller_mut().hub_mut();
+
+                    // Ensure an external hub exists at root port 0. If a host device already
+                    // occupies the port, do not overwrite it.
+                    if root.port_device(0).is_none() {
+                        let _ = root.attach_at_path(
+                            &[0],
+                            Box::new(aero_usb::hub::UsbHubDevice::with_port_count(16)),
+                        );
+                    }
+
+                    // Determine whether root port 0 is a hub, and which downstream ports are
+                    // already occupied. (Borrow the hub briefly so we can later call
+                    // `attach_at_path` on the root hub without borrow conflicts.)
+                    let hub_state = if let Some(mut dev0) = root.port_device_mut(0) {
+                        if let Some(hub) = dev0.as_hub_mut() {
+                            let port_count = hub.num_ports();
+                            let port1_occupied = hub.downstream_device_mut(0).is_some();
+                            let port2_occupied =
+                                port_count >= 2 && hub.downstream_device_mut(1).is_some();
+                            let port3_occupied =
+                                port_count >= 3 && hub.downstream_device_mut(2).is_some();
+                            Some((port_count, port1_occupied, port2_occupied, port3_occupied))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some((port_count, port1_occupied, port2_occupied, port3_occupied)) =
+                        hub_state
+                    {
+                        // Attach built-in HID devices behind the external hub.
+                        if port_count >= 1 && !port1_occupied {
+                            let keyboard = self
+                                .usb_hid_keyboard
+                                .get_or_insert_with(aero_usb::hid::UsbHidKeyboardHandle::new)
+                                .clone();
+                            let _ = root.attach_at_path(&[0, 1], Box::new(keyboard));
+                        }
+                        if port_count >= 2 && !port2_occupied {
+                            let mouse = self
+                                .usb_hid_mouse
+                                .get_or_insert_with(aero_usb::hid::UsbHidMouseHandle::new)
+                                .clone();
+                            let _ = root.attach_at_path(&[0, 2], Box::new(mouse));
+                        }
+                        if port_count >= 3 && !port3_occupied {
+                            let gamepad = self
+                                .usb_hid_gamepad
+                                .get_or_insert_with(aero_usb::hid::UsbHidGamepadHandle::new)
+                                .clone();
+                            let _ = root.attach_at_path(&[0, 3], Box::new(gamepad));
+                        }
                     }
                 }
             }

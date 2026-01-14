@@ -3654,7 +3654,8 @@ impl Machine {
     /// See `docs/21-smp.md#status-today` and `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
-        let cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_synthetic_usb_hid = true;
         Self::new_with_native_config(cfg)
     }
 
@@ -3668,6 +3669,7 @@ impl Machine {
         smbios_uuid_seed: u64,
     ) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_synthetic_usb_hid = true;
         cfg.smbios_uuid_seed = smbios_uuid_seed;
         Self::new_with_native_config(cfg)
     }
@@ -3685,6 +3687,7 @@ impl Machine {
     #[wasm_bindgen]
     pub fn new_with_cpu_count(ram_size_bytes: u32, cpu_count: u32) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_synthetic_usb_hid = true;
         cfg.cpu_count = Self::validate_cpu_count(cpu_count)?;
         Self::new_with_native_config(cfg)
     }
@@ -3705,6 +3708,7 @@ impl Machine {
         cpu_count: Option<u32>,
     ) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_synthetic_usb_hid = true;
         if let Some(cpu_count) = cpu_count {
             cfg.cpu_count = Self::validate_cpu_count(cpu_count)?;
         }
@@ -3743,6 +3747,7 @@ impl Machine {
         options: Option<JsValue>,
     ) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_synthetic_usb_hid = true;
 
         if let Some(options) = options {
             if !options.is_null() && !options.is_undefined() {
@@ -3871,7 +3876,8 @@ impl Machine {
 
         let guest_size_u64 =
             crate::validate_shared_guest_ram_layout("Machine.new_shared", guest_base, guest_size)?;
-        let cfg = aero_machine::MachineConfig::browser_defaults(guest_size_u64);
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(guest_size_u64);
+        cfg.enable_synthetic_usb_hid = true;
 
         let mem = memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
             js_error(format!(
