@@ -12,6 +12,13 @@ export type SetBootDisksMessage = {
   mounts: MountConfig;
   hdd: DiskImageMetadata | null;
   cd: DiskImageMetadata | null;
+  /**
+   * Optional boot-device preference for the canonical machine runtime.
+   *
+   * This allows keeping install media mounted while still booting from HDD after the first install
+   * reboot.
+   */
+  bootDevice?: "hdd" | "cdrom";
 };
 
 export function emptySetBootDisksMessage(): SetBootDisksMessage {
@@ -58,7 +65,10 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
   const hdd = (isObjectLikeRecord(hddRaw) ? (hddRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
   const cd = (isObjectLikeRecord(cdRaw) ? (cdRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
 
-  return { type: "setBootDisks", mounts, hdd, cd };
+  const bootDeviceRaw = (rec as { bootDevice?: unknown }).bootDevice;
+  const bootDevice = bootDeviceRaw === "hdd" || bootDeviceRaw === "cdrom" ? bootDeviceRaw : undefined;
+
+  return bootDevice ? { type: "setBootDisks", mounts, hdd, cd, bootDevice } : { type: "setBootDisks", mounts, hdd, cd };
 }
 
 // -----------------------------------------------------------------------------
@@ -185,6 +195,13 @@ export function machineBootDisksToOpfsSpec(
     cd = { meta, path: opfsPathForDisk(meta) };
   }
 
-  const bootDrive = cd ? 0xe0 : 0x80;
+  const bootDrive =
+    msg.bootDevice === "cdrom" && cd
+      ? 0xe0
+      : msg.bootDevice === "hdd" && hdd
+        ? 0x80
+        : cd
+          ? 0xe0
+          : 0x80;
   return { hdd, cd, bootDrive };
 }

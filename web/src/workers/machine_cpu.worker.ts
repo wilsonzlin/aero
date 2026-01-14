@@ -1488,7 +1488,10 @@ ctx.onmessage = (ev) => {
     const nextCdId = typeof (bootDisks.cd as { id?: unknown } | null | undefined)?.id === "string" ? bootDisks.cd!.id : "";
     const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
 
-    if (disksChanged) {
+    const explicitBootDevice = (bootDisks as Partial<SetBootDisksMessage>).bootDevice;
+    if (explicitBootDevice === "hdd" || explicitBootDevice === "cdrom") {
+      pendingBootDevice = explicitBootDevice;
+    } else if (disksChanged) {
       // Default boot-device policy for new disk selections:
       // - if install media is mounted, start with a CD boot so BIOS can El Torito boot it.
       // - otherwise boot HDD.

@@ -1046,7 +1046,16 @@ export class WorkerCoordinator {
    * primary mode selector and treat boot-disk presence as an *activity* signal (VM vs demo loops).
    */
   setBootDisks(mounts: MountConfig, hdd: DiskImageMetadata | null, cd: DiskImageMetadata | null): void {
-    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts, hdd, cd };
+    const prev = this.bootDisks;
+    const prevHddId = typeof (prev?.hdd as { id?: unknown } | null | undefined)?.id === "string" ? prev!.hdd!.id : "";
+    const prevCdId = typeof (prev?.cd as { id?: unknown } | null | undefined)?.id === "string" ? prev!.cd!.id : "";
+    const nextHddId = typeof (hdd as { id?: unknown } | null | undefined)?.id === "string" ? hdd!.id : "";
+    const nextCdId = typeof (cd as { id?: unknown } | null | undefined)?.id === "string" ? cd!.id : "";
+    const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
+
+    const bootDevice = disksChanged ? (cd ? "cdrom" : "hdd") : prev?.bootDevice ?? (cd ? "cdrom" : "hdd");
+
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts, hdd, cd, bootDevice };
     this.bootDisks = msg;
 
     const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";
@@ -2266,6 +2275,18 @@ export class WorkerCoordinator {
         maybeCursorState.hotY,
       );
       return;
+    }
+
+    if (role === "cpu") {
+      const bootDeviceMsg = data as Partial<{ type: unknown; bootDevice: unknown }>;
+      if (bootDeviceMsg?.type === "machineCpu.bootDeviceSelected") {
+        const bootDevice = bootDeviceMsg.bootDevice;
+        if (bootDevice === "hdd" || bootDevice === "cdrom") {
+          const prev = this.bootDisks ?? emptySetBootDisksMessage();
+          this.bootDisks = { ...prev, bootDevice };
+        }
+        return;
+      }
     }
 
     if (role === "gpu") {

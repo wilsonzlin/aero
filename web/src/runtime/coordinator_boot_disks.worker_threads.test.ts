@@ -104,6 +104,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       mounts: { hddId: "hdd1", cdId: "cd1" },
       hdd,
       cd,
+      bootDevice: "cdrom",
     } satisfies SetBootDisksMessage;
     const expectedIoMessage = { ...expectedCpuMessage, hdd: null, cd: null } satisfies SetBootDisksMessage;
 
@@ -126,6 +127,60 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(restartedCpuWorker).not.toBe(cpuWorker);
     expect(restartedCpuWorker.posted).toContainEqual({
       message: expectedCpuMessage,
+      transfer: undefined,
+    });
+  });
+
+  it("persists the machine CPU worker boot-device policy across CPU worker restarts", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as any).workers.cpu;
+
+    // Machine runtime boots from CD on the first run, then switches to HDD after the guest requests a reset.
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
+
+    // CPU worker restarts must preserve the policy so the guest boots from HDD even if the install ISO remains mounted.
+    (coordinator as any).terminateWorker("cpu");
+    (coordinator as any).spawnWorker("cpu", segments);
+
+    const restartedCpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(restartedCpuWorker.posted).toContainEqual({
+      message: {
+        ...emptySetBootDisksMessage(),
+        mounts: { hddId: "hdd1", cdId: "cd1" },
+        hdd,
+        cd,
+        bootDevice: "hdd",
+      } satisfies SetBootDisksMessage,
       transfer: undefined,
     });
   });
@@ -169,6 +224,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       mounts: { hddId: "hdd1", cdId: "cd1" },
       hdd,
       cd,
+      bootDevice: "cdrom",
     } satisfies SetBootDisksMessage;
 
     expect(ioWorker.posted).toContainEqual({
