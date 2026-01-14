@@ -12912,6 +12912,24 @@ bool TestFvfXyzNormalDiffuseIgnoresExtraDirectionalLightsBeyondFixedfuncLimit() 
     }
   }
 
+  // Ensure directional overflow does not stop subsequent point lights from being
+  // packed (a naive implementation might `break` when dir slots are full).
+  D3DLIGHT9 point{};
+  point.Type = D3DLIGHT_POINT;
+  point.Position = {1.0f, 2.0f, 3.0f};
+  point.Diffuse = {0.25f, 0.5f, 0.75f, 1.0f};
+  point.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  point.Attenuation0 = 1.0f;
+  point.Range = 1.0f;
+  hr = device_set_light(cleanup.hDevice, /*index=*/5, &point);
+  if (!Check(hr == S_OK, "SetLight(point after directional overflow)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/5, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(point after directional overflow, TRUE)")) {
+    return false;
+  }
+
   const VertexXyzNormalDiffuse tri[3] = {
       {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
       {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
@@ -12966,6 +12984,24 @@ bool TestFvfXyzNormalDiffuseIgnoresExtraDirectionalLightsBeyondFixedfuncLimit() 
     return false;
   }
   if (!check_diffuse(kSlot3DiffuseRel, "directional overflow: slot3 diffuse == light3 (yellow)", colors[3])) {
+    return false;
+  }
+
+  // Point slot0 diffuse register: c224.
+  constexpr uint32_t kPoint0PosRel = (223u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kPoint0DiffuseRel = (224u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kPoint0PosRel * 4 + 0] == 1.0f &&
+             payload[kPoint0PosRel * 4 + 1] == 2.0f &&
+             payload[kPoint0PosRel * 4 + 2] == 3.0f &&
+             payload[kPoint0PosRel * 4 + 3] == 1.0f,
+             "directional overflow: point slot0 position packed")) {
+    return false;
+  }
+  if (!Check(payload[kPoint0DiffuseRel * 4 + 0] == 0.25f &&
+             payload[kPoint0DiffuseRel * 4 + 1] == 0.5f &&
+             payload[kPoint0DiffuseRel * 4 + 2] == 0.75f &&
+             payload[kPoint0DiffuseRel * 4 + 3] == 1.0f,
+             "directional overflow: point slot0 diffuse packed")) {
     return false;
   }
 
@@ -13042,6 +13078,22 @@ bool TestFvfXyzNormalDiffuseIgnoresExtraPointLightsBeyondFixedfuncLimit() {
     }
   }
 
+  // Ensure point overflow does not stop subsequent directional lights from being
+  // packed (a naive implementation might `break` when point slots are full).
+  D3DLIGHT9 dir{};
+  dir.Type = D3DLIGHT_DIRECTIONAL;
+  dir.Direction = {0.0f, 0.0f, -1.0f};
+  dir.Diffuse = {0.25f, 0.5f, 0.75f, 1.0f};
+  dir.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/3, &dir);
+  if (!Check(hr == S_OK, "SetLight(directional after point overflow)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/3, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(directional after point overflow, TRUE)")) {
+    return false;
+  }
+
   const VertexXyzNormalDiffuse tri[3] = {
       {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
       {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
@@ -13106,6 +13158,26 @@ bool TestFvfXyzNormalDiffuseIgnoresExtraPointLightsBeyondFixedfuncLimit() {
              payload[kPoint1DiffuseRel * 4 + 2] == points[1].b &&
              payload[kPoint1DiffuseRel * 4 + 3] == 1.0f,
              "point overflow: slot1 diffuse == point1 (green)")) {
+    return false;
+  }
+
+  // Directional slot0 diffuse register: c212.
+  constexpr uint32_t kSlot0DiffuseRel = (212u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kSlot0DiffuseRel * 4 + 0] == 0.25f &&
+             payload[kSlot0DiffuseRel * 4 + 1] == 0.5f &&
+             payload[kSlot0DiffuseRel * 4 + 2] == 0.75f &&
+             payload[kSlot0DiffuseRel * 4 + 3] == 1.0f,
+             "point overflow: directional slot0 diffuse packed")) {
+    return false;
+  }
+
+  // Ensure the ignored 3rd point light did not clobber material constants (c233..c235).
+  constexpr uint32_t kMatDiffuseRel = (233u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kMatDiffuseRel * 4 + 0] == 1.0f &&
+             payload[kMatDiffuseRel * 4 + 1] == 1.0f &&
+             payload[kMatDiffuseRel * 4 + 2] == 1.0f &&
+             payload[kMatDiffuseRel * 4 + 3] == 1.0f,
+             "point overflow: material diffuse constant preserved")) {
     return false;
   }
 
