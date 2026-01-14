@@ -1061,12 +1061,36 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
       return acmdSharedHandles.get(handle) ?? handle;
     }
 
+    // Resolves a handle coming from an AeroGPU command stream.
+    //
+    // This differs from `resolveSharedHandle()` by treating "reserved underlying IDs" as invalid:
+    // if an original handle has been destroyed while shared-surface aliases still exist, the
+    // underlying numeric ID is kept alive in `acmdSharedRefcounts` to prevent handle reuse/collision,
+    // but the original handle value must not be used for subsequent commands.
+    function resolveSharedCmdHandle(handle, op) {
+      if (handle === 0) return 0;
+      if (acmdSharedHandles.has(handle)) return resolveSharedHandle(handle);
+      if (acmdSharedRefcounts.has(handle)) {
+        fail(
+          "ACMD " +
+            op +
+            " shared surface handle " +
+            handle +
+            " was destroyed (underlying id kept alive by shared surface aliases)",
+        );
+      }
+      return handle;
+    }
+
     function registerSharedHandle(handle) {
       if (handle === 0) return;
       const existing = acmdSharedHandles.get(handle);
       if (existing !== undefined) {
         if (existing !== handle) fail("ACMD shared surface handle " + handle + " is already an alias (underlying=" + existing + ")");
         return;
+      }
+      if (acmdSharedRefcounts.has(handle)) {
+        fail("ACMD shared surface handle " + handle + " is still in use (underlying id kept alive by shared surface aliases)");
       }
       acmdSharedHandles.set(handle, handle);
       acmdSharedRefcounts.set(handle, (acmdSharedRefcounts.get(handle) || 0) + 1);
@@ -1145,6 +1169,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
         return;
       }
 
+      // Underlying handles remain reserved as long as any aliases still reference them. If an
+      // original handle was destroyed, it must not be reused as a new alias handle until the
+      // underlying resource is fully released.
+      if (acmdSharedRefcounts.has(outHandle)) {
+        fail("ACMD IMPORT_SHARED_SURFACE out_resource_handle " + outHandle + " is still in use");
+      }
+
       // Do not allow aliasing a handle that is already bound to a real resource.
       if (acmdTextures.has(outHandle) || acmdBuffers.has(outHandle)) {
         fail("ACMD IMPORT_SHARED_SURFACE out_resource_handle " + outHandle + " collides with an existing resource");
@@ -1165,7 +1196,15 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     function destroySharedHandle(handle) {
       if (handle === 0) return null;
       const underlying = acmdSharedHandles.get(handle);
-      if (underlying === undefined) return null;
+      if (underlying === undefined) {
+        // If the original handle has already been destroyed (removed from `acmdSharedHandles`) but
+        // the underlying resource is still alive due to aliases, treat duplicate destroys as an
+        // idempotent no-op.
+        if (acmdSharedRefcounts.has(handle)) {
+          return { underlying: handle, lastRef: false };
+        }
+        return null;
+      }
       acmdSharedHandles.delete(handle);
 
       const count = acmdSharedRefcounts.get(underlying);
@@ -1475,6 +1514,13 @@ void main() {
             if (shared !== undefined && shared !== bufferHandle) {
               fail("ACMD CREATE_BUFFER handle " + bufferHandle + " is already an alias (underlying=" + shared + ")");
             }
+            if (shared === undefined && acmdSharedRefcounts.has(bufferHandle)) {
+              fail(
+                "ACMD CREATE_BUFFER handle " +
+                  bufferHandle +
+                  " is still in use (underlying id kept alive by shared surface aliases)",
+              );
+            }
 
             const glBuf = gl.createBuffer();
             if (!glBuf) fail("gl.createBuffer failed");
@@ -1514,6 +1560,13 @@ void main() {
             const shared = acmdSharedHandles.get(textureHandle);
             if (shared !== undefined && shared !== textureHandle) {
               fail("ACMD CREATE_TEXTURE2D handle " + textureHandle + " is already an alias (underlying=" + shared + ")");
+            }
+            if (shared === undefined && acmdSharedRefcounts.has(textureHandle)) {
+              fail(
+                "ACMD CREATE_TEXTURE2D handle " +
+                  textureHandle +
+                  " is still in use (underlying id kept alive by shared surface aliases)",
+              );
             }
 
             if (mipLevels === 0) fail("ACMD CREATE_TEXTURE2D mip_levels must be >= 1");
@@ -1701,8 +1754,8 @@ void main() {
             if (colorCount > 8) fail("ACMD SET_RENDER_TARGETS color_count out of bounds: " + colorCount);
             const depthStencilRaw = readU32(pv, off + 12);
             const color0Raw = colorCount > 0 ? readU32(pv, off + 16) : 0;
-            const color0 = color0Raw !== 0 ? resolveSharedHandle(color0Raw) : 0;
-            const depthStencil = depthStencilRaw !== 0 ? resolveSharedHandle(depthStencilRaw) : 0;
+            const color0 = color0Raw !== 0 ? resolveSharedCmdHandle(color0Raw, "SET_RENDER_TARGETS") : 0;
+            const depthStencil = depthStencilRaw !== 0 ? resolveSharedCmdHandle(depthStencilRaw, "SET_RENDER_TARGETS") : 0;
 
             let fb = null;
             acmdColor0 = null;
@@ -1818,7 +1871,7 @@ void main() {
               const offsetBytes = readU32(pv, bOff + 8);
 
               if (slot === 0) {
-                const resolvedBufferHandle = resolveSharedHandle(bufferHandle);
+                const resolvedBufferHandle = resolveSharedCmdHandle(bufferHandle, "SET_VERTEX_BUFFERS");
                 const glBuf = acmdBuffers.get(resolvedBufferHandle);
                 if (!glBuf) fail("ACMD unknown buffer_handle=" + bufferHandle + " (resolved=" + resolvedBufferHandle + ")");
                 gl.bindVertexArray(acmdVao);
@@ -1916,7 +1969,7 @@ void main() {
               if (textureRaw === 0) {
                 acmdPsTexture0 = null;
               } else {
-                const textureHandle = resolveSharedHandle(textureRaw);
+                const textureHandle = resolveSharedCmdHandle(textureRaw, "SET_TEXTURE");
                 const texObj = acmdTextures.get(textureHandle);
                 if (!texObj) fail("ACMD SET_TEXTURE unknown texture_handle=" + textureRaw + " (resolved=" + textureHandle + ")");
                 if (texObj.target !== gl.TEXTURE_2D) {
@@ -2033,7 +2086,7 @@ void main() {
             // struct aerogpu_cmd_upload_resource (32 bytes) + data
             if (cmdSize < AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES) fail("ACMD UPLOAD_RESOURCE size_bytes too small: " + cmdSize);
             const resourceRaw = readU32(pv, off + 8);
-            const resourceHandle = resolveSharedHandle(resourceRaw);
+            const resourceHandle = resolveSharedCmdHandle(resourceRaw, "UPLOAD_RESOURCE");
             const offsetBytesU64 = readU64Big(pv, off + 16);
             const sizeBytesU64 = readU64Big(pv, off + 24);
             const offsetBytes = u64BigToSafeNumber(offsetBytesU64, "ACMD UPLOAD_RESOURCE offset_bytes");
