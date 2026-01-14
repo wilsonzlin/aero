@@ -1585,6 +1585,13 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           this.lastFetchMs = performance.now() - start;
           this.lastFetchAtMs = Date.now();
         }
+        if (this.persistentCacheWritesDisabled) {
+          // Another inflight chunk may have hit quota while we were writing. Do not record persistent
+          // metadata once persistence is disabled, but keep the bytes in memory so subsequent reads
+          // don't need to re-download.
+          this.inMemoryChunks.set(chunkIndex, bytes);
+          return;
+        }
         this.recordCachedChunk(chunkIndex, generation);
         this.scheduleBackgroundFlush();
         return;
@@ -1867,6 +1874,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const meta = this.meta;
     if (!meta) return;
     if (generation !== this.cacheGeneration) return;
+    if (this.persistentCacheWritesDisabled) return;
 
     const start = chunkIndex * this.opts.chunkSize;
     const end = Math.min(start + this.opts.chunkSize, this.capacityBytesValue);
