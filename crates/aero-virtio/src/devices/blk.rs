@@ -170,7 +170,11 @@ pub trait BlockBackend {
 ///
 /// Most users should not implement [`BlockBackend`] directly. Instead, prefer passing an
 /// [`aero_storage::VirtualDisk`] (e.g. [`aero_storage::RawDisk`]) through wiring layers and
-/// constructing a [`VirtioBlkDisk`] at the edge.
+/// constructing a [`VirtioBlkDisk`] at the edge (typically via
+/// `VirtioBlkDisk::new_from_virtual_disk`).
+///
+/// `VirtioBlkDisk` is `VirtioBlk<Box<dyn VirtualDisk>>` on wasm32 and `VirtioBlk<Box<dyn VirtualDisk + Send>>`
+/// on native targets.
 #[cfg(target_arch = "wasm32")]
 pub type VirtioBlkDisk = VirtioBlk<Box<dyn aero_storage::VirtualDisk>>;
 #[cfg(not(target_arch = "wasm32"))]
