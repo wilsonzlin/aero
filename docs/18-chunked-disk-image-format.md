@@ -249,7 +249,10 @@ This section describes a high-level pipeline for taking an uploaded disk image a
 
 This repo includes a reference publisher CLI at [`tools/image-chunker/`](../tools/image-chunker/) (`aero-image-chunker publish`) that implements this pipeline for S3-compatible object stores (AWS S3, MinIO, etc).
 
-For CI and deployment validation, the same tool also provides `aero-image-chunker verify` to re-download a published `manifest.json` + `chunks/*.bin` and validate schema, chunk sizes, and optional per-chunk checksums end-to-end.
+For CI and deployment validation, the same tool also provides `aero-image-chunker verify` to
+re-download a published `manifest.json` + `chunks/*.bin` and validate schema, chunk sizes, and
+optional per-chunk checksums end-to-end (supports both S3-backed verification and direct HTTP
+verification via `--manifest-url` for public/CDN-hosted images).
 
 Note on input formats:
 
@@ -258,6 +261,8 @@ Note on input formats:
 - `aero-image-chunker` defaults to `--format auto` (format detection) and treats unknown images as
   `raw` (treat the input file bytes as the logical disk bytes). It can also open other formats
   (e.g. qcow2/VHD/AeroSparse) via `--format` and publish the expanded logical disk view.
+- Images that require an explicit parent (QCOW2 backing files, VHD differencing) should be flattened
+  to a standalone image before chunking.
 
 ### 3.1 Pipeline steps
 
