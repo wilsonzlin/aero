@@ -45,8 +45,19 @@ fn aerogpu_bochs_vbe_dispi_8bpp_display_present_uses_dac_palette() {
     let base = m.vbe_lfb_base();
     m.write_physical_u8(base, 1);
 
+    let reads_before = m
+        .aerogpu_bar1_mmio_read_count()
+        .expect("AeroGPU should expose a BAR1 MMIO read counter");
+
     m.display_present();
     assert_eq!(m.display_resolution(), (2, 2));
     // RGBA8888 little-endian u32: [R, G, B, A].
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
+
+    // Present should use the direct VRAM fast-path when the Bochs VBE_DISPI framebuffer is backed
+    // by BAR1 VRAM (avoid routing per-pixel reads through the PCI MMIO router).
+    let reads_after = m
+        .aerogpu_bar1_mmio_read_count()
+        .expect("AeroGPU should expose a BAR1 MMIO read counter");
+    assert_eq!(reads_before, reads_after);
 }

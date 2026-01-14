@@ -52,12 +52,23 @@ fn aerogpu_bochs_vbe_dispi_16bpp_display_present_respects_offsets_and_stride() {
     let correct_base_off = 10u64;
     m.write_physical_u16(base + correct_base_off, 0x8543);
 
+    let reads_before = m
+        .aerogpu_bar1_mmio_read_count()
+        .expect("AeroGPU should expose a BAR1 MMIO read counter");
+
     m.display_present();
 
     assert_eq!(m.display_resolution(), (2, 2));
     // For 0x8543 (RGB565): r=0b10000 -> 0x84, g=0b101010 -> 0xAA, b=0b00011 -> 0x18.
     // Expected RGBA8888: 0xFF18AA84.
     assert_eq!(m.display_framebuffer()[0], 0xFF18_AA84);
+
+    // Present should use the direct VRAM fast-path when the Bochs VBE_DISPI framebuffer is backed
+    // by BAR1 VRAM (avoid routing per-pixel reads through the PCI MMIO router).
+    let reads_after = m
+        .aerogpu_bar1_mmio_read_count()
+        .expect("AeroGPU should expose a BAR1 MMIO read counter");
+    assert_eq!(reads_before, reads_after);
 }
 
 #[test]
