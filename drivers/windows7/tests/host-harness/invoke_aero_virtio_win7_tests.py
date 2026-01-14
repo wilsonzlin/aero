@@ -40,11 +40,12 @@ It:
     their output files before verification
   - verify QEMU-emitted virtio PCI Vendor/Device/Revision IDs via `query-pci` (when `--qemu-preflight-pci` is enabled)
   - trigger a virtio-blk runtime resize via `blockdev-resize` / legacy `block_resize` (when `--with-blk-resize` is enabled)
-  - inject deterministic virtio-input events via `input-send-event`:
+  - inject deterministic virtio-input events:
     - keyboard + relative mouse: `--with-input-events` / `--with-virtio-input-events`
-    - mouse wheel: `--with-input-wheel` / `--with-virtio-input-wheel`
-    - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys`
-    - tablet / absolute pointer: `--with-input-tablet-events` / `--with-tablet-events`
+      - prefers QMP `input-send-event`, with backcompat fallbacks when unavailable
+    - mouse wheel: `--with-input-wheel` / `--with-virtio-input-wheel` (requires QMP `input-send-event`)
+    - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys` (requires QMP `input-send-event`)
+    - tablet / absolute pointer: `--with-input-tablet-events` / `--with-tablet-events` (requires QMP `input-send-event`)
   - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
@@ -772,14 +773,83 @@ def _qmp_send_command_raw(sock: socket.socket, cmd: dict[str, object]) -> dict[s
 
     Unlike `_qmp_send_command`, this helper does not raise when QEMU returns an error.
     """
+
     sock.sendall(json.dumps(cmd, separators=(",", ":")).encode("utf-8") + b"\n")
     return _qmp_read_response(sock, timeout_seconds=2.0)
+
+
+class _QmpCommandError(RuntimeError):
+    """
+    Structured error for a QMP command response containing `{"error": ...}`.
+
+    Keeping the parsed `error.class`/`error.desc` fields makes it possible for callers to
+    implement robust fallbacks (e.g. `input-send-event` → `send-key` / HMP) based on the
+    actual QMP error type, rather than string matching.
+    """
+
+    def __init__(self, *, execute: str, resp: dict[str, object]):
+        self.execute = execute
+        self.resp = resp
+
+        err = resp.get("error")
+        err_dict = err if isinstance(err, dict) else {}
+        self.error_class = str(err_dict.get("class") or "")
+        self.error_desc = str(err_dict.get("desc") or "")
+
+        # Keep the message stable-ish for log scraping / tests.
+        msg = f"QMP command '{execute}' failed"
+        if self.error_class or self.error_desc:
+            msg += f": {self.error_class}: {self.error_desc}".rstrip()
+        else:
+            msg += f": {resp}"
+        super().__init__(msg)
+
+
+def _qmp_error_is_command_not_found(e: BaseException, *, command: str) -> bool:
+    """
+    Best-effort detection of QMP "unknown command" responses across QEMU versions.
+
+    Newer QEMU builds typically respond with:
+      {"error":{"class":"CommandNotFound","desc":"..."}}
+
+    Some environments may only surface a stringified error. Keep the matching conservative
+    and scoped to the requested `command`.
+    """
+
+    cmd = command.lower()
+    if isinstance(e, _QmpCommandError):
+        # Most accurate case: we have the QMP error response.
+        cls = (e.error_class or "").lower()
+        desc = (e.error_desc or "").lower()
+        if cls == "commandnotfound":
+            return True
+
+        # Some QEMU builds may not use CommandNotFound but still describe an unknown command.
+        # Keep this conservative so we don't accidentally treat "device not found" (etc) as a
+        # missing QMP command.
+        if cmd in desc and (
+            "unknown command" in desc or "has not been found" in desc or "command not found" in desc
+        ):
+            return True
+        return False
+
+    # Best-effort fallback when callers surface only a stringified error.
+    msg = str(e).lower()
+    if cmd in msg and (
+        "commandnotfound" in msg
+        or "has not been found" in msg
+        or "unknown command" in msg
+        or "command not found" in msg
+    ):
+        return True
+    return False
 
 
 def _qmp_send_command(sock: socket.socket, cmd: dict[str, object]) -> dict[str, object]:
     resp = _qmp_send_command_raw(sock, cmd)
     if "error" in resp:
-        raise RuntimeError(f"QMP command failed: {resp}")
+        execute = str(cmd.get("execute") or "")
+        raise _QmpCommandError(execute=execute, resp=resp)
     return resp
 
 
@@ -1203,6 +1273,33 @@ def _qmp_block_resize_command(*, device: str, size: int) -> dict[str, object]:
     return {"execute": "block_resize", "arguments": {"device": device, "size": int(size)}}
 
 
+def _qmp_send_key_command(*, qcodes: list[str], hold_time_ms: Optional[int] = None) -> dict[str, object]:
+    """
+    Build a QMP `send-key` command (legacy fallback for keyboard injection).
+
+    Some older QEMU builds lack `input-send-event` but still expose `send-key`.
+    """
+
+    args: dict[str, object] = {
+        "keys": [{"type": "qcode", "data": q} for q in qcodes],
+    }
+    if hold_time_ms is not None:
+        # QMP uses `hold-time` in milliseconds.
+        args["hold-time"] = int(hold_time_ms)
+    return {"execute": "send-key", "arguments": args}
+
+
+def _qmp_human_monitor_command(*, command_line: str) -> dict[str, object]:
+    """
+    Build a QMP `human-monitor-command` command.
+
+    This is used as a fallback for older injection mechanisms (HMP `sendkey`, `mouse_move`,
+    `mouse_button`, ...).
+    """
+
+    return {"execute": "human-monitor-command", "arguments": {"command-line": command_line}}
+
+
 def _qmp_deterministic_keyboard_events(*, qcode: str) -> list[dict[str, object]]:
     # Press + release a single key via qcode (stable across host layouts).
     return [
@@ -1338,6 +1435,9 @@ def _try_qmp_input_inject_virtio_input_events(
             _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=device))
             return device
         except Exception as e_with_device:
+            # If the command itself doesn't exist, don't bother retrying without `device=`.
+            if _qmp_error_is_command_not_found(e_with_device, command="input-send-event"):
+                raise
             try:
                 _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=None))
             except Exception as e_without_device:
@@ -1365,80 +1465,112 @@ def _try_qmp_input_inject_virtio_input_events(
         mouse_rel_events = mouse_events[:rel_end]
         mouse_btn_events = mouse_events[rel_end:]
 
-        # Keyboard: 'a' press + release.
-        kbd_device = send(s, [kbd_events[0]], device=kbd_device)
-        time.sleep(0.05)
-        kbd_device = send(s, [kbd_events[1]], device=kbd_device)
-
-        # Mouse: small movement then left click.
-        time.sleep(0.05)
         try:
-            mouse_device = send(s, mouse_rel_events, device=mouse_device)
-        except Exception as e:
-            if not want_wheel:
+            # Preferred path: QMP `input-send-event` (supports virtio device routing on newer QEMU).
+            #
+            # Keyboard: 'a' press + release.
+            kbd_device = send(s, [kbd_events[0]], device=kbd_device)
+            time.sleep(0.05)
+            kbd_device = send(s, [kbd_events[1]], device=kbd_device)
+
+            # Mouse: small movement then left click.
+            time.sleep(0.05)
+            try:
+                mouse_device = send(s, mouse_rel_events, device=mouse_device)
+            except Exception as e:
+                if not want_wheel:
+                    raise
+
+                def rewrite(events: list[dict[str, object]], axis_map: dict[str, str]) -> list[dict[str, object]]:
+                    out: list[dict[str, object]] = []
+                    for ev in events:
+                        if ev.get("type") == "rel" and isinstance(ev.get("data"), dict):
+                            axis = ev["data"].get("axis")
+                            if axis in axis_map:
+                                ev2 = {"type": "rel", "data": dict(ev["data"])}
+                                ev2["data"]["axis"] = axis_map[axis]
+                                out.append(ev2)
+                                continue
+                        out.append(ev)
+                    return out
+
+                # Some QEMU versions use alternate axis names for scroll wheels. Try a best-effort matrix
+                # of axis pairs before failing.
+                errors: dict[str, str] = {"wheel+hscroll": str(e)}
+                attempts: list[tuple[str, dict[str, str]]] = [
+                    ("wheel+hwheel", {_QMP_TEST_MOUSE_HSCROLL_AXIS: _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}),
+                    ("vscroll+hscroll", {_QMP_TEST_MOUSE_VSCROLL_AXIS: _QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK}),
+                    (
+                        "vscroll+hwheel",
+                        {
+                            _QMP_TEST_MOUSE_VSCROLL_AXIS: _QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK,
+                            _QMP_TEST_MOUSE_HSCROLL_AXIS: _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK,
+                        },
+                    ),
+                ]
+
+                for label, axis_map in attempts:
+                    evs = rewrite(mouse_rel_events, axis_map)
+                    try:
+                        mouse_device = send(s, evs, device=mouse_device)
+                        break
+                    except Exception as e2:
+                        errors[label] = str(e2)
+                else:
+                    raise RuntimeError(
+                        "QMP input-send-event failed while injecting scroll for "
+                        "--with-input-wheel/--with-virtio-input-wheel or --with-input-events-extended/--with-input-events-extra. "
+                        "Upgrade QEMU or omit those flags. "
+                        f"errors={errors}"
+                    ) from e
+            time.sleep(0.05)
+            mouse_device = send(s, [mouse_btn_events[0]], device=mouse_device)
+            time.sleep(0.05)
+            mouse_device = send(s, [mouse_btn_events[1]], device=mouse_device)
+
+            if extended:
+                # Keyboard: modifiers + function key.
+                time.sleep(0.05)
+                for evt in _qmp_deterministic_keyboard_modifier_events():
+                    kbd_device = send(s, [evt], device=kbd_device)
+                    time.sleep(0.05)
+
+                # Mouse: side/extra + wheel.
+                time.sleep(0.05)
+                for evt in _qmp_deterministic_mouse_extra_button_events():
+                    mouse_device = send(s, [evt], device=mouse_device)
+                    time.sleep(0.05)
+
+            return _VirtioInputQmpInjectInfo(keyboard_device=kbd_device, mouse_device=mouse_device)
+        except _QmpCommandError as e:
+            # Backcompat: older QEMU builds lack `input-send-event`.
+            if not _qmp_error_is_command_not_found(e, command="input-send-event"):
                 raise
 
-            def rewrite(events: list[dict[str, object]], axis_map: dict[str, str]) -> list[dict[str, object]]:
-                out: list[dict[str, object]] = []
-                for ev in events:
-                    if ev.get("type") == "rel" and isinstance(ev.get("data"), dict):
-                        axis = ev["data"].get("axis")
-                        if axis in axis_map:
-                            ev2 = {"type": "rel", "data": dict(ev["data"])}
-                            ev2["data"]["axis"] = axis_map[axis]
-                            out.append(ev2)
-                            continue
-                    out.append(ev)
-                return out
-
-            # Some QEMU versions use alternate axis names for scroll wheels. Try a best-effort matrix
-            # of axis pairs before failing.
-            errors: dict[str, str] = {"wheel+hscroll": str(e)}
-            attempts: list[tuple[str, dict[str, str]]] = [
-                ("wheel+hwheel", {_QMP_TEST_MOUSE_HSCROLL_AXIS: _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}),
-                ("vscroll+hscroll", {_QMP_TEST_MOUSE_VSCROLL_AXIS: _QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK}),
-                (
-                    "vscroll+hwheel",
-                    {
-                        _QMP_TEST_MOUSE_VSCROLL_AXIS: _QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK,
-                        _QMP_TEST_MOUSE_HSCROLL_AXIS: _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK,
-                    },
-                ),
-            ]
-
-            for label, axis_map in attempts:
-                evs = rewrite(mouse_rel_events, axis_map)
-                try:
-                    mouse_device = send(s, evs, device=mouse_device)
-                    break
-                except Exception as e2:
-                    errors[label] = str(e2)
-            else:
+            if want_wheel:
                 raise RuntimeError(
-                    "QMP input-send-event failed while injecting scroll for "
-                    "--with-input-wheel/--with-virtio-input-wheel or --with-input-events-extended/--with-input-events-extra. "
-                    "Upgrade QEMU or omit those flags. "
-                    f"errors={errors}"
+                    "QMP command 'input-send-event' is required for --with-input-wheel/--with-input-events-extended "
+                    "(scroll/extra input injection), but this QEMU build does not support it. "
+                    "Upgrade QEMU or omit those flags."
                 ) from e
-        time.sleep(0.05)
-        mouse_device = send(s, [mouse_btn_events[0]], device=mouse_device)
-        time.sleep(0.05)
-        mouse_device = send(s, [mouse_btn_events[1]], device=mouse_device)
 
-        if extended:
-            # Keyboard: modifiers + function key.
-            time.sleep(0.05)
-            for evt in _qmp_deterministic_keyboard_modifier_events():
-                kbd_device = send(s, [evt], device=kbd_device)
-                time.sleep(0.05)
+            # Fallback keyboard injection:
+            # - Prefer QMP `send-key` (qcodes).
+            # - Fall back further to HMP `sendkey` via QMP `human-monitor-command`.
+            try:
+                _qmp_send_command(s, _qmp_send_key_command(qcodes=["a"], hold_time_ms=50))
+            except _QmpCommandError as e_send_key:
+                if not _qmp_error_is_command_not_found(e_send_key, command="send-key"):
+                    raise
+                _qmp_send_command(s, _qmp_human_monitor_command(command_line="sendkey a"))
 
-            # Mouse: side/extra + wheel.
-            time.sleep(0.05)
-            for evt in _qmp_deterministic_mouse_extra_button_events():
-                mouse_device = send(s, [evt], device=mouse_device)
-                time.sleep(0.05)
+            # Fallback mouse injection: HMP `mouse_move` + `mouse_button`.
+            _qmp_send_command(s, _qmp_human_monitor_command(command_line="mouse_move 10 5"))
+            _qmp_send_command(s, _qmp_human_monitor_command(command_line="mouse_button 1"))
+            _qmp_send_command(s, _qmp_human_monitor_command(command_line="mouse_button 0"))
 
-        return _VirtioInputQmpInjectInfo(keyboard_device=kbd_device, mouse_device=mouse_device)
+            # Fallback paths are broadcast-only.
+            return _VirtioInputQmpInjectInfo(keyboard_device=None, mouse_device=None)
 
 
 @dataclass(frozen=True)
@@ -1510,6 +1642,8 @@ def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> 
             _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=device))
             return device
         except Exception as e_with_device:
+            if _qmp_error_is_command_not_found(e_with_device, command="input-send-event"):
+                raise
             try:
                 _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=None))
             except Exception as e_without_device:
@@ -1526,19 +1660,28 @@ def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> 
         tablet_device: Optional[str] = _VIRTIO_INPUT_QMP_TABLET_ID
         ev = _qmp_deterministic_tablet_events()
 
-        # Reset move (0,0).
-        tablet_device = send(s, ev[0:2], device=tablet_device)
-        time.sleep(0.05)
-        # Target move.
-        tablet_device = send(s, ev[2:4], device=tablet_device)
-        time.sleep(0.05)
-        # Click down.
-        tablet_device = send(s, [ev[4]], device=tablet_device)
-        time.sleep(0.05)
-        # Click up.
-        tablet_device = send(s, [ev[5]], device=tablet_device)
+        try:
+            # Reset move (0,0).
+            tablet_device = send(s, ev[0:2], device=tablet_device)
+            time.sleep(0.05)
+            # Target move.
+            tablet_device = send(s, ev[2:4], device=tablet_device)
+            time.sleep(0.05)
+            # Click down.
+            tablet_device = send(s, [ev[4]], device=tablet_device)
+            time.sleep(0.05)
+            # Click up.
+            tablet_device = send(s, [ev[5]], device=tablet_device)
 
-        return _VirtioInputTabletQmpInjectInfo(tablet_device=tablet_device)
+            return _VirtioInputTabletQmpInjectInfo(tablet_device=tablet_device)
+        except _QmpCommandError as e:
+            if not _qmp_error_is_command_not_found(e, command="input-send-event"):
+                raise
+            raise RuntimeError(
+                "QMP command 'input-send-event' is required for --with-input-tablet-events "
+                "(absolute pointer injection), but this QEMU build does not support it. "
+                "Upgrade QEMU or omit --with-input-tablet-events."
+            ) from e
 
 def _try_qmp_virtio_blk_resize(endpoint: _QmpEndpoint, *, drive_id: str, new_bytes: int) -> str:
     """
@@ -2273,7 +2416,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="with_input_events",
         action="store_true",
         help=(
-            "Inject deterministic keyboard/mouse events via QMP (input-send-event) and require the guest "
+            "Inject deterministic keyboard/mouse events via QMP (prefers input-send-event, with backcompat fallbacks when unavailable) "
+            "and require the guest "
             "virtio-input-events selftest marker to PASS. Also emits a host marker: "
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS/FAIL|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast "
             "(may appear multiple times due to retries). "
@@ -2332,7 +2476,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Attach a virtio-tablet-pci device and inject deterministic absolute-pointer (tablet) events via "
-            "QMP (input-send-event). Require the guest virtio-input-tablet-events selftest marker to PASS. "
+            "QMP input-send-event. Require the guest virtio-input-tablet-events selftest marker to PASS. "
             "Also emits a host marker: "
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS/FAIL|attempt=<n>|tablet_mode=device/broadcast "
             "(may appear multiple times due to retries). "
@@ -2760,7 +2904,7 @@ def main() -> int:
 
     # QMP endpoint used to:
     # - request a graceful shutdown (so the wav audiodev can flush/finalize)
-    # - optionally inject virtio-input events (keyboard + mouse) via `input-send-event`
+    # - optionally inject virtio-input events (keyboard + mouse) via QMP (prefers `input-send-event` with backcompat fallbacks)
     # - optionally introspect PCI state to verify MSI-X enablement (`--require-virtio-*-msix`)
     #
     # Historically we enabled QMP only when we needed a graceful exit for `-audiodev wav` output, so we

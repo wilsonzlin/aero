@@ -102,7 +102,7 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireNoBlkRecovery,
 
-  # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
+  # If set, inject deterministic keyboard/mouse events via QMP (prefers `input-send-event`, with backcompat fallbacks) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
   #
   # Also emits a host marker for each injection attempt:
@@ -145,7 +145,7 @@ param(
   [Alias("WithInputEventsExtra")]
   [switch]$WithInputEventsExtended,
 
-  # If set, attach a virtio-tablet-pci device, inject deterministic absolute-pointer events via QMP (`input-send-event`),
+  # If set, attach a virtio-tablet-pci device, inject deterministic absolute-pointer events via QMP `input-send-event` (required; no backcompat fallback),
   # and require the guest virtio-input-tablet-events marker to PASS.
   #
   # Also emits a host marker for each injection attempt:
@@ -3107,12 +3107,80 @@ function Invoke-AeroQmpCommand {
   $Writer.WriteLine(($Command | ConvertTo-Json -Compress -Depth 10))
   $resp = Read-AeroQmpResponse -Reader $Reader
   if ($resp.PSObject.Properties.Name -contains "error") {
+    $execName = ""
+    try { $execName = [string]$Command.execute } catch { }
+    $cls = ""
     $desc = ""
+    try { $cls = [string]$resp.error.class } catch { }
     try { $desc = [string]$resp.error.desc } catch { }
     if ([string]::IsNullOrEmpty($desc)) { $desc = "unknown" }
+    if (-not [string]::IsNullOrEmpty($cls)) {
+      if (-not [string]::IsNullOrEmpty($execName)) {
+        throw "QMP command '$execName' failed ($cls): $desc"
+      }
+      throw "QMP command failed ($cls): $desc"
+    }
+    if (-not [string]::IsNullOrEmpty($execName)) {
+      throw "QMP command '$execName' failed: $desc"
+    }
     throw "QMP command failed: $desc"
   }
   return $resp
+}
+
+function Test-AeroQmpCommandNotFound {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Message,
+    [Parameter(Mandatory = $true)] [string]$Command
+  )
+
+  $m = $Message.ToLowerInvariant()
+  $cmd = $Command.ToLowerInvariant()
+  if (-not $m.Contains($cmd)) { return $false }
+  if ($m.Contains("commandnotfound")) { return $true }
+  if ($m.Contains("has not been found")) { return $true }
+  if ($m.Contains("unknown command")) { return $true }
+  if ($m.Contains("command not found")) { return $true }
+  return $false
+}
+
+function Invoke-AeroQmpHumanMonitorCommand {
+  param(
+    [Parameter(Mandatory = $true)] [System.IO.StreamWriter]$Writer,
+    [Parameter(Mandatory = $true)] [System.IO.StreamReader]$Reader,
+    [Parameter(Mandatory = $true)] [string]$CommandLine
+  )
+
+  $cmd = @{
+    execute   = "human-monitor-command"
+    arguments = @{
+      "command-line" = $CommandLine
+    }
+  }
+  $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
+}
+
+function Invoke-AeroQmpSendKey {
+  param(
+    [Parameter(Mandatory = $true)] [System.IO.StreamWriter]$Writer,
+    [Parameter(Mandatory = $true)] [System.IO.StreamReader]$Reader,
+    [Parameter(Mandatory = $true)] [string[]]$Qcodes,
+    [Parameter(Mandatory = $false)] [int]$HoldTimeMs = 50
+  )
+
+  $keys = @()
+  foreach ($q in $Qcodes) {
+    $keys += @{ type = "qcode"; data = $q }
+  }
+
+  $cmd = @{
+    execute   = "send-key"
+    arguments = @{
+      keys        = $keys
+      "hold-time" = $HoldTimeMs
+    }
+  }
+  $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
 }
 
 function Invoke-AeroQmpInputSendEvent {
@@ -3191,18 +3259,21 @@ function Try-AeroQmpInjectVirtioInputEvents {
       $kbdDevice = $script:VirtioInputKeyboardQmpId
       $mouseDevice = $script:VirtioInputMouseQmpId
 
-      # Keyboard: 'a' down/up.
-      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
-        @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "a" } } }
-      )
+      try {
+        # Preferred path: QMP `input-send-event` (supports virtio `device=` routing on newer QEMU).
+        #
+        # Keyboard: 'a' down/up.
+        $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = "a" } } }
+        )
 
-      Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 50
 
-      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
-        @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "a" } } }
-      )
+        $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = "a" } } }
+        )
 
-      Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 50
 
       # Mouse: move + left click.
       $wantWheel = ([bool]$WithWheel) -or $Extended
@@ -3267,17 +3338,55 @@ function Try-AeroQmpInjectVirtioInputEvents {
         }
       }
 
-      Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 50
 
-      $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
-        @{ type = "btn"; data = @{ down = $true; button = "left" } }
-      )
+        $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
+          @{ type = "btn"; data = @{ down = $true; button = "left" } }
+        )
 
-      Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 50
 
-      $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
-        @{ type = "btn"; data = @{ down = $false; button = "left" } }
-      )
+        $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events @(
+          @{ type = "btn"; data = @{ down = $false; button = "left" } }
+        )
+      } catch {
+        # Backcompat: older QEMU builds lack `input-send-event`.
+        $msg = ""
+        try { $msg = [string]$_.Exception.Message } catch { }
+        if (-not (Test-AeroQmpCommandNotFound -Message $msg -Command "input-send-event")) {
+          throw
+        }
+
+        $wantWheel = ([bool]$WithWheel) -or $Extended
+        if ($wantWheel) {
+          throw "QMP input-send-event is required for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra, but this QEMU build does not support it. Upgrade QEMU or omit those flags."
+        }
+
+        Write-Warning "QMP input-send-event is unavailable; falling back to legacy input injection (send-key / HMP mouse_move/mouse_button)."
+
+        # Keyboard fallback:
+        # - Prefer QMP `send-key` (qcodes)
+        # - Otherwise HMP `sendkey` via `human-monitor-command`
+        try {
+          Invoke-AeroQmpSendKey -Writer $writer -Reader $reader -Qcodes @("a") -HoldTimeMs 50
+        } catch {
+          $msg2 = ""
+          try { $msg2 = [string]$_.Exception.Message } catch { }
+          if (-not (Test-AeroQmpCommandNotFound -Message $msg2 -Command "send-key")) {
+            throw
+          }
+          Invoke-AeroQmpHumanMonitorCommand -Writer $writer -Reader $reader -CommandLine "sendkey a"
+        }
+
+        # Mouse fallback: HMP `mouse_move` + `mouse_button`.
+        Invoke-AeroQmpHumanMonitorCommand -Writer $writer -Reader $reader -CommandLine "mouse_move 10 5"
+        Invoke-AeroQmpHumanMonitorCommand -Writer $writer -Reader $reader -CommandLine "mouse_button 1"
+        Invoke-AeroQmpHumanMonitorCommand -Writer $writer -Reader $reader -CommandLine "mouse_button 0"
+
+        # Legacy fallbacks are broadcast-only.
+        $kbdDevice = $null
+        $mouseDevice = $null
+      }
 
       if ($Extended) {
         Start-Sleep -Milliseconds 50
@@ -3323,6 +3432,13 @@ function Try-AeroQmpInjectVirtioInputEvents {
       return $true
     } catch {
       try { $lastErr = [string]$_.Exception.Message } catch { }
+      if (-not [string]::IsNullOrEmpty($lastErr)) {
+        if (Test-AeroQmpCommandNotFound -Message $lastErr -Command "input-send-event") {
+          # No backcompat path for absolute pointer (tablet) injection.
+          $lastErr = "input-send-event is unavailable; no fallback is available for absolute tablet injection (--with-input-tablet-events)"
+          break
+        }
+      }
       Start-Sleep -Milliseconds 100
       continue
     } finally {
@@ -4135,7 +4251,8 @@ try {
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
-    # - Also used for virtio-input event injection (`input-send-event`) when -WithInputEvents/-WithInputMediaKeys is set.
+    # - Also used for virtio-input event injection when input injection flags are enabled
+    #   (prefers QMP `input-send-event`, with backcompat fallbacks for keyboard/mouse when unavailable).
     # - Also used for virtio PCI MSI-X enable verification (query-pci / info pci) when -RequireVirtio*Msix is set.
     # - Also used for the optional virtio PCI ID preflight (-QemuPreflightPci/-QmpPreflightPci).
     try {
@@ -4807,7 +4924,7 @@ try {
       $scriptExitCode = 1
     }
     "QMP_INPUT_INJECT_FAILED" {
-      Write-Host "FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
+      Write-Host "FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP (ensure QMP is reachable and QEMU supports an input injection mechanism: input-send-event, send-key, or human-monitor-command)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -4839,7 +4956,7 @@ try {
       $scriptExitCode = 1
     }
     "QMP_INPUT_TABLET_INJECT_FAILED" {
-      Write-Host "FAIL: QMP_INPUT_TABLET_INJECT_FAILED: failed to inject virtio-input tablet events via QMP (ensure QMP is reachable and QEMU supports input-send-event)"
+      Write-Host "FAIL: QMP_INPUT_TABLET_INJECT_FAILED: failed to inject virtio-input tablet events via QMP (ensure QMP is reachable and QEMU supports input-send-event; no backcompat path is available for absolute tablet injection)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

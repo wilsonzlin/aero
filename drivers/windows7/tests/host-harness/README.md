@@ -331,7 +331,7 @@ Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the
 
 When `--require-virtio-snd-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
 The **PowerShell** harness does the same when `-RequireVirtioSndMsix` is set.
-### virtio-input event delivery (QMP input injection)
+### virtio-input event delivery (QMP/HMP input injection)
 
 The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.
 To regression-test **actual input event delivery** (virtio queues → KMDF HID → user-mode `ReadFile`), the guest
@@ -342,16 +342,15 @@ To enable end-to-end testing:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-events`
    (for example via `New-AeroWin7TestImage.ps1 -TestInputEvents`).
 2. Run the host harness with `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events`
-   (alias: `--with-virtio-input-events`) so it injects keyboard/mouse events via QMP (`input-send-event`) and
-   requires the guest marker:
+   (alias: `--with-virtio-input-events`) so it injects keyboard/mouse events via QMP and requires the guest marker:
    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`
-2. Injects a deterministic input sequence via QMP `input-send-event`:
-   - keyboard: `'a'` press + release
-   - mouse: relative move + left click
+2. Injects a deterministic input sequence via QMP:
+    - keyboard: `'a'` press + release
+    - mouse: relative move + left click
 3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
 The harness also emits a host-side marker for the injection step itself (useful for debugging flaky setups and for log
@@ -364,8 +363,21 @@ Note: The harness may retry input injection a few times after the guest reports 
 timing flakiness (input reports can be dropped if no user-mode read is pending). In that case you may see multiple
 `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
 
-Note: On some QEMU builds, `input-send-event` may not accept the `device=` routing parameter. In that case the harness
-falls back to broadcasting the input events and reports `kbd_mode=broadcast` / `mouse_mode=broadcast` in the marker.
+#### QEMU feature requirements / fallback behavior
+
+The harness prefers QMP `input-send-event` (with optional `device=` routing to the virtio input devices by QOM id).
+If `input-send-event` is unavailable (QMP `CommandNotFound`), it falls back to older injection mechanisms:
+
+- **Keyboard**
+  - QMP `send-key` when available
+  - otherwise HMP `sendkey <key>` via QMP `human-monitor-command`
+- **Mouse (relative)**
+  - HMP `mouse_move <dx> <dy>` and `mouse_button <state>` via QMP `human-monitor-command`
+- **Device routing**
+  - The legacy fallbacks are **broadcast-only** (no per-device targeting).
+
+Note: On some QEMU builds, `input-send-event` may exist but reject the `device=` routing parameter. In that case the
+harness falls back to broadcasting the input events and reports `kbd_mode=broadcast` / `mouse_mode=broadcast` in the marker.
 
 PowerShell:
 
@@ -447,7 +459,7 @@ Note: If the guest selftest is too old (or otherwise misconfigured) and does not
 marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early
 (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.
 
-If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
+If input injection fails (for example QMP is unreachable or the QEMU build does not support any supported injection mechanism),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
 #### Optional: Consumer Control (media keys)
@@ -554,11 +566,11 @@ To enable end-to-end testing:
        - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
        - requires the guest marker to PASS
 
-To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
-enumeration), use:
+ To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
+ enumeration), use:
 
-- PowerShell: `-WithVirtioTablet`
-- Python: `--with-virtio-tablet`
+ - PowerShell: `-WithVirtioTablet`
+ - Python: `--with-virtio-tablet`
 
 The injected sequence is:
 
@@ -570,6 +582,10 @@ The harness also emits a host-side marker for each injection attempt:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|tablet_mode=device/broadcast`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+
+Note: Unlike the keyboard/mouse path above, **tablet (absolute) injection requires QMP `input-send-event`**. There is
+no widely-supported legacy fallback for absolute pointer injection; if `input-send-event` is missing the harness will
+fail with a clear reason.
 
 PowerShell:
 
@@ -831,8 +847,8 @@ On the self-hosted runner you need:
 > `concurrency.group: win7-virtio-harness` to prevent concurrent runs from fighting over ports/images.
 > If `18080` is already in use on your runner, override it via the workflow input `http_port`.
 
-The workflow can also optionally exercise the end-to-end virtio-input event delivery path (QMP `input-send-event` + guest
-HID report verification) by setting the workflow input `with_virtio_input_events=true`.
+The workflow can also optionally exercise the end-to-end virtio-input event delivery path (guest HID report verification +
+host-side input injection via QMP/HMP) by setting the workflow input `with_virtio_input_events=true`.
 This requires a guest image provisioned with `--test-input-events` (for example via
 `New-AeroWin7TestImage.ps1 -TestInputEvents`) so the guest selftest enables the `virtio-input-events` read loop.
 
