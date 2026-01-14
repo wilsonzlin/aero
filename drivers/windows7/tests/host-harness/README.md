@@ -826,7 +826,8 @@ To enable end-to-end testing:
           HID interface.
         - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
           `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-        - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches.
+        - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
+          more specific match than the strict generic fallback below).
         - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
           - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only), and the canonical `aero_virtio_input.inf` is also
             SUBSYS-only.
@@ -834,9 +835,10 @@ To enable end-to-end testing:
             - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
               `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
             - Opt into the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) via the optional
-              legacy alias INF under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled`
-              suffix to enable) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
-              - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+              legacy alias INF under `drivers/windows7/virtio-input/inf/` (`virtio-input.inf.disabled` → `virtio-input.inf`
+              to enable) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+              - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this
+                by default).
               - When binding via the generic fallback entry, Device Manager will show the generic
                 **Aero VirtIO Input Device** name.
               - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
@@ -845,11 +847,11 @@ To enable end-to-end testing:
       an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
       to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
       - If you need the strict revision-gated generic fallback binding (no contract subsystem IDs), you must also opt into
-        the legacy alias INF (the `*.inf.disabled` file; drop the `.disabled` suffix to enable) and include it in the allow list.
+        the legacy alias INF (`virtio-input.inf.disabled` → `virtio-input.inf`) and include it in the allow list.
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-      `-WithTabletEvents`, `-EnableTabletEvents`) /
-      `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-     `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+       `-WithTabletEvents`, `-EnableTabletEvents`) /
+       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+      `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
     - requires the guest marker to PASS
