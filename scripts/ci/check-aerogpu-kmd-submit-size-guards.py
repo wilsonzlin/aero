@@ -257,6 +257,10 @@ def main() -> int:
     text = SRC.read_text(encoding="utf-8", errors="replace")
     errors: list[str] = []
 
+    # Used in regex patterns below. Keep strict enough to avoid matching the prefix
+    # of a larger hex literal like 0xFFFFFFFFFFFFFFFFull.
+    u32_max_re = r"(?:UINT32_MAX|0x[Ff]{8}(?![0-9A-Fa-f])[uUlL]{0,3})"
+
     if not re.search(r"(?m)^\s*#\s*define\s+AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT\b", text):
         errors.append(
             f"{SRC.relative_to(ROOT)}: missing AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT definition"
@@ -336,7 +340,8 @@ def main() -> int:
                     body,
                     "AeroGpuDdiSubmitCommand checked sizing",
                     r"RtlSizeTMult\s*\(\s*\(?\s*(?:\(\s*SIZE_T\s*\)\s*)?allocCount\s*\)?\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<alloc_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
-                    r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:aerogpu_legacy_submission_desc_header|struct\s+aerogpu_legacy_submission_desc_header)\b[^,]*,\s*(?P=alloc_var)\s*,\s*&descSize\s*\)",
+                    r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:aerogpu_legacy_submission_desc_header|struct\s+aerogpu_legacy_submission_desc_header)\b[^,]*,\s*(?P=alloc_var)\s*,\s*&descSize\s*\).*?"
+                    rf"\bdescSize\b\s*>\s*(?:\(\s*SIZE_T\s*\)\s*)?{u32_max_re}",
                 ),
                 _forbid(
                     body_nocomments,
@@ -365,7 +370,8 @@ def main() -> int:
                     body,
                     "AeroGpuBuildAllocTable checked sizing",
                     r"RtlSizeTMult\s*\(\s*\(?\s*(?:\(\s*SIZE_T\s*\)\s*)?entryCount\s*\)?\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<entries_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
-                    r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:struct\s+)?aerogpu_alloc_table_header\b[^,]*,\s*(?P=entries_var)\s*,\s*&(?P<table_var>[A-Za-z0-9_]+)\s*\)",
+                    r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:struct\s+)?aerogpu_alloc_table_header\b[^,]*,\s*(?P=entries_var)\s*,\s*&(?P<table_var>[A-Za-z0-9_]+)\s*\).*?"
+                    rf"\b(?P=table_var)\b\s*>\s*(?:\(\s*SIZE_T\s*\)\s*)?{u32_max_re}",
                 ),
                 _forbid(
                     body_nocomments,
