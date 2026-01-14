@@ -1533,6 +1533,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         VIOINPUT_DEVICE_KIND kind;
         VIOINPUT_DEVICE_KIND subsysKind;
         PCSTR kindStr;
+        BOOLEAN strictIdName;
 
         RtlZeroMemory(name, sizeof(name));
         size = 0;
