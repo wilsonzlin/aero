@@ -15,6 +15,12 @@ const SCANOUT_STATE_U32_LEN: usize = 8;
 const SCANOUT_STATE_BYTE_LEN: u32 = (SCANOUT_STATE_U32_LEN as u32) * 4;
 const SCANOUT_STATE_GENERATION_BUSY_BIT: u32 = 1 << 31;
 
+// Keep constants in sync with:
+// - `crates/aero-shared/src/cursor_state.rs`
+// - `web/src/ipc/cursor_state.ts`
+const CURSOR_STATE_U32_LEN: usize = 12;
+const CURSOR_STATE_BYTE_LEN: u32 = (CURSOR_STATE_U32_LEN as u32) * 4;
+
 const SCANOUT_SOURCE_LEGACY_TEXT: u32 = 0;
 const SCANOUT_SOURCE_LEGACY_VBE_LFB: u32 = 1;
 // `ScanoutState.format` uses AeroGPU `AerogpuFormat` discriminants (`0` is `Invalid`).
@@ -1098,6 +1104,8 @@ fn wasm_machine_aerogpu_int10_vbe_updates_scanout_state() {
 
     let scanout_ptr = machine.scanout_state_ptr();
     let scanout_len = machine.scanout_state_len_bytes();
+    let cursor_ptr = machine.cursor_state_ptr();
+    let cursor_len = machine.cursor_state_len_bytes();
     machine.reset();
 
     // If the build does not support shared scanout state (non-threaded WASM), skip.
@@ -1112,6 +1120,13 @@ fn wasm_machine_aerogpu_int10_vbe_updates_scanout_state() {
         "scanout_state_ptr must be non-zero in wasm-threaded builds"
     );
     assert_eq!(scanout_len, SCANOUT_STATE_BYTE_LEN);
+    #[cfg(feature = "wasm-threaded")]
+    assert_ne!(
+        cursor_ptr, 0,
+        "cursor_state_ptr must be non-zero in wasm-threaded builds"
+    );
+    #[cfg(feature = "wasm-threaded")]
+    assert_eq!(cursor_len, CURSOR_STATE_BYTE_LEN);
 
     let mut halted = false;
     for _ in 0..10_000 {
