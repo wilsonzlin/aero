@@ -259,6 +259,7 @@ If no UI exists, use DevTools Console to read the standard ring header (layout i
 const out =
   globalThis.__aeroAudioOutput ??
   globalThis.__aeroAudioOutputWorker ??
+  globalThis.__aeroAudioOutputVirtioSndDemo ??
   globalThis.__aeroAudioOutputHdaDemo;
 
 out?.getMetrics?.()

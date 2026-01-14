@@ -4392,12 +4392,13 @@ function renderAudioPanel(): HTMLElement {
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           // Include all known audio outputs so QA can tell which ring was actually active.
-          audioOutputs: {
-            __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
-            __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
-            __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
-            __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
-          },
+           audioOutputs: {
+             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
+             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
+             __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
+             __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
+             __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
+           },
           workerProducer: {
             bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
             underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
@@ -4562,6 +4563,7 @@ function renderAudioPanel(): HTMLElement {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
             __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
+            __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
             __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
           },
           workerProducer: {
@@ -4645,6 +4647,7 @@ function renderAudioPanel(): HTMLElement {
             { name: "main", out: g.__aeroAudioOutput },
             { name: "worker", out: g.__aeroAudioOutputWorker },
             { name: "hda-demo", out: g.__aeroAudioOutputHdaDemo },
+            { name: "virtio-snd-demo", out: g.__aeroAudioOutputVirtioSndDemo },
             { name: "loopback", out: g.__aeroAudioOutputLoopback },
           ];
 

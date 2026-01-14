@@ -83,6 +83,7 @@ class FakeHidDevice {
     this.opened = false;
   });
 
+  // Match the WebHID method signatures so `vi.fn().mock.calls` is typed with the correct tuple shape.
   readonly sendReport = vi.fn(async (_reportId: number, _data: BufferSource) => {});
   readonly sendFeatureReport = vi.fn(async (_reportId: number, _data: BufferSource) => {});
   readonly receiveFeatureReport = vi.fn(async (_reportId: number) => new DataView(new ArrayBuffer(0)));
