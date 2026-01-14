@@ -13,6 +13,7 @@ pub use aero_usb::xhci::{regs, XhciController};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 use memory::MemoryBus;
 
+use aero_devices::pci::profile::{PCI_DEVICE_ID_QEMU_XHCI, PCI_VENDOR_ID_REDHAT_QEMU, USB_XHCI_QEMU};
 use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 
 enum AeroUsbMemoryBus<'a> {
@@ -56,7 +57,11 @@ impl XhciPciDevice {
     /// The emulator crate does not model a full PCI bus, but Windows/Linux still read the
     /// `Interrupt Line` register during enumeration. Use a stable (but otherwise arbitrary) BDF so
     /// the computed IRQ line matches other legacy devices.
-    const BDF: PciBdf = PciBdf::new(0, 1, 3);
+    ///
+    /// We choose the same canonical BDF as the `aero-devices` PCI profile (`USB_XHCI_QEMU`) so
+    /// guest-visible enumeration (and the derived INTx line value) stays consistent across native
+    /// integrations and the web runtime.
+    const BDF: PciBdf = USB_XHCI_QEMU.bdf;
 
     pub fn new(controller: XhciController, mmio_base: u32) -> Self {
         let mut config = PciConfigSpace::new();
@@ -67,8 +72,11 @@ impl XhciPciDevice {
 
         // Vendor/device: QEMU-style xHCI (stable but not architecturally important for most guests
         // that bind based on class code).
-        config.set_u16(0x00, 0x1b36);
-        config.set_u16(0x02, 0x000d);
+        config.set_u16(0x00, PCI_VENDOR_ID_REDHAT_QEMU);
+        config.set_u16(0x02, PCI_DEVICE_ID_QEMU_XHCI);
+        config.write(0x08, 1, 0x01); // revision ID (AERO xHCI contract)
+        config.set_u16(0x2c, PCI_VENDOR_ID_REDHAT_QEMU);
+        config.set_u16(0x2e, PCI_DEVICE_ID_QEMU_XHCI);
 
         // Class code: serial bus / USB / xHCI.
         config.write(0x09, 1, 0x30); // prog IF (xHCI)

@@ -4,6 +4,28 @@ use emulator::io::pci::{MmioDevice, PciDevice};
 use emulator::io::usb::xhci::{regs, XhciController, XhciPciDevice};
 use memory::MemoryBus;
 
+#[test]
+fn xhci_pci_identity_matches_canonical_profile() {
+    let dev = XhciPciDevice::new(XhciController::new(), 0xfebf_0000);
+
+    assert_eq!(dev.config_read(0x00, 2) as u16, 0x1b36); // QEMU/Red Hat
+    assert_eq!(dev.config_read(0x02, 2) as u16, 0x000d); // qemu-xhci
+    assert_eq!(dev.config_read(0x08, 1) as u8, 0x01); // revision
+
+    // Class code: 0c/03/30 (serial bus / USB / xHCI).
+    assert_eq!(dev.config_read(0x0b, 1) as u8, 0x0c);
+    assert_eq!(dev.config_read(0x0a, 1) as u8, 0x03);
+    assert_eq!(dev.config_read(0x09, 1) as u8, 0x30);
+
+    // Subsystem IDs are set to match the base VID/DID (canonical qemu-xhci identity).
+    assert_eq!(dev.config_read(0x2c, 2) as u16, 0x1b36);
+    assert_eq!(dev.config_read(0x2e, 2) as u16, 0x000d);
+
+    // INTx pin should be INTA#; line is derived from the canonical PCI routing swizzle.
+    assert_eq!(dev.config_read(0x3d, 1) as u8, 0x01);
+    assert_eq!(dev.config_read(0x3c, 1) as u8, 0x0b);
+}
+
 struct PanicMem;
 
 impl MemoryBus for PanicMem {
