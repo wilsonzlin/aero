@@ -537,9 +537,9 @@ Known gaps / limitations (enforced by code/tests):
     - Translator tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
     - GS input feeding (current in-tree behavior):
       - Prepass paths populate GS `v#[]` from **VS outputs** via a minimal
-        VS-as-compute path (vertex pulling + a small VS opcode subset). If VS-as-compute translation fails,
+        VS-as-compute path (vertex pulling + **`mov`/`add` only** today). If VS-as-compute translation fails,
         draws fail unless the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
-        to force IA-fill for debugging; may misrender).
+        to force IA-fill for debugging; may misrender because GS observes pre-VS IA values).
     - Supported resource ops in the translated GS subset (non-exhaustive):
       - Texture2D: `sample`/`sample_l`/`ld`/`resinfo`
       - SRV buffers: `ld_raw`/`ld_structured`/`bufinfo`
@@ -549,7 +549,8 @@ Known gaps / limitations (enforced by code/tests):
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)
   - Known GS emulation gaps / next steps:
     - Broaden VS-as-compute feeding (opcode coverage + correct draw instancing semantics).
-    - Instanced draws (`instance_count > 1`) with GS bound are not validated; treat as unsupported until dedicated tests exist.
+    - Strip and adjacency-strip IA topologies (`LINESTRIP`, `TRIANGLESTRIP`, `LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not supported end-to-end yet (until Tasks 705/708/711 equivalents land).
+    - Instanced draws (`instance_count > 1`) with GS bound are not validated; treat as unsupported until dedicated tests exist (some translated prepass paths fail-fast on `instance_count != 1`).
     - Some downlevel backends have very low per-stage storage-buffer limits (commonly `max_storage_buffers_per_shader_stage = 4`), which can block compute-prepass execution.
   - Owning doc: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
     - GS DXBC + ILAY fixtures: [`crates/aero-d3d11/tests/fixtures/README.md`](../../crates/aero-d3d11/tests/fixtures/README.md)

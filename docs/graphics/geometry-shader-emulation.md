@@ -7,7 +7,7 @@ pipeline.
 This document describes:
 
 - what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for a small set of IA input topologies (`PointList`, `LineList`, `TriangleList`, `LineListAdj`, and `TriangleListAdj`) via the translated GS prepass), and
-- the **next steps** (broaden VS-as-compute feeding for GS inputs (currently minimal; opcode coverage + instancing), then grow opcode/system-value/resource-binding coverage and bring up HS/DS emulation).
+- the **next steps** (broaden VS-as-compute feeding for GS inputs (currently **very** minimal: `mov`/`add` only + no draw instancing), then grow opcode/system-value/resource-binding coverage and bring up HS/DS emulation).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 >
@@ -82,9 +82,10 @@ Current status:
   executes that translated WGSL compute prepass at draw time.
   - Today, GS `v#[]` inputs are populated via vertex pulling:
     - Translated-GS prepass paths prefer feeding `v#[]` from **VS outputs**
-      via vertex pulling plus a minimal **VS-as-compute** implementation (simple SM4 subset). If
+      via vertex pulling plus a minimal **VS-as-compute** implementation (**currently `mov`/`add` only**). If
       VS-as-compute translation fails, draws fail unless the VS is a strict passthrough (or
-      `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may misrender).
+      `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may misrender
+      because the GS observes pre-VS IA values).
   - This requires an input layout.
 
 ### Why we expand strips into lists
@@ -165,16 +166,22 @@ The executor currently uses **two distinct** compute prepass implementations for
   `CREATE_SHADER_DXBC` time and its declared input primitive matches the IA topology.
 - **Pass sequence (translated-GS prepass paths today):**
   1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
-     vertex pulling to load IA data and a small VS-as-compute translator (currently a minimal SM4 subset)
+     vertex pulling to load IA data and a small VS-as-compute translator (**currently `mov`/`add` only**)
      to execute the guest VS instruction stream for the subset needed by GS tests.
      - If VS-as-compute translation fails, the executor only falls back to filling `gs_inputs` from the
        IA stream when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
        to force IA-fill for debugging; may misrender). Otherwise the draw fails with a clear error.
-  2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive
-     (`dispatch_workgroups(primitive_count, 1, 1)`) and loops `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
-     It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
+   2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive
+      (`dispatch_workgroups(primitive_count, 1, 1)`) and loops `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
+      It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
    3. **Finalize:** a 1-workgroup dispatch runs `cs_finalize` to write `DrawIndexedIndirectArgs` from the
       counters (and to deterministically skip the draw if overflow occurred).
+   4. **Index expand (executor-side):** the executor runs an additional compute pass to expand the
+      indexed output into a non-indexed vertex stream and repack `DrawIndexedIndirectArgs` into
+      `DrawIndirectArgs`, so the render pass can always use `draw_indirect` (avoiding
+      `draw_indexed_indirect`, which is unreliable on some backends). See
+      `GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL` in
+      `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`.
 - **Bindings (translated GS prepass WGSL):**
   - `@group(0)` contains prepass IO (expanded vertices/indices, counters+indirect args, params, and
     `gs_inputs`).
@@ -238,7 +245,8 @@ Current limitations (high-level):
     currently use the built-in synthetic expansion WGSL prepass (and do not execute guest GS DXBC).
 - VS-as-compute feeding for GS inputs is still incomplete:
   - The translated-GS prepass paths prefer a minimal VS-as-compute feeding path so the GS observes VS
-    output registers (correct D3D11 semantics), but it is still a small subset (simple VS expected).
+    output registers (correct D3D11 semantics), but it is still a very small subset (**`mov`/`add` only**,
+    simple VS expected).
   - If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a
     strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for
     debugging; may misrender). Otherwise the draw fails with a clear error.
@@ -283,7 +291,7 @@ WGSL compute → expanded draw). Anything not listed here should be assumed unsu
 
 ### Input primitive types (end-to-end)
 
-Supported end-to-end today (translated-GS prepass):
+Supported end-to-end today (translated-GS prepass; for both `Draw` and `DrawIndexed`):
 
 - `point`: `D3D11_PRIMITIVE_TOPOLOGY_POINTLIST`
 - `line`: `D3D11_PRIMITIVE_TOPOLOGY_LINELIST`
@@ -296,16 +304,18 @@ for `LINELIST_ADJ`/`LINESTRIP_ADJ` and `TRIANGLELIST_ADJ`/`TRIANGLESTRIP_ADJ` is
 [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) section 2.1.1b.
 
 Note: for the current translated-GS prepass paths, the GS `v#[]` inputs are populated via vertex
-pulling plus a minimal VS-as-compute feeding path (simple SM4 subset) so the GS observes VS output
-registers (correct D3D11 semantics). If VS-as-compute translation fails, the executor only falls
-back to IA-fill when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is
-set to force IA-fill for debugging; may misrender). Otherwise the draw fails with a clear error.
+pulling plus a minimal VS-as-compute feeding path (**currently `mov`/`add` only**) so the GS observes
+VS output registers (correct D3D11 semantics).
+If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a strict
+passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may
+misrender because the GS observes pre-VS IA values). Otherwise the draw fails with a clear error.
 
 Not yet supported end-to-end (these may still route through synthetic expansion for plumbing tests, but
 do not execute guest GS DXBC):
 
 - strip input topologies (`D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP`, `D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP`)
 - adjacency strip topologies (`D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP_ADJ`, `D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ`)
+  - (tracked by the equivalent of the old Tasks 705/708/711)
 
 ### Output topology / streams
 
@@ -405,15 +415,18 @@ Known limitations include:
   - GS output cannot be captured into D3D stream-out buffers
 - **Limited VS-as-compute feeding for GS inputs**
   - The translated-GS prepass paths run a small VS-as-compute translator to populate the GS `v#[]`
-    register payload from VS outputs. This currently supports a small VS instruction subset (enough
-    for the in-tree GS tests) and will fail translation for more complex vertex shaders.
+    register payload from VS outputs.
+    - Current bring-up limitation: VS-as-compute supports **`mov` and `add` only** (plus `ret`), so
+      many vertex shaders will fail translation.
   - If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a strict
     passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may
-    misrender). Otherwise the draw fails with a clear error.
+    misrender because the GS observes pre-VS IA values). Otherwise the draw fails with a clear error.
 - **Draw instancing (`instance_count > 1`) is not validated**
-  - The emulation path preserves `instance_count` in the indirect draw args, but the current translated
-    GS prepass does not expand geometry per draw instance and does not currently fan out over
-    `SV_InstanceID`. Treat instanced draws with GS bound as unsupported until dedicated tests exist.
+  - The emulation path preserves `instance_count` in the indirect draw args, but the translated GS
+    prepass does not expand geometry per draw instance and does not currently fan out over
+    `SV_InstanceID`.
+  - Some translated GS prepass variants currently fail-fast on `instance_count != 1`; treat instanced
+    draws with GS bound as unsupported until dedicated tests exist.
 - **Limited output topology / payload**
   - Output topology is limited to `pointlist`, `linestrip`, and `trianglestrip` (stream 0 only).
     Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,
@@ -433,8 +446,8 @@ Known limitations include:
     emulation binds multiple storage buffers (expanded vertices + optional expanded indices,
     counters/indirect args, and sometimes IA pulling buffers), so some prepass variants may not be
     available on those backends.
-    See `crates/aero-d3d11/tests/common/mod.rs` (`skip_if_compute_or_indirect_unsupported`) for the
-    current skip heuristics used by tests.
+    See `crates/aero-d3d11/tests/common/mod.rs` (`require_gs_prepass_or_skip`,
+    `skip_if_compute_or_indirect_unsupported`) for the current skip heuristics used by tests.
 
 Error policy:
 
