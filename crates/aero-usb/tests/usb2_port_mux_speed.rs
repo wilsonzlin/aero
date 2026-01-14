@@ -3,6 +3,8 @@ use aero_usb::{UsbSpeed, UsbWebUsbPassthroughDevice};
 
 // EHCI PORTSC bits we care about.
 const EHCI_PORT_CCS: u32 = 1 << 0;
+const EHCI_PORT_FPR: u32 = 1 << 6;
+const EHCI_PORT_SUSP: u32 = 1 << 7;
 const EHCI_PORT_HSP: u32 = 1 << 9;
 const EHCI_PORT_LS_MASK: u32 = 0b11 << 10;
 const EHCI_PORT_OWNER: u32 = 1 << 13;
@@ -67,6 +69,31 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
         (portsc & EHCI_PORT_LS_MASK) >> 10,
         0b10,
         "full-speed device should report idle J-state via LS"
+    );
+
+    // During resume at low/full speed, the host should report a K-state (D- high) via the LS bits.
+    mux.ehci_write_portsc_masked(0, EHCI_PORT_SUSP, EHCI_PORT_SUSP);
+    let portsc = mux.ehci_read_portsc(0);
+    assert_ne!(portsc & EHCI_PORT_SUSP, 0, "expected SUSP set after suspend request");
+
+    mux.ehci_write_portsc_masked(0, EHCI_PORT_FPR, EHCI_PORT_FPR);
+    let portsc = mux.ehci_read_portsc(0);
+    assert_ne!(portsc & EHCI_PORT_FPR, 0, "expected FPR set while resuming");
+    assert_eq!(
+        (portsc & EHCI_PORT_LS_MASK) >> 10,
+        0b01,
+        "expected K-state while resuming"
+    );
+
+    for _ in 0..20 {
+        mux.ehci_tick_1ms(0);
+    }
+    let portsc = mux.ehci_read_portsc(0);
+    assert_eq!(portsc & EHCI_PORT_FPR, 0, "expected resume to complete");
+    assert_eq!(
+        (portsc & EHCI_PORT_LS_MASK) >> 10,
+        0b10,
+        "expected J-state after resume completes"
     );
 
     mux.detach(0);
