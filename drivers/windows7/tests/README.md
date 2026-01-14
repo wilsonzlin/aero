@@ -263,6 +263,13 @@ if the Revision ID does not match.
 
 For Linux/CI environments, `host-harness/invoke_aero_virtio_win7_tests.py` provides the same behavior without requiring PowerShell.
 
+This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrapper around the Python harness:
+
+- [`.github/workflows/win7-virtio-harness.yml`](../../../.github/workflows/win7-virtio-harness.yml)
+  - Use workflow inputs `with_virtio_input_events=true` and/or `with_virtio_input_tablet_events=true` to enable the QMP
+    injection-based end-to-end virtio-input tests (requires a guest image provisioned with the corresponding
+    `--test-input-events` / `--test-input-tablet-events` flags).
+
 See `host-harness/README.md` for required prerequisites and usage.
 
 ---
