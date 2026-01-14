@@ -146,6 +146,8 @@ const WASM_PACK_TESTS: &[&str] = &[
     "webhid_report_descriptor_synthesis_wasm",
 ];
 
+const AERO_WASM_PACK_SPLIT_ENV: &str = "AERO_WASM_PACK_SPLIT";
+
 const AERO_WASM_INPUT_TESTS: &[&str] = &[
     "machine_input_injection",
     "machine_input_backends",
@@ -238,6 +240,7 @@ Steps:
       (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked {aero_machine_focused_flags}
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked
+      (set AERO_WASM_PACK_SPLIT=1 to run each wasm-pack test in a separate invocation; slower but can help debug hangs)
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked {aero_wasm_focused_flags}
   6. (unless --rust-only) npm -w web run test:unit -- {web_unit_test_paths}
        (or: set --node-dir/--web-dir web / AERO_NODE_DIR=web (deprecated: AERO_WEB_DIR/WEB_DIR) to run `npm run test:unit` from `web/`)
@@ -248,6 +251,7 @@ Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
   --machine             Also run targeted `aero-machine` tests (USB: UHCI/EHCI/xHCI + USB2 routing; input: i8042 + virtio-input; plus snapshot/restore).
   --wasm                Also run targeted wasm-pack tests for WASM USB/input regressions (requires Node; does not require `node_modules`).
+                        Set AERO_WASM_PACK_SPLIT=1 to run each wasm-pack test in a separate process (slower, but can help debug hangs).
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
   --with-wasm            Also run host-side `aero-wasm` input integration smoke tests (no wasm-pack; does not require `node_modules`).
@@ -365,27 +369,50 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     if opts.wasm {
-        let mut cmd = Command::new("wasm-pack");
-        cmd.current_dir(&repo_root)
-            .args(["test", "--node", "crates/aero-wasm"]);
-        for &test in WASM_PACK_TESTS {
-            cmd.args(["--test", test]);
+        if env_var_nonempty(AERO_WASM_PACK_SPLIT_ENV) {
+            for &test in WASM_PACK_TESTS {
+                let mut cmd = Command::new("wasm-pack");
+                cmd.current_dir(&repo_root)
+                    .args(["test", "--node", "crates/aero-wasm", "--test", test, "--locked"]);
+                let step_desc = format!(
+                    "WASM: wasm-pack test --node crates/aero-wasm --test {test} --locked (split)"
+                );
+                runner.run_step(&step_desc, &mut cmd)
+                    .map_err(|err| match err {
+                        XtaskError::Message(msg)
+                            if msg == "missing required command: wasm-pack" =>
+                        {
+                            XtaskError::Message(
+                                "missing required command: wasm-pack\n\nInstall wasm-pack (https://rustwasm.github.io/wasm-pack/installer/) or omit `--wasm`."
+                                    .to_string(),
+                            )
+                        }
+                        other => other,
+                    })?;
+            }
+        } else {
+            let mut cmd = Command::new("wasm-pack");
+            cmd.current_dir(&repo_root)
+                .args(["test", "--node", "crates/aero-wasm"]);
+            for &test in WASM_PACK_TESTS {
+                cmd.args(["--test", test]);
+            }
+            cmd.arg("--locked");
+            let wasm_pack_focused_flags = format_test_flags(WASM_PACK_TESTS);
+            let step_desc = format!(
+                "WASM: wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked"
+            );
+            runner.run_step(&step_desc, &mut cmd)
+                .map_err(|err| match err {
+                    XtaskError::Message(msg) if msg == "missing required command: wasm-pack" => {
+                        XtaskError::Message(
+                            "missing required command: wasm-pack\n\nInstall wasm-pack (https://rustwasm.github.io/wasm-pack/installer/) or omit `--wasm`."
+                                .to_string(),
+                        )
+                    }
+                    other => other,
+                })?;
         }
-        cmd.arg("--locked");
-        let wasm_pack_focused_flags = format_test_flags(WASM_PACK_TESTS);
-        let step_desc = format!(
-            "WASM: wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked"
-        );
-        runner.run_step(&step_desc, &mut cmd)
-            .map_err(|err| match err {
-                XtaskError::Message(msg) if msg == "missing required command: wasm-pack" => {
-                    XtaskError::Message(
-                        "missing required command: wasm-pack\n\nInstall wasm-pack (https://rustwasm.github.io/wasm-pack/installer/) or omit `--wasm`."
-                            .to_string(),
-                    )
-                }
-                other => other,
-            })?;
     }
 
     if opts.rust_only {
