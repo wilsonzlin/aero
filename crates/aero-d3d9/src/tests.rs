@@ -1476,6 +1476,87 @@ fn assemble_ps3_mova_sat_relative_const() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_mova_multi_component_relative_const() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 2.0, 0.0, 0.0 (write a0.x=1, a0.y=2)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000, // 1.0
+            0x4000_0000, // 2.0
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c2, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c3, 0.0, 1.0, 0.0, 1.0 (green)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 3, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // mova a0.xy, c0.xy
+    out.extend(enc_inst(
+        0x002E,
+        &[
+            enc_dst(3, 0, 0x3),    // a0.xy (regtype 3)
+            enc_src(2, 0, 0xE4), // c0.xyzw
+        ],
+    ));
+
+    // mov r0, c1[a0.x]
+    let mut c1_rel_x = enc_src(2, 1, 0xE4);
+    c1_rel_x |= 0x0000_2000; // RELATIVE flag
+    out.extend(enc_inst(
+        0x0001,
+        &[
+            enc_dst(0, 0, 0xF),
+            c1_rel_x,
+            enc_src(3, 0, 0x00), // a0.x
+        ],
+    ));
+
+    // add r0, r0, c1[a0.y]
+    let mut c1_rel_y = enc_src(2, 1, 0xE4);
+    c1_rel_y |= 0x0000_2000; // RELATIVE flag
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            c1_rel_y,
+            enc_src(3, 0, 0x55), // a0.y (swizzle yyyy)
+        ],
+    ));
+
+    // mov oC0, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_mova_relative_const_component_y() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -4254,6 +4335,46 @@ fn sm3_mova_sat_relative_const_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "ae1a8e1ea93708f5a75c5932aee528e3fc81af1ab92ef21524a7f1fea3e8705b"
+    );
+}
+
+#[test]
+fn sm3_mova_multi_component_relative_const_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_mova_multi_component_relative_const());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, software::Vec4::new(1.0, 1.0, 1.0, 1.0));
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // a0.x = 1 reads c2 (red), a0.y = 2 reads c3 (green) => yellow.
+    assert_eq!(rt.get(4, 4).to_rgba8(), [255, 255, 0, 255]);
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "9c63cec05ddc8ff912be9a050e587ed8b44acfeea445c50ee41c4d7c90bf3cef"
     );
 }
 

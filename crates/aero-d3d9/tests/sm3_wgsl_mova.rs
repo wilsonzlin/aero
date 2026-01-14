@@ -96,6 +96,20 @@ fn wgsl_supports_mova_and_relative_constant_indexing() {
 
         let wgsl = generate_wgsl(&ir).unwrap();
 
+        // VS and PS constants occupy separate halves of the shared uniform constant array.
+        match stage {
+            ShaderStage::Vertex => assert!(
+                wgsl.wgsl.contains("const CONST_BASE: u32 = 0u;"),
+                "{}",
+                wgsl.wgsl
+            ),
+            ShaderStage::Pixel => assert!(
+                wgsl.wgsl.contains("const CONST_BASE: u32 = 256u;"),
+                "{}",
+                wgsl.wgsl
+            ),
+        }
+
         let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
