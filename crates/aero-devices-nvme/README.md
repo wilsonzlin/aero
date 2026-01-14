@@ -62,15 +62,40 @@ supports *sector-aligned* byte offsets and lengths.
 
 ## Interrupts
 
-- Legacy INTx signalling is modelled via `NvmeController::intx_level` and exposed via
-  `NvmePciDevice::irq_level()`.
-- The PCI wrapper (`NvmePciDevice`) supports message-signaled interrupts when the platform attaches
-  an `aero_platform::interrupts::msi::MsiTrigger` sink via `NvmePciDevice::set_msi_target`:
-  - **MSI**: single-vector (`MsiCapability`).
-  - **MSI-X**: BAR0-backed table + PBA (single vector; table entry 0).
-- When MSI-X is enabled it is used in preference to MSI; when neither is enabled (or no MSI sink is
-  attached), the device falls back to legacy INTx.
-- MSI-X table/PBA programming state is preserved across snapshot/restore.
+The controller derives an internal "interrupt requested" level (`NvmeController::intx_level`) from
+completion queue state (any CQ with pending entries and interrupts enabled), gated by the NVMe
+`INTMS` mask.
+
+`NvmePciDevice` can surface that interrupt condition through either legacy INTx or message-signaled
+interrupts:
+
+- **Legacy INTx (level-triggered):** `NvmePciDevice::irq_level()` reflects
+  `NvmeController::intx_level` unless `PCI COMMAND.INTX_DISABLE` (bit 10) is set. The line remains
+  asserted while completions are pending and is deasserted when the guest advances the CQ head
+  doorbell (or masks interrupts via `INTMS`).
+- **MSI (single vector):** the NVMe PCI profile exposes a single-vector MSI capability. When MSI is
+  enabled and the platform attaches an `aero_platform::interrupts::msi::MsiTrigger` sink via
+  `NvmePciDevice::set_msi_target`, completions trigger MSI deliveries instead of asserting INTx.
+- **MSI-X (single vector):** the NVMe PCI profile also exposes an MSI-X capability with a
+  BAR0-backed MSI-X table/PBA region. The current implementation provides **one** MSI-X table entry
+  (vector 0). When MSI-X is enabled and an MSI sink is attached, completions trigger MSI-X vector 0
+  deliveries (and both MSI and legacy INTx are suppressed).
+
+MSI-X table/PBA exposure (BIR 0 / BAR0):
+
+- Table: `BAR0 + 0x3000` (1 × 16-byte entry)
+- PBA: `BAR0 + 0x3010` (8-byte aligned; one 64-bit word for the single vector)
+
+When neither MSI nor MSI-X is enabled (or no MSI sink is attached), the device falls back to legacy
+INTx (unless the guest disables it via `PCI COMMAND.INTX_DISABLE`).
+
+Note: if the guest disables INTx (`PCI COMMAND.INTX_DISABLE=1`) without enabling MSI/MSI-X (or if
+the platform does not attach an `MsiTrigger` sink), interrupts will not be delivered.
+
+MSI-X table/PBA programming state is preserved across snapshot/restore.
+
+See also: [`docs/05-storage-subsystem.md`](../../docs/05-storage-subsystem.md) (NVMe section) for the
+platform-level storage topology context.
 
 ## Best-effort semantics
 
