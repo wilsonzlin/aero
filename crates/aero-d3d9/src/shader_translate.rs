@@ -8,6 +8,7 @@ use crate::shader;
 use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 use crate::sm3;
 use crate::sm3::decode::TextureType;
+use crate::vertex::DeclUsage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderTranslateBackend {
@@ -25,12 +26,11 @@ pub struct ShaderTranslation {
     pub wgsl: String,
     pub entry_point: &'static str,
     pub uses_semantic_locations: bool,
-    /// Semantic → WGSL location mapping derived from vertex shader `dcl_*` declarations (legacy
-    /// translator) when [`ShaderTranslation::uses_semantic_locations`] is true.
-    ///
-    /// The strict SM3 pipeline uses [`crate::vertex::StandardLocationMap`] and does not currently
-    /// emit an explicit mapping list, so this may be empty even when
+    /// Semantic → WGSL location mapping derived from vertex shader `dcl_*` declarations when
     /// [`ShaderTranslation::uses_semantic_locations`] is true.
+    ///
+    /// Some translation paths (or legacy cached artifacts) may omit this metadata, in which case
+    /// callers should fall back to [`crate::vertex::StandardLocationMap`] for the common semantics.
     pub semantic_locations: Vec<shader::SemanticLocation>,
     pub used_samplers: BTreeSet<u16>,
     pub sampler_texture_types: HashMap<u16, TextureType>,
@@ -333,17 +333,61 @@ fn try_translate_sm3(
         })?;
     }
 
+    let semantic_locations = if stage == shader::ShaderStage::Vertex && ir.uses_semantic_locations {
+        let mut out = Vec::new();
+        for decl in &ir.inputs {
+            if decl.reg.file != sm3::ir::RegFile::Input {
+                continue;
+            }
+            let Some((usage, usage_index)) = sm3_semantic_to_decl_usage(&decl.semantic) else {
+                continue;
+            };
+            out.push(shader::SemanticLocation {
+                usage,
+                usage_index,
+                location: decl.reg.index,
+            });
+        }
+        out
+    } else {
+        Vec::new()
+    };
+
     Ok(ShaderTranslation {
         backend: ShaderTranslateBackend::Sm3,
         version,
         wgsl: wgsl_str,
         entry_point: wgsl.entry_point,
         uses_semantic_locations: ir.uses_semantic_locations,
-        semantic_locations: Vec::new(),
+        semantic_locations,
         used_samplers,
         sampler_texture_types,
         fallback_reason: None,
     })
+}
+
+fn sm3_semantic_to_decl_usage(semantic: &sm3::ir::Semantic) -> Option<(DeclUsage, u8)> {
+    let (usage, index) = match semantic {
+        sm3::ir::Semantic::Position(i) => (DeclUsage::Position, *i),
+        sm3::ir::Semantic::BlendWeight(i) => (DeclUsage::BlendWeight, *i),
+        sm3::ir::Semantic::BlendIndices(i) => (DeclUsage::BlendIndices, *i),
+        sm3::ir::Semantic::Normal(i) => (DeclUsage::Normal, *i),
+        sm3::ir::Semantic::Tangent(i) => (DeclUsage::Tangent, *i),
+        sm3::ir::Semantic::Binormal(i) => (DeclUsage::Binormal, *i),
+        sm3::ir::Semantic::Color(i) => (DeclUsage::Color, *i),
+        sm3::ir::Semantic::TexCoord(i) => (DeclUsage::TexCoord, *i),
+        sm3::ir::Semantic::PositionT(i) => (DeclUsage::PositionT, *i),
+        sm3::ir::Semantic::PointSize(i) => (DeclUsage::PSize, *i),
+        sm3::ir::Semantic::Fog(i) => (DeclUsage::Fog, *i),
+        sm3::ir::Semantic::Depth(i) => (DeclUsage::Depth, *i),
+        sm3::ir::Semantic::Sample(i) => (DeclUsage::Sample, *i),
+        sm3::ir::Semantic::TessFactor(i) => (DeclUsage::TessFactor, *i),
+        sm3::ir::Semantic::Other { usage, index } => {
+            let usage = DeclUsage::from_u8(*usage).ok()?;
+            return Some((usage, *index));
+        }
+    };
+    Some((usage, index))
 }
 
 fn collect_used_samplers_sm3(ir: &sm3::ir::ShaderIr) -> BTreeSet<u16> {
