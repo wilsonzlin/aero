@@ -7910,21 +7910,11 @@ static int DoQueryUmdPrivateJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, 
     return 1;
   }
   if (!f->QueryAdapterInfo) {
-    JsonWriter w(out);
-    w.BeginObject();
-    w.Key("schema_version");
-    w.Uint32(1);
-    w.Key("command");
-    w.String("query-umd-private");
-    w.Key("ok");
-    w.Bool(false);
-    w.Key("error");
-    w.BeginObject();
-    w.Key("message");
-    w.String("D3DKMTQueryAdapterInfo not available (missing gdi32 export)");
-    w.EndObject();
-    w.EndObject();
-    out->push_back('\n');
+    JsonWriteTopLevelError(out,
+                           "query-umd-private",
+                           f,
+                           "D3DKMTQueryAdapterInfo not available (missing gdi32 export)",
+                           STATUS_NOT_SUPPORTED);
     return 1;
   }
 
@@ -8022,21 +8012,11 @@ static int DoQuerySegmentsJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, st
     return 1;
   }
   if (!f->QueryAdapterInfo) {
-    JsonWriter w(out);
-    w.BeginObject();
-    w.Key("schema_version");
-    w.Uint32(1);
-    w.Key("command");
-    w.String("query-segments");
-    w.Key("ok");
-    w.Bool(false);
-    w.Key("error");
-    w.BeginObject();
-    w.Key("message");
-    w.String("D3DKMTQueryAdapterInfo not available (missing gdi32 export)");
-    w.EndObject();
-    w.EndObject();
-    out->push_back('\n');
+    JsonWriteTopLevelError(out,
+                           "query-segments",
+                           f,
+                           "D3DKMTQueryAdapterInfo not available (missing gdi32 export)",
+                           STATUS_NOT_SUPPORTED);
     return 1;
   }
 
