@@ -1959,6 +1959,42 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn collect_used_pixel_inputs_op_match_arms_stay_deduplicated() {
+        // This file has a long match over `IrOp` variants. A past merge conflict accidentally
+        // duplicated `IrOp::Dp2Add` inside an or-pattern group and `#[deny(unreachable_patterns)]`
+        // turned it into a hard build break.
+        //
+        // The `#[deny(unreachable_patterns)]` attribute *should* catch this during compilation, but
+        // this test acts as an additional guard to ensure that the attribute stays in place and
+        // that `Dp2Add` only appears once in the `collect_used_pixel_inputs_op` match.
+        const SRC: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/sm3/software.rs"));
+
+        let fn_start = SRC
+            .find("fn collect_used_pixel_inputs_op")
+            .expect("collect_used_pixel_inputs_op should exist in source");
+
+        // Look back a small window for the `deny(unreachable_patterns)` attribute.
+        let window_start = fn_start.saturating_sub(256);
+        let header = &SRC[window_start..fn_start];
+        assert!(
+            header.contains("#[deny(unreachable_patterns)]"),
+            "collect_used_pixel_inputs_op must retain #[deny(unreachable_patterns)]"
+        );
+
+        let fn_end = SRC[fn_start..]
+            .find("fn collect_used_pixel_inputs_cond")
+            .map(|off| fn_start + off)
+            .expect("collect_used_pixel_inputs_cond should exist after collect_used_pixel_inputs_op");
+
+        let fn_src = &SRC[fn_start..fn_end];
+        assert_eq!(
+            fn_src.matches("IrOp::Dp2Add").count(),
+            1,
+            "collect_used_pixel_inputs_op should list IrOp::Dp2Add exactly once"
+        );
+    }
+
     fn src_input(index: u32) -> Src {
         Src {
             reg: RegRef {
