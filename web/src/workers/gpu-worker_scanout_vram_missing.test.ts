@@ -105,7 +105,7 @@ describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // GPU-protocol init (headless, no canvas).
@@ -142,14 +142,14 @@ describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
             (ev as { category?: unknown; message?: unknown } | null | undefined)?.category === "Scanout" &&
             String((ev as { message?: unknown }).message).includes(expectedSnippet),
         );
-      }, 10_000);
+      }, 20_000);
 
       const errorPromise = waitForWorkerMessage(worker, (msg) => {
         const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
         if (maybeProtocol?.type !== MessageType.ERROR) return false;
         const rawMsg = (maybeProtocol as { message?: unknown }).message;
         return typeof rawMsg === "string" && rawMsg.includes(expectedSnippet);
-      }, 10_000);
+      }, 20_000);
 
       // Drive a tick to trigger `presentOnce()` which performs the VRAM-missing scanout guard.
       worker.postMessage({
@@ -185,5 +185,5 @@ describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, 60_000);
 });

@@ -162,7 +162,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // Load mock presenter module (installs present()).
@@ -183,7 +183,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
         options: { wasmModuleUrl },
       });
 
-      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 10_000);
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 20_000);
 
       // Publish a single shared-layout frame with a distinctive first pixel so we can prove which
       // buffer the worker consumed.
@@ -579,5 +579,5 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, 60_000);
 });

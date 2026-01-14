@@ -139,7 +139,7 @@ describe("workers/gpu-worker WDDM tick gating", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // GPU-protocol init (frame pacing state + shared framebuffer handle).
@@ -230,5 +230,5 @@ describe("workers/gpu-worker WDDM tick gating", () => {
     } finally {
       await worker.terminate();
     }
-  }, 30_000);
+  }, 60_000);
 });

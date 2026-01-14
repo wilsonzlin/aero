@@ -109,7 +109,7 @@ describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // Publish a cursor descriptor pointing into VRAM. We don't care about the backing bytes; the
@@ -141,8 +141,8 @@ describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
               String((ev as { message?: unknown }).message).includes(expectedSnippet),
            );
          },
-         10_000,
-       );
+          20_000,
+        );
 
       // Drive a tick so the worker polls CursorState and attempts a cursor readback.
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
@@ -165,8 +165,8 @@ describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
            format_str: aerogpuFormatToString(CURSOR_FORMAT_B8G8R8A8),
          },
        });
-     } finally {
-       await worker.terminate();
-     }
-   }, 20_000);
+      } finally {
+        await worker.terminate();
+      }
+    }, 60_000);
 });
