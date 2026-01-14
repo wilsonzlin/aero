@@ -1401,7 +1401,8 @@ export class WorkerCoordinator {
         // worker, it may already be running and touching NET_TX/NET_RX. Always pause
         // it (when present) before resetting the shared rings.
         const netWorker = net?.worker;
-        await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io?.worker, net: netWorker });
+        const gpuWorker = gpu?.status.state === "ready" ? gpu.worker : undefined;
+        await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io?.worker, gpu: gpuWorker, net: netWorker });
 
         const saved = await this.snapshotRpc<VmSnapshotMachineSavedMessage>(
           cpu.worker,
@@ -1498,7 +1499,8 @@ export class WorkerCoordinator {
         // worker, it may already be running and touching NET_TX/NET_RX. Always pause
         // it (when present) before resetting the shared rings.
         const netWorker = net?.worker;
-        await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io?.worker, net: netWorker });
+        const gpuWorker = gpu?.status.state === "ready" ? gpu.worker : undefined;
+        await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io?.worker, gpu: gpuWorker, net: netWorker });
 
         const restored = await this.snapshotRpc<VmSnapshotMachineRestoredMessage>(
           cpu.worker,

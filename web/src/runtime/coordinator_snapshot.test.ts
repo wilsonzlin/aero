@@ -618,13 +618,15 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     (coordinator as any).activeConfig = { vmRuntime: "machine" };
     const cpu = new StubWorker();
     const io = new StubWorker();
+    const gpu = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, { cpu, io, net });
+    installReadyWorkers(coordinator, { cpu, io, gpu, net });
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
     expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
     expect(io.posted.length).toBe(0);
+    expect(gpu.posted.length).toBe(0);
     expect(net.posted.length).toBe(0);
 
     cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
@@ -632,6 +634,11 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
     io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted.length).toBe(0);
+    expect(gpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    gpu.emitMessage({ kind: "vm.snapshot.paused", requestId: gpu.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
@@ -649,10 +656,12 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
     expect(io.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    expect(gpu.posted[1]?.message.kind).toBe("vm.snapshot.resume");
     expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
 
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[1]!.message.requestId, ok: true });
+    gpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: gpu.posted[1]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
@@ -666,8 +675,9 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     (coordinator as any).activeConfig = { vmRuntime: "machine" };
     const cpu = new StubWorker();
     const io = new StubWorker();
+    const gpu = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, { cpu, io, net });
+    installReadyWorkers(coordinator, { cpu, io, gpu, net });
 
     const shared = (coordinator as any).shared;
     const scanoutOffsetBytes = 64;
@@ -725,6 +735,11 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
+    expect(net.posted.length).toBe(0);
+    expect(gpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    gpu.emitMessage({ kind: "vm.snapshot.paused", requestId: gpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
     expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
     net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
@@ -744,10 +759,12 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
     expect(io.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    expect(gpu.posted[1]?.message.kind).toBe("vm.snapshot.resume");
     expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
 
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[1]!.message.requestId, ok: true });
+    gpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: gpu.posted[1]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
@@ -790,12 +807,17 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const coordinator = new WorkerCoordinator();
     (coordinator as any).activeConfig = { vmRuntime: "machine" };
     const cpu = new StubWorker();
+    const gpu = new StubWorker();
     const net = new StubWorker();
-    installReadyWorkers(coordinator, { cpu, net });
+    installReadyWorkers(coordinator, { cpu, gpu, net });
 
     const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
 
     cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted.length).toBe(0);
+    gpu.emitMessage({ kind: "vm.snapshot.paused", requestId: gpu.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
     net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
@@ -807,6 +829,10 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
     const cpuResume = cpu.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpuResume.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    const gpuResume = gpu.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
+    gpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: gpuResume.message.requestId, ok: true });
     await flushMicrotasks();
 
     const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
