@@ -1401,8 +1401,8 @@ struct TessPatchState {
   _pad0: u32;
   _pad1: u32;
 }
-// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
-// using a dedicated internal group instead use `@group(4)`.
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources and other internal
+// emulation bindings).
 @group(3) @binding(273) var<storage, read_write> tess_patch_state: array<TessPatchState>;
 ```
 
