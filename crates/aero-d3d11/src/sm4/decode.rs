@@ -1008,8 +1008,6 @@ pub fn decode_instruction(
         OPCODE_GE => decode_cmp(CmpOp::Ge, saturate, &mut r),
         OPCODE_EQ => decode_cmp(CmpOp::Eq, saturate, &mut r),
         OPCODE_NE => decode_cmp(CmpOp::Ne, saturate, &mut r),
-        OPCODE_GT => decode_cmp(CmpOp::Gt, saturate, &mut r),
-        OPCODE_LE => decode_cmp(CmpOp::Le, saturate, &mut r),
         OPCODE_UDIV => {
             // `udiv dst_quot, dst_rem, a, b`
             // Note: integer division does not support saturate; ignore the opcode modifier if
@@ -1584,7 +1582,7 @@ fn decode_cmp(
     _saturate: bool,
     r: &mut InstrReader<'_>,
 ) -> Result<Sm4Inst, Sm4DecodeError> {
-    // SM4/SM5 float compares (`lt/ge/eq/ne/gt/le`) write predicate masks (0xffffffff/0) into the untyped
+    // SM4/SM5 float compares (`lt/ge/eq/ne`) write predicate masks (0xffffffff/0) into the untyped
     // register file. Saturate modifiers are only meaningful for float *numeric* results, so ignore
     // it here (while still consuming any extended opcode tokens above).
     let dst = decode_dst(r)?;

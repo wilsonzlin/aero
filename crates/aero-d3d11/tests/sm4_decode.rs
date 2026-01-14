@@ -3597,8 +3597,6 @@ fn decodes_float_cmp_opcodes() {
         (OPCODE_NE, CmpOp::Ne),
         (OPCODE_LT, CmpOp::Lt),
         (OPCODE_GE, CmpOp::Ge),
-        (OPCODE_GT, CmpOp::Gt),
-        (OPCODE_LE, CmpOp::Le),
     ];
 
     let mut expected = Vec::<Sm4Inst>::new();

@@ -32,7 +32,7 @@ pub const OPCODE_MAX: u32 = 0x0b;
 
 // ---- Float comparisons ----
 //
-// SM4/SM5 float compares (`lt/ge/eq/ne/gt/le`) produce per-component predicate masks in the
+// SM4/SM5 float compares (`lt/ge/eq/ne`) produce per-component predicate masks in the
 // untyped register file: 0xffffffff for true, 0x00000000 for false.
 //
 // The translator bitcasts these masks to `f32` lanes so subsequent `movc`/`if_nz` style
@@ -41,8 +41,6 @@ pub const OPCODE_LT: u32 = 0x0c;
 pub const OPCODE_GE: u32 = 0x0d;
 pub const OPCODE_EQ: u32 = 0x0e;
 pub const OPCODE_NE: u32 = 0x0f;
-pub const OPCODE_GT: u32 = 0x10;
-pub const OPCODE_LE: u32 = 0x11;
 
 /// Unsigned integer add with carry: `uaddc dst_sum, dst_carry, a, b`.
 pub const OPCODE_UADDC: u32 = 0x6a;
@@ -470,8 +468,6 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_GE => Some("ge"),
         OPCODE_EQ => Some("eq"),
         OPCODE_NE => Some("ne"),
-        OPCODE_GT => Some("gt"),
-        OPCODE_LE => Some("le"),
         OPCODE_IADD => Some("iadd"),
         OPCODE_ISUB => Some("isub"),
         OPCODE_IMUL => Some("imul"),
