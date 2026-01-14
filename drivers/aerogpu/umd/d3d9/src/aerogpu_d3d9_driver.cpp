@@ -8037,6 +8037,24 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
     return true;
   }
 
+  // If we already have a valid submission contract (DMA buffer + allocation list
+  // + private data), but the current DMA buffer is too small for the next packet,
+  // do *not* reacquire submit buffers here when the command stream is non-empty.
+  //
+  // `ensure_cmd_space()` will notice the insufficient remaining space, submit the
+  // in-flight DMA buffer, and call back into `wddm_ensure_recording_buffers()` for
+  // a fresh buffer. Reacquiring here would discard already-recorded packets.
+  const bool have_submit_contract =
+      dev->wddm_context.pCommandBuffer &&
+      dev->wddm_context.CommandBufferSize >= sizeof(aerogpu_cmd_stream_header) &&
+      dev->wddm_context.pAllocationList &&
+      dev->wddm_context.AllocationListSize != 0 &&
+      dev->wddm_context.pDmaBufferPrivateData &&
+      dev->wddm_context.DmaBufferPrivateDataSize >= expected_dma_priv_bytes;
+  if (have_submit_contract && !dev->cmd.empty() && dev->wddm_context.CommandBufferSize < min_buffer_bytes) {
+    return true;
+  }
+
   // If the caller tracked allocations for a packet but hasn't emitted any command
   // buffer bytes yet (cmd stream still empty), a submit-buffer re-acquire would
   // rebind/reset the allocation-list tracker and drop those tracked alloc_ids.
