@@ -1455,7 +1455,7 @@ export interface WasmApi {
         ): number;
         /**
          * Newer UHCI runtime builds support attaching WebHID devices behind the external hub
-         * topology (e.g. `guestPath` like `[0, 4]`).
+         * topology (e.g. `guestPath` like `[0, 5]`).
          *
          * Optional to allow older deployed wasm builds.
          */
