@@ -595,7 +595,8 @@ static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err)
     DWORD e = GetLastError();
     if (e != ERROR_ALREADY_EXISTS) {
       if (err) {
-        *err = "CreateDirectory failed: " + aerogpu_test::Win32ErrorToString(e);
+        *err = "CreateDirectory failed (" + aerogpu_test::WideToUtf8(dir) + "): " +
+               aerogpu_test::Win32ErrorToString(e);
       }
       return false;
     }
