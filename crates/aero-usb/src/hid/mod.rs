@@ -14,6 +14,10 @@ pub mod webhid;
 pub use composite::UsbCompositeHidInputHandle;
 pub use gamepad::{GamepadReport, UsbHidGamepad, UsbHidGamepadHandle};
 pub use keyboard::{UsbHidKeyboard, UsbHidKeyboardHandle};
+pub use keyboard::{
+    KEYBOARD_LED_CAPS_LOCK, KEYBOARD_LED_COMPOSE, KEYBOARD_LED_KANA, KEYBOARD_LED_MASK,
+    KEYBOARD_LED_NUM_LOCK, KEYBOARD_LED_SCROLL_LOCK,
+};
 pub use mouse::{UsbHidMouse, UsbHidMouseHandle};
 
 pub use report_descriptor::{
