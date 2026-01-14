@@ -14,6 +14,17 @@ param(
   # Optional: fail if audio/input drivers are requested but missing from virtio-win.
   [switch]$StrictOptional,
 
+  # Optional: select the ISO authoring backend used by tools/driver-iso/build.py.
+  # - auto: prefer the deterministic Rust backend (aero_iso) when cargo is available
+  # - rust: require cargo
+  # - external: force xorriso/mkisofs/oscdimg/IMAPI behavior
+  [ValidateSet("auto", "rust", "external")]
+  [string]$IsoBackend = "auto",
+
+  # Optional: seconds since Unix epoch for deterministic ISO timestamps.
+  # If omitted, tools/driver-iso/build.py uses SOURCE_DATE_EPOCH when set, otherwise 0.
+  [long]$SourceDateEpoch,
+
   # Delete the staging directory produced by make-driver-pack.ps1 after the ISO is built.
   [switch]$CleanStage
 )
@@ -113,7 +124,16 @@ Write-Host "Building ISO..."
 Write-Host "  staging: $packRoot"
 Write-Host "  output : $OutIso"
 
-& $python $isoBuilder --drivers-root $packRoot --output $OutIso
+$isoArgs = @(
+  "--drivers-root", $packRoot,
+  "--output", $OutIso,
+  "--backend", $IsoBackend
+)
+if ($PSBoundParameters.ContainsKey("SourceDateEpoch")) {
+  $isoArgs += @("--source-date-epoch", "$SourceDateEpoch")
+}
+
+& $python $isoBuilder @isoArgs
 if ($LASTEXITCODE -ne 0) {
   throw "driver-iso build failed (exit $LASTEXITCODE)."
 }

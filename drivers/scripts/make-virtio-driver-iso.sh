@@ -20,6 +20,11 @@ Options:
 Any arguments after `--` are passed through to `make-virtio-driver-iso.ps1` (e.g.
 `-Drivers viostor,netkvm` or `-StrictOptional`).
 
+You can also pass through ISO builder options supported by `tools/driver-iso/build.py`, for example:
+
+- `-IsoBackend rust`
+- `-SourceDateEpoch 0`
+
 EOF
 }
 
