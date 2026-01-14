@@ -1504,9 +1504,80 @@ static NDIS_STATUS AerovNetCtrlVlanUpdate(_Inout_ AEROVNET_ADAPTER* Adapter, _In
                                  sizeof(LeVid), NULL);
 }
 
+static NDIS_STATUS AerovNetCtrlSetMacTable(_Inout_ AEROVNET_ADAPTER* Adapter, _In_reads_(ETH_LENGTH_OF_ADDRESS) const UCHAR* UnicastMac,
+                                           _In_ ULONG MulticastCount,
+                                           _In_reads_bytes_opt_(MulticastCount * ETH_LENGTH_OF_ADDRESS) const UCHAR* MulticastMacs) {
+  NDIS_STATUS Status;
+  ULONG DataBytes;
+  PUCHAR Data;
+  ULONG Offset;
+  UINT32 Entries;
+  USHORT DataBytesU16;
+
+  if (!Adapter || !UnicastMac) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) == 0) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  if (MulticastCount != 0 && MulticastMacs == NULL) {
+    return NDIS_STATUS_INVALID_DATA;
+  }
+
+  // Payload layout for VIRTIO_NET_CTRL_MAC_TABLE_SET:
+  //   u32 unicast_entries
+  //   u8  unicast_macs[unicast_entries][6]
+  //   u32 multicast_entries
+  //   u8  multicast_macs[multicast_entries][6]
+  DataBytes = sizeof(UINT32) + ETH_LENGTH_OF_ADDRESS + sizeof(UINT32) + (MulticastCount * ETH_LENGTH_OF_ADDRESS);
+  if (DataBytes > 0xFFFFu) {
+    return NDIS_STATUS_INVALID_LENGTH;
+  }
+  DataBytesU16 = (USHORT)DataBytes;
+
+  Data = (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, DataBytes, AEROVNET_TAG);
+  if (!Data) {
+    return NDIS_STATUS_RESOURCES;
+  }
+  RtlZeroMemory(Data, DataBytes);
+
+  Offset = 0;
+  Entries = 1;
+  RtlCopyMemory(Data + Offset, &Entries, sizeof(Entries));
+  Offset += sizeof(Entries);
+
+  RtlCopyMemory(Data + Offset, UnicastMac, ETH_LENGTH_OF_ADDRESS);
+  Offset += ETH_LENGTH_OF_ADDRESS;
+
+  Entries = (UINT32)MulticastCount;
+  RtlCopyMemory(Data + Offset, &Entries, sizeof(Entries));
+  Offset += sizeof(Entries);
+
+  if (MulticastCount) {
+    RtlCopyMemory(Data + Offset, MulticastMacs, MulticastCount * ETH_LENGTH_OF_ADDRESS);
+    Offset += MulticastCount * ETH_LENGTH_OF_ADDRESS;
+  }
+
+  ASSERT(Offset == DataBytes);
+
+  Status = AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_MAC, VIRTIO_NET_CTRL_MAC_TABLE_SET, Data, DataBytesU16, NULL);
+
+  ExFreePoolWithTag(Data, AEROVNET_TAG);
+  return Status;
+}
+
 static VOID AerovNetCtrlUpdateRxMode(_Inout_ AEROVNET_ADAPTER* Adapter) {
   ULONG Filter;
+  ULONG MulticastCount;
+  UCHAR MulticastMacs[NDIS_MAX_MULTICAST_LIST][ETH_LENGTH_OF_ADDRESS];
+  UCHAR UnicastMac[ETH_LENGTH_OF_ADDRESS];
   UCHAR On;
+  BOOLEAN WantPromisc;
+  BOOLEAN WantAllMulti;
+  BOOLEAN WantTableMulticast;
+  NDIS_STATUS TableStatus;
 
   if (!Adapter) {
     return;
@@ -1516,19 +1587,71 @@ static VOID AerovNetCtrlUpdateRxMode(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return;
   }
 
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) == 0 || Adapter->CtrlVq.QueueSize == 0) {
+    return;
+  }
+
+  if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+    return;
+  }
+
+  // Snapshot filter + multicast list under the adapter lock so the control
+  // commands use a consistent view.
+  NdisAcquireSpinLock(&Adapter->Lock);
   Filter = Adapter->PacketFilter;
+  MulticastCount = Adapter->MulticastListSize;
+  if (MulticastCount > NDIS_MAX_MULTICAST_LIST) {
+    MulticastCount = NDIS_MAX_MULTICAST_LIST;
+  }
+  if (MulticastCount) {
+    RtlCopyMemory(MulticastMacs, Adapter->MulticastList, MulticastCount * ETH_LENGTH_OF_ADDRESS);
+  }
+  RtlCopyMemory(UnicastMac, Adapter->CurrentMac, ETH_LENGTH_OF_ADDRESS);
+  NdisReleaseSpinLock(&Adapter->Lock);
 
   // Best-effort: if called at DISPATCH_LEVEL, AerovNetCtrlSendCommand will
   // fail fast and we will keep relying on software filtering.
-  On = (Filter & NDIS_PACKET_TYPE_PROMISCUOUS) ? 1u : 0u;
+  WantPromisc = (Filter & NDIS_PACKET_TYPE_PROMISCUOUS) ? TRUE : FALSE;
+  On = WantPromisc ? 1u : 0u;
   (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_PROMISC, &On, sizeof(On), NULL);
 
-  // virtio-net does not provide a "multicast list set" command unless using the
-  // MAC_TABLE_SET control. To avoid missing multicast traffic when Windows
-  // enables multicast filtering, enable ALLMULTI whenever MULTICAST (or
-  // ALL_MULTICAST) is requested, and rely on AerovNetAcceptFrame() to drop
-  // unwanted multicast frames locally.
-  On = (Filter & (NDIS_PACKET_TYPE_MULTICAST | NDIS_PACKET_TYPE_ALL_MULTICAST)) ? 1u : 0u;
+  TableStatus = NDIS_STATUS_SUCCESS;
+  WantTableMulticast = (!WantPromisc && (Filter & NDIS_PACKET_TYPE_MULTICAST) != 0 && (Filter & NDIS_PACKET_TYPE_ALL_MULTICAST) == 0 &&
+                        MulticastCount != 0)
+                           ? TRUE
+                           : FALSE;
+
+  // Program the MAC filter tables (best-effort). Always provide a unicast entry
+  // for the current MAC so directed traffic is received even when we fall back
+  // to software filtering.
+  if (WantTableMulticast) {
+    TableStatus = AerovNetCtrlSetMacTable(Adapter, UnicastMac, MulticastCount, (const UCHAR*)MulticastMacs);
+  } else {
+    // Clear multicast table entries when not using selective multicast filtering.
+    (VOID)AerovNetCtrlSetMacTable(Adapter, UnicastMac, 0, NULL);
+  }
+
+  if (WantPromisc) {
+    WantAllMulti = TRUE;
+  } else if (Filter & NDIS_PACKET_TYPE_ALL_MULTICAST) {
+    WantAllMulti = TRUE;
+  } else if (Filter & NDIS_PACKET_TYPE_MULTICAST) {
+    if (MulticastCount == 0) {
+      // Be conservative while Windows updates the multicast list: accept all
+      // multicast frames until a list is installed.
+      WantAllMulti = TRUE;
+    } else if (WantTableMulticast && TableStatus == NDIS_STATUS_SUCCESS) {
+      WantAllMulti = FALSE;
+    } else {
+      // Fall back to ALLMULTI so we don't miss multicast frames if MAC_TABLE_SET
+      // fails for any reason.
+      WantAllMulti = TRUE;
+    }
+  } else {
+    WantAllMulti = FALSE;
+  }
+
+  On = WantAllMulti ? 1u : 0u;
   (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_ALLMULTI, &On, sizeof(On), NULL);
 }
 
@@ -1716,6 +1839,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     Status = AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_MAC, VIRTIO_NET_CTRL_MAC_ADDR_SET, Adapter->CurrentMac, ETH_LENGTH_OF_ADDRESS, &Ack);
     DbgPrint("virtio-net-ctrl-vq|INFO|mac_addr_set|status=0x%08x|ack=%u\n", Status, Ack);
   }
+
+  AerovNetCtrlUpdateRxMode(Adapter);
 
   return NDIS_STATUS_SUCCESS;
 }
@@ -2963,6 +3088,7 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         RtlCopyMemory(Adapter->MulticastList, InBuffer, InLen);
       }
 
+      AerovNetCtrlUpdateRxMode(Adapter);
       BytesRead = InLen;
       break;
     }
@@ -2995,6 +3121,7 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
       }
 
       RtlCopyMemory(Adapter->CurrentMac, NewMac, ETH_LENGTH_OF_ADDRESS);
+      AerovNetCtrlUpdateRxMode(Adapter);
       BytesRead = ETH_LENGTH_OF_ADDRESS;
       break;
     }
