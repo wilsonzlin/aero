@@ -2091,3 +2091,199 @@ fn port_remote_wakeup_allows_queued_transfer_to_complete_after_resume() {
     assert_eq!(ev.endpoint_id(), endpoint_id);
     assert_eq!(ev.completion_code_raw(), CompletionCode::Success.as_u8());
 }
+
+#[test]
+fn port_remote_wakeup_through_external_hub_allows_queued_transfer_to_complete_after_resume() {
+    use crate::hid::UsbHidKeyboardHandle;
+
+    // Hub class requests use bmRequestType: HostToDevice | Class | Other.
+    const HUB_BM_REQUEST_TYPE_CLASS_OTHER_OUT: u8 = 0x23;
+    // Hub class port feature selectors (USB 2.0 hub class spec 11.24.2.7).
+    const HUB_PORT_FEATURE_RESET: u16 = 4;
+    const HUB_PORT_FEATURE_POWER: u16 = 8;
+
+    let mut mem = TestMem::new(0x40_000);
+    let dcbaa = 0x1000u64;
+    let ring_base = 0x8000u64;
+    let buf_ptr = 0x9000u64;
+
+    let kb = UsbHidKeyboardHandle::new();
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(kb.clone()));
+
+    let mut ctrl = XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+    ctrl.attach_device(0, Box::new(hub));
+
+    // Reset so the port becomes enabled and the hub can tick.
+    ctrl.write_portsc(0, PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms_no_dma();
+    }
+    while ctrl.pop_pending_event().is_some() {}
+
+    // Configure the hub and enable remote wakeup propagation.
+    {
+        let hub_dev = ctrl
+            .find_device_by_topology(1, &[])
+            .expect("expected hub behind root port 1");
+        control_no_data(
+            hub_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            hub_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+        // Power + reset downstream port 1 so the keyboard is enabled/reachable.
+        control_no_data(
+            hub_dev,
+            SetupPacket {
+                bm_request_type: HUB_BM_REQUEST_TYPE_CLASS_OTHER_OUT,
+                b_request: 0x03, // SET_FEATURE
+                w_value: HUB_PORT_FEATURE_POWER,
+                w_index: 1,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            hub_dev,
+            SetupPacket {
+                bm_request_type: HUB_BM_REQUEST_TYPE_CLASS_OTHER_OUT,
+                b_request: 0x03, // SET_FEATURE
+                w_value: HUB_PORT_FEATURE_RESET,
+                w_index: 1,
+                w_length: 0,
+            },
+        );
+    }
+    // Hub port reset takes 50ms.
+    for _ in 0..50 {
+        ctrl.tick_1ms_no_dma();
+    }
+
+    // Configure the keyboard and enable remote wake.
+    {
+        let kb_dev = ctrl
+            .find_device_by_topology(1, &[1])
+            .expect("expected keyboard behind hub port 1");
+        control_no_data(
+            kb_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            kb_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    ctrl.usbcmd = regs::USBCMD_RUN;
+
+    // Enable a slot and bind it to the keyboard behind hub port 1.
+    let enable = ctrl.enable_slot(&mut mem);
+    assert_eq!(
+        enable.completion_code,
+        super::CommandCompletionCode::Success,
+        "enable slot"
+    );
+    let slot_id = enable.slot_id;
+
+    let mut slot_ctx = context::SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    slot_ctx
+        .set_route_string_from_root_ports(&[1])
+        .expect("route string should encode hub port 1");
+    let addr = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(
+        addr.completion_code,
+        super::CommandCompletionCode::Success,
+        "address device"
+    );
+
+    // Configure an interrupt IN Normal TRB (EP1 IN => DCI=3).
+    let endpoint_id = 3u8;
+    let mut trb0 = Trb::new(buf_ptr, 8 & Trb::STATUS_TRANSFER_LEN_MASK, 0);
+    trb0.set_trb_type(TrbType::Normal);
+    trb0.set_cycle(true);
+    trb0.control |= Trb::CONTROL_IOC_BIT;
+    mem.write_trb(ring_base, trb0);
+
+    let mut stop_marker = Trb::default();
+    stop_marker.set_trb_type(TrbType::NoOp);
+    stop_marker.set_cycle(false);
+    mem.write_trb(ring_base + TRB_LEN as u64, stop_marker);
+
+    ctrl.set_endpoint_ring(slot_id, endpoint_id, ring_base, true);
+
+    // Suspend the port (U3). Clear PLC and drain the resulting PSC event so the wake-induced PSC is
+    // observable.
+    ctrl.write_portsc(0, regs::PORTSC_LWS | (3u32 << regs::PORTSC_PLS_SHIFT));
+    ctrl.write_portsc(0, PORTSC_PLC);
+    while ctrl.pop_pending_event().is_some() {}
+
+    // Ring the endpoint doorbell while suspended: transfers must not execute.
+    ctrl.ring_doorbell(slot_id, endpoint_id);
+    ctrl.tick(&mut mem);
+    assert_eq!(
+        &mem.data[buf_ptr as usize..buf_ptr as usize + 8],
+        &[0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert!(
+        ctrl.pop_pending_event().is_none(),
+        "no transfer event expected while port is suspended"
+    );
+
+    // While suspended, a keypress on the downstream keyboard triggers remote wake through the hub.
+    kb.key_event(0x04, true);
+    ctrl.tick_1ms_no_dma();
+
+    let portsc = ctrl.read_portsc(0);
+    assert_eq!(
+        (portsc & regs::PORTSC_PLS_MASK) >> regs::PORTSC_PLS_SHIFT,
+        0,
+        "expected remote wake to resume the port"
+    );
+    assert_ne!(portsc & PORTSC_PLC, 0, "expected PLC to latch on resume");
+
+    let psc = ctrl
+        .pop_pending_event()
+        .expect("expected Port Status Change Event TRB");
+    assert_eq!(psc.trb_type(), TrbType::PortStatusChangeEvent);
+    assert_eq!(((psc.parameter >> 24) & 0xff) as u8, 1);
+
+    ctrl.tick(&mut mem);
+    assert_eq!(
+        &mem.data[buf_ptr as usize..buf_ptr as usize + 8],
+        &[0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+
+    let ev = ctrl.pop_pending_event().expect("expected transfer event");
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.slot_id(), slot_id);
+    assert_eq!(ev.endpoint_id(), endpoint_id);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::Success.as_u8());
+}
