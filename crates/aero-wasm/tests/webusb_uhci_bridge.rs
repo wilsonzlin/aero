@@ -247,9 +247,9 @@ fn uhci_controller_bridge_does_not_reuse_action_ids_across_disconnect_reconnect(
         _ => panic!("expected a controlIn action"),
     };
 
-    assert_ne!(
-        first_id, second_id,
-        "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect"
+    assert!(
+        second_id > first_id,
+        "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect (first={first_id}, second={second_id})"
     );
 }
 
@@ -308,9 +308,9 @@ fn webusb_uhci_bridge_does_not_reuse_action_ids_across_disconnect_reconnect() {
         _ => panic!("expected a controlIn action"),
     };
 
-    assert_ne!(
-        first_id, second_id,
-        "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect"
+    assert!(
+        second_id > first_id,
+        "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect (first={first_id}, second={second_id})"
     );
 }
 
