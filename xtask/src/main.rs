@@ -80,20 +80,49 @@ fn try_main() -> Result<()> {
         return help();
     };
 
+    let args = strip_global_noop_flags(args.collect());
+
     match cmd.as_str() {
-        "bios-rom" => cmd_bios_rom::cmd(args.collect()),
-        "fixtures" => cmd_fixtures(args.collect()),
-        "conformance" => cmd_conformance::cmd(args.collect()),
-        "input" => cmd_input::cmd(args.collect()),
-        "snapshot" => cmd_snapshot::cmd(args.collect()),
-        "shader-opcode-report" => cmd_shader_opcode_report::cmd(args.collect()),
-        "test-all" => cmd_test_all::cmd(args.collect()),
-        "wasm" => cmd_wasm::cmd(args.collect()),
-        "wasm-check" => cmd_wasm_check::cmd(args.collect()),
-        "web" => cmd_web::cmd(args.collect()),
+        "bios-rom" => cmd_bios_rom::cmd(args),
+        "fixtures" => cmd_fixtures(args),
+        "conformance" => cmd_conformance::cmd(args),
+        "input" => cmd_input::cmd(args),
+        "snapshot" => cmd_snapshot::cmd(args),
+        "shader-opcode-report" => cmd_shader_opcode_report::cmd(args),
+        "test-all" => cmd_test_all::cmd(args),
+        "wasm" => cmd_wasm::cmd(args),
+        "wasm-check" => cmd_wasm_check::cmd(args),
+        "web" => cmd_web::cmd(args),
         "-h" | "--help" | "help" => help(),
         other => Err(format!("unknown xtask subcommand `{other}` (run `cargo xtask help`)").into()),
     }
+}
+
+fn strip_global_noop_flags(args: Vec<String>) -> Vec<String> {
+    // `cargo xtask` is an alias for `cargo run --locked -p xtask -- ...`. This means cargo-level
+    // flags like `--locked` cannot be passed after the xtask subcommand without reaching the xtask
+    // binary itself, which historically caused confusing "unexpected argument" failures.
+    //
+    // Treat `--locked` as a global no-op unless the user explicitly passes it after `--` (i.e.
+    // forwarding to a child command/test binary).
+    let mut out = Vec::with_capacity(args.len());
+    let mut passthrough = false;
+    for arg in args {
+        if passthrough {
+            out.push(arg);
+            continue;
+        }
+        if arg == "--" {
+            passthrough = true;
+            out.push(arg);
+            continue;
+        }
+        if arg == "--locked" {
+            continue;
+        }
+        out.push(arg);
+    }
+    out
 }
 
 fn maybe_isolate_cargo_home(repo_root: &Path) -> Result<()> {
@@ -204,6 +233,34 @@ Run `cargo xtask <command> --help` for command-specific help.
 "
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_global_noop_flags;
+
+    #[test]
+    fn strip_global_noop_flags_removes_locked_before_double_dash() {
+        let out = strip_global_noop_flags(vec![
+            "wasm".to_string(),
+            "--locked".to_string(),
+            "single".to_string(),
+        ]);
+        assert_eq!(out, vec!["wasm".to_string(), "single".to_string()]);
+    }
+
+    #[test]
+    fn strip_global_noop_flags_preserves_locked_after_double_dash() {
+        let out = strip_global_noop_flags(vec![
+            "--".to_string(),
+            "--locked".to_string(),
+            "foo".to_string(),
+        ]);
+        assert_eq!(
+            out,
+            vec!["--".to_string(), "--locked".to_string(), "foo".to_string()]
+        );
+    }
 }
 
 fn cmd_fixtures(args: Vec<String>) -> Result<()> {
