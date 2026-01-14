@@ -435,8 +435,17 @@ export async function opfsWriteState(state: DiskManagerState): Promise<void> {
   const disksDir = await opfsGetDisksDir();
   const fileHandle = await disksDir.getFileHandle(OPFS_METADATA_FILE, { create: true });
   const writable = await fileHandle.createWritable({ keepExistingData: false });
-  await writable.write(JSON.stringify(state, null, 2));
-  await writable.close();
+  try {
+    await writable.write(JSON.stringify(state, null, 2));
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort(err);
+    } catch {
+      // ignore abort failures
+    }
+    throw err;
+  }
 }
 
 export async function opfsUpdateState<T>(
