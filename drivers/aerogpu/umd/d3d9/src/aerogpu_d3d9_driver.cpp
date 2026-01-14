@@ -4632,10 +4632,11 @@ static bool emit_set_shader_constants_f_locked(
     uint32_t vec4_count);
 
 // -----------------------------------------------------------------------------
-// Fixed-function fallback shader selection (stage0 COLOROP/ALPHAOP minimal)
+// Fixed-function fallback shader selection (stage0 COLOROP/ALPHAOP)
 // -----------------------------------------------------------------------------
 namespace {
 
+// Stage0 `D3DTSS_*` (numeric values from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
 constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
 constexpr uint32_t kD3dTssColorArg2 = 3u;  // D3DTSS_COLORARG2
@@ -4643,6 +4644,7 @@ constexpr uint32_t kD3dTssAlphaOp = 4u;    // D3DTSS_ALPHAOP
 constexpr uint32_t kD3dTssAlphaArg1 = 5u;  // D3DTSS_ALPHAARG1
 constexpr uint32_t kD3dTssAlphaArg2 = 6u;  // D3DTSS_ALPHAARG2
 
+// Stage0 `D3DTOP_*` (numeric values from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;     // D3DTOP_DISABLE
 constexpr uint32_t kD3dTopSelectArg1 = 2u;  // D3DTOP_SELECTARG1
 constexpr uint32_t kD3dTopSelectArg2 = 3u;  // D3DTOP_SELECTARG2
@@ -4650,33 +4652,63 @@ constexpr uint32_t kD3dTopModulate = 4u;    // D3DTOP_MODULATE
 constexpr uint32_t kD3dTopModulate2x = 5u;  // D3DTOP_MODULATE2X
 constexpr uint32_t kD3dTopModulate4x = 6u;  // D3DTOP_MODULATE4X
 constexpr uint32_t kD3dTopAdd = 7u;         // D3DTOP_ADD
+constexpr uint32_t kD3dTopAddSigned = 8u;   // D3DTOP_ADDSIGNED
 constexpr uint32_t kD3dTopSubtract = 10u;   // D3DTOP_SUBTRACT
+constexpr uint32_t kD3dTopBlendDiffuseAlpha = 12u;  // D3DTOP_BLENDDIFFUSEALPHA
+constexpr uint32_t kD3dTopBlendTextureAlpha = 13u;  // D3DTOP_BLENDTEXTUREALPHA
 
+// Stage0 `D3DTA_*` source selector/modifiers (numeric values from d3d9types.h).
 constexpr uint32_t kD3dTaSelectMask = 0xFu;  // D3DTA_SELECTMASK
 constexpr uint32_t kD3dTaDiffuse = 0u;       // D3DTA_DIFFUSE
+constexpr uint32_t kD3dTaCurrent = 1u;       // D3DTA_CURRENT (stage0 treated as DIFFUSE)
 constexpr uint32_t kD3dTaTexture = 2u;       // D3DTA_TEXTURE
 constexpr uint32_t kD3dTaTFactor = 3u;       // D3DTA_TFACTOR
+constexpr uint32_t kD3dTaComplement = 0x10u;      // D3DTA_COMPLEMENT
+constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;  // D3DTA_ALPHAREPLICATE
 
-enum class FixedfuncStage0Src : uint8_t {
+enum class FixedfuncStageArgSrc : uint8_t {
   Diffuse = 0,
   Texture = 1,
-  Modulate = 2, // TEXTURE * DIFFUSE
+  TextureFactor = 2,
+};
 
-  // Extended stage0 subset:
-  Add = 3, // TEXTURE + DIFFUSE
-  Subtract = 4, // TEXTURE - DIFFUSE
-  SubtractReverse = 5, // DIFFUSE - TEXTURE
-  Modulate2x = 6, // (TEXTURE * DIFFUSE) * 2
-  Modulate4x = 7, // (TEXTURE * DIFFUSE) * 4
+struct FixedfuncStageArg {
+  FixedfuncStageArgSrc src = FixedfuncStageArgSrc::Diffuse;
+  bool complement = false;
+  bool alpha_replicate = false;
+};
 
-  // D3DRS_TEXTUREFACTOR (PS constant c0).
-  TextureFactor = 8,
-  ModulateTextureFactor = 9, // TEXTURE * TFACTOR (RGB)
+enum class FixedfuncStageOp : uint8_t {
+  Disable = 0,
+  SelectArg1 = 1,
+  SelectArg2 = 2,
+  Modulate = 3,
+  Modulate2x = 4,
+  Modulate4x = 5,
+  Add = 6,
+  Subtract = 7,
+  AddSigned = 8,
+  BlendTextureAlpha = 9,
+  BlendDiffuseAlpha = 10,
+};
+
+struct FixedfuncStageState {
+  FixedfuncStageOp op = FixedfuncStageOp::Disable;
+  FixedfuncStageArg arg1{};
+  FixedfuncStageArg arg2{};
 };
 
 struct FixedfuncStage0Key {
-  FixedfuncStage0Src color = FixedfuncStage0Src::Diffuse;
-  FixedfuncStage0Src alpha = FixedfuncStage0Src::Diffuse;
+  FixedfuncStageState color{};
+  FixedfuncStageState alpha{};
+  // True when the fixed-function stage state requires sampling texture0 or using
+  // its alpha channel (e.g., BLENDTEXTUREALPHA).
+  bool uses_texture = false;
+  // True when stage state uses D3DRS_TEXTUREFACTOR (passed to the PS as `c0`).
+  bool uses_tfactor = false;
+  // False when the stage-state combination is not supported by the fixed-function
+  // fallback path; callers must treat this as D3DERR_INVALIDCALL at draw time.
+  bool supported = true;
 };
 
 bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) {
@@ -4689,152 +4721,126 @@ bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) 
   return std::memcmp(sh->bytecode.data(), bytes, size) == 0;
 }
 
-constexpr uint32_t fixedfunc_stage0_variant_index(FixedfuncStage0Key key) {
-  // FixedfuncStage0Src values are defined densely (0..N-1). Use a dense 2D index
-  // so stage0 variants can be cached in a flat array without hashing.
-  constexpr uint32_t kSrcCount = static_cast<uint32_t>(FixedfuncStage0Src::ModulateTextureFactor) + 1u;
-  return static_cast<uint32_t>(key.color) * kSrcCount + static_cast<uint32_t>(key.alpha);
-}
+bool fixedfunc_decode_arg(uint32_t arg, FixedfuncStageArg* out) {
+  if (!out) {
+    return false;
+  }
 
-FixedfuncStage0Src fixedfunc_decode_arg_src(uint32_t arg) {
+  constexpr uint32_t kAllowedMask = kD3dTaSelectMask | kD3dTaComplement | kD3dTaAlphaReplicate;
+  if ((arg & ~kAllowedMask) != 0) {
+    return false;
+  }
+
+  out->complement = (arg & kD3dTaComplement) != 0;
+  out->alpha_replicate = (arg & kD3dTaAlphaReplicate) != 0;
   switch (arg & kD3dTaSelectMask) {
-    case kD3dTaTexture:
-      return FixedfuncStage0Src::Texture;
-    case kD3dTaTFactor:
-      return FixedfuncStage0Src::TextureFactor;
     case kD3dTaDiffuse:
+    case kD3dTaCurrent: // Stage0 CURRENT is diffuse.
+      out->src = FixedfuncStageArgSrc::Diffuse;
+      return true;
+    case kD3dTaTexture:
+      out->src = FixedfuncStageArgSrc::Texture;
+      return true;
+    case kD3dTaTFactor:
+      out->src = FixedfuncStageArgSrc::TextureFactor;
+      return true;
     default:
-      return FixedfuncStage0Src::Diffuse;
+      return false;
   }
 }
 
-FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t arg2, bool has_tex0) {
+bool fixedfunc_decode_op(uint32_t op, FixedfuncStageOp* out) {
+  if (!out) {
+    return false;
+  }
   switch (op) {
     case kD3dTopDisable:
-      return FixedfuncStage0Src::Diffuse;
+      *out = FixedfuncStageOp::Disable;
+      return true;
     case kD3dTopSelectArg1:
-      return fixedfunc_decode_arg_src(arg1);
+      *out = FixedfuncStageOp::SelectArg1;
+      return true;
     case kD3dTopSelectArg2:
-      return fixedfunc_decode_arg_src(arg2);
-    case kD3dTopModulate: {
-      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
-      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      // Common fixed-function cases:
-      // - TEXTURE * DIFFUSE
-      // - DIFFUSE * TEXTURE
-      // - DIFFUSE * DIFFUSE (no texture involvement)
-      // - TEXTURE * TEXTURE (approximate as texture-only)
-      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
-          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
-        return FixedfuncStage0Src::Modulate;
-      }
-      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::TextureFactor) ||
-          (a1 == FixedfuncStage0Src::TextureFactor && a2 == FixedfuncStage0Src::Texture)) {
-        return FixedfuncStage0Src::ModulateTextureFactor;
-      }
-      // No texture involvement: avoid sampling even if a texture happens to be bound.
-      if (a1 != FixedfuncStage0Src::Texture && a2 != FixedfuncStage0Src::Texture) {
-        // Best-effort: treat TFACTOR as unsupported here and fall back to diffuse/current.
-        return FixedfuncStage0Src::Diffuse;
-      }
-      if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Diffuse) {
-        return FixedfuncStage0Src::Diffuse;
-      }
-      if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Texture) {
-        return FixedfuncStage0Src::Texture;
-      }
-      // Unknown modulate source combination: best-effort fall back to texturing
-      // when a texture is bound (fixed-function apps often assume stage0 texturing
-      // even if their exact state isn't represented by our minimal shader set).
-      return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
-    }
-    case kD3dTopModulate2x: {
-      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
-      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
-          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
-        return FixedfuncStage0Src::Modulate2x;
-      }
-      // Best-effort: fall back to plain modulate.
-      return fixedfunc_decode_op_src(kD3dTopModulate, arg1, arg2, has_tex0);
-    }
-    case kD3dTopModulate4x: {
-      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
-      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
-          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
-        return FixedfuncStage0Src::Modulate4x;
-      }
-      // Best-effort: fall back to plain modulate.
-      return fixedfunc_decode_op_src(kD3dTopModulate, arg1, arg2, has_tex0);
-    }
-    case kD3dTopAdd: {
-      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
-      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      // Common case: TEXTURE + DIFFUSE.
-      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
-          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
-        return FixedfuncStage0Src::Add;
-      }
-      // Best-effort: fall back to select arg1 (avoids sampling when possible).
-      return fixedfunc_decode_arg_src(arg1);
-    }
-    case kD3dTopSubtract: {
-      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
-      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      // Common cases: (TEXTURE - DIFFUSE) or (DIFFUSE - TEXTURE).
-      if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) {
-        return FixedfuncStage0Src::Subtract;
-      }
-      if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture) {
-        return FixedfuncStage0Src::SubtractReverse;
-      }
-      // Best-effort: fall back to select arg1.
-      return fixedfunc_decode_arg_src(arg1);
-    }
+      *out = FixedfuncStageOp::SelectArg2;
+      return true;
+    case kD3dTopModulate:
+      *out = FixedfuncStageOp::Modulate;
+      return true;
+    case kD3dTopModulate2x:
+      *out = FixedfuncStageOp::Modulate2x;
+      return true;
+    case kD3dTopModulate4x:
+      *out = FixedfuncStageOp::Modulate4x;
+      return true;
+    case kD3dTopAdd:
+      *out = FixedfuncStageOp::Add;
+      return true;
+    case kD3dTopSubtract:
+      *out = FixedfuncStageOp::Subtract;
+      return true;
+    case kD3dTopAddSigned:
+      *out = FixedfuncStageOp::AddSigned;
+      return true;
+    case kD3dTopBlendTextureAlpha:
+      *out = FixedfuncStageOp::BlendTextureAlpha;
+      return true;
+    case kD3dTopBlendDiffuseAlpha:
+      *out = FixedfuncStageOp::BlendDiffuseAlpha;
+      return true;
     default:
-      // Unsupported op: best-effort approximation based on the referenced sources.
-      //
-      // This is intentionally conservative: if the app's combiner does not reference
-      // TEXTURE, avoid sampling even if a texture happens to be bound.
-      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
-      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Diffuse) {
-        return FixedfuncStage0Src::Diffuse;
-      }
-      if (a1 == FixedfuncStage0Src::TextureFactor && a2 == FixedfuncStage0Src::TextureFactor) {
-        return FixedfuncStage0Src::TextureFactor;
-      }
-      // If the unsupported op doesn't reference TEXTURE, avoid sampling even if a
-      // texture is currently bound.
-      if (a1 != FixedfuncStage0Src::Texture && a2 != FixedfuncStage0Src::Texture) {
-        return FixedfuncStage0Src::Diffuse;
-      }
-      if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Texture) {
-        return has_tex0 ? FixedfuncStage0Src::Texture : FixedfuncStage0Src::Diffuse;
-      }
-      // One texture + one diffuse/tfactor: approximate with modulate when a texture is
-      // bound, otherwise treat as diffuse-only.
-      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::TextureFactor) ||
-          (a1 == FixedfuncStage0Src::TextureFactor && a2 == FixedfuncStage0Src::Texture)) {
-        return has_tex0 ? FixedfuncStage0Src::ModulateTextureFactor : FixedfuncStage0Src::Diffuse;
-      }
-      return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
+      return false;
   }
 }
 
-bool fixedfunc_stage0_src_requires_texture(FixedfuncStage0Src src) {
-  switch (src) {
-    case FixedfuncStage0Src::Diffuse:
-    case FixedfuncStage0Src::TextureFactor:
+bool fixedfunc_op_uses_arg1(FixedfuncStageOp op) {
+  switch (op) {
+    case FixedfuncStageOp::Disable:
+    case FixedfuncStageOp::SelectArg2:
       return false;
     default:
       return true;
   }
 }
 
-bool fixedfunc_stage0_src_uses_texture_factor(FixedfuncStage0Src src) {
-  return src == FixedfuncStage0Src::TextureFactor || src == FixedfuncStage0Src::ModulateTextureFactor;
+bool fixedfunc_op_uses_arg2(FixedfuncStageOp op) {
+  switch (op) {
+    case FixedfuncStageOp::Modulate:
+    case FixedfuncStageOp::Modulate2x:
+    case FixedfuncStageOp::Modulate4x:
+    case FixedfuncStageOp::Add:
+    case FixedfuncStageOp::Subtract:
+    case FixedfuncStageOp::AddSigned:
+    case FixedfuncStageOp::BlendTextureAlpha:
+    case FixedfuncStageOp::BlendDiffuseAlpha:
+    case FixedfuncStageOp::SelectArg2:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool fixedfunc_state_uses_texture(const FixedfuncStageState& st) {
+  if (st.op == FixedfuncStageOp::BlendTextureAlpha) {
+    // Uses texture alpha as the blend factor regardless of arg sources.
+    return true;
+  }
+  if (fixedfunc_op_uses_arg1(st.op) && st.arg1.src == FixedfuncStageArgSrc::Texture) {
+    return true;
+  }
+  if (fixedfunc_op_uses_arg2(st.op) && st.arg2.src == FixedfuncStageArgSrc::Texture) {
+    return true;
+  }
+  return false;
+}
+
+bool fixedfunc_state_uses_tfactor(const FixedfuncStageState& st) {
+  if (fixedfunc_op_uses_arg1(st.op) && st.arg1.src == FixedfuncStageArgSrc::TextureFactor) {
+    return true;
+  }
+  if (fixedfunc_op_uses_arg2(st.op) && st.arg2.src == FixedfuncStageArgSrc::TextureFactor) {
+    return true;
+  }
+  return false;
 }
 
 HRESULT ensure_fixedfunc_texture_factor_constant_locked(Device* dev) {
@@ -4884,199 +4890,335 @@ FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
   const uint32_t alphaarg1 = dev->texture_stage_states[0][kD3dTssAlphaArg1];
   const uint32_t alphaarg2 = dev->texture_stage_states[0][kD3dTssAlphaArg2];
 
-  key.color = fixedfunc_decode_op_src(colorop, colorarg1, colorarg2, has_tex0);
-  key.alpha = fixedfunc_decode_op_src(alphaop, alphaarg1, alphaarg2, has_tex0);
-
-  // D3D9 semantics: if COLOROP is DISABLE, the entire stage is disabled (both
-  // color and alpha come from the incoming diffuse/current value). Ignore
-  // ALPHAOP in that case so we don't accidentally sample the texture just to
-  // source alpha.
-  if (colorop == kD3dTopDisable) {
-    key.color = FixedfuncStage0Src::Diffuse;
-    key.alpha = FixedfuncStage0Src::Diffuse;
+  if (!fixedfunc_decode_op(colorop, &key.color.op)) {
+    key.supported = false;
     return key;
   }
+
+  // D3D9 semantics: if COLOROP is DISABLE, the entire stage is disabled (both
+  // color and alpha come from the incoming diffuse/current value). Ignore ALPHAOP
+  // and args in that case so we don't accidentally sample the texture just to
+  // source alpha.
+  if (key.color.op == FixedfuncStageOp::Disable) {
+    key.alpha.op = FixedfuncStageOp::Disable;
+    key.uses_texture = false;
+    key.uses_tfactor = false;
+    return key;
+  }
+
+  if (!fixedfunc_decode_op(alphaop, &key.alpha.op)) {
+    key.supported = false;
+    return key;
+  }
+
+  // Decode only the arguments required for each op so unused args can't cause
+  // spurious INVALIDCALL failures.
+  if (fixedfunc_op_uses_arg1(key.color.op)) {
+    if (!fixedfunc_decode_arg(colorarg1, &key.color.arg1)) {
+      key.supported = false;
+      return key;
+    }
+  }
+  if (fixedfunc_op_uses_arg2(key.color.op)) {
+    if (!fixedfunc_decode_arg(colorarg2, &key.color.arg2)) {
+      key.supported = false;
+      return key;
+    }
+  }
+
+  if (fixedfunc_op_uses_arg1(key.alpha.op)) {
+    if (!fixedfunc_decode_arg(alphaarg1, &key.alpha.arg1)) {
+      key.supported = false;
+      return key;
+    }
+  }
+  if (fixedfunc_op_uses_arg2(key.alpha.op)) {
+    if (!fixedfunc_decode_arg(alphaarg2, &key.alpha.arg2)) {
+      key.supported = false;
+      return key;
+    }
+  }
+
+  key.uses_texture = fixedfunc_state_uses_texture(key.color) || fixedfunc_state_uses_texture(key.alpha);
+  key.uses_tfactor = fixedfunc_state_uses_tfactor(key.color) || fixedfunc_state_uses_tfactor(key.alpha);
 
   // Defensive: avoid selecting a texture-sampling shader when stage0 has no
   // bound texture. This prevents regressions in non-textured fixed-function
   // tests that leave default COLOROP=MODULATE but never bind texture0.
-  if (!has_tex0) {
-    if (fixedfunc_stage0_src_requires_texture(key.color)) {
-      key.color = FixedfuncStage0Src::Diffuse;
-    }
-    if (fixedfunc_stage0_src_requires_texture(key.alpha)) {
-      key.alpha = FixedfuncStage0Src::Diffuse;
-    }
+  if (!has_tex0 && key.uses_texture) {
+    // Preserve behavior: treat stage0 as disabled (passthrough diffuse), which
+    // avoids binding an invalid texture-sampling shader when texture0 is null.
+    key.color.op = FixedfuncStageOp::Disable;
+    key.alpha.op = FixedfuncStageOp::Disable;
+    key.color.arg1 = {};
+    key.color.arg2 = {};
+    key.alpha.arg1 = {};
+    key.alpha.arg2 = {};
+    key.uses_texture = false;
+    key.uses_tfactor = false;
   }
 
   return key;
 }
 
-const void* fixedfunc_ps_variant_bytes(FixedfuncStage0Key key, uint32_t* size_out) {
-  if (!size_out) {
-    return nullptr;
-  }
-  *size_out = 0;
+// -----------------------------------------------------------------------------
+// Minimal ps_2_0 token builder used for fixed-function stage0 shaders.
+// -----------------------------------------------------------------------------
+namespace fixedfunc_ps20 {
 
-  const auto set = [&](const void* bytes, size_t size) -> const void* {
-    *size_out = static_cast<uint32_t>(size);
-    return bytes;
+constexpr uint32_t kPs20Version = 0xFFFF0200u;
+constexpr uint32_t kPsEnd = 0x0000FFFFu;
+
+// Instruction tokens are encoded as:
+//   (length_in_dwords << 24) | opcode
+// where `length_in_dwords` includes the instruction token itself.
+constexpr uint32_t kOpMov = 0x03000001u;   // mov (3 dwords: op + dst + src)
+constexpr uint32_t kOpAdd = 0x04000002u;   // add (4 dwords: op + dst + a + b)
+constexpr uint32_t kOpMul = 0x04000005u;   // mul (4 dwords: op + dst + a + b)
+constexpr uint32_t kOpTexld = 0x04000042u; // texld (4 dwords: op + dst + t0 + s0)
+
+// `D3DSHADER_SRCMOD_*` (numeric values from d3d9types.h).
+enum class SrcMod : uint32_t {
+  None = 0,
+  Neg = 1,
+  Bias = 2,
+  Comp = 6,
+};
+
+constexpr uint32_t swizzle(uint8_t x, uint8_t y, uint8_t z, uint8_t w) {
+  return static_cast<uint32_t>(x) | (static_cast<uint32_t>(y) << 2) | (static_cast<uint32_t>(z) << 4) |
+         (static_cast<uint32_t>(w) << 6);
+}
+
+constexpr uint32_t swizzle_xyzw() {
+  return swizzle(0, 1, 2, 3); // 0xE4
+}
+
+constexpr uint32_t swizzle_wwww() {
+  return swizzle(3, 3, 3, 3); // 0xFF
+}
+
+constexpr uint32_t dst_temp(uint32_t reg, uint32_t mask) {
+  return (mask << 16) | reg;
+}
+
+constexpr uint32_t dst_oc0(uint32_t mask) {
+  // Pixel shader output color register. For ps_2_0 token streams without dcl
+  // declarations, this encoding matches the existing fixed-function shader tables.
+  return (mask << 16) | 0x0800u;
+}
+
+constexpr uint32_t src_reg(uint32_t reg_type, uint32_t reg, uint32_t swz, SrcMod mod) {
+  return (reg_type << 28) | (static_cast<uint32_t>(mod) << 24) | (swz << 16) | reg;
+}
+
+constexpr uint32_t src_temp(uint32_t reg, uint32_t swz = swizzle_xyzw(), SrcMod mod = SrcMod::None) {
+  return src_reg(/*reg_type=*/0, reg, swz, mod);
+}
+
+constexpr uint32_t src_input(uint32_t reg, uint32_t swz = swizzle_xyzw(), SrcMod mod = SrcMod::None) {
+  return src_reg(/*reg_type=*/1, reg, swz, mod);
+}
+
+constexpr uint32_t src_const(uint32_t reg, uint32_t swz = swizzle_xyzw(), SrcMod mod = SrcMod::None) {
+  return src_reg(/*reg_type=*/2, reg, swz, mod);
+}
+
+constexpr uint32_t src_texcoord(uint32_t reg, uint32_t swz = swizzle_xyzw(), SrcMod mod = SrcMod::None) {
+  return src_reg(/*reg_type=*/3, reg, swz, mod);
+}
+
+constexpr uint32_t src_sampler0() {
+  // s0 token (sampler), with the same encoding used by existing fixed-function shaders.
+  return 0x20E40800u;
+}
+
+struct Builder {
+  std::vector<uint32_t> tokens;
+
+  void begin() {
+    tokens.clear();
+    tokens.push_back(kPs20Version);
+  }
+
+  void end() {
+    tokens.push_back(kPsEnd);
+  }
+
+  void texld(uint32_t dst, uint32_t coord, uint32_t sampler) {
+    tokens.push_back(kOpTexld);
+    tokens.push_back(dst);
+    tokens.push_back(coord);
+    tokens.push_back(sampler);
+  }
+
+  void mov(uint32_t dst, uint32_t src) {
+    tokens.push_back(kOpMov);
+    tokens.push_back(dst);
+    tokens.push_back(src);
+  }
+
+  void add(uint32_t dst, uint32_t a, uint32_t b) {
+    tokens.push_back(kOpAdd);
+    tokens.push_back(dst);
+    tokens.push_back(a);
+    tokens.push_back(b);
+  }
+
+  void mul(uint32_t dst, uint32_t a, uint32_t b) {
+    tokens.push_back(kOpMul);
+    tokens.push_back(dst);
+    tokens.push_back(a);
+    tokens.push_back(b);
+  }
+};
+
+uint32_t arg_src_token(const FixedfuncStageArg& arg) {
+  const uint32_t swz = arg.alpha_replicate ? swizzle_wwww() : swizzle_xyzw();
+  const SrcMod mod = arg.complement ? SrcMod::Comp : SrcMod::None;
+  switch (arg.src) {
+    case FixedfuncStageArgSrc::Texture:
+      // r0 contains texld result.
+      return src_temp(/*reg=*/0, swz, mod);
+    case FixedfuncStageArgSrc::TextureFactor:
+      return src_const(/*reg=*/0, swz, mod);
+    case FixedfuncStageArgSrc::Diffuse:
+    default:
+      return src_input(/*reg=*/0, swz, mod);
+  }
+}
+
+bool build_stage_state(Builder& b, const FixedfuncStageState& st, uint32_t out_reg, uint32_t out_mask) {
+  // Stage-state argument temporaries.
+  constexpr uint32_t kArg1Reg = 1;
+  constexpr uint32_t kArg2Reg = 2;
+  constexpr uint32_t kTmpReg = 4;
+
+  const auto materialize = [&](uint32_t dst_reg, const FixedfuncStageArg& arg) {
+    b.mov(dst_temp(dst_reg, /*mask=*/0xFu), arg_src_token(arg));
   };
 
-  // Diffuse/diffuse (no texturing).
-  if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Diffuse) {
-    return set(fixedfunc::kPsPassthroughColor, sizeof(fixedfunc::kPsPassthroughColor));
+  switch (st.op) {
+    case FixedfuncStageOp::Disable:
+      return true; // passthrough (already initialized by caller)
+
+    case FixedfuncStageOp::SelectArg1:
+      materialize(kArg1Reg, st.arg1);
+      b.mov(dst_temp(out_reg, out_mask), src_temp(kArg1Reg));
+      return true;
+
+    case FixedfuncStageOp::SelectArg2:
+      materialize(kArg2Reg, st.arg2);
+      b.mov(dst_temp(out_reg, out_mask), src_temp(kArg2Reg));
+      return true;
+
+    case FixedfuncStageOp::Modulate:
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      b.mul(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), src_temp(kArg2Reg));
+      return true;
+
+    case FixedfuncStageOp::Modulate2x:
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      b.mul(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), src_temp(kArg2Reg));
+      b.add(dst_temp(out_reg, out_mask), src_temp(out_reg), src_temp(out_reg));
+      return true;
+
+    case FixedfuncStageOp::Modulate4x:
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      b.mul(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), src_temp(kArg2Reg));
+      b.add(dst_temp(out_reg, out_mask), src_temp(out_reg), src_temp(out_reg));
+      b.add(dst_temp(out_reg, out_mask), src_temp(out_reg), src_temp(out_reg));
+      return true;
+
+    case FixedfuncStageOp::Add:
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      b.add(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), src_temp(kArg2Reg));
+      return true;
+
+    case FixedfuncStageOp::Subtract:
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      b.add(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), src_temp(kArg2Reg, swizzle_xyzw(), SrcMod::Neg));
+      return true;
+
+    case FixedfuncStageOp::AddSigned:
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      b.add(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), src_temp(kArg2Reg));
+      // Bias (x - 0.5) is used to implement ADDSIGNED without constant registers.
+      b.mov(dst_temp(out_reg, out_mask), src_temp(out_reg, swizzle_xyzw(), SrcMod::Bias));
+      return true;
+
+    case FixedfuncStageOp::BlendTextureAlpha: {
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      const uint32_t alpha = src_temp(/*reg=*/0, swizzle_wwww(), SrcMod::None);
+      const uint32_t inv_alpha = src_temp(/*reg=*/0, swizzle_wwww(), SrcMod::Comp);
+      b.mul(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), alpha);
+      b.mul(dst_temp(kTmpReg, out_mask), src_temp(kArg2Reg), inv_alpha);
+      b.add(dst_temp(out_reg, out_mask), src_temp(out_reg), src_temp(kTmpReg));
+      return true;
+    }
+
+    case FixedfuncStageOp::BlendDiffuseAlpha: {
+      materialize(kArg1Reg, st.arg1);
+      materialize(kArg2Reg, st.arg2);
+      const uint32_t alpha = src_input(/*reg=*/0, swizzle_wwww(), SrcMod::None);
+      const uint32_t inv_alpha = src_input(/*reg=*/0, swizzle_wwww(), SrcMod::Comp);
+      b.mul(dst_temp(out_reg, out_mask), src_temp(kArg1Reg), alpha);
+      b.mul(dst_temp(kTmpReg, out_mask), src_temp(kArg2Reg), inv_alpha);
+      b.add(dst_temp(out_reg, out_mask), src_temp(out_reg), src_temp(kTmpReg));
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
+bool build_stage0_ps(FixedfuncStage0Key key, std::vector<uint32_t>* out_tokens) {
+  if (!out_tokens) {
+    return false;
+  }
+  if (!key.supported) {
+    return false;
   }
 
-  // TextureFactor/TextureFactor.
-  if (key.color == FixedfuncStage0Src::TextureFactor && key.alpha == FixedfuncStage0Src::TextureFactor) {
-    return set(fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor));
+  Builder b;
+  b.begin();
+
+  // r0 = tex0
+  if (key.uses_texture) {
+    b.texld(dst_temp(/*reg=*/0, /*mask=*/0xFu), src_texcoord(/*reg=*/0), src_sampler0());
   }
 
-  // Alpha-op expansion cases where RGB is diffuse but alpha uses an extended op.
-  if (key.color == FixedfuncStage0Src::Diffuse) {
-    if (key.alpha == FixedfuncStage0Src::Add) {
-      return set(fixedfunc::kPsStage0DiffuseAlphaAddTextureDiffuse, sizeof(fixedfunc::kPsStage0DiffuseAlphaAddTextureDiffuse));
-    }
-    if (key.alpha == FixedfuncStage0Src::Subtract) {
-      return set(fixedfunc::kPsStage0DiffuseAlphaSubtractTextureDiffuse,
-                 sizeof(fixedfunc::kPsStage0DiffuseAlphaSubtractTextureDiffuse));
-    }
-    if (key.alpha == FixedfuncStage0Src::SubtractReverse) {
-      return set(fixedfunc::kPsStage0DiffuseAlphaSubtractDiffuseTexture,
-                 sizeof(fixedfunc::kPsStage0DiffuseAlphaSubtractDiffuseTexture));
-    }
-    if (key.alpha == FixedfuncStage0Src::Modulate2x) {
-      return set(fixedfunc::kPsStage0DiffuseAlphaModulate2xTextureDiffuse,
-                 sizeof(fixedfunc::kPsStage0DiffuseAlphaModulate2xTextureDiffuse));
-    }
-    if (key.alpha == FixedfuncStage0Src::Modulate4x) {
-      return set(fixedfunc::kPsStage0DiffuseAlphaModulate4xTextureDiffuse,
-                 sizeof(fixedfunc::kPsStage0DiffuseAlphaModulate4xTextureDiffuse));
-    }
+  // r3 = diffuse (baseline passthrough)
+  constexpr uint32_t kOutReg = 3;
+  b.mov(dst_temp(kOutReg, /*mask=*/0xFu), src_input(/*reg=*/0));
+
+  // Stage0 RGB into r3.xyz (mask 0x7), alpha into r3.w (mask 0x8).
+  if (!build_stage_state(b, key.color, kOutReg, /*mask=*/0x7u)) {
+    return false;
+  }
+  if (!build_stage_state(b, key.alpha, kOutReg, /*mask=*/0x8u)) {
+    return false;
   }
 
-  // Texture variants.
-  if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Texture) {
-    return set(fixedfunc::kPsStage0TextureTexture, sizeof(fixedfunc::kPsStage0TextureTexture));
-  }
-  if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Diffuse) {
-    return set(fixedfunc::kPsStage0TextureDiffuse, sizeof(fixedfunc::kPsStage0TextureDiffuse));
-  }
-  if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Modulate) {
-    return set(fixedfunc::kPsStage0TextureModulate, sizeof(fixedfunc::kPsStage0TextureModulate));
-  }
+  b.mov(dst_oc0(/*mask=*/0xFu), src_temp(kOutReg));
+  b.end();
 
-  // Diffuse color with textured alpha.
-  if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Texture) {
-    return set(fixedfunc::kPsStage0DiffuseTexture, sizeof(fixedfunc::kPsStage0DiffuseTexture));
-  }
-  if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Modulate) {
-    return set(fixedfunc::kPsStage0DiffuseModulate, sizeof(fixedfunc::kPsStage0DiffuseModulate));
-  }
+  *out_tokens = std::move(b.tokens);
+  return true;
+}
 
-  // RGB extended ops with "classic" alpha sources.
-  if (key.alpha == FixedfuncStage0Src::Texture || key.alpha == FixedfuncStage0Src::Diffuse || key.alpha == FixedfuncStage0Src::Modulate) {
-    if (key.color == FixedfuncStage0Src::Add) {
-      if (key.alpha == FixedfuncStage0Src::Texture) {
-        return set(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture,
-                   sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture));
-      }
-      if (key.alpha == FixedfuncStage0Src::Diffuse) {
-        return set(fixedfunc::kPsStage0AddTextureDiffuseAlphaDiffuse,
-                   sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaDiffuse));
-      }
-      if (key.alpha == FixedfuncStage0Src::Modulate) {
-        return set(fixedfunc::kPsStage0AddTextureDiffuseAlphaModulate,
-                   sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaModulate));
-      }
-    }
-    if (key.color == FixedfuncStage0Src::Subtract) {
-      if (key.alpha == FixedfuncStage0Src::Texture) {
-        return set(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture,
-                   sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture));
-      }
-      if (key.alpha == FixedfuncStage0Src::Diffuse) {
-        return set(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaDiffuse,
-                   sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaDiffuse));
-      }
-      if (key.alpha == FixedfuncStage0Src::Modulate) {
-        return set(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaModulate,
-                   sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaModulate));
-      }
-    }
-    if (key.color == FixedfuncStage0Src::SubtractReverse) {
-      if (key.alpha == FixedfuncStage0Src::Texture) {
-        return set(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture,
-                   sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture));
-      }
-      if (key.alpha == FixedfuncStage0Src::Diffuse) {
-        return set(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaDiffuse,
-                   sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaDiffuse));
-      }
-      if (key.alpha == FixedfuncStage0Src::Modulate) {
-        return set(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaModulate,
-                   sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaModulate));
-      }
-    }
-    if (key.color == FixedfuncStage0Src::Modulate2x) {
-      if (key.alpha == FixedfuncStage0Src::Texture) {
-        return set(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture,
-                   sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture));
-      }
-      if (key.alpha == FixedfuncStage0Src::Diffuse) {
-        return set(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaDiffuse,
-                   sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaDiffuse));
-      }
-      if (key.alpha == FixedfuncStage0Src::Modulate) {
-        return set(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaModulate,
-                   sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaModulate));
-      }
-    }
-    if (key.color == FixedfuncStage0Src::Modulate4x) {
-      if (key.alpha == FixedfuncStage0Src::Texture) {
-        return set(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture,
-                   sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture));
-      }
-      if (key.alpha == FixedfuncStage0Src::Diffuse) {
-        return set(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaDiffuse,
-                   sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaDiffuse));
-      }
-      if (key.alpha == FixedfuncStage0Src::Modulate) {
-        return set(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaModulate,
-                   sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaModulate));
-      }
-    }
-    if (key.color == FixedfuncStage0Src::ModulateTextureFactor) {
-      if (key.alpha == FixedfuncStage0Src::Texture) {
-        return set(fixedfunc::kPsStage0ModulateTextureTFactorAlphaTexture,
-                   sizeof(fixedfunc::kPsStage0ModulateTextureTFactorAlphaTexture));
-      }
-      if (key.alpha == FixedfuncStage0Src::Diffuse) {
-        return set(fixedfunc::kPsStage0ModulateTextureTFactorAlphaDiffuse,
-                   sizeof(fixedfunc::kPsStage0ModulateTextureTFactorAlphaDiffuse));
-      }
-      if (key.alpha == FixedfuncStage0Src::Modulate) {
-        return set(fixedfunc::kPsStage0ModulateTextureTFactorAlphaModulate,
-                   sizeof(fixedfunc::kPsStage0ModulateTextureTFactorAlphaModulate));
-      }
-    }
-  }
+} // namespace fixedfunc_ps20
 
-  // Modulate variants.
-  if (key.color == FixedfuncStage0Src::Modulate && key.alpha == FixedfuncStage0Src::Modulate) {
-    // TEXTURE * DIFFUSE for both RGB and A.
-    return set(fixedfunc::kPsTexturedModulateVertexColor, sizeof(fixedfunc::kPsTexturedModulateVertexColor));
-  }
-  if (key.color == FixedfuncStage0Src::Modulate && key.alpha == FixedfuncStage0Src::Diffuse) {
-    return set(fixedfunc::kPsStage0ModulateDiffuse, sizeof(fixedfunc::kPsStage0ModulateDiffuse));
-  }
-  if (key.color == FixedfuncStage0Src::Modulate && key.alpha == FixedfuncStage0Src::Texture) {
-    return set(fixedfunc::kPsStage0ModulateTexture, sizeof(fixedfunc::kPsStage0ModulateTexture));
-  }
-
-  // Unknown combination: fall back to diffuse.
-  return set(fixedfunc::kPsPassthroughColor, sizeof(fixedfunc::kPsPassthroughColor));
+bool fixedfunc_build_stage0_ps_bytes(FixedfuncStage0Key key, std::vector<uint32_t>* out_words) {
+  return fixedfunc_ps20::build_stage0_ps(key, out_words);
 }
 
 HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
@@ -5085,48 +5227,95 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   }
 
   const FixedfuncStage0Key key = fixedfunc_stage0_key_locked(dev);
-  const uint32_t variant_index = fixedfunc_stage0_variant_index(key);
-  if (variant_index >= (sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]))) {
-    return E_FAIL;
+  if (!key.supported) {
+    return kD3DErrInvalidCall;
   }
 
-  // Fixed-function stage0 variant shaders are cached per-device so toggling texture-stage-state does not
-  // spam CREATE_SHADER_DXBC/DESTROY_SHADER.
-  Shader* new_ps = dev->fixedfunc_stage0_ps_variants[variant_index];
-  uint32_t ps_size = 0;
-  const void* ps_bytes = fixedfunc_ps_variant_bytes(key, &ps_size);
-  if (!ps_bytes || ps_size == 0) {
+  std::vector<uint32_t> ps_words;
+  if (!fixedfunc_build_stage0_ps_bytes(key, &ps_words) || ps_words.empty()) {
     return E_FAIL;
   }
+  const void* ps_bytes = ps_words.data();
+  const uint32_t ps_size = static_cast<uint32_t>(ps_words.size() * sizeof(uint32_t));
 
-  // Upload D3DRS_TEXTUREFACTOR (c0) when the selected stage0 path uses it.
-  if (fixedfunc_stage0_src_uses_texture_factor(key.color) || fixedfunc_stage0_src_uses_texture_factor(key.alpha)) {
+  if (key.uses_tfactor) {
     const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
     if (FAILED(hr)) {
       return hr;
     }
   }
 
-  if (!new_ps) {
-    // If this cache slot is already pointing at the desired bytecode, reuse it
-    // rather than creating a duplicate shader.
-    if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {
-      new_ps = *ps_slot;
-    } else {
-      new_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
-      if (!new_ps) {
-        return E_OUTOFMEMORY;
-      }
-    }
-    dev->fixedfunc_stage0_ps_variants[variant_index] = new_ps;
+  // If the current slot already matches, no work is needed.
+  if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {
+    return S_OK;
   }
 
-  if (*ps_slot == new_ps) {
+  // Stage0 fixed-function PS variants are cached per-device in
+  // `fixedfunc_stage0_ps_variants` so toggling texture-stage-state does not spam
+  // CREATE_SHADER_DXBC/DESTROY_SHADER.
+  Shader* desired_ps = nullptr;
+  for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+    if (!ps) {
+      continue;
+    }
+    if (shader_bytecode_equals(ps, ps_bytes, ps_size)) {
+      desired_ps = ps;
+      break;
+    }
+  }
+
+  if (!desired_ps) {
+    desired_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
+    if (!desired_ps) {
+      return E_OUTOFMEMORY;
+    }
+
+    bool inserted = false;
+    for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+      if (!slot) {
+        slot = desired_ps;
+        inserted = true;
+        break;
+      }
+    }
+
+    // In the extremely unlikely event that a device uses more than the reserved
+    // number of stage0 variants, evict an unreferenced cached PS.
+    if (!inserted) {
+      for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+        Shader* cand = slot;
+        if (!cand) {
+          continue;
+        }
+        if (cand == dev->ps ||
+            cand == dev->fixedfunc_ps ||
+            cand == dev->fixedfunc_ps_tex1 ||
+            cand == dev->fixedfunc_ps_xyz_diffuse_tex1 ||
+            cand == dev->fixedfunc_ps_interop) {
+          continue;
+        }
+        (void)emit_destroy_shader_locked(dev, cand->handle);
+        delete cand;
+        slot = desired_ps;
+        inserted = true;
+        break;
+      }
+    }
+
+    if (!inserted) {
+      // Unable to safely evict a cached variant; drop the new shader and fail.
+      (void)emit_destroy_shader_locked(dev, desired_ps->handle);
+      delete desired_ps;
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  if (*ps_slot == desired_ps) {
     return S_OK;
   }
 
   Shader* old_ps = *ps_slot;
-  *ps_slot = new_ps;
+  *ps_slot = desired_ps;
 
   // If the PS we're replacing is currently bound (either via the full
   // fixed-function fallback or via shader-stage interop fallbacks where one
@@ -5134,7 +5323,7 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   const bool ps_bound = (old_ps != nullptr && dev->ps == old_ps);
   if (ps_bound) {
     Shader* prev_ps = dev->ps;
-    dev->ps = new_ps;
+    dev->ps = desired_ps;
     // Defensive: the host executor rejects null shader binds; if the old PS is
     // bound we must have a VS too.
     if (!dev->vs || !emit_bind_shaders_locked(dev)) {
@@ -5148,7 +5337,6 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
 }
 
 } // namespace
-
 static bool emit_set_shader_constants_f_locked(
     Device* dev,
     uint32_t stage,
@@ -5222,6 +5410,19 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
 
   const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
 
+  // Stage0 texture stage state is only relevant to the fixed-function *pixel*
+  // stage. When a user pixel shader is bound (PS-only interop path), stage state
+  // must not cause spurious INVALIDCALL failures.
+  const bool need_fixedfunc_ps = (dev->user_ps == nullptr);
+  if (need_fixedfunc_ps) {
+    // Validate stage0 texture stage state before emitting any shader creation /
+    // bind commands so unsupported fixed-function draws fail cleanly.
+    const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
+    if (!stage0_key.supported) {
+      return D3DERR_INVALIDCALL;
+    }
+  }
+
   Shader** vs_slot = nullptr;
   Shader** ps_slot = nullptr;
   VertexDecl* fvf_decl = nullptr;
@@ -5292,9 +5493,11 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
   }
-  const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-  if (FAILED(ps_hr)) {
-    return ps_hr;
+  if (need_fixedfunc_ps) {
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+    if (FAILED(ps_hr)) {
+      return ps_hr;
+    }
   }
 
   // Ensure the FVF-derived declaration is bound when the app is using the SetFVF
@@ -13161,9 +13364,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       }
     }
     if (ps_slot) {
-      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-      if (FAILED(ps_hr)) {
-        return trace.ret(ps_hr);
+      // Stage0 stage-state selection is guarded: if the app configured an
+      // unsupported stage-state combination, tolerate state changes (including
+      // texture binds) and fail draws with INVALIDCALL instead.
+      const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
+      if (stage0_key.supported) {
+        const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+        if (FAILED(ps_hr)) {
+          return trace.ret(ps_hr);
+        }
       }
     }
   }
@@ -15480,9 +15689,14 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
       }
     }
     if (ps_slot) {
-      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-      if (FAILED(ps_hr)) {
-        return trace.ret(ps_hr);
+      // Stage0 stage-state selection is guarded: if the app sets an unsupported
+      // stage-state combination, fail draws (not state setting) with INVALIDCALL.
+      const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
+      if (stage0_key.supported) {
+        const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+        if (FAILED(ps_hr)) {
+          return trace.ret(ps_hr);
+        }
       }
     }
   }

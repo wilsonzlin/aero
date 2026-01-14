@@ -69,6 +69,10 @@ bool Check(bool cond, const char* msg) {
   return true;
 }
 
+// Minimal ps_2_0 instruction tokens used by stage0 fixed-function PS selection.
+constexpr uint32_t kPsOpMul = 0x04000005u;
+constexpr uint32_t kPsOpTexld = 0x04000042u;
+
 template <size_t N>
 bool ShaderBytecodeEquals(const Shader* shader, const uint32_t (&expected)[N]) {
   if (!shader) {
@@ -78,6 +82,24 @@ bool ShaderBytecodeEquals(const Shader* shader, const uint32_t (&expected)[N]) {
     return false;
   }
   return std::memcmp(shader->bytecode.data(), expected, sizeof(expected)) == 0;
+}
+
+bool ShaderContainsToken(const Shader* shader, uint32_t token) {
+  if (!shader) {
+    return false;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return false;
+  }
+  for (size_t off = 0; off < size; off += sizeof(uint32_t)) {
+    uint32_t w = 0;
+    std::memcpy(&w, shader->bytecode.data() + off, sizeof(uint32_t));
+    if (w == token) {
+      return true;
+    }
+  }
+  return false;
 }
 
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
@@ -627,8 +649,10 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
     if (!Check(dev->ps != nullptr, "VS-only: PS bound")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-               "VS-only: initial PS is passthrough")) {
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "VS-only: initial PS does not contain texld")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "VS-only: initial PS does not contain mul")) {
       return false;
     }
   }
@@ -647,8 +671,10 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
     if (!Check(dev->ps != nullptr, "VS-only: PS bound after SetTexture")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-               "VS-only: SetTexture updates PS to modulate/texture")) {
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "VS-only: SetTexture PS contains texld")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "VS-only: SetTexture PS contains mul")) {
       return false;
     }
   }
@@ -663,8 +689,10 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
     if (!Check(dev->ps != nullptr, "VS-only: PS bound after SetTextureStageState")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-               "VS-only: COLOROP=DISABLE updates PS to passthrough")) {
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "VS-only: DISABLE PS does not contain texld")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "VS-only: DISABLE PS does not contain mul")) {
       return false;
     }
   }

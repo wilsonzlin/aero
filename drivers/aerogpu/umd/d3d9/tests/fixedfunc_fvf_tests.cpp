@@ -57,6 +57,9 @@ constexpr uint32_t kD3dTopModulate2x = 5u;
 constexpr uint32_t kD3dTopModulate4x = 6u;
 constexpr uint32_t kD3dTopAdd = 7u;
 constexpr uint32_t kD3dTopSubtract = 10u;
+// Intentionally unsupported by the fixed-function stage0 subset (used to validate
+// draw-time guardrails).
+constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
 
 // D3DTA_* source selector (from d3d9types.h).
 constexpr uint32_t kD3dTaDiffuse = 0u;
@@ -70,6 +73,11 @@ constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
 constexpr uint32_t kD3dTransformView = 2u;
 constexpr uint32_t kD3dTransformProjection = 3u;
 constexpr uint32_t kD3dTransformWorld0 = 256u;
+
+// Pixel shader instruction tokens (ps_2_0).
+constexpr uint32_t kPsOpAdd = 0x04000002u;
+constexpr uint32_t kPsOpMul = 0x04000005u;
+constexpr uint32_t kPsOpTexld = 0x04000042u;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -88,6 +96,24 @@ bool ShaderBytecodeEquals(const Shader* shader, const uint32_t (&expected)[N]) {
     return false;
   }
   return std::memcmp(shader->bytecode.data(), expected, sizeof(expected)) == 0;
+}
+
+bool ShaderContainsToken(const Shader* shader, uint32_t token) {
+  if (!shader) {
+    return false;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return false;
+  }
+  for (size_t off = 0; off < size; off += sizeof(uint32_t)) {
+    uint32_t w = 0;
+    std::memcpy(&w, shader->bytecode.data() + off, sizeof(uint32_t));
+    if (w == token) {
+      return true;
+    }
+  }
+  return false;
 }
 
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
@@ -473,8 +499,8 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
     if (!Check(dev->ps == dev->fixedfunc_ps, "fixed-function PS is bound (no texture)")) {
       return false;
     }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-               "fixed-function PS bytecode (no texture -> passthrough)")) {
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld),
+               "fixed-function PS does not contain texld (no texture -> passthrough)")) {
       return false;
     }
   }
@@ -3104,7 +3130,7 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
     // Ensure the draw didn't change the explicitly bound vertex decl.
-    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl restored after XYZ|DIFFUSE draw")) {
+    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl preserved after XYZ|DIFFUSE draw")) {
       return false;
     }
 
@@ -3118,6 +3144,13 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
                "XYZ|DIFFUSE via decl VS bytecode matches kVsWvpPosColor")) {
       return false;
     }
+    if (!Check(dev->ps != nullptr, "XYZ|DIFFUSE via decl binds PS")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld),
+               "XYZ|DIFFUSE via decl without texture binds PS without texld")) {
+      return false;
+    }
     if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer (decl xyz|diffuse)")) {
       return false;
     }
@@ -3127,6 +3160,30 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
   if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE VB draw via decl)")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse)")) {
     return false;
   }
 
@@ -3171,6 +3228,9 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
 
   bool saw_draw = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_DRAW)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_draw)) {
+      continue;
+    }
     const auto* d = reinterpret_cast<const aerogpu_cmd_draw*>(hdr);
     if (d->first_vertex == 1 && d->vertex_count == 3 && d->instance_count == 1) {
       saw_draw = true;
@@ -3178,27 +3238,6 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     }
   }
   if (!Check(saw_draw, "DRAW uses start_vertex=1 vertex_count=3 instance_count=1 (decl xyz|diffuse)")) {
-    return false;
-  }
-
-  bool saw_wvp_constants = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
-    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
-      continue;
-    }
-    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
-    if (hdr->size_bytes < need) {
-      continue;
-    }
-    const float* payload = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
-    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
-      saw_wvp_constants = true;
-      break;
-    }
-  }
-  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse VB draw)")) {
     return false;
   }
 
@@ -3391,7 +3430,7 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   {
     std::lock_guard<std::mutex> lock_dev(dev->mutex);
     // Ensure the draw didn't change the explicitly bound vertex decl.
-    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl restored after XYZ|DIFFUSE|TEX1 draw")) {
+    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl preserved after XYZ|DIFFUSE|TEX1 draw")) {
       return false;
     }
 
@@ -3405,6 +3444,13 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
                "XYZ|DIFFUSE|TEX1 via decl VS bytecode matches kVsWvpPosColorTex0")) {
       return false;
     }
+    if (!Check(dev->ps != nullptr, "XYZ|DIFFUSE|TEX1 via decl binds PS")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld),
+               "XYZ|DIFFUSE|TEX1 via decl binds PS that samples texture (texld)")) {
+      return false;
+    }
     if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer (decl xyz|diffuse|tex1)")) {
       return false;
     }
@@ -3414,6 +3460,30 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
   if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 VB draw via decl)")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse|tex1)")) {
     return false;
   }
 
@@ -3458,6 +3528,9 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
 
   bool saw_draw = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_DRAW)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_draw)) {
+      continue;
+    }
     const auto* d = reinterpret_cast<const aerogpu_cmd_draw*>(hdr);
     if (d->first_vertex == 1 && d->vertex_count == 3 && d->instance_count == 1) {
       saw_draw = true;
@@ -3465,27 +3538,6 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
     }
   }
   if (!Check(saw_draw, "DRAW uses start_vertex=1 vertex_count=3 instance_count=1 (decl xyz|diffuse|tex1)")) {
-    return false;
-  }
-
-  bool saw_wvp_constants = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
-    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
-      continue;
-    }
-    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
-    if (hdr->size_bytes < need) {
-      continue;
-    }
-    const float* payload = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
-    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
-      saw_wvp_constants = true;
-      break;
-    }
-  }
-  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl xyz|diffuse|tex1 VB draw)")) {
     return false;
   }
 
@@ -3589,8 +3641,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS bound after draw")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-                 "XYZRHW|TEX1: PS bytecode modulate/texture")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZRHW|TEX1: PS contains texld")) {
+        return false;
+      }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZRHW|TEX1: PS contains mul")) {
         return false;
       }
     }
@@ -3609,8 +3663,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS still bound after SetTexture(null)")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-                 "XYZRHW|TEX1: PS bytecode (no texture -> passthrough)")) {
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZRHW|TEX1: passthrough PS does not contain texld")) {
+        return false;
+      }
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZRHW|TEX1: passthrough PS does not contain mul")) {
         return false;
       }
     }
@@ -3623,8 +3679,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS still bound after SetTexture(texture)")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-                 "XYZRHW|TEX1: PS bytecode (texture restored -> modulate/texture)")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZRHW|TEX1: restored PS contains texld")) {
+        return false;
+      }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZRHW|TEX1: restored PS contains mul")) {
         return false;
       }
     }
@@ -3640,8 +3698,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS still bound after SetTextureStageState")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-                 "XYZRHW|TEX1: PS bytecode disable->passthrough")) {
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZRHW|TEX1: disable PS does not contain texld")) {
+        return false;
+      }
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZRHW|TEX1: disable PS does not contain mul")) {
         return false;
       }
     }
@@ -3743,8 +3803,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS bound after draw")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-                 "XYZ|TEX1: PS bytecode modulate/texture")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|TEX1: PS contains texld")) {
+        return false;
+      }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|TEX1: PS contains mul")) {
         return false;
       }
     }
@@ -3763,8 +3825,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS still bound after SetTexture(null)")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-                 "XYZ|TEX1: PS bytecode (no texture -> passthrough)")) {
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|TEX1: passthrough PS does not contain texld")) {
+        return false;
+      }
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|TEX1: passthrough PS does not contain mul")) {
         return false;
       }
     }
@@ -3777,8 +3841,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS still bound after SetTexture(texture)")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-                 "XYZ|TEX1: PS bytecode (texture restored -> modulate/texture)")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|TEX1: restored PS contains texld")) {
+        return false;
+      }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|TEX1: restored PS contains mul")) {
         return false;
       }
     }
@@ -3794,8 +3860,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS still bound after SetTextureStageState")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-                 "XYZ|TEX1: PS bytecode disable->passthrough")) {
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|TEX1: disable PS does not contain texld")) {
+        return false;
+      }
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|TEX1: disable PS does not contain mul")) {
         return false;
       }
     }
@@ -4455,8 +4523,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseVertexDeclFvfs() {
       if (!Check(dev->ps != nullptr, "XYZRHW|TEX1 via decl: PS bound after draw")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-                 "XYZRHW|TEX1 via decl: PS bytecode modulate/texture")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZRHW|TEX1 via decl: PS contains texld")) {
+        return false;
+      }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZRHW|TEX1 via decl: PS contains mul")) {
         return false;
       }
     }
@@ -4472,8 +4542,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseVertexDeclFvfs() {
       if (!Check(dev->ps != nullptr, "XYZRHW|TEX1 via decl: PS still bound after SetTextureStageState")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-                 "XYZRHW|TEX1 via decl: PS bytecode disable->passthrough")) {
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZRHW|TEX1 via decl: disable PS does not contain texld")) {
+        return false;
+      }
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZRHW|TEX1 via decl: disable PS does not contain mul")) {
         return false;
       }
     }
@@ -4621,8 +4693,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseVertexDeclFvfs() {
       if (!Check(dev->ps != nullptr, "XYZ|TEX1 via decl: PS bound after draw")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-                 "XYZ|TEX1 via decl: PS bytecode modulate/texture")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|TEX1 via decl: PS contains texld")) {
+        return false;
+      }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|TEX1 via decl: PS contains mul")) {
         return false;
       }
     }
@@ -4638,8 +4712,10 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseVertexDeclFvfs() {
       if (!Check(dev->ps != nullptr, "XYZ|TEX1 via decl: PS still bound after SetTextureStageState")) {
         return false;
       }
-      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-                 "XYZ|TEX1 via decl: PS bytecode disable->passthrough")) {
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "XYZ|TEX1 via decl: disable PS does not contain texld")) {
+        return false;
+      }
+      if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "XYZ|TEX1 via decl: disable PS does not contain mul")) {
         return false;
       }
     }
@@ -4829,7 +4905,7 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return Check(hr == S_OK, tag);
   };
 
-  const auto ExpectFixedfuncPs = [&](auto const& expected_bytecode, const char* tag) -> bool {
+  const auto ExpectFixedfuncPsTokens = [&](const char* tag, bool expect_texld, bool expect_mul) -> bool {
     std::lock_guard<std::mutex> lock(dev->mutex);
     if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present")) {
       return false;
@@ -4837,14 +4913,22 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound")) {
       return false;
     }
-    return Check(ShaderBytecodeEquals(dev->ps, expected_bytecode), tag);
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld) == expect_texld, "PS texld token expectation")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpMul) == expect_mul, "PS mul token expectation")) {
+      return false;
+    }
+    return Check(true, tag);
   };
 
   // Default stage0: COLOR = TEXTURE * DIFFUSE, ALPHA = TEXTURE.
   if (!DrawTri("DrawPrimitiveUP(first)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0ModulateTexture, "fixed-function PS bytecode (modulate/texture)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (modulate/texture)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/true)) {
     return false;
   }
 
@@ -4855,7 +4939,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(second)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0ModulateDiffuse, "fixed-function PS bytecode (modulate/diffuse)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (modulate/diffuse)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/true)) {
     return false;
   }
 
@@ -4872,8 +4958,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(third)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsTexturedModulateVertexColor,
-                         "fixed-function PS bytecode (modulate/modulate)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (modulate/modulate)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/true)) {
     return false;
   }
 
@@ -4887,7 +4974,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(fourth)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0TextureModulate, "fixed-function PS bytecode (texture/modulate)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (texture/modulate)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/true)) {
     return false;
   }
 
@@ -4901,7 +4990,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(fifth)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0TextureTexture, "fixed-function PS bytecode (texture/texture)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (texture/texture)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/false)) {
     return false;
   }
 
@@ -4912,7 +5003,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(sixth)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0TextureDiffuse, "fixed-function PS bytecode (texture/diffuse)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (texture/diffuse)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/false)) {
     return false;
   }
 
@@ -4929,7 +5022,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(seventh)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0DiffuseTexture, "fixed-function PS bytecode (diffuse/texture)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (diffuse/texture)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/false)) {
     return false;
   }
 
@@ -4946,7 +5041,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(eighth)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0DiffuseModulate, "fixed-function PS bytecode (diffuse/modulate)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (diffuse/modulate)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/true)) {
     return false;
   }
 
@@ -4963,7 +5060,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(ninth)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsPassthroughColor, "fixed-function PS bytecode (disable -> passthrough)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (disable -> passthrough)",
+                               /*expect_texld=*/false,
+                               /*expect_mul=*/false)) {
     return false;
   }
 
@@ -4989,7 +5088,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(tenth)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0ModulateTexture, "fixed-function PS bytecode (restore modulate/texture)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (restore modulate/texture)",
+                               /*expect_texld=*/true,
+                               /*expect_mul=*/true)) {
     return false;
   }
 
@@ -5005,7 +5106,29 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   if (!DrawTri("DrawPrimitiveUP(eleventh)")) {
     return false;
   }
-  if (!ExpectFixedfuncPs(fixedfunc::kPsPassthroughColor, "fixed-function PS bytecode (no texture -> passthrough)")) {
+  if (!ExpectFixedfuncPsTokens("fixed-function PS tokens (no texture -> passthrough)",
+                               /*expect_texld=*/false,
+                               /*expect_mul=*/false)) {
+    return false;
+  }
+
+  // Rebind texture and set an unsupported stage0 op. Setting the state should
+  // succeed, but draws should fail cleanly with D3DERR_INVALIDCALL and must not
+  // emit additional commands.
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0=rebind)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopAddSmooth, "SetTextureStageState(COLOROP=ADDSMOOTH) succeeds")) {
+    return false;
+  }
+  const size_t before_bad_draw = dev->cmd.bytes_used();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP unsupported stage0 => D3DERR_INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(dev->cmd.bytes_used() == before_bad_draw, "unsupported draw emits no new commands")) {
     return false;
   }
 
@@ -5035,37 +5158,39 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
     uint32_t tfactor = 0u;
     bool uses_tfactor = false;
 
-    const void* expected_ps_bytes = nullptr;
-    size_t expected_ps_size = 0;
+    // Expected fixed-function PS token usage.
+    bool expect_texld = false;
+    bool expect_add = false;
+    bool expect_mul = false;
   };
 
   const Case cases[] = {
       // Extended ops (RGB path). Keep ALPHA=TEXTURE so RGB expectations match common D3D9 usage.
       {"add", kD3dTopAdd, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
-       fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture)},
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/false},
       {"subtract_tex_minus_diff", kD3dTopSubtract, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
-       fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture)},
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/false},
       {"subtract_diff_minus_tex", kD3dTopSubtract, kD3dTaDiffuse, kD3dTaTexture, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
-       fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture, sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture)},
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/false},
       {"modulate2x", kD3dTopModulate2x, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
-       fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture)},
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/true},
       {"modulate4x", kD3dTopModulate4x, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
-       fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture)},
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/true},
 
       // TFACTOR source (select arg1).
       {"tfactor_select", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
        /*set_tfactor=*/true, 0xFF3366CCu, /*uses_tfactor=*/true,
-       fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor)},
+       /*expect_texld=*/false, /*expect_add=*/false, /*expect_mul=*/false},
       // Default TFACTOR is white (0xFFFFFFFF). Verify the driver uploads c0 even
       // if the app never explicitly sets D3DRS_TEXTUREFACTOR.
       {"tfactor_default", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/true,
-       fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor)},
+       /*expect_texld=*/false, /*expect_add=*/false, /*expect_mul=*/false},
   };
 
   const VertexXyzrhwDiffuseTex1 tri[3] = {
@@ -5184,18 +5309,25 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
     }
 
     // Validate the bound PS matches the expected variant.
+    std::vector<uint8_t> expected_ps_bytes;
     {
       std::lock_guard<std::mutex> lock(dev->mutex);
       if (!Check(dev->ps != nullptr, "PS must be bound")) {
         return false;
       }
-      if (!Check(dev->ps->bytecode.size() == c.expected_ps_size, "expected PS bytecode size")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld) == c.expect_texld, "PS texld token expectation")) {
         return false;
       }
-      if (!Check(std::memcmp(dev->ps->bytecode.data(), c.expected_ps_bytes, c.expected_ps_size) == 0,
-                 "expected PS bytecode bytes")) {
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpAdd) == c.expect_add, "PS add token expectation")) {
         return false;
       }
+      if (!Check(ShaderContainsToken(dev->ps, kPsOpMul) == c.expect_mul, "PS mul token expectation")) {
+        return false;
+      }
+      expected_ps_bytes = dev->ps->bytecode;
+    }
+    if (!Check(!expected_ps_bytes.empty(), "expected PS bytecode non-empty")) {
+      return false;
     }
 
     dev->cmd.finalize();
@@ -5205,26 +5337,26 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       return false;
     }
 
-    // Confirm the expected PS bytecode was created at most once.
+    // Confirm the fixed-function PS variant is created at most once (cached across both draws).
     size_t create_count = 0;
     for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
       const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
       if (cs->stage != AEROGPU_SHADER_STAGE_PIXEL) {
         continue;
       }
-      if (cs->dxbc_size_bytes != c.expected_ps_size) {
+      if (cs->dxbc_size_bytes != expected_ps_bytes.size()) {
         continue;
       }
-      const size_t need = sizeof(aerogpu_cmd_create_shader_dxbc) + c.expected_ps_size;
+      const size_t need = sizeof(aerogpu_cmd_create_shader_dxbc) + expected_ps_bytes.size();
       if (hdr->size_bytes < need) {
         continue;
       }
       const void* payload = reinterpret_cast<const uint8_t*>(cs) + sizeof(aerogpu_cmd_create_shader_dxbc);
-      if (std::memcmp(payload, c.expected_ps_bytes, c.expected_ps_size) == 0) {
+      if (std::memcmp(payload, expected_ps_bytes.data(), expected_ps_bytes.size()) == 0) {
         ++create_count;
       }
     }
-    if (!Check(create_count == 1, "PS variant CREATE_SHADER_DXBC emitted once (cached)")) {
+    if (!Check(create_count == 1, "fixed-function PS CREATE_SHADER_DXBC emitted once (cached)")) {
       return false;
     }
 

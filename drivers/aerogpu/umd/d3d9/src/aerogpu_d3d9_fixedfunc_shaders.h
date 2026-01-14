@@ -311,18 +311,17 @@ static constexpr uint32_t kPsTexturedModulateVertexColor[] = {
 };
 
 // -----------------------------------------------------------------------------
-// Minimal stage0 fixed-function fallback variants (ps_2_0)
+// Legacy stage0 fixed-function fallback variants (ps_2_0)
 // -----------------------------------------------------------------------------
-// These variants are selected by the UMD based on stage0 texture stage state:
-// - COLOROP/COLORARG1/COLORARG2
-// - ALPHAOP/ALPHAARG1/ALPHAARG2
+// These were used by the initial bring-up implementation, which hard-selected
+// from a tiny set of pre-baked pixel shader token streams.
 //
-// Supported sources:
-// - Diffuse (v0)
-// - Texture0 (texld t0,s0)
-// - Modulate (Texture0 * Diffuse)
+// Stage0 emulation has since been expanded: the D3D9 UMD now synthesizes a
+// `ps_2_0` token stream at runtime based on the supported subset of stage0
+// texture stage state (see `fixedfunc_ps20` in `aerogpu_d3d9_driver.cpp`).
 //
-// Note: the MODULATE/MODULATE case is implemented by `kPsTexturedModulateVertexColor`.
+// The tables below are kept as a reference for the expected instruction
+// encodings and as a convenient source of minimal token streams.
 
 // ps_2_0:
 //   texld r0, t0, s0
