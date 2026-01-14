@@ -2,7 +2,8 @@ use std::fs;
 
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::{
-    parse_signatures, translate_sm4_to_wgsl, DxbcFile, FourCC, ShaderStage, Sm4Program,
+    parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_ds_eval, DxbcFile, FourCC,
+    ShaderStage, Sm4Program,
 };
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
@@ -74,4 +75,45 @@ fn parses_and_translates_sm5_ds_tri_integer_fixture() {
     );
 
     assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn parses_and_translates_sm5_ds_eval_tri_integer_fixture() {
+    let bytes = load_fixture("ds_tri_integer.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4/5 parse failed");
+    assert_eq!(program.stage, ShaderStage::Domain);
+
+    let module = decode_program(&program).expect("SM4/5 decode failed");
+    assert_eq!(module.stage, ShaderStage::Domain);
+
+    let translated = translate_sm4_to_wgsl_ds_eval(&dxbc, &module, &signatures)
+        .expect("signature-driven DS eval translation failed");
+    assert!(
+        translated.wgsl.contains("fn ds_eval"),
+        "expected DS eval WGSL to contain `fn ds_eval`:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("patch_id * verts_per_patch"),
+        "DS eval WGSL should not embed legacy per-patch fixed-stride indexing:\n{}",
+        translated.wgsl
+    );
+
+    // Ensure the snippet links into the runtime wrapper and validates as a full WGSL module.
+    let out_reg_count = translated
+        .reflection
+        .outputs
+        .iter()
+        .map(|p| p.register)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let full_wgsl = aero_d3d11::runtime::tessellation::domain_eval::build_triangle_domain_eval_wgsl(
+        &translated.wgsl,
+        out_reg_count,
+    );
+    assert_wgsl_validates(&full_wgsl);
 }

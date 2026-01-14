@@ -527,6 +527,46 @@ pub fn translate_sm4_module_to_wgsl(
     }
 }
 
+/// Translates a decoded SM4/SM5 *domain shader* module into a WGSL snippet that exposes a
+/// **pure domain-shader evaluation function**:
+///
+/// ```wgsl
+/// fn ds_eval(patch_id: u32, domain: vec3<f32>, local_vertex: u32) -> AeroDsOut;
+/// ```
+///
+/// This output is designed to be linked into the tessellation runtime's
+/// `runtime::tessellation::domain_eval` wrapper, which is responsible for:
+/// - dispatching the evaluation kernel over `(patch_id, local_vertex)` coordinates,
+/// - computing `SV_DomainLocation` (`domain`) using the tessellator library and per-patch metadata,
+/// - writing `AeroDsOut` registers into an expanded vertex buffer using `vertex_base + local_vertex`
+///   from the layout-pass patch metadata.
+///
+/// Unlike [`translate_sm4_module_to_wgsl`]'s domain-shader path, this translation does **not**
+/// embed its own fixed-stride tessellation scan (which is invalid when tess levels vary per patch).
+pub fn translate_sm4_module_to_wgsl_ds_eval(
+    dxbc: &DxbcFile<'_>,
+    module: &Sm4Module,
+    signatures: &ShaderSignatures,
+) -> Result<ShaderTranslation, ShaderTranslateError> {
+    if module.stage != ShaderStage::Domain {
+        return Err(ShaderTranslateError::UnsupportedStage(module.stage));
+    }
+    let rdef = dxbc.get_rdef().and_then(|res| res.ok());
+    let isgn = signatures
+        .isgn
+        .as_ref()
+        .ok_or(ShaderTranslateError::MissingSignature("ISGN"))?;
+    let osgn = signatures
+        .osgn
+        .as_ref()
+        .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
+    let psgn = signatures
+        .psgn
+        .as_ref()
+        .ok_or(ShaderTranslateError::MissingSignature("PSGN"))?;
+    translate_ds_eval(module, isgn, psgn, osgn, rdef)
+}
+
 /// Scans a decoded SM4/SM5 module and produces bind group layout entries for the
 /// module's declared shader stage.
 ///
@@ -1350,6 +1390,137 @@ fn translate_ds(
     })
 }
 
+fn translate_ds_eval(
+    module: &Sm4Module,
+    isgn: &DxbcSignature,
+    psgn: &DxbcSignature,
+    osgn: &DxbcSignature,
+    rdef: Option<RdefChunk>,
+) -> Result<ShaderTranslation, ShaderTranslateError> {
+    // See `translate_ds` for supported domain/partitioning modes. This path differs only in that it
+    // emits a pure evaluation helper (`ds_eval`) suitable for linking into the runtime's
+    // patch-meta-based tessellation pipeline.
+
+    // Validate declared tessellation metadata when present in the IR. Older decoders may not
+    // populate these declarations yet, so absence is treated as "unknown" rather than an error.
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::HsDomain { domain } => {
+                if *domain != crate::sm4_ir::HsDomain::Tri {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("ds_domain_{domain:?}"),
+                    });
+                }
+            }
+            Sm4Decl::HsPartitioning { partitioning } => {
+                if *partitioning != crate::sm4_ir::HsPartitioning::Integer {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("ds_partitioning_{partitioning:?}"),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut io = build_ds_io_maps(module, isgn, psgn, osgn)?;
+    io.ds_mode = DsTranslationMode::Eval;
+    let resources = scan_resources(module, rdef.as_ref())?;
+
+    let reflection = ShaderReflection {
+        inputs: io.inputs_reflection(),
+        outputs: io.outputs_reflection_vertex(),
+        bindings: resources.bindings(ShaderStage::Domain),
+        rdef,
+    };
+
+    // These strides must match the buffers produced by HS emulation.
+    let cp_in_stride = isgn
+        .parameters
+        .iter()
+        .filter(|p| {
+            !is_sv_domain_location(&p.semantic_name) && !is_sv_primitive_id(&p.semantic_name)
+        })
+        .map(|p| p.register)
+        .max()
+        .map(|m| m.saturating_add(1))
+        .unwrap_or(1)
+        .max(1);
+    let pc_in_stride = psgn
+        .parameters
+        .iter()
+        .map(|p| p.register)
+        .max()
+        .map(|m| m.saturating_add(1))
+        .unwrap_or(1)
+        .max(1);
+
+    let out_reg_count = io
+        .outputs
+        .keys()
+        .copied()
+        .max()
+        .map(|m| m.saturating_add(1))
+        .unwrap_or(0);
+    if out_reg_count == 0 {
+        return Err(ShaderTranslateError::MissingSignature("OSGN"));
+    }
+
+    let mut w = WgslWriter::new();
+
+    resources.emit_decls(&mut w, ShaderStage::Domain)?;
+
+    w.line(&format!("const DS_CP_IN_STRIDE: u32 = {cp_in_stride}u;"));
+    w.line(&format!("const DS_PC_IN_STRIDE: u32 = {pc_in_stride}u;"));
+    w.line("");
+
+    // Domain-shader evaluation function.
+    //
+    // - `patch_id` provides `SV_PrimitiveID`.
+    // - `domain` provides `SV_DomainLocation`.
+    // - `local_vertex` is currently unused by the translator, but is included for a stable
+    //   runtime-facing signature (and to support future system-value extensions).
+    w.line("fn ds_eval(patch_id: u32, domain: vec3<f32>, local_vertex: u32) -> AeroDsOut {");
+    w.indent();
+    w.line("let _aero_local_vertex: u32 = local_vertex;");
+    w.line("let ds_patch_id: u32 = patch_id;");
+    w.line("let ds_domain_location: vec3<f32> = domain;");
+    w.line("let ds_primitive_id: u32 = patch_id;");
+    w.line("let ds_pc_base: u32 = ds_patch_id * DS_PC_IN_STRIDE;");
+    w.line("");
+    w.line("var out: AeroDsOut;");
+    w.line("");
+
+    emit_temp_and_output_decls(&mut w, module, &io)?;
+    let ctx = EmitCtx {
+        stage: ShaderStage::Domain,
+        io: &io,
+        resources: &resources,
+    };
+    emit_instructions(&mut w, module, &ctx)?;
+
+    w.line("");
+    for reg in 0..out_reg_count {
+        let expr = if let Some(p) = io.outputs.get(&reg) {
+            apply_sig_mask_to_vec4(&format!("o{reg}"), p.param.mask)
+        } else {
+            "vec4<f32>(0.0)".to_owned()
+        };
+        w.line(&format!("out.o{reg} = {expr};"));
+    }
+    w.line("return out;");
+    w.dedent();
+    w.line("}");
+
+    Ok(ShaderTranslation {
+        wgsl: w.finish(),
+        stage: ShaderStage::Domain,
+        reflection,
+    })
+}
+
 fn translate_vs(
     module: &Sm4Module,
     isgn: &DxbcSignature,
@@ -1742,6 +1913,7 @@ fn build_io_maps(
         hs_pc_patch_constant_reg_masks: BTreeMap::new(),
         hs_pc_tess_factor_writes: Vec::new(),
         hs_pc_tess_factor_stride: 0,
+        ds_mode: DsTranslationMode::LegacyCompute,
     })
 }
 
@@ -1922,6 +2094,7 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         hs_pc_patch_constant_reg_masks: BTreeMap::new(),
         hs_pc_tess_factor_writes: Vec::new(),
         hs_pc_tess_factor_stride: 0,
+        ds_mode: DsTranslationMode::LegacyCompute,
     }
 }
 
@@ -2491,6 +2664,24 @@ impl VsInputField {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DsTranslationMode {
+    /// Legacy DS translation mode: emits a full compute entry point (`ds_main`) including a
+    /// fixed-stride tessellation scan and writes vertices to `out_index = patch_id * verts_per_patch + vert_in_patch`.
+    ///
+    /// This is kept for backward compatibility with existing tests and runtime plumbing.
+    LegacyCompute,
+    /// DS "evaluation" translation mode: emits a pure `ds_eval(...) -> AeroDsOut` helper suitable
+    /// for the runtime's layout-pass + patch-meta tessellation pipeline.
+    Eval,
+}
+
+impl Default for DsTranslationMode {
+    fn default() -> Self {
+        Self::LegacyCompute
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct IoMaps {
     inputs: BTreeMap<u32, ParamInfo>,
@@ -2532,6 +2723,7 @@ struct IoMaps {
     hs_pc_patch_constant_reg_masks: BTreeMap<u32, u8>,
     hs_pc_tess_factor_writes: Vec<HsTessFactorWrite>,
     hs_pc_tess_factor_stride: u32,
+    ds_mode: DsTranslationMode,
 }
 
 impl IoMaps {
@@ -3062,8 +3254,16 @@ impl IoMaps {
                 // Domain shader patch-constant inputs are provided via HS patch-constant output
                 // buffers. Treat all other `v#` inputs as patch-constant registers, even when the
                 // signature marks them as system values (e.g. tess factors).
+                let pc_expr = match self.ds_mode {
+                    DsTranslationMode::LegacyCompute => {
+                        format!("ds_in_pc.data[ds_pc_base + {reg}u]")
+                    }
+                    DsTranslationMode::Eval => {
+                        format!("aero_hs_patch_constants[ds_pc_base + {reg}u]")
+                    }
+                };
                 Ok(apply_sig_mask_to_vec4(
-                    &format!("ds_in_pc.data[ds_pc_base + {reg}u]"),
+                    &pc_expr,
                     p.param.mask,
                 ))
             }
@@ -6782,9 +6982,14 @@ fn emit_src_vec4(
             RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
         },
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
-            ShaderStage::Domain => format!(
-                "ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
-            ),
+            ShaderStage::Domain => match ctx.io.ds_mode {
+                DsTranslationMode::LegacyCompute => format!(
+                    "ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
+                ),
+                DsTranslationMode::Eval => format!(
+                    "aero_hs_control_points[(ds_patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
+                ),
+            },
             ShaderStage::Hull => {
                 // Hull shaders can index both input patch control points and output patch control
                 // points (when using `OutputPatch` in HLSL). Both are encoded as 2D-indexed input
@@ -6906,9 +7111,14 @@ fn emit_src_vec4_u32(
             format!("bitcast<vec4<u32>>({expr})")
         }
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
-            ShaderStage::Domain => format!(
-                "bitcast<vec4<u32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
-            ),
+            ShaderStage::Domain => match ctx.io.ds_mode {
+                DsTranslationMode::LegacyCompute => format!(
+                    "bitcast<vec4<u32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+                ),
+                DsTranslationMode::Eval => format!(
+                    "bitcast<vec4<u32>>(aero_hs_control_points[(ds_patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+                ),
+            },
             ShaderStage::Hull => {
                 let base = if ctx.io.hs_cp_output_regs.contains(reg)
                     && !ctx.io.hs_input_regs.contains(reg)
@@ -7013,9 +7223,14 @@ fn emit_src_vec4_i32(
             format!("bitcast<vec4<i32>>({expr})")
         }
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
-            ShaderStage::Domain => format!(
-                "bitcast<vec4<i32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
-            ),
+            ShaderStage::Domain => match ctx.io.ds_mode {
+                DsTranslationMode::LegacyCompute => format!(
+                    "bitcast<vec4<i32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+                ),
+                DsTranslationMode::Eval => format!(
+                    "bitcast<vec4<i32>>(aero_hs_control_points[(ds_patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+                ),
+            },
             ShaderStage::Hull => {
                 let base = if ctx.io.hs_cp_output_regs.contains(reg)
                     && !ctx.io.hs_input_regs.contains(reg)

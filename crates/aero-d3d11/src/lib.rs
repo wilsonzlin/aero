@@ -25,8 +25,9 @@ mod wgsl_bootstrap;
 
 pub use aero_dxbc::{DxbcChunk, DxbcError, DxbcFile, FourCC};
 pub use shader_translate::{
-    translate_sm4_module_to_wgsl, Binding, BindingKind, Builtin, IoParam, ShaderReflection,
-    ShaderTranslateError, ShaderTranslation, StorageTextureFormat,
+    translate_sm4_module_to_wgsl, translate_sm4_module_to_wgsl_ds_eval, Binding, BindingKind,
+    Builtin, IoParam, ShaderReflection, ShaderTranslateError, ShaderTranslation,
+    StorageTextureFormat,
 };
 pub use signature::{
     parse_signature_chunk, parse_signatures, DxbcSignature, DxbcSignatureParameter,
@@ -40,7 +41,7 @@ pub use sm4_ir::{
     Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
     UavRef, WriteMask,
 };
-pub use wgsl::{translate_sm4_to_wgsl, WgslError, WgslTranslation};
+pub use wgsl::{translate_sm4_to_wgsl, translate_sm4_to_wgsl_ds_eval, WgslError, WgslTranslation};
 pub use wgsl_bootstrap::{
     translate_sm4_to_wgsl_bootstrap, WgslBootstrapError, WgslBootstrapTranslation,
 };
