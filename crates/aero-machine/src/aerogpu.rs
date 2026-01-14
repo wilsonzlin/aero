@@ -1275,12 +1275,20 @@ impl AeroGpuMmioDevice {
             }
 
             if dma_enabled && self.ring_gpa != 0 {
-                if let (Some(tail_addr), Some(head_addr)) = (
+                match (
                     self.ring_gpa.checked_add(RING_TAIL_OFFSET),
                     self.ring_gpa.checked_add(RING_HEAD_OFFSET),
                 ) {
-                    let tail = mem.read_u32(tail_addr);
-                    mem.write_u32(head_addr, tail);
+                    (Some(tail_addr), Some(head_addr)) => {
+                        let tail = mem.read_u32(tail_addr);
+                        mem.write_u32(head_addr, tail);
+                    }
+                    _ => {
+                        // Treat arithmetic overflow as an out-of-bounds guest address. This is a
+                        // guest-controlled pointer, so record an error rather than silently
+                        // ignoring the ring reset side-effect.
+                        self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                    }
                 }
             }
 
