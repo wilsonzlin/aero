@@ -1389,6 +1389,9 @@ def validate_virtio_input_model_lines(
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
+
+    The legacy filename alias is expected to remain byte-for-byte identical to the
+    canonical INF from the first section header (`[Version]`) onward (CI enforces this).
     """
 
     model_entries = parse_inf_model_entries(inf_path)
@@ -1593,9 +1596,8 @@ def check_inf_alias_drift_excluding_sections(
     """
     Compare two INFs while ignoring specific sections + comments.
 
-    This is used for virtio-input where the legacy alias INF is allowed to differ
-    in the models sections (it provides an opt-in generic fallback HWID), but
-    should otherwise stay in sync with the canonical INF.
+    This is used when a legacy alias INF is intentionally permitted to diverge in
+    specific sections, but should otherwise stay in sync with the canonical INF.
     """
 
     canonical_lines = _normalized_inf_lines_without_sections(canonical, drop_sections=drop_sections)
@@ -3721,8 +3723,9 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
-        # The legacy alias INF must stay in sync with the canonical INF (different
-        # filename only), and must include the same strict fallback HWID.
+        # The legacy alias INF must stay in sync with the canonical INF (different filename
+        # only). It is kept for compatibility with workflows that reference the legacy
+        # `virtio-input.inf` name.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
