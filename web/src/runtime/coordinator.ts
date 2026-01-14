@@ -1055,21 +1055,77 @@ export class WorkerCoordinator {
     // still express the user's intent. Comparing mount IDs avoids accidentally resetting boot-device
     // policy when only metadata changes.
     const sanitizeMountId = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
-    const prevHddId = sanitizeMountId(prev?.mounts?.hddId);
-    const prevCdId = sanitizeMountId(prev?.mounts?.cdId);
-    const nextHddId = sanitizeMountId(mounts?.hddId);
-    const nextCdId = sanitizeMountId(mounts?.cdId);
-    const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
+    const prevMountHddId = sanitizeMountId(prev?.mounts?.hddId);
+    const prevMountCdId = sanitizeMountId(prev?.mounts?.cdId);
+    const nextMountHddId = sanitizeMountId(mounts?.hddId);
+    const nextMountCdId = sanitizeMountId(mounts?.cdId);
 
     const canonicalMounts: MountConfig = {};
-    if (nextHddId) canonicalMounts.hddId = nextHddId;
-    if (nextCdId) canonicalMounts.cdId = nextCdId;
+    if (nextMountHddId) canonicalMounts.hddId = nextMountHddId;
+    if (nextMountCdId) canonicalMounts.cdId = nextMountCdId;
 
-    const defaultBootDevice = nextCdId ? "cdrom" : "hdd";
+    const normalizeDisk = <TKind extends "hdd" | "cd">(
+      kind: TKind,
+      mountId: string,
+      next: DiskImageMetadata | null,
+      prevMeta: DiskImageMetadata | null | undefined,
+    ): DiskImageMetadata | null => {
+      if (!next && !mountId) return null;
+
+      const nextKind = next ? ((next as unknown as { kind?: unknown }).kind as unknown) : undefined;
+      const nextId = next ? String((next as unknown as { id?: unknown }).id ?? "").trim() : "";
+      const prevKind = prevMeta ? ((prevMeta as unknown as { kind?: unknown }).kind as unknown) : undefined;
+      const prevId = prevMeta ? String((prevMeta as unknown as { id?: unknown }).id ?? "").trim() : "";
+
+      // When mount IDs are present (DiskManager selection), treat them as canonical and preserve
+      // the prior metadata object if a transient refresh fails to provide it.
+      if (mountId) {
+        if (next && nextKind === kind && nextId === mountId) return next;
+        if (prevMeta && prevKind === kind && prevId === mountId) return prevMeta;
+        return null;
+      }
+
+      // Legacy callers may not populate `mounts.*Id`. In that case accept the metadata as-is.
+      return next && nextKind === kind ? next : null;
+    };
+
+    const nextHdd = normalizeDisk("hdd", nextMountHddId, hdd, prev?.hdd);
+    const nextCd = normalizeDisk("cd", nextMountCdId, cd, prev?.cd);
+
+    // Disk selection changes are detected using mount IDs when available, otherwise fall back to
+    // the disk metadata IDs. This keeps machine-runtime boot-device policy stable even when disk
+    // metadata is temporarily null, while still letting legacy callers that omit mounts behave
+    // sensibly.
+    const prevSelHddId = prevMountHddId || sanitizeMountId(prev?.hdd?.id);
+    const prevSelCdId = prevMountCdId || sanitizeMountId(prev?.cd?.id);
+    const nextSelHddId = nextMountHddId || sanitizeMountId(nextHdd?.id);
+    const nextSelCdId = nextMountCdId || sanitizeMountId(nextCd?.id);
+    const disksChanged = prevSelHddId !== nextSelHddId || prevSelCdId !== nextSelCdId;
+
+    const defaultBootDevice = nextSelCdId ? "cdrom" : "hdd";
     const bootDevice = disksChanged ? defaultBootDevice : prev?.bootDevice ?? defaultBootDevice;
 
-    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts: canonicalMounts, hdd, cd, bootDevice };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts: canonicalMounts, hdd: nextHdd, cd: nextCd, bootDevice };
     this.bootDisks = msg;
+
+    // When nothing about the effective selection changed, avoid re-broadcasting to workers. This
+    // prevents expensive legacy disk remounts and avoids re-triggering machine-runtime disk
+    // reattachment.
+    const prevHddMetaId = sanitizeMountId(prev?.hdd?.id);
+    const prevCdMetaId = sanitizeMountId(prev?.cd?.id);
+    const nextHddMetaId = sanitizeMountId(nextHdd?.id);
+    const nextCdMetaId = sanitizeMountId(nextCd?.id);
+    const prevBootDevice = prev?.bootDevice ?? "";
+    if (
+      prev &&
+      prevMountHddId === nextMountHddId &&
+      prevMountCdId === nextMountCdId &&
+      prevHddMetaId === nextHddMetaId &&
+      prevCdMetaId === nextCdMetaId &&
+      prevBootDevice === bootDevice
+    ) {
+      return;
+    }
 
     const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";
 

@@ -224,20 +224,75 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
 
     // DiskManager may re-apply the same selection (e.g. after refresh). This must not reset bootDevice back to cdrom.
+    const postedBefore = cpuWorker.posted.length;
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
 
-    // `setBootDisks` also re-syncs audio/mic rings; find the most recent boot-disks message.
-    const lastBootDisksMsg = [...cpuWorker.posted].reverse().find((p) => (p.message as { type?: unknown }).type === "setBootDisks");
-    expect(lastBootDisksMsg).toEqual({
-      message: {
-        ...emptySetBootDisksMessage(),
-        mounts: { hddId: "hdd1", cdId: "cd1" },
-        hdd,
-        cd,
-        bootDevice: "hdd",
-      } satisfies SetBootDisksMessage,
-      transfer: undefined,
+    expect(coordinator.getBootDisks()?.bootDevice).toBe("hdd");
+
+    // The coordinator may treat this as a no-op (skip re-broadcast), but if it does send another
+    // `setBootDisks` message it must preserve the persisted bootDevice policy.
+    const newBootDisksMsgs = cpuWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    for (const entry of newBootDisksMsgs) {
+      expect(entry).toEqual({
+        message: {
+          ...emptySetBootDisksMessage(),
+          mounts: { hddId: "hdd1", cdId: "cd1" },
+          hdd,
+          cd,
+          bootDevice: "hdd",
+        } satisfies SetBootDisksMessage,
+        transfer: undefined,
+      });
+    }
+  });
+
+  it("preserves disk metadata when mounts are unchanged but setBootDisks is called with null metadata (machine runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
     });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const postedBefore = cpuWorker.posted.length;
+
+    // Simulate a DiskManager refresh where mounts still reference the same disk IDs but metadata is missing/late-loaded.
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, null, null);
+
+    expect(coordinator.getBootDisks()?.hdd).toBe(hdd);
+    expect(coordinator.getBootDisks()?.cd).toBe(cd);
+
+    // No new boot-disks message should be broadcast (it would otherwise detach disks in the machine CPU worker).
+    const newBootDisksMsgs = cpuWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(newBootDisksMsgs).toHaveLength(0);
   });
 
   it("resends boot disk selection to the IO worker when vmRuntime=legacy and the worker restarts", () => {
