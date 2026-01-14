@@ -790,7 +790,10 @@ function Get-FileSha256Hex([string]$path) {
     try {
         $stream = [System.IO.File]::OpenRead($path)
         try {
-            $sha = New-Object System.Security.Cryptography.SHA256Managed
+            # Use the OS crypto provider when available (more compatible with FIPS mode).
+            $sha = $null
+            try { $sha = New-Object System.Security.Cryptography.SHA256CryptoServiceProvider } catch { $sha = $null }
+            if (-not $sha) { $sha = New-Object System.Security.Cryptography.SHA256Managed }
             try {
                 $hash = $sha.ComputeHash($stream)
             } finally {
