@@ -359,6 +359,65 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 finally:
                     sys.argv = old_argv
 
+    def test_rejects_disk_image_directory(self) -> None:
+        h = self.harness
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            disk_dir = Path(td)
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "invoke_aero_virtio_win7_tests.py",
+                    "--qemu-system",
+                    "qemu-system-x86_64",
+                    "--disk-image",
+                    str(disk_dir),
+                    "--dry-run",
+                ]
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    rc = h.main()
+                self.assertEqual(rc, 2)
+                self.assertIn("ERROR: disk image path is a directory", stderr.getvalue())
+            finally:
+                sys.argv = old_argv
+
+    def test_rejects_serial_log_directory(self) -> None:
+        h = self.harness
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            serial_dir = tmp / "serial_dir"
+            serial_dir.mkdir()
+            disk = tmp / "disk.img"
+            # Keep disk missing; dry-run mode should still reach serial-log validation.
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "invoke_aero_virtio_win7_tests.py",
+                    "--qemu-system",
+                    "qemu-system-x86_64",
+                    "--disk-image",
+                    str(disk),
+                    "--serial-log",
+                    str(serial_dir),
+                    "--dry-run",
+                ]
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    rc = h.main()
+                self.assertEqual(rc, 2)
+                self.assertIn("ERROR: serial log path is a directory", stderr.getvalue())
+            finally:
+                sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()

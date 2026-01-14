@@ -4778,6 +4778,9 @@ if ($DryRun) {
   try { $SerialLogPath = [System.IO.Path]::GetFullPath($SerialLogPath) } catch { }
 } else {
   $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
+  if (Test-Path -LiteralPath $DiskImagePath -PathType Container) {
+    throw "-DiskImagePath must be a disk image file path (got a directory): $DiskImagePath"
+  }
 
   $serialParent = Split-Path -Parent $SerialLogPath
   if ([string]::IsNullOrEmpty($serialParent)) { $serialParent = "." }
@@ -4786,6 +4789,9 @@ if ($DryRun) {
   }
   $SerialLogPath = Join-Path (Resolve-Path -LiteralPath $serialParent).Path (Split-Path -Leaf $SerialLogPath)
 
+  if (Test-Path -LiteralPath $SerialLogPath -PathType Container) {
+    throw "-SerialLogPath must be a file path (got a directory): $SerialLogPath"
+  }
   if (Test-Path -LiteralPath $SerialLogPath) {
     Remove-Item -LiteralPath $SerialLogPath -Force
   }

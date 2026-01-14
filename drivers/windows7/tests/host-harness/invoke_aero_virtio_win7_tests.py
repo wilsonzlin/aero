@@ -2998,6 +2998,9 @@ def main() -> int:
                 return 2
 
     disk_image = Path(args.disk_image).resolve()
+    if disk_image.exists() and disk_image.is_dir():
+        print(f"ERROR: disk image path is a directory: {disk_image}", file=sys.stderr)
+        return 2
     if not disk_image.exists():
         if args.dry_run:
             print(f"WARNING: disk image not found: {disk_image}", file=sys.stderr)
@@ -3005,10 +3008,21 @@ def main() -> int:
             print(f"ERROR: disk image not found: {disk_image}", file=sys.stderr)
             return 2
     serial_log = Path(args.serial_log).resolve()
+    if serial_log.exists() and serial_log.is_dir():
+        print(f"ERROR: serial log path is a directory: {serial_log}", file=sys.stderr)
+        return 2
     if not args.dry_run:
-        serial_log.parent.mkdir(parents=True, exist_ok=True)
-        if serial_log.exists():
-            serial_log.unlink()
+        try:
+            serial_log.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"ERROR: failed to create serial log directory: {serial_log.parent}: {e}", file=sys.stderr)
+            return 2
+        try:
+            if serial_log.exists():
+                serial_log.unlink()
+        except OSError as e:
+            print(f"ERROR: failed to remove existing serial log: {serial_log}: {e}", file=sys.stderr)
+            return 2
 
     qemu_stderr_log = serial_log.with_name(serial_log.stem + ".qemu.stderr.log")
     if not args.dry_run:
