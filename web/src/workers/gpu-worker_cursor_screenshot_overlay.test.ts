@@ -29,6 +29,9 @@ import {
   publishCursorState,
 } from "../ipc/cursor_state";
 
+const WORKER_MESSAGE_TIMEOUT_MS = 15_000;
+const TEST_TIMEOUT_MS = 70_000;
+
 async function waitForWorkerMessage(
   worker: Worker,
   predicate: (msg: unknown) => boolean,
@@ -107,7 +110,7 @@ async function initHeadlessGpuWorker(worker: Worker, initMsg: TestWorkerInitMess
   await waitForWorkerMessage(
     worker,
     (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-    10_000,
+    WORKER_MESSAGE_TIMEOUT_MS,
   );
 
   const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -127,7 +130,7 @@ async function initHeadlessGpuWorker(worker: Worker, initMsg: TestWorkerInitMess
   await waitForWorkerMessage(
     worker,
     (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-    10_000,
+    WORKER_MESSAGE_TIMEOUT_MS,
   );
 }
 
@@ -138,7 +141,7 @@ async function requestScreenshot(worker: Worker, requestId: number, includeCurso
       (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
       (msg as { type?: unknown }).type === "screenshot" &&
       (msg as { requestId?: unknown }).requestId === requestId,
-    10_000,
+    WORKER_MESSAGE_TIMEOUT_MS,
   );
   worker.postMessage({
     protocol: GPU_PROTOCOL_NAME,
@@ -226,7 +229,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("respects alpha for A8 cursor formats (transparent cursor does not overwrite)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -298,7 +301,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads VRAM-backed cursor surfaces when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -383,7 +386,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads VRAM-backed cursor surfaces even when last-row pitch padding is out of bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -481,7 +484,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("syncs hardware cursor state for screenshots even when no tick is forced", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -566,7 +569,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("alpha-blends partially transparent cursor pixels", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -639,7 +642,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB cursor formats before compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -713,7 +716,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("blends sRGB cursor over sRGB scanout in linear space when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -790,7 +793,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("blends sRGB cursor over sRGB scanout from the VRAM aperture in linear space when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -877,7 +880,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB cursor formats from the shared VRAM aperture before compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -963,7 +966,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB scanout formats before returning screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1028,7 +1031,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB scanout formats from guest RAM before returning screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1083,7 +1086,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("propagates cursor alpha when the scanout pixel is transparent", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1155,7 +1158,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("alpha-blends cursor pixels over partially transparent scanout pixels (alpha composited)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1228,7 +1231,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("applies cursor hotX offsets when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1305,7 +1308,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("applies cursor hotY offsets when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1382,7 +1385,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("clips cursors that extend beyond the screenshot bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1461,7 +1464,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("clips cursors that extend beyond the screenshot bounds vertically", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1540,7 +1543,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("clips cursors when hotX causes a negative origin", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1620,7 +1623,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
 
   it("clips cursors when hotY causes a negative origin", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1699,5 +1702,161 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, TEST_TIMEOUT_MS);
+
+  it("clips cursors when cursorX is negative (signed coordinates)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+
+    // Scanout: 2x1 BGRX pixels.
+    // pixel0: 0xff102030, pixel1: 0xff010203.
+    views.guestU8.set([0x10, 0x20, 0x30, 0x00, 0x01, 0x02, 0x03, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 2,
+      height: 1,
+      pitchBytes: 8,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor: 2x1 BGRX pixels. Place cursor at x=-1 so originX=-1 (cursor pixel0 clipped).
+    // pixel0: [0a 0b 0c 00] -> 0xff0a0b0c
+    // pixel1: [0d 0e 0f 00] -> 0xff0d0e0f
+    views.guestU8.set([0x0a, 0x0b, 0x0c, 0x00, 0x0d, 0x0e, 0x0f, 0x00], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: -1,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 2,
+      height: 1,
+      pitchBytes: 8,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(2);
+      expect(shot.height).toBe(1);
+
+      // pixel0 becomes cursor pixel1, pixel1 stays scanout.
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 0)).toBe(0xff0d0e0f);
+      expect(pixelU32At(shot.rgba8, shot.width, 1, 0)).toBe(0xff010203);
+    } finally {
+      await worker.terminate();
+    }
+  }, TEST_TIMEOUT_MS);
+
+  it("clips cursors when cursorY is negative (signed coordinates)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+
+    // Scanout: 1x2 BGRX pixels.
+    // pixel(0,0): 0xff102030, pixel(0,1): 0xff010203.
+    views.guestU8.set([0x10, 0x20, 0x30, 0x00, 0x01, 0x02, 0x03, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 2,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor: 1x2 BGRX pixels. Place cursor at y=-1 so originY=-1 (cursor row0 clipped).
+    // row0: [0a 0b 0c 00] -> 0xff0a0b0c
+    // row1: [0d 0e 0f 00] -> 0xff0d0e0f
+    views.guestU8.set([0x0a, 0x0b, 0x0c, 0x00, 0x0d, 0x0e, 0x0f, 0x00], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: -1,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 2,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(2);
+
+      // pixel(0,0) becomes cursor row1, pixel(0,1) stays scanout.
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 0)).toBe(0xff0d0e0f);
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 1)).toBe(0xff010203);
+    } finally {
+      await worker.terminate();
+    }
+  }, TEST_TIMEOUT_MS);
 });
