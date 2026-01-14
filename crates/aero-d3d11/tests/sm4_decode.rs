@@ -3077,6 +3077,26 @@ fn rejects_sm5_thread_group_decl_with_too_small_declared_len() {
 }
 
 #[test]
+fn rejects_windows_sdk_dxbc_token_encoding() {
+    // Real DXBC encodes instruction length in bits 24..=30 of the opcode token.
+    // Our in-tree SM4 decoder currently expects Aero's legacy encoding (length in bits 11..=23).
+    //
+    // Use a real DXBC-looking opcode token: mov with len=5, opcode=54 (0x36).
+    let body = [0x0500_0036u32];
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+
+    let err = decode_program(&program).expect_err("decode should fail");
+    assert_eq!(err.at_dword, 2);
+    assert!(matches!(
+        err.kind,
+        Sm4DecodeErrorKind::UnsupportedTokenEncoding { .. }
+    ));
+}
+
+#[test]
 fn decodes_atomic_add_via_structural_fallback() {
     // Pick an opcode that is not otherwise recognized by the decoder and rely on the structural
     // decoding path.

@@ -28,6 +28,15 @@ pub enum Sm4DecodeErrorKind {
         declared: usize,
         available: usize,
     },
+    /// The shader appears to use the official DXBC SM4/SM5 token encoding from the Windows SDK,
+    /// which is not yet supported by Aero's SM4 decoder.
+    ///
+    /// This is typically detected when an opcode token has:
+    /// - a zero instruction-length field in Aero's legacy encoding (bits 11..=23), but
+    /// - a non-zero length in the official encoding (bits 24..=30).
+    UnsupportedTokenEncoding {
+        encoding: &'static str,
+    },
     InstructionLengthZero,
     InstructionOutOfBounds {
         start: usize,
@@ -67,6 +76,10 @@ impl fmt::Display for Sm4DecodeError {
             } => write!(
                 f,
                 "declared program length {declared} is out of bounds (available {available})"
+            ),
+            Sm4DecodeErrorKind::UnsupportedTokenEncoding { encoding } => write!(
+                f,
+                "unsupported SM4/5 token encoding ({encoding}); this decoder currently expects Aero's internal token format"
             ),
             Sm4DecodeErrorKind::InstructionLengthZero => write!(f, "instruction length is zero"),
             Sm4DecodeErrorKind::InstructionOutOfBounds {
@@ -125,6 +138,19 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         let opcode = opcode_token & OPCODE_MASK;
         let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
         if len == 0 {
+            // Real DXBC encodes instruction length in bits 24..=30; our current decoder/fixtures use
+            // a legacy encoding with length in bits 11..=23. Provide a targeted error when the
+            // official encoding is detected so users don't have to reverse-engineer the bitfields
+            // from a generic "length is zero" failure.
+            let official_len = ((opcode_token >> 24) & 0x7f) as usize;
+            if official_len != 0 {
+                return Err(Sm4DecodeError {
+                    at_dword: i,
+                    kind: Sm4DecodeErrorKind::UnsupportedTokenEncoding {
+                        encoding: "Windows SDK DXBC (length in bits 24..30)",
+                    },
+                });
+            }
             return Err(Sm4DecodeError {
                 at_dword: i,
                 kind: Sm4DecodeErrorKind::InstructionLengthZero,
@@ -372,6 +398,15 @@ pub fn decode_program_decls(program: &Sm4Program) -> Result<Vec<Sm4Decl>, Sm4Dec
         let opcode = opcode_token & OPCODE_MASK;
         let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
         if len == 0 {
+            let official_len = ((opcode_token >> 24) & 0x7f) as usize;
+            if official_len != 0 {
+                return Err(Sm4DecodeError {
+                    at_dword: i,
+                    kind: Sm4DecodeErrorKind::UnsupportedTokenEncoding {
+                        encoding: "Windows SDK DXBC (length in bits 24..30)",
+                    },
+                });
+            }
             return Err(Sm4DecodeError {
                 at_dword: i,
                 kind: Sm4DecodeErrorKind::InstructionLengthZero,
