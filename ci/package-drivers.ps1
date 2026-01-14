@@ -21,6 +21,8 @@ param(
     # arbitrary directories (it deletes $OutDir/_staging). Use -AllowUnsafeOutDir to override.
     [switch] $AllowUnsafeOutDir,
     [string] $Version,
+    [string] $DriverNameMapJson,
+    [switch] $SelfTest,
     [switch] $NoIso,
     [switch] $LegacyIso,
     [switch] $MakeFatImage,
@@ -42,6 +44,12 @@ function Get-IsWindows {
         return $false
     }
 }
+
+# Optional driver rename overrides loaded from -DriverNameMapJson.
+# Keys may be either:
+# - a driverRel (relative path under out/packages, e.g. "windows7/virtio-blk"), or
+# - a leaf driver folder name (e.g. "blk")
+$script:DriverNameMap = @{}
 
 function Resolve-RepoPath {
     param([Parameter(Mandatory = $true)][string] $Path)
@@ -490,6 +498,51 @@ function Normalize-PathComponent {
     return $Value
 }
 
+function Normalize-DriverRel {
+    param([Parameter(Mandatory = $true)][string] $Value)
+
+    $normalized = $Value.Replace([System.IO.Path]::DirectorySeparatorChar, "/").Replace([System.IO.Path]::AltDirectorySeparatorChar, "/")
+    $normalized = ($normalized -replace "/+", "/").Trim("/")
+    return $normalized
+}
+
+function Load-DriverNameMap {
+    param([string] $Path)
+
+    $map = @{}
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $map
+    }
+
+    $resolved = Resolve-RepoPath -Path $Path
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+        throw "DriverNameMapJson does not exist: '$resolved'."
+    }
+
+    $raw = Get-Content -LiteralPath $resolved -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        throw "DriverNameMapJson is empty: '$resolved'."
+    }
+
+    $obj = $raw | ConvertFrom-Json
+    if ($null -eq $obj) {
+        throw "DriverNameMapJson did not parse as JSON: '$resolved'."
+    }
+
+    foreach ($prop in $obj.PSObject.Properties) {
+        $kRaw = ([string]$prop.Name).Trim()
+        $vRaw = ([string]$prop.Value).Trim()
+        if ([string]::IsNullOrWhiteSpace($kRaw) -or [string]::IsNullOrWhiteSpace($vRaw)) {
+            continue
+        }
+
+        $key = (Normalize-DriverRel -Value $kRaw).ToLowerInvariant()
+        $map[$key] = $vRaw
+    }
+
+    return $map
+}
+
 function Assert-ContainsFileExtension {
     param(
         [Parameter(Mandatory = $true)][string] $Root,
@@ -645,12 +698,18 @@ function Copy-DriversForArch {
 
     $inputRootTrimmed = $InputRoot.TrimEnd("\", "/")
 
-    $infFiles = Get-ChildItem -Path $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue
+    $infFiles = @(
+        Get-ChildItem -Path $InputRoot -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName
+    )
     if (-not $infFiles) {
         throw "No '.inf' files found under '$InputRoot'."
     }
 
     $seen = New-Object "System.Collections.Generic.HashSet[string]"
+    # Detect multiple different source packages mapping to the same destination driver directory
+    # (arch + driverName). This prevents accidental merging/overwriting.
+    $destDirToSource = New-Object System.Collections.Hashtable ([System.StringComparer]::OrdinalIgnoreCase)
     $copied = 0
 
     foreach ($inf in $infFiles) {
@@ -677,9 +736,76 @@ function Copy-DriversForArch {
         if ([string]::IsNullOrWhiteSpace($driverName)) {
             $driverName = $inf.BaseName
         }
+
+        # Driver name overrides are applied before collision detection so callers can
+        # disambiguate nested layouts that would otherwise collide (e.g. groupA/blk + groupB/blk).
+        $driverRel = ""
+        if ($segments -and $segments.Count -gt 0) {
+            $archNames = @("x86", "i386", "win32", "x64", "amd64", "x86_64", "x86-64")
+            $archIndex = -1
+            for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+                if ($archNames -contains $segments[$i].ToLowerInvariant()) {
+                    $archIndex = $i
+                    break
+                }
+            }
+            if ($archIndex -gt 0) {
+                $driverRel = ($segments[0..($archIndex - 1)] -join "/")
+            } else {
+                $driverRel = ($segments -join "/")
+            }
+        }
+        $driverRelNorm = ""
+        if (-not [string]::IsNullOrWhiteSpace($driverRel)) {
+            $driverRelNorm = Normalize-DriverRel -Value $driverRel
+        }
+        $driverNameNormKey = (Normalize-PathComponent -Value $driverName.Trim()).ToLowerInvariant()
+        $driverRelKey = $driverRelNorm.ToLowerInvariant()
+        if (-not [string]::IsNullOrWhiteSpace($driverRelKey) -and $script:DriverNameMap.ContainsKey($driverRelKey)) {
+            $driverName = $script:DriverNameMap[$driverRelKey]
+        } elseif ($script:DriverNameMap.ContainsKey($driverNameNormKey)) {
+            $driverName = $script:DriverNameMap[$driverNameNormKey]
+        }
+
         $driverName = Normalize-PathComponent -Value $driverName
 
         $destDir = Join-Path $DestRoot (Join-Path "drivers" (Join-Path $driverName $arch))
+
+        $destKey = ("{0}|{1}" -f $arch, $driverName)
+        if ($destDirToSource.ContainsKey($destKey)) {
+            $existing = $destDirToSource[$destKey]
+            $existingSrc = [string]$existing.SourceDir
+            if (-not $existingSrc.Equals($srcDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $msg = @(
+                    "Driver name collision detected while staging signed drivers.",
+                    "",
+                    "Destination directory (would be merged/overwritten):",
+                    "  $destDir",
+                    "",
+                    "The following two source directories both map to the same destination (arch=$arch, driverName=$driverName):",
+                    "",
+                    "  1) $existingSrc",
+                    "     driverRel: $($existing.DriverRel)",
+                    "     INF      : $($existing.Inf)",
+                    "",
+                    "  2) $srcDir",
+                    "     driverRel: $driverRelNorm",
+                    "     INF      : $($inf.FullName)",
+                    "",
+                    "Remediation:",
+                    "  - Rename one of the driver package directories so it maps to a unique driver folder name, OR",
+                    "  - Provide an explicit mapping via -DriverNameMapJson (see ci/README.md)."
+                ) -join "`r`n"
+                throw $msg
+            }
+        } else {
+            $destDirToSource[$destKey] = [pscustomobject]@{
+                SourceDir = $srcDir
+                Inf = $inf.FullName
+                DriverRel = $driverRelNorm
+            }
+        }
+
         $key = "$arch|$driverName|$srcDir"
         if ($seen.Contains($key)) {
             continue
@@ -698,6 +824,82 @@ function Copy-DriversForArch {
     Assert-ContainsFileExtension -Root $DestRoot -Extension "inf"
     Assert-ContainsFileExtension -Root $DestRoot -Extension "cat"
     Assert-ContainsFileExtension -Root $DestRoot -Extension "sys"
+}
+
+function Invoke-PackageDriversSelfTest {
+    # Unit-like self-test for collision detection (and optional mapping overrides).
+    # Run:
+    #   pwsh -File ci/package-drivers.ps1 -SelfTest
+    $root = Resolve-RepoPath -Path "out/_selftest_package_drivers"
+    if (Test-Path -LiteralPath $root) {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+    $inputRoot = Join-Path $root "input"
+    $stageRoot = Join-Path $root "stage"
+    New-Item -ItemType Directory -Force -Path $inputRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+
+    # Two different packages with the same leaf driver directory ("blk") under different groups.
+    # Without an explicit mapping, Get-DriverNameFromRelativeSegments maps both to "blk",
+    # causing a collision at: drivers/blk/x64.
+    $pkg1 = Join-Path $inputRoot "groupA/blk/x64"
+    $pkg2 = Join-Path $inputRoot "groupB/blk/x64"
+    New-Item -ItemType Directory -Force -Path $pkg1 | Out-Null
+    New-Item -ItemType Directory -Force -Path $pkg2 | Out-Null
+
+    Set-Content -LiteralPath (Join-Path $pkg1 "a.inf") -Value "; test" -Encoding Ascii
+    New-Item -ItemType File -Force -Path (Join-Path $pkg1 "a.cat") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $pkg1 "a.sys") | Out-Null
+
+    Set-Content -LiteralPath (Join-Path $pkg2 "b.inf") -Value "; test" -Encoding Ascii
+    New-Item -ItemType File -Force -Path (Join-Path $pkg2 "b.cat") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $pkg2 "b.sys") | Out-Null
+
+    $script:DriverNameMap = @{}
+    $threw = $false
+    try {
+        Copy-DriversForArch -InputRoot $inputRoot -Arches @("x64") -DestRoot $stageRoot
+    } catch {
+        $threw = $true
+        $m = $_.Exception.Message
+        if ($m -notmatch "Driver name collision detected") {
+            throw "SelfTest: expected collision error, got: $m"
+        }
+    }
+    if (-not $threw) {
+        throw "SelfTest: expected Copy-DriversForArch to throw on driver-name collision, but it succeeded."
+    }
+
+    # Demonstrate explicit mapping to disambiguate the output folder names.
+    $mapPath = Join-Path $root "driver-name-map.json"
+    $mapJson = @(
+        "{",
+        "  `"groupA/blk`": `"virtio-blk-a`",",
+        "  `"groupB/blk`": `"virtio-blk-b`"",
+        "}"
+    ) -join "`r`n"
+    $mapJson | Set-Content -LiteralPath $mapPath -Encoding UTF8
+
+    $script:DriverNameMap = Load-DriverNameMap -Path $mapPath
+    if (Test-Path -LiteralPath $stageRoot) {
+        Remove-Item -LiteralPath $stageRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+
+    Copy-DriversForArch -InputRoot $inputRoot -Arches @("x64") -DestRoot $stageRoot
+
+    $expected1 = Join-Path $stageRoot "drivers/virtio-blk-a/x64"
+    $expected2 = Join-Path $stageRoot "drivers/virtio-blk-b/x64"
+    if (-not (Test-Path -LiteralPath $expected1 -PathType Container)) {
+        throw "SelfTest: expected mapped output directory not found: $expected1"
+    }
+    if (-not (Test-Path -LiteralPath $expected2 -PathType Container)) {
+        throw "SelfTest: expected mapped output directory not found: $expected2"
+    }
+
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 function New-FatImageInputFromBundle {
@@ -1290,6 +1492,20 @@ function Invoke-DeterminismSelfTest {
         } else {
             $env:AERO_MAKE_FAT_IMAGE = $oldFatEnv
         }
+    }
+}
+
+if ($SelfTest) {
+    Invoke-PackageDriversSelfTest
+    Write-Host "ci/package-drivers.ps1 selftest OK"
+    exit 0
+}
+
+if (-not [string]::IsNullOrWhiteSpace($DriverNameMapJson)) {
+    $script:DriverNameMap = Load-DriverNameMap -Path $DriverNameMapJson
+    if ($script:DriverNameMap.Count -gt 0) {
+        $driverNameMapResolved = Resolve-RepoPath -Path $DriverNameMapJson
+        Write-Host ("Loaded driver name overrides: {0} entry(s) from {1}" -f $script:DriverNameMap.Count, $driverNameMapResolved)
     }
 }
 

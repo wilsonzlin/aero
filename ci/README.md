@@ -224,6 +224,41 @@ Notes:
   - Does **not** require `-CertPath`.
   - Does **not** bundle `aero-test.cer`.
   - `INSTALL.txt` omits certificate/test signing steps and notes that drivers are expected to be production/WHQL signed.
+### Driver directory naming + collision detection
+
+`ci/package-drivers.ps1` stages drivers into `drivers/<driverName>/<arch>/...` inside the output zip/iso.
+
+When staging from nested input layouts like `out/packages/<group>/<driver>/<arch>/...`, it uses a heuristic
+(`Get-DriverNameFromRelativeSegments`) to pick a leaf `<driverName>`. If two *different* source driver
+packages map to the same destination folder, the script now **fails fast** to avoid silently merging /
+overwriting packages.
+
+To disambiguate (or to maintain stable output names across input layouts), provide an explicit mapping:
+
+#### `-DriverNameMapJson`
+
+Path to a JSON object mapping input driver identifiers to desired output driver directory names.
+
+- **Keys** (case-insensitive) may be either:
+  - a `driverRel` (relative path under `out/packages`, excluding the arch segment), e.g. `windows7/virtio/blk`
+  - a leaf driver folder name (e.g. `blk`)
+- **Values** are the desired output directory name under `drivers/<value>/<arch>/...`.
+
+Example:
+
+```json
+{
+  "windows7/virtio/blk": "virtio-blk",
+  "windows7/virtio/net": "virtio-net",
+  "blk": "virtio-blk"
+}
+```
+
+Self-test (demonstrates collision detection + mapping override):
+
+```powershell
+pwsh -File ci/package-drivers.ps1 -SelfTest
+```
 
 Artifacts (typical):
 
