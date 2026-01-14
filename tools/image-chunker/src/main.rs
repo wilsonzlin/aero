@@ -230,7 +230,7 @@ struct VerifyArgs {
     chunk_sample: Option<u64>,
 
     /// Seed for `--chunk-sample` randomization (enables deterministic sampling for CI).
-    #[arg(long)]
+    #[arg(long, requires = "chunk_sample")]
     chunk_sample_seed: Option<u64>,
 }
 
@@ -2323,5 +2323,24 @@ mod tests {
         let b = select_sampled_chunk_indices(chunk_count, sample, &mut rng2)?;
         assert_eq!(a, b);
         Ok(())
+    }
+
+    #[test]
+    fn chunk_sample_seed_requires_chunk_sample_flag() {
+        let err = Cli::try_parse_from([
+            "aero-image-chunker",
+            "verify",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/demo/",
+            "--chunk-sample-seed",
+            "123",
+        ])
+        .expect_err("expected clap to reject --chunk-sample-seed without --chunk-sample");
+        assert!(
+            err.to_string().contains("--chunk-sample"),
+            "unexpected error: {err}"
+        );
     }
 }
