@@ -95,6 +95,12 @@ typedef struct _VIRTIO_NET_HDR {
 } VIRTIO_NET_HDR;
 
 C_ASSERT(sizeof(VIRTIO_NET_HDR) == 10);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR, Flags) == 0);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR, GsoType) == 1);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR, HdrLen) == 2);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR, GsoSize) == 4);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR, CsumStart) == 6);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR, CsumOffset) == 8);
 
 // Receive header when VIRTIO_NET_F_MRG_RXBUF is negotiated.
 // The driver must read NumBuffers from the first buffer of each received packet.
