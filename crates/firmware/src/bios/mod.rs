@@ -280,6 +280,20 @@ impl FirmwareMemoryBus for BiosMemoryBus<'_> {
     }
 }
 
+/// BIOS boot device class used by the host-configurable boot order.
+///
+/// This is intentionally a small, stable enum so it can be snapshotted as a compact `u8` list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BiosBootDevice {
+    /// Boot from a BIOS fixed disk (`DL=0x80..`).
+    Hdd = 0,
+    /// Boot from an El Torito CD-ROM (`DL=0xE0..`).
+    Cdrom = 1,
+    /// Boot from a floppy disk (`DL=0x00..`).
+    Floppy = 2,
+}
+
 #[derive(Debug, Clone)]
 pub struct BiosConfig {
     /// Total guest RAM size.
@@ -306,6 +320,23 @@ pub struct BiosConfig {
     /// When unset, the BIOS keeps the default RAM-backed base address
     /// ([`crate::video::vbe::VbeDevice::LFB_BASE_DEFAULT`]).
     pub vbe_lfb_base: Option<u32>,
+
+    /// Host-configurable boot order used by BIOS boot-device selection logic.
+    ///
+    /// Note: the classic BIOS boot drive number passed in `DL` is still stored separately in
+    /// [`BiosConfig::boot_drive`]. This list is intended to represent user/host policy (e.g. "try
+    /// CD first, then HDD") in a way that can be snapshotted and restored deterministically.
+    pub boot_order: Vec<BiosBootDevice>,
+    /// BIOS drive number to use when booting from a CD-ROM device class.
+    ///
+    /// The conventional range for El Torito CD-ROM boot devices is `0xE0..=0xEF`.
+    pub cd_boot_drive: u8,
+    /// Whether the BIOS should prefer booting from a CD-ROM when present.
+    ///
+    /// This is a host-facing convenience policy flag. When unset, callers are expected to select
+    /// an explicit [`BiosConfig::boot_drive`] or provide an explicit [`BiosConfig::boot_order`]
+    /// depending on the higher-level machine wiring.
+    pub boot_from_cd_if_present: bool,
 }
 
 impl Default for BiosConfig {
@@ -326,6 +357,9 @@ impl Default for BiosConfig {
             // Match the default routing in `aero_acpi::AcpiConfig`.
             pirq_to_gsi: [10, 11, 12, 13],
             vbe_lfb_base: None,
+            boot_order: vec![BiosBootDevice::Hdd],
+            cd_boot_drive: 0xE0,
+            boot_from_cd_if_present: false,
         }
     }
 }
