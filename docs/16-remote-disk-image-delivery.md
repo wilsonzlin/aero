@@ -33,6 +33,9 @@ Companion tools:
 
 - Correctness + CORS conformance checks: [`tools/disk-streaming-conformance/`](../tools/disk-streaming-conformance/README.md)
 - Range throughput + CDN cache probing (`X-Cache`): [`tools/range-harness/`](../tools/range-harness/README.md)
+- Chunked disk publisher + verifier (no-`Range` delivery): [`tools/image-chunker/`](../tools/image-chunker/README.md)
+  - `publish --format <raw|qcow2|vhd|aerospar|auto>`: publish the logical disk byte stream for common formats.
+  - `verify`: validate a published `manifest.json` + `chunks/*.bin` end-to-end.
 
 ---
 
