@@ -198,8 +198,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pci_ids_match_protocol() {
+        assert_eq!(AEROGPU_PCI_VENDOR_ID, pci::AEROGPU_PCI_VENDOR_ID);
+        assert_eq!(AEROGPU_PCI_DEVICE_ID, pci::AEROGPU_PCI_DEVICE_ID);
+        assert_eq!(
+            AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
+            pci::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID
+        );
+        assert_eq!(AEROGPU_PCI_SUBSYSTEM_ID, pci::AEROGPU_PCI_SUBSYSTEM_ID);
+    }
+
+    #[test]
+    fn pci_class_code_matches_protocol() {
+        assert_eq!(
+            AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
+            pci::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER
+        );
+        assert_eq!(
+            AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
+            pci::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE
+        );
+        assert_eq!(AEROGPU_PCI_PROG_IF, pci::AEROGPU_PCI_PROG_IF);
+    }
+
+    #[test]
     fn bar0_size_matches_protocol() {
         assert_eq!(AEROGPU_PCI_BAR0_SIZE_BYTES, pci::AEROGPU_PCI_BAR0_SIZE_BYTES as u64);
+    }
+
+    #[test]
+    fn mmio_magic_matches_protocol() {
+        assert_eq!(AEROGPU_MMIO_MAGIC, pci::AEROGPU_MMIO_MAGIC);
     }
 
     #[test]
@@ -295,6 +324,19 @@ mod tests {
             mmio::CURSOR_PITCH_BYTES,
             pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64
         );
+    }
+
+    #[test]
+    fn irq_bits_match_protocol() {
+        assert_eq!(irq_bits::FENCE, pci::AEROGPU_IRQ_FENCE);
+        assert_eq!(irq_bits::SCANOUT_VBLANK, pci::AEROGPU_IRQ_SCANOUT_VBLANK);
+        assert_eq!(irq_bits::ERROR, pci::AEROGPU_IRQ_ERROR);
+    }
+
+    #[test]
+    fn ring_control_bits_match_protocol() {
+        assert_eq!(ring_control::ENABLE, pci::AEROGPU_RING_CONTROL_ENABLE);
+        assert_eq!(ring_control::RESET, pci::AEROGPU_RING_CONTROL_RESET);
     }
 
     #[test]
