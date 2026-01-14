@@ -54,7 +54,7 @@ Steps:
      --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
-  6. (unless --rust-only) npm -w web run test:unit -- src/input src/usb/usb_guest_controller.test.ts src/usb/xhci_webusb_bridge.test.ts src/usb/ehci_webusb_root_port_rust_drift.test.ts src/usb/xhci_webusb_root_port_rust_drift.test.ts
+  6. (unless --rust-only) npm -w web run test:unit -- src/input src/usb/usb_guest_controller.test.ts src/usb/xhci_webusb_bridge.test.ts src/usb/uhci_webusb_root_port_rust_drift.test.ts src/usb/ehci_webusb_root_port_rust_drift.test.ts src/usb/xhci_webusb_root_port_rust_drift.test.ts
   7. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
@@ -257,6 +257,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         "src/input",
         "src/usb/usb_guest_controller.test.ts",
         "src/usb/xhci_webusb_bridge.test.ts",
+        "src/usb/uhci_webusb_root_port_rust_drift.test.ts",
         "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
         "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
     ]);
