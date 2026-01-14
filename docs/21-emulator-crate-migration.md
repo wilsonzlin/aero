@@ -22,6 +22,7 @@ Related docs:
 
 - VM wiring map: [`docs/vm-crate-map.md`](./vm-crate-map.md)
 - Canonical USB stack: [ADR 0015](./adr/0015-canonical-usb-stack.md)
+- Canonical audio stack: [ADR 0010](./adr/0010-canonical-audio-stack.md)
 - Storage consolidation plan: [`docs/20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md)
 
 ---
@@ -194,6 +195,31 @@ See also controller contracts:
 - Any non-trivial networking logic that duplicates `aero-net-*` crates should move out. The intended
   end state for `crates/emulator` is that `src/io/net/*` is *either* deleted outright *or* remains as
   thin re-exports only.
+
+### Audio (HDA/AC97/device bridges)
+
+Audio stack selection is governed by [ADR 0010](./adr/0010-canonical-audio-stack.md).
+
+**Emulator (legacy; feature-gated)**
+
+- Legacy audio device models and host bridges (AC97/HDA/DSP + AudioWorklet glue), gated by
+  `--features legacy-audio`:
+  - `crates/emulator/src/audio/*`
+  - `crates/emulator/src/io/audio/*`
+
+**Canonical replacement**
+
+- HDA device model + PCM helpers: `crates/aero-audio` (`aero_audio::hda`)
+- virtio-snd device model: `crates/aero-virtio` (`aero_virtio::devices::snd`)
+- AudioWorklet + microphone SharedArrayBuffer bridges: `crates/platform` (`aero_platform::audio::*`)
+- Browser/WASM exports for wiring audio devices into the worker runtime: `crates/aero-wasm`
+
+**Deletion targets (in `crates/emulator`)**
+
+- `src/audio/`
+- `src/io/audio/`
+- Legacy audio benches/tests that require `--features legacy-audio` once equivalent coverage exists
+  in the canonical crates.
 
 ---
 
