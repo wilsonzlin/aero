@@ -13608,15 +13608,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)cacheCode);
 
                 if (mmioFence != 0) {
-                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
-                } else {
                     /*
-                     * We refreshed the cached error payload because something about it changed
-                     * (count/code/fence). If the device did not provide an associated fence
-                     * (ERROR_FENCE==0), explicitly clear the cached fence so powered-down QUERY_ERROR
-                     * calls do not report a stale fence from a prior error.
+                     * Only update the cached fence when the device provides one. If ERROR_FENCE==0,
+                     * leave the cached KMD-side fence value intact (it may be a best-effort fence
+                     * chosen by the ISR path to help associate the error with in-flight work).
                      */
-                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, 0);
+                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
                 }
             }
 
@@ -13643,12 +13640,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 }
                 if (mmioFence != 0) {
                     out->error_fence = (uint64_t)mmioFence;
-                } else if (shouldRefreshCache) {
-                    /*
-                     * New error payload without a fence: avoid reporting a stale cached fence that may
-                     * refer to an unrelated prior error.
-                     */
-                    out->error_fence = 0;
                 }
                 out->error_count = mmioCount;
             }
