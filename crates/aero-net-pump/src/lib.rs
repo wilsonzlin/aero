@@ -35,6 +35,17 @@
 //! let pump = E1000TickPump::new(64, 64);
 //! pump.tick(&mut nic, &mut mem, &mut backend);
 //! ```
+//!
+//! ## Cargo features
+//!
+//! - `virtio-net` (enabled by default): Enables virtio-net pump helpers like [`tick_virtio_net`]
+//!   and [`VirtioNetTickPump`]. This feature pulls in `aero-virtio`.
+//!
+//! Consumers that only need E1000 helpers can opt out of the heavier virtio dependency graph:
+//!
+//! ```toml
+//! aero-net-pump = { path = "../aero-net-pump", default-features = false }
+//! ```
 #![forbid(unsafe_code)]
 
 use aero_net_backend::NetworkBackend;
