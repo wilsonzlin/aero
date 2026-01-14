@@ -281,3 +281,81 @@ fn tier2_shr_count_1_sets_of_from_old_msb() {
     assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
 }
+
+#[test]
+fn tier2_shl_updates_pf_observed_by_jp() {
+    // mov al, 0x03
+    // shl al, 1
+    // jp +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // 0x03 << 1 = 0x06 (0b0000_0110) has even parity => PF=1 => JP taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x03, // mov al, 0x03
+        0xD0, 0xE0, // shl al, 1
+        0x7A, 0x03, // jp +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
+fn tier2_shl_updates_zf_observed_by_jz() {
+    // mov al, 0x00
+    // shl al, 1
+    // jz +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // 0x00 << 1 = 0 => ZF=1 => JZ taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x00, // mov al, 0x00
+        0xD0, 0xE0, // shl al, 1
+        0x74, 0x03, // jz +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
+fn tier2_shl_updates_sf_observed_by_js() {
+    // mov al, 0x40
+    // shl al, 1
+    // js +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // 0x40 << 1 = 0x80 => SF=1 => JS taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x40, // mov al, 0x40
+        0xD0, 0xE0, // shl al, 1
+        0x78, 0x03, // js +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
