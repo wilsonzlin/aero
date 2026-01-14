@@ -3684,15 +3684,48 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     // mis-parsing tag payloads as pending state by preferring tag detection at the expected offset
     // *after* the pending pairs.
     fn known_tag(bytes: &[u8], off: usize) -> bool {
-        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
-            tag == b"DACP"
-                || tag == b"ATRG"
-                || tag == b"DACI"
-                || tag == b"ATST"
-                || tag == b"VREG"
-                || tag == b"EXEC"
-                || tag == b"BVBE"
-        })
+        let Some(tag) = bytes.get(off..off.saturating_add(4)) else {
+            return false;
+        };
+
+        if tag == b"DACP" {
+            const PALETTE_LEN: usize = 256 * 3;
+            const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"ATRG" {
+            const TOTAL_LEN: usize = 4 + 0x20;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"DACI" {
+            const TOTAL_LEN: usize = 4 + (1 + 1 + 1 + 1 + 3);
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"ATST" {
+            const TOTAL_LEN: usize = 4 + 2;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"VREG" {
+            const REG_LEN: usize = 256;
+            const TOTAL_LEN: usize = 4 + (1 + 1 + REG_LEN + 1 + REG_LEN + 1 + REG_LEN);
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"EXEC" {
+            let len_bytes = match bytes.get(off.saturating_add(4)..off.saturating_add(8)) {
+                Some(b) => b,
+                None => return false,
+            };
+            let byte_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                as usize;
+            let payload_end = off.saturating_add(8).saturating_add(byte_len);
+            return bytes.len() >= payload_end;
+        }
+        if tag == b"BVBE" {
+            const PAYLOAD_LEN: usize = 2 + 10 * 2;
+            const TOTAL_LEN: usize = 4 + PAYLOAD_LEN;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        false
     }
     fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
         bytes
@@ -3955,15 +3988,48 @@ fn apply_aerogpu_snapshot_v2(
     // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe and tag-based
     // detection.
     fn known_tag(bytes: &[u8], off: usize) -> bool {
-        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
-            tag == b"DACP"
-                || tag == b"ATRG"
-                || tag == b"DACI"
-                || tag == b"ATST"
-                || tag == b"VREG"
-                || tag == b"EXEC"
-                || tag == b"BVBE"
-        })
+        let Some(tag) = bytes.get(off..off.saturating_add(4)) else {
+            return false;
+        };
+
+        if tag == b"DACP" {
+            const PALETTE_LEN: usize = 256 * 3;
+            const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"ATRG" {
+            const TOTAL_LEN: usize = 4 + 0x20;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"DACI" {
+            const TOTAL_LEN: usize = 4 + (1 + 1 + 1 + 1 + 3);
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"ATST" {
+            const TOTAL_LEN: usize = 4 + 2;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"VREG" {
+            const REG_LEN: usize = 256;
+            const TOTAL_LEN: usize = 4 + (1 + 1 + REG_LEN + 1 + REG_LEN + 1 + REG_LEN);
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        if tag == b"EXEC" {
+            let len_bytes = match bytes.get(off.saturating_add(4)..off.saturating_add(8)) {
+                Some(b) => b,
+                None => return false,
+            };
+            let byte_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                as usize;
+            let payload_end = off.saturating_add(8).saturating_add(byte_len);
+            return bytes.len() >= payload_end;
+        }
+        if tag == b"BVBE" {
+            const PAYLOAD_LEN: usize = 2 + 10 * 2;
+            const TOTAL_LEN: usize = 4 + PAYLOAD_LEN;
+            return bytes.len() >= off.saturating_add(TOTAL_LEN);
+        }
+        false
     }
     fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
         bytes
@@ -18433,6 +18499,65 @@ mod tests {
 
         assert_eq!(vram.pel_mask, pel_mask);
         assert_eq!(vram.dac_palette[0], [7, 8, 9]);
+    }
+
+    #[test]
+    fn decode_aerogpu_snapshot_v1_parses_pending_pairs_without_tags_even_when_pending_lo_looks_like_tag(
+    ) {
+        // If a snapshot contains pending pairs but no tagged trailing sections, `pending_lo` may
+        // still coincidentally match a tag string. Ensure we treat it as a pending field rather
+        // than skipping pending parsing.
+        let scanout_pending_lo = u32::from_le_bytes(*b"DACP");
+        let cursor_pending_lo = 0x1122_3344;
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+
+        // Pending pairs (2 × (pending_lo, pending_flag_u32)).
+        push_u32_le(&mut bytes, scanout_pending_lo);
+        push_u32_le(&mut bytes, 1);
+        push_u32_le(&mut bytes, cursor_pending_lo);
+        push_u32_le(&mut bytes, 0);
+
+        let snap = decode_aerogpu_snapshot_v1(&bytes).expect("snapshot v1 should decode");
+        assert_eq!(snap.bar0.scanout0_fb_gpa_pending_lo, scanout_pending_lo);
+        assert!(snap.bar0.scanout0_fb_gpa_lo_pending);
+        assert_eq!(snap.bar0.cursor_fb_gpa_pending_lo, cursor_pending_lo);
+        assert!(!snap.bar0.cursor_fb_gpa_lo_pending);
+        assert!(snap.vga_dac.is_none());
+    }
+
+    #[test]
+    fn apply_aerogpu_snapshot_v2_parses_pending_pairs_without_tags_even_when_pending_lo_looks_like_tag(
+    ) {
+        let scanout_pending_lo = u32::from_le_bytes(*b"DACP");
+        let cursor_pending_lo = 0x1122_3344;
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_u32_le(&mut bytes, 4096); // page_size
+        push_u32_le(&mut bytes, 0); // page_count
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+
+        push_u32_le(&mut bytes, scanout_pending_lo);
+        push_u32_le(&mut bytes, 1);
+        push_u32_le(&mut bytes, cursor_pending_lo);
+        push_u32_le(&mut bytes, 0);
+
+        let mut vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut bar0 = AeroGpuMmioDevice::default();
+        let restored_dac = apply_aerogpu_snapshot_v2(&bytes, &mut vram, &mut bar0)
+            .expect("snapshot v2 should apply");
+        assert!(!restored_dac, "no DACP tag was provided");
+
+        let regs = bar0.snapshot_v1();
+        assert_eq!(regs.scanout0_fb_gpa_pending_lo, scanout_pending_lo);
+        assert!(regs.scanout0_fb_gpa_lo_pending);
+        assert_eq!(regs.cursor_fb_gpa_pending_lo, cursor_pending_lo);
+        assert!(!regs.cursor_fb_gpa_lo_pending);
     }
 
     #[test]
