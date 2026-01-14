@@ -379,8 +379,12 @@ trample compute-shader state, Aero reserves a fourth bind group:
 - The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
   extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
 - Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
-  args) also live in `@group(3)`, but occupy a reserved binding-number range that does not overlap
-  the D3D register mappings (see “Internal bindings” below).
+  args) are internal to the compute-expansion pipeline. The **target** design places these in
+  `@group(3)` in a reserved binding-number range that does not overlap the D3D register mappings (see
+  “Internal bindings” below).
+  - Note: the current executor’s placeholder compute-prepass uses an ad-hoc bind group layout and
+    does not yet implement this reserved-range scheme; see
+    [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
 
@@ -790,6 +794,12 @@ GS/HS/DS are compiled as compute entry points but keep the normal D3D binding mo
 
 Expansion compute pipelines require additional buffers that are not part of the D3D binding model
 (vertex pulling inputs, scratch outputs, counters, indirect args).
+
+Implementation note: the layout described below is the **target** binding scheme. The current
+executor’s placeholder compute-prepass uses a separate bind group layout for its outputs, and the
+vertex-pulling helper bind group currently occupies `@group(3)` with low-numbered bindings (including
+`@binding(32)`), which overlaps the D3D register binding ranges. This will need to be unified as
+GS/HS/DS bytecode execution lands.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range within the
 reserved internal group (`@group(3)`) to avoid colliding with D3D register mappings.
