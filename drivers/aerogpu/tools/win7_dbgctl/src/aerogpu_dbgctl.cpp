@@ -9594,10 +9594,53 @@ int wmain(int argc, wchar_t **argv) {
     CMD_SELFTEST
   } cmd = CMD_NONE;
 
+  // Pre-scan argv for global JSON flags so we can still emit machine-readable
+  // JSON even if argument parsing fails before we reach `--json`/`--pretty` in
+  // the main parse loop.
+  for (int i = 1; i < argc; ++i) {
+    const wchar_t *a = argv[i];
+    if (!a) {
+      continue;
+    }
+    if (wcscmp(a, L"--pretty") == 0) {
+      g_json_output = true;
+      g_json_pretty = true;
+      continue;
+    }
+    if (wcscmp(a, L"--json") == 0) {
+      g_json_output = true;
+      // Allow "--json <path>" as a convenience/compat form in addition to "--json=<path>".
+      if (i + 1 < argc) {
+        const wchar_t *next = argv[i + 1];
+        // Disambiguate between JSON output path and the next option:
+        // - paths typically start with a drive letter or '\\'
+        // - options use '-' or '/' prefixes
+        if (next && next[0] != L'-' && next[0] != L'/') {
+          g_json_path = next;
+          i += 1;
+        }
+      }
+      continue;
+    }
+    if (wcsncmp(a, L"--json=", 7) == 0) {
+      g_json_output = true;
+      const wchar_t *path = a + 7;
+      if (path && *path) {
+        g_json_path = path;
+      }
+      continue;
+    }
+  }
+
   const auto SetCommand = [&](int newCmd) -> bool {
     if (cmd != CMD_NONE) {
       fwprintf(stderr, L"Multiple commands specified.\n");
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriteTopLevelError(&json, "parse-args", NULL, "Multiple commands specified", STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
+      }
       return false;
     }
     cmd = (decltype(cmd))newCmd;
@@ -9637,6 +9680,10 @@ int wmain(int argc, wchar_t **argv) {
       if (!path || *path == 0) {
         fwprintf(stderr, L"--json=PATH requires a non-empty PATH\n");
         PrintUsage();
+        std::string json;
+        JsonWriteTopLevelError(&json, "parse-args", NULL, "--json=PATH requires a non-empty PATH",
+                               STATUS_INVALID_PARAMETER);
+        WriteJsonToDestination(json);
         return 1;
       }
       g_json_output = true;
@@ -9648,6 +9695,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--display requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--display requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       displayNameOpt = argv[++i];
@@ -9658,6 +9710,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--ring-id requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--ring-id requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       ringId = (uint32_t)wcstoul(argv[++i], NULL, 0);
@@ -9668,6 +9725,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--timeout-ms requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--timeout-ms requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       timeoutMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
@@ -9679,6 +9742,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--size requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--size requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       const wchar_t *arg = argv[++i];
@@ -9686,6 +9754,12 @@ int wmain(int argc, wchar_t **argv) {
       const unsigned long v = wcstoul(arg, &end, 0);
       if (!end || end == arg || *end != 0) {
         fwprintf(stderr, L"Invalid --size value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --size value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       readGpaSizeBytes = (uint32_t)v;
@@ -9696,6 +9770,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--out requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--out requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       const wchar_t *out = argv[++i];
@@ -9708,6 +9787,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--cmd-out requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--cmd-out requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       dumpLastCmdOutPath = argv[++i];
@@ -9718,6 +9802,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--alloc-out requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--alloc-out requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       dumpLastCmdAllocOutPath = argv[++i];
@@ -9734,6 +9824,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--map-shared-handle requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "map-shared-handle", NULL, "--map-shared-handle requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (!SetCommand(CMD_MAP_SHARED_HANDLE)) {
@@ -9744,6 +9840,12 @@ int wmain(int argc, wchar_t **argv) {
       mapSharedHandle = (uint64_t)_wcstoui64(arg, &end, 0);
       if (!end || end == arg || *end != 0) {
         fwprintf(stderr, L"Invalid --map-shared-handle value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --map-shared-handle value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "map-shared-handle", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       continue;
@@ -9753,6 +9855,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--read-gpa requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "read-gpa", NULL, "--read-gpa requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (!SetCommand(CMD_READ_GPA)) {
@@ -9763,6 +9870,12 @@ int wmain(int argc, wchar_t **argv) {
       readGpa = (uint64_t)_wcstoui64(arg, &end, 0);
       if (!end || end == arg || *end != 0) {
         fwprintf(stderr, L"Invalid --read-gpa value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --read-gpa value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "read-gpa", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       continue;
@@ -9772,6 +9885,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--vblank-samples requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--vblank-samples requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       vblankSamples = (uint32_t)wcstoul(argv[++i], NULL, 0);
@@ -9782,6 +9901,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--vblank-interval-ms requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--vblank-interval-ms requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       vblankIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
@@ -9792,6 +9917,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--samples requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--samples requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       watchSamples = (uint32_t)wcstoul(argv[++i], NULL, 0);
@@ -9803,6 +9933,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--interval-ms requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--interval-ms requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       watchIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
@@ -9814,11 +9950,21 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--csv requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--csv requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (createAllocCsvPath) {
         fwprintf(stderr, L"--csv specified multiple times\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--csv specified multiple times", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       createAllocCsvPath = argv[++i];
@@ -9829,6 +9975,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--index-from-tail requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--index-from-tail requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       const wchar_t *arg = argv[++i];
@@ -9836,6 +9988,12 @@ int wmain(int argc, wchar_t **argv) {
       dumpLastCmdIndexFromTail = (uint32_t)wcstoul(arg, &end, 0);
       if (!end || end == arg || *end != 0) {
         fwprintf(stderr, L"Invalid --index-from-tail value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --index-from-tail value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       continue;
@@ -9845,6 +10003,11 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--count requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--count requires an argument", STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       const wchar_t *arg = argv[++i];
@@ -9852,6 +10015,12 @@ int wmain(int argc, wchar_t **argv) {
       const unsigned long v = wcstoul(arg, &end, 0);
       if (!end || end == arg || *end != 0 || v == 0) {
         fwprintf(stderr, L"Invalid --count value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --count value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       dumpLastCmdCount = (uint32_t)v;
@@ -9910,6 +10079,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--dump-scanout-bmp requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "dump-scanout-bmp", NULL, "--dump-scanout-bmp requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (!SetCommand(CMD_DUMP_SCANOUT_BMP)) {
@@ -9922,6 +10097,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--dump-scanout-png requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "dump-scanout-png", NULL, "--dump-scanout-png requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (!SetCommand(CMD_DUMP_SCANOUT_PNG)) {
@@ -9940,6 +10121,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--dump-cursor-bmp requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "dump-cursor-bmp", NULL, "--dump-cursor-bmp requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (!SetCommand(CMD_DUMP_CURSOR_BMP)) {
@@ -9952,6 +10139,12 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--dump-cursor-png requires an argument\n");
         PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "dump-cursor-png", NULL, "--dump-cursor-png requires an argument",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
         return 1;
       }
       if (!SetCommand(CMD_DUMP_CURSOR_PNG)) {

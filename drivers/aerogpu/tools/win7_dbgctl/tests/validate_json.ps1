@@ -42,22 +42,32 @@ function Assert-ValidJson {
 
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status")
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status", "--pretty")
+Assert-ValidJson -ExpectedCommand "list-displays" -Args @("--list-displays")
 Assert-ValidJson -ExpectedCommand "query-fence" -Args @("--query-fence")
+Assert-ValidJson -ExpectedCommand "watch-fence" -Args @("--watch-fence", "--samples", "2", "--interval-ms", "0")
 Assert-ValidJson -ExpectedCommand "query-perf" -Args @("--query-perf")
 Assert-ValidJson -ExpectedCommand "query-scanout" -Args @("--query-scanout")
 Assert-ValidJson -ExpectedCommand "query-cursor" -Args @("--query-cursor")
+Assert-ValidJson -ExpectedCommand "query-umd-private" -Args @("--query-umd-private")
+Assert-ValidJson -ExpectedCommand "query-segments" -Args @("--query-segments")
 Assert-ValidJson -ExpectedCommand "dump-ring" -Args @("--dump-ring", "--ring-id", "0")
-Assert-ValidJson -ExpectedCommand "watch-fence" -Args @("--watch-fence", "--samples", "2", "--interval-ms", "0")
-Assert-ValidJson -ExpectedCommand "watch-ring" -Args @("--watch-ring", "--ring-id", "0", "--samples", "2", "--interval-ms", "1")
+Assert-ValidJson -ExpectedCommand "watch-ring" -Args @("--watch-ring", "--ring-id", "0", "--samples", "1", "--interval-ms", "1")
 Assert-ValidJson -ExpectedCommand "dump-last-cmd" -Args @("--dump-last-cmd", "--cmd-out", "last_cmd_test.bin")
-Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "4", "--out", "read_gpa_test.bin")
+Assert-ValidJson -ExpectedCommand "dump-createalloc" -Args @("--dump-createalloc")
 Assert-ValidJson -ExpectedCommand "dump-vblank" -Args @("--dump-vblank", "--vblank-samples", "1")
 Assert-ValidJson -ExpectedCommand "query-scanline" -Args @("--query-scanline", "--vblank-samples", "1", "--vblank-interval-ms", "0")
 Assert-ValidJson -ExpectedCommand "wait-vblank" -Args @("--wait-vblank", "--vblank-samples", "2", "--timeout-ms", "200")
+Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "4", "--out", "read_gpa_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-scanout-bmp" -Args @("--dump-scanout-bmp", "scanout_test.bmp")
 Assert-ValidJson -ExpectedCommand "dump-scanout-png" -Args @("--dump-scanout-png", "scanout_test.png")
 Assert-ValidJson -ExpectedCommand "dump-cursor-bmp" -Args @("--dump-cursor-bmp", "cursor_test.bmp")
 Assert-ValidJson -ExpectedCommand "dump-cursor-png" -Args @("--dump-cursor-png", "cursor_test.png")
+
+# Parse errors should still return machine-readable JSON if `--json` is present.
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--query-fence")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "nope", "--read-gpa", "0x0")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-createalloc", "--csv", "a.csv", "--csv", "b.csv")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--json=")
 
 Write-Host "OK: dbgctl JSON output parsed successfully"
 
