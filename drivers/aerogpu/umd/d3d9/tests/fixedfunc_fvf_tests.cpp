@@ -2956,6 +2956,165 @@ bool TestApplyStateBlockSamplerStateCapturesRedundantSet() {
   return true;
 }
 
+bool TestApplyStateBlockVertexDeclCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "pfnCreateVertexDecl is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "pfnSetVertexDecl is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Decl A: XYZRHW|DIFFUSE (positionT + color).
+  const D3DVERTEXELEMENT9_COMPAT decl_a_blob[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDeclA{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_a_blob, static_cast<uint32_t>(sizeof(decl_a_blob)), &hDeclA);
+  if (!Check(hr == S_OK, "CreateVertexDecl(A=XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+  cleanup.vertex_decls.push_back(hDeclA);
+
+  // Decl B: XYZRHW|TEX1 (positionT + texcoord0).
+  const D3DVERTEXELEMENT9_COMPAT decl_b_blob[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDeclB{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_b_blob, static_cast<uint32_t>(sizeof(decl_b_blob)), &hDeclB);
+  if (!Check(hr == S_OK, "CreateVertexDecl(B=XYZRHW|TEX1)")) {
+    return false;
+  }
+  cleanup.vertex_decls.push_back(hDeclB);
+
+  auto* decl_a = reinterpret_cast<VertexDecl*>(hDeclA.pDrvPrivate);
+  auto* decl_b = reinterpret_cast<VertexDecl*>(hDeclB.pDrvPrivate);
+  if (!Check(decl_a != nullptr && decl_b != nullptr, "vertex decl pointers")) {
+    return false;
+  }
+
+  const aerogpu_handle_t decl_a_handle = decl_a->handle;
+  if (!Check(decl_a_handle != 0, "decl A handle non-zero")) {
+    return false;
+  }
+
+  // Seed decl A so a redundant SetVertexDecl(A) within Begin/EndStateBlock still
+  // needs to be captured for state block semantics.
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDeclA);
+  if (!Check(hr == S_OK, "SetVertexDecl(A) seed")) {
+    return false;
+  }
+
+  // Record redundant SetVertexDecl(A).
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(vertex decl redundant)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDeclA);
+  if (!Check(hr == S_OK, "SetVertexDecl(A) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(vertex decl redundant)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Switch to decl B so applying the state block must restore decl A.
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDeclB);
+  if (!Check(hr == S_OK, "SetVertexDecl(B) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(vertex decl redundant)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vertex_decl == decl_a, "ApplyStateBlock restores vertex decl A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->fvf == kFvfXyzrhwDiffuse, "ApplyStateBlock restores implied FVF for decl A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock vertex decl)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_INPUT_LAYOUT) == 0, "ApplyStateBlock emits no CREATE_INPUT_LAYOUT")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_decl = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_input_layout)) {
+      continue;
+    }
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == decl_a_handle) {
+      saw_decl = true;
+      break;
+    }
+  }
+  if (!Check(saw_decl, "ApplyStateBlock emits SET_INPUT_LAYOUT for decl A")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -21240,6 +21399,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockSamplerStateCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockVertexDeclCapturesRedundantSet()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
