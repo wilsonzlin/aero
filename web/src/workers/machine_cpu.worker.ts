@@ -2009,13 +2009,17 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       }
       const fn =
         (m as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
-        (m as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs;
+        (m as unknown as { snapshotFullToOpfs?: unknown }).snapshotFullToOpfs ??
+        (m as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs ??
+        (m as unknown as { snapshotDirtyToOpfs?: unknown }).snapshotDirtyToOpfs;
       if (typeof fn === "function") {
         await maybeAwait((fn as (path: string) => unknown).call(m, op.path));
       } else {
         const snapBytesFn =
           (m as unknown as { snapshot_full?: unknown }).snapshot_full ??
-          (m as unknown as { snapshot_dirty?: unknown }).snapshot_dirty;
+          (m as unknown as { snapshotFull?: unknown }).snapshotFull ??
+          (m as unknown as { snapshot_dirty?: unknown }).snapshot_dirty ??
+          (m as unknown as { snapshotDirty?: unknown }).snapshotDirty;
         if (typeof snapBytesFn !== "function") {
           throw new Error("Machine snapshot exports are unavailable in this WASM build.");
         }
@@ -2062,7 +2066,9 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       if (!vmSnapshotPaused) {
         throw new Error("VM is not paused; call vm.snapshot.pause before restoring.");
       }
-      const restoreFromOpfs = (m as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs;
+      const restoreFromOpfs =
+        (m as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs ??
+        (m as unknown as { restoreSnapshotFromOpfs?: unknown }).restoreSnapshotFromOpfs;
       if (typeof restoreFromOpfs === "function") {
         await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
       } else {
@@ -2081,7 +2087,9 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
     }
 
     if (op.kind === "machine.restoreFromOpfs") {
-      const restoreFromOpfs = (m as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs;
+      const restoreFromOpfs =
+        (m as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs ??
+        (m as unknown as { restoreSnapshotFromOpfs?: unknown }).restoreSnapshotFromOpfs;
       if (typeof restoreFromOpfs === "function") {
         await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
       } else {

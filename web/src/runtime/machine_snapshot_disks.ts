@@ -96,13 +96,17 @@ export async function reattachMachineSnapshotDisks(opts: {
   // Prefer the Rust-side helper when available: it understands the canonical Win7 `disk_id` mapping,
   // can reopen both raw disk images and COW overlays, and does not require JS to know the
   // `overlayBlockSizeBytes` used when creating an aerosparse overlay.
-  const reattachFromOpfs = (machine as unknown as { reattach_restored_disks_from_opfs?: unknown }).reattach_restored_disks_from_opfs;
+  const reattachFromOpfs =
+    (machine as unknown as { reattach_restored_disks_from_opfs?: unknown }).reattach_restored_disks_from_opfs ??
+    (machine as unknown as { reattachRestoredDisksFromOpfs?: unknown }).reattachRestoredDisksFromOpfs;
   if (typeof reattachFromOpfs === "function") {
     await callMaybeAsync(reattachFromOpfs as (...args: unknown[]) => unknown, machine, []);
     return;
   }
 
-  const take = (machine as unknown as { take_restored_disk_overlays?: unknown }).take_restored_disk_overlays;
+  const take =
+    (machine as unknown as { take_restored_disk_overlays?: unknown }).take_restored_disk_overlays ??
+    (machine as unknown as { takeRestoredDiskOverlays?: unknown }).takeRestoredDiskOverlays;
   if (typeof take !== "function") return;
 
   const raw = (take as () => unknown).call(machine);
@@ -365,7 +369,9 @@ export async function restoreMachineSnapshotFromOpfsAndReattachDisks(opts: {
   const prefix = formatPrefix(opts.logPrefix);
   const machine = opts.machine;
 
-  const restore = (machine as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs;
+  const restore =
+    (machine as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs ??
+    (machine as unknown as { restoreSnapshotFromOpfs?: unknown }).restoreSnapshotFromOpfs;
   if (typeof restore !== "function") {
     throw new Error(`${prefix} Machine.restore_snapshot_from_opfs(path) is unavailable in this WASM build.`);
   }
@@ -386,7 +392,9 @@ export async function restoreMachineSnapshotAndReattachDisks(opts: {
   const prefix = formatPrefix(opts.logPrefix);
   const machine = opts.machine;
 
-  const restore = (machine as unknown as { restore_snapshot?: unknown }).restore_snapshot;
+  const restore =
+    (machine as unknown as { restore_snapshot?: unknown }).restore_snapshot ??
+    (machine as unknown as { restoreSnapshot?: unknown }).restoreSnapshot;
   if (typeof restore !== "function") {
     throw new Error(`${prefix} Machine.restore_snapshot(bytes) is unavailable in this WASM build.`);
   }
