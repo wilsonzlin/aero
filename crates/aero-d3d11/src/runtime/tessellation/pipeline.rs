@@ -95,9 +95,9 @@ impl TessellationPipelines {
             cfg,
         };
 
-        if !self.vs_as_compute.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.vs_as_compute.entry(key) {
             let pipeline = VsAsComputePipeline::new(device, vertex_pulling, cfg)?;
-            self.vs_as_compute.insert(key, pipeline);
+            e.insert(pipeline);
         }
 
         Ok(self
