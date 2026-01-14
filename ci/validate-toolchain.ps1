@@ -307,7 +307,7 @@ try {
   # "extra" files found under the package directory tree, or only INF-referenced
   # payload files).
   $extraRelDir = Join-Path "tools" (Join-Path "win7_dbgctl" "bin")
-  $extraFileName = "aero_inf2cat_extra_tool.exe"
+  $extraFileName = "aero_extra_payload_dbgctl.exe"
   $extraRelPath = Join-Path $extraRelDir $extraFileName
   $extraAbsDir = Join-Path $pkgDir $extraRelDir
   New-Item -ItemType Directory -Force -Path $extraAbsDir | Out-Null
@@ -435,20 +435,24 @@ DiskName="Aero Dummy Install Disk"
   }
 
   Write-Host ""
-  Write-Host "== Inf2Cat catalog contents experiment (unreferenced extra file) =="
+  Write-Host "== Inf2Cat catalog hashing behavior (unreferenced extra file) =="
   Write-Host "Extra file NOT referenced by INF: $extraRelPath"
   Write-Host "Extra file absolute path:         $extraAbsPath"
 
   # We expect exactly one catalog from this single-INF dummy package, but keep the
   # logic generic in case Inf2Cat produces multiple catalogs in some environments.
   $extraFoundInAnyCat = $false
+  $referencedFoundInAnyCat = $false
+  $referencedFileName = "aero_dummy.sys"
   $certutilAvailable = $null -ne (Get-Command certutil.exe -ErrorAction SilentlyContinue)
 
   foreach ($cat in $catFiles) {
     $certutilDumpPath = Join-Path $LogDir ("certutil-dump-" + $cat.BaseName + ".txt")
 
-    $foundInThisCat = $false
-    $foundBy = @()
+    $extraFoundInThisCat = $false
+    $extraFoundBy = @()
+    $referencedFoundInThisCat = $false
+    $referencedFoundBy = @()
 
     if ($certutilAvailable) {
       try {
@@ -456,14 +460,26 @@ DiskName="Aero Dummy Install Disk"
         $dumpLines | Set-Content -LiteralPath $certutilDumpPath -Encoding UTF8
         $dumpText = $dumpLines -join "`n"
 
-        $patterns = @(
+        $extraPatterns = @(
           $extraFileName,
           $extraRelPath.Replace('/', '\')
-        )
-        foreach ($p in $patterns) {
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        foreach ($p in $extraPatterns) {
           if (-not [string]::IsNullOrWhiteSpace($p) -and ($dumpText -match [regex]::Escape($p))) {
-            $foundInThisCat = $true
-            $foundBy += "certutil"
+            $extraFoundInThisCat = $true
+            $extraFoundBy += "certutil"
+            break
+          }
+        }
+
+        $refPatterns = @(
+          $referencedFileName,
+          $referencedFileName.ToUpperInvariant()
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        foreach ($p in $refPatterns) {
+          if (-not [string]::IsNullOrWhiteSpace($p) -and ($dumpText -match [regex]::Escape($p))) {
+            $referencedFoundInThisCat = $true
+            $referencedFoundBy += "certutil"
             break
           }
         }
@@ -478,11 +494,16 @@ DiskName="Aero Dummy Install Disk"
     # file names are typically embedded as strings (often UTF-16LE).
     try {
       $catBytes = [System.IO.File]::ReadAllBytes($cat.FullName)
-      $bytePatterns = @(
+      $extraBytePatterns = @(
         $extraFileName,
         $extraFileName.ToUpperInvariant(),
         $extraRelPath.Replace('/', '\'),
         $extraRelPath.Replace('/', '\').ToUpperInvariant()
+      ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+      $refBytePatterns = @(
+        $referencedFileName,
+        $referencedFileName.ToUpperInvariant()
       ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
       $encodings = @(
@@ -491,35 +512,56 @@ DiskName="Aero Dummy Install Disk"
         [System.Text.Encoding]::Unicode
       )
 
-      foreach ($p in $bytePatterns) {
+      foreach ($p in $extraBytePatterns) {
         foreach ($enc in $encodings) {
           $needle = $enc.GetBytes($p)
           if (Test-ByteSubsequence -Haystack $catBytes -Needle $needle) {
-            $foundInThisCat = $true
-            $foundBy += "raw-bytes:$($enc.WebName)"
+            $extraFoundInThisCat = $true
+            $extraFoundBy += "raw-bytes:$($enc.WebName)"
             break
           }
         }
-        if ($foundInThisCat) { break }
+        if ($extraFoundInThisCat) { break }
+      }
+
+      foreach ($p in $refBytePatterns) {
+        foreach ($enc in $encodings) {
+          $needle = $enc.GetBytes($p)
+          if (Test-ByteSubsequence -Haystack $catBytes -Needle $needle) {
+            $referencedFoundInThisCat = $true
+            $referencedFoundBy += "raw-bytes:$($enc.WebName)"
+            break
+          }
+        }
+        if ($referencedFoundInThisCat) { break }
       }
     } catch {
       Write-Warning "Failed to scan raw catalog bytes for '$($cat.FullName)': $($_.Exception.Message)"
     }
 
-    $foundBy = $foundBy | Select-Object -Unique
-    $resultText = if ($foundInThisCat) { "YES" } else { "NO" }
-    $methodsText = if ($foundBy.Count -gt 0) { $foundBy -join ", " } else { "(none)" }
+    if ($extraFoundInThisCat) { $extraFoundInAnyCat = $true }
+    if ($referencedFoundInThisCat) { $referencedFoundInAnyCat = $true }
+
+    $extraFoundBy = $extraFoundBy | Select-Object -Unique
+    $extraResultText = if ($extraFoundInThisCat) { "YES" } else { "NO" }
+    $extraMethodsText = if ($extraFoundBy.Count -gt 0) { $extraFoundBy -join ", " } else { "(none)" }
+
+    $referencedFoundBy = $referencedFoundBy | Select-Object -Unique
+    $refResultText = if ($referencedFoundInThisCat) { "YES" } else { "NO" }
+    $refMethodsText = if ($referencedFoundBy.Count -gt 0) { $referencedFoundBy -join ", " } else { "(none)" }
 
     Write-Host "Catalog: $($cat.Name)"
     if ($certutilAvailable) {
       Write-Host "  certutil dump: $certutilDumpPath"
     }
-    Write-Host "  Extra file name present in catalog contents: $resultText"
-    Write-Host "  Detection method(s): $methodsText"
+    Write-Host "  Referenced file name present in catalog contents ($referencedFileName): $refResultText"
+    Write-Host "  Referenced detection method(s): $refMethodsText"
+    Write-Host "  Extra file name present in catalog contents ($extraFileName): $extraResultText"
+    Write-Host "  Extra detection method(s): $extraMethodsText"
+  }
 
-    if ($foundInThisCat) {
-      $extraFoundInAnyCat = $true
-    }
+  if (-not $referencedFoundInAnyCat) {
+    throw "Unable to locate expected referenced file name '$referencedFileName' inside the generated catalog(s). The catalog scanning logic may be broken."
   }
 
   $conclusion = if ($extraFoundInAnyCat) { "YES" } else { "NO" }
@@ -527,6 +569,14 @@ DiskName="Aero Dummy Install Disk"
   Write-Host "== Conclusion =="
   Write-Host "Inf2Cat includes unreferenced extra files in the generated catalog: $conclusion"
   Write-Host "INF2CAT_UNREFERENCED_FILE_HASHED=$([int]$extraFoundInAnyCat)"
+
+  $expectExtraInCatalog = $false
+  if ($extraFoundInAnyCat -ne $expectExtraInCatalog) {
+    $state = if ($extraFoundInAnyCat) { "WAS" } else { "was NOT" }
+    throw "Unexpected Inf2Cat behavior change: unreferenced extra file '$extraFileName' $state found in the generated catalog(s). This smoke test locks down whether non-INF-referenced files are covered by the catalog signature."
+  }
+
+  Write-Host "Catalog inclusion of unreferenced file '$extraFileName': $extraFoundInAnyCat (expected: $expectExtraInCatalog)"
 
   $artifactPkgDir = Join-Path $LogDir "dummy-driver-package"
   Copy-Item -Path $pkgDir -Destination $artifactPkgDir -Recurse -Force

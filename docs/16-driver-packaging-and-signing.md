@@ -112,31 +112,38 @@ The script will copy the requested `WdfCoInstaller*.dll` into `out/packages/<dri
 
 `ci/make-catalogs.ps1` runs `Inf2Cat` in each staged package directory to generate `.cat` files. If a coinstaller DLL is present and referenced by the driver’s INF, Inf2Cat will hash it into the generated catalog.
 
-### Important: extra files in the package directory may be hashed too
+### Inf2Cat hashing scope (unreferenced extra files)
 
-`Inf2Cat` is invoked against the *package directory* (`/driver:<dir>`). Whether it hashes only **INF-referenced** payload files or also hashes **extra** files found under the package directory tree is a toolchain detail we validate in CI.
+`Inf2Cat` is invoked against the *package directory* (`/driver:<dir>`), but catalog membership is driven by the INF: the generated `.cat` includes the **INF and INF-referenced payload files**.
 
-CI validates the current toolchain’s behaviour in `ci/validate-toolchain.ps1` by:
+Files that are present under the package directory but **not referenced by any INF** (for example helper tools) are **not** included in the catalog, and therefore are **not protected by the `.cat` signature**.
 
-- generating a dummy driver package (INF + SYS),
-- adding an *unreferenced* extra file under a subdirectory (e.g. `tools/extra/aero_inf2cat_extra_tool.exe`),
-- running `Inf2Cat /os:7_X86,7_X64`,
-- dumping the resulting `.cat` and checking whether the extra filename appears in the catalog’s member list.
+CI locks down this behaviour in `ci/validate-toolchain.ps1` by staging a dummy package and an unreferenced sentinel payload file under a subdirectory (currently: `tools/win7_dbgctl/bin/aero_extra_payload_dbgctl.exe`), then dumping/scanning the generated `.cat` to ensure the file name is **absent**. The script prints:
 
-The workflow logs print a stable summary line:
+- `INF2CAT_UNREFERENCED_FILE_HASHED=0` (expected; CI fails if this ever changes).
 
-- `INF2CAT_UNREFERENCED_FILE_HASHED=0`: unreferenced extra files are **not** cataloged (catalog membership is limited to INF-referenced payload files and the INF itself).
-- `INF2CAT_UNREFERENCED_FILE_HASHED=1`: unreferenced extra files **are** cataloged (extra files under the package directory tree are included in the `.cat` member list).
-
-**Practical rule:** treat the staged package directory as immutable after catalog generation. If you add, modify, or post-process any files that are hashed into the catalog, you must regenerate and re-sign the `.cat`.
-
-For packaged helper tools (for example `aerogpu_dbgctl.exe` staged as `tools/aerogpu_dbgctl.exe`), ensure they are built/copied into the staging directory **before** running `ci/make-catalogs.ps1`.
+Practical rule: treat the staged package directory as immutable after catalog generation + signing. If you add, modify, or post-process any files that are hashed into the catalog (INF + INF-referenced payloads), you must regenerate and re-sign the `.cat`. Extra unreferenced tools are not cataloged, so changing them does not affect driver installation signature checks (but also isn't protected by the catalog; see below).
 
 Signing is handled by `ci/sign-drivers.ps1` (which uses `signtool` to sign `.sys` drivers and `.cat` catalogs):
 
 ```powershell
 .\ci\sign-drivers.ps1
 ```
+
+### What files are covered by the catalog signature?
+
+`Inf2Cat` catalogs **cover the INF and the files referenced by the INF** (for example via `CopyFiles` / `SourceDisksFiles`).
+
+Files that are merely *present in the package directory* but **not referenced by any INF** are **not** included in the catalog, and therefore are **not protected by the `.cat` signature**.
+
+Implications:
+
+- If you modify an extra tool binary like `aerogpu_dbgctl.exe` *after* the driver package has been signed, it **will not** break driver installation / PnP signature checks, because it is not part of the signed catalog in the first place.
+- However, this also means the tool’s bytes are **not tamper-evident via the driver catalog**. If you need integrity/authenticity for such tools, you must:
+  - Authenticode-sign the `.exe` separately, and/or
+  - reference it from an INF (so Inf2Cat includes it in the catalog).
+
+This repo locks down the current Inf2Cat behavior via a CI smoke test in `ci/validate-toolchain.ps1`, which creates a dummy package with a distinctive unreferenced payload file and asserts that the filename does **not** appear in the generated `.cat`. If a future WDK update changes this behavior, CI will fail and the packaging assumptions/docs must be revisited.
 
 ---
 
