@@ -481,10 +481,11 @@ Implementation notes (bring-up):
   - For `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
     variant. When `D3DRS_LIGHTING` is enabled, it uses the lit variant and uploads a reserved lighting constant block
     (`c244..c253`) via `ensure_fixedfunc_lighting_constants_locked()`.
-  - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
-    fixed-function and programmable paths.
-    - Even so, when switching back to fixed-function WVP vertex shaders the UMD forces a re-upload (`fixedfunc_matrix_dirty`)
-      since user shaders may have written overlapping VS constant registers.
+  - The reserved constant ranges are intentionally high so they are unlikely to collide with app/user shader constants when
+    switching between fixed-function and programmable paths.
+    - Even so, when switching back to fixed-function WVP (and lit `NORMAL` variants) the UMD forces a re-upload
+      (`fixedfunc_matrix_dirty` / `fixedfunc_lighting_dirty`) since user shaders may have written overlapping VS constant
+      registers.
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
