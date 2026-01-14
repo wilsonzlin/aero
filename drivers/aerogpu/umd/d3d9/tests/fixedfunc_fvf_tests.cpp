@@ -1899,6 +1899,95 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   return true;
 }
 
+bool TestFvfXyzrhwDiffuseLightingEnabledStillDraws() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFF0000FFu},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE; lighting=on)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosColor),
+               "XYZRHW|DIFFUSE uses kVsPassthroughPosColor even when lighting is enabled")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZRHW|DIFFUSE; lighting=on)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS emitted")) {
+    return false;
+  }
+  for (const auto* hdr : binds) {
+    const auto* bs = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+    if (!Check(bs->vs != 0 && bs->ps != 0, "BIND_SHADERS binds non-zero VS/PS")) {
+      return false;
+    }
+  }
+
+  // Sanity-check that fixed-function lighting constant uploads are not emitted for
+  // pre-transformed XYZRHW vertices (D3DRS_LIGHTING is ignored).
+  bool saw_lighting_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 244u && sc->vec4_count == 10u) {
+      saw_lighting_constants = true;
+      break;
+    }
+  }
+  if (!Check(!saw_lighting_constants, "XYZRHW draws do not upload fixed-function lighting constants")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -7281,6 +7370,9 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
 
 int main() {
   if (!aerogpu::TestFvfXyzrhwDiffuseEmitsSaneCommands()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzrhwDiffuseLightingEnabledStillDraws()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseEmitsInputLayoutAndShaders()) {

@@ -5672,11 +5672,16 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
   const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
+  const bool fvf_xyzrhw = fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   // MVP behavior: if the app requests fixed-function lighting but the active FVF
   // does not carry normals, fail cleanly instead of silently falling back to the
   // unlit shader variants.
-  if (lighting_enabled && !fixedfunc_fvf_has_normal(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  //
+  // Note: pre-transformed vertices (D3DFVF_XYZRHW*) are already lit; D3DRS_LIGHTING
+  // is ignored by D3D9 for these FVFs, so do not reject them just because lighting
+  // happens to be enabled.
+  if (lighting_enabled && !fvf_xyzrhw && !fixedfunc_fvf_has_normal(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     return D3DERR_INVALIDCALL;
   }
 
