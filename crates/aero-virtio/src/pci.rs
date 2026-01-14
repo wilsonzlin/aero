@@ -2463,6 +2463,77 @@ mod tests {
     }
 
     #[test]
+    fn config_interrupt_msix_pending_delivers_after_programming_entry() {
+        let state = Rc::new(RefCell::new(TestInterruptState::default()));
+        let mut pci = VirtioPciDevice::new(
+            Box::new(CountingDevice::new(0)),
+            Box::new(TestInterrupts {
+                state: state.clone(),
+            }),
+        );
+        // BAR0 MSI-X programming is performed via MMIO, which is gated by PCI COMMAND.MEM.
+        pci.set_pci_command(1u16 << 1);
+
+        enable_msix(&mut pci);
+
+        // Use table entry 0 for config interrupts, but leave the table entry at its reset state
+        // (addr=0) so delivery is blocked and the PBA pending bit is latched.
+        pci.msix_config_vector = 0;
+
+        pci.signal_config_interrupt();
+        assert!(!pci.irq_level());
+
+        {
+            let state = state.borrow();
+            assert_eq!(state.legacy_raise_count, 0);
+            assert!(state.msix_messages.is_empty());
+        }
+
+        let mut pba = [0u8; 8];
+        pci.config
+            .capability_mut::<MsixCapability>()
+            .unwrap()
+            .pba_read(0, &mut pba);
+        assert_eq!(u64::from_le_bytes(pba) & 1, 1);
+
+        // Complete MSI-X table entry programming via BAR0 MMIO. Program the data first so delivery
+        // uses the intended message payload once the address becomes valid.
+        let table_base = u64::from(
+            pci.config
+                .capability::<MsixCapability>()
+                .expect("missing MSI-X capability")
+                .table_offset(),
+        );
+        let entry0 = table_base;
+
+        // Data: vector 0x46.
+        pci.bar0_write(entry0 + 0x08, &0x0046u32.to_le_bytes());
+        // Pending must not deliver yet because the address is still invalid.
+        assert!(state.borrow().msix_messages.is_empty());
+
+        // Address: valid xAPIC MSI window.
+        pci.bar0_write(entry0 + 0x00, &0xfee0_0000u32.to_le_bytes());
+        pci.bar0_write(entry0 + 0x04, &0u32.to_le_bytes());
+
+        let state = state.borrow();
+        assert_eq!(state.legacy_raise_count, 0);
+        assert_eq!(
+            state.msix_messages,
+            vec![MsiMessage {
+                address: 0xFEE0_0000,
+                data: 0x0046
+            }]
+        );
+        drop(state);
+
+        pci.config
+            .capability_mut::<MsixCapability>()
+            .unwrap()
+            .pba_read(0, &mut pba);
+        assert_eq!(u64::from_le_bytes(pba) & 1, 0);
+    }
+
+    #[test]
     fn config_interrupt_msix_enabled_with_masked_entry_is_suppressed() {
         let state = Rc::new(RefCell::new(TestInterruptState::default()));
         let mut pci = VirtioPciDevice::new(
