@@ -281,6 +281,14 @@ static void test_multivector_mapping(void)
     assert(ctx.drain_calls_by_queue[0] == 1);
     assert(ctx.drain_calls_by_queue[1] == 0);
 
+    /* Vector 2: queue 1 only. */
+    assert(WdkTestTriggerMessageInterrupt(msix.MessageInfo, 2) != FALSE);
+    assert(WdkTestRunQueuedDpc(&msix.Vectors[2].Dpc) != FALSE);
+    assert(ctx.config_calls == 1);
+    assert(ctx.drain_calls == 2);
+    assert(ctx.drain_calls_by_queue[0] == 1);
+    assert(ctx.drain_calls_by_queue[1] == 1);
+
     VirtioMsixDisconnect(&msix);
 }
 
