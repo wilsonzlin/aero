@@ -5516,11 +5516,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       Shader* prev_ps = dev->ps;
       dev->vs = *vs_slot;
       dev->ps = *ps_slot;
-      if (needs_matrix) {
-        // User shaders may have touched the constant registers while fixed-function
-        // was inactive. Force a re-upload when we bind our internal WVP shader.
-        dev->fixedfunc_matrix_dirty = true;
-      }
+      // Do not force `fixedfunc_matrix_dirty` here: other entrypoints already
+      // mark the matrix constants dirty on relevant state changes (SetFVF /
+      // SetVertexDecl, SetTransform/MultiplyTransform, user shader/constant
+      // writes that overlap the reserved range). Forcing it here can cause
+      // redundant WVP uploads because SetTransform may have already updated the
+      // fixed-function constant range eagerly.
       if (!emit_bind_shaders_locked(dev)) {
         dev->vs = prev_vs;
         dev->ps = prev_ps;
