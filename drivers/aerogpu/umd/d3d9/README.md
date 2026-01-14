@@ -614,8 +614,9 @@ Current behavior is intentionally bring-up level, with two paths:
   - Destination stride: some runtimes/header vintages pass `DestStride == 0` (or omit the field entirely). In this case,
     the UMD infers the effective destination vertex stride from **stream 0** of `hVertexDecl` when possible; if it cannot
     be inferred, it falls back to the currently-bound stream 0 stride.
-  - for `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce
-    `XYZRHW` (for `D3DFVF_XYZW*` the input `w` is respected), and
+  - for `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs: applies a CPU-side **World/View/Projection + viewport (x/y)** transform to
+    produce `XYZRHW` (for `D3DFVF_XYZW*` the input `w` is respected; output `z` remains D3D9 NDC depth `0..1` and does not
+    apply viewport `MinZ`/`MaxZ`), and
   - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space).
 
   Unless `D3DPV_DONOTCOPYDATA` is set, the UMD clears the full destination vertex (`DestStride` bytes) before writing

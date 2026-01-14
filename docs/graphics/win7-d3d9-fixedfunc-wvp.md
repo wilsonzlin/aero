@@ -52,6 +52,7 @@ Conversion details (bring-up):
 - Uses the current D3D9 viewport (`X`, `Y`, `Width`, `Height`) and inverts the D3D9 `-0.5` pixel center convention
   (`x/y` are treated as pixel-center coordinates).
 - Uses `w = 1/rhw` (with a safe fallback when `rhw==0`) and writes `clip.xyzw = {ndc.x*w, ndc.y*w, z*w, w}`.
+- `z` is treated as D3D9 NDC depth (`0..1`); viewport `MinZ`/`MaxZ` are currently ignored.
 
 This is used by the fixed-function FVFs:
 
@@ -72,8 +73,9 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - Destination stride: when `DestStride` is present but 0 (or absent in older header vintages), the UMD infers the
     effective stride from **stream 0** of `hVertexDecl` when possible, otherwise falling back to the currently-bound stream
     0 stride.
-  - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes
-    `XYZRHW` (screen space). For `D3DFVF_XYZW*`, the input `w` component is respected.
+  - For `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport
+    transform for `x/y`, and writes `XYZRHW` (screen space). For `D3DFVF_XYZW*`, the input `w` component is respected.
+    - `z` stays in D3D9 NDC depth (`0..1`); viewport `MinZ`/`MaxZ` are currently ignored.
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
   - `D3DPV_DONOTCOPYDATA` (`ProcessVertices.Flags & 0x1`) controls whether non-position elements are written:
     - When set, the UMD writes **only** the output position (`POSITIONT` float4) and preserves all other destination bytes
