@@ -152,6 +152,7 @@ impl Tier2WasmCodegen {
 
         let mut has_load_mem = false;
         let mut has_store_mem = false;
+        let mut needs_fast_path = false;
         let mut uses_read_u8 = false;
         let mut uses_read_u16 = false;
         let mut uses_read_u32 = false;
@@ -191,8 +192,44 @@ impl Tier2WasmCodegen {
 
         let has_mem_ops = has_load_mem || has_store_mem;
         let mut options = options;
-        // Enabling the inline-TLB fast-path only matters if the trace performs memory accesses.
-        options.inline_tlb &= has_mem_ops;
+        // Enabling the inline-TLB fast-path only matters if the trace performs memory accesses and
+        // contains at least one access that can actually take the fast path.
+        //
+        // Some traces consist solely of constant cross-page loads/stores which always fall back to
+        // the slow helpers for correctness; in that case we can omit the `mmu_translate` import and
+        // the inline-TLB locals entirely.
+        if has_mem_ops && options.inline_tlb {
+            let always_cross_page = |addr: Operand, size_bytes: u32| -> bool {
+                if size_bytes <= 1 {
+                    return false;
+                }
+                let Operand::Const(addr) = addr else {
+                    return false;
+                };
+                let cross_limit =
+                    PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
+                (addr & PAGE_OFFSET_MASK) > cross_limit
+            };
+
+            for inst in trace.iter_instrs() {
+                match *inst {
+                    Instr::LoadMem { addr, width, .. } | Instr::StoreMem { addr, width, .. } => {
+                        let size_bytes = match width {
+                            Width::W8 => 1u32,
+                            Width::W16 => 2u32,
+                            Width::W32 => 4u32,
+                            Width::W64 => 8u32,
+                        };
+                        if !always_cross_page(addr, size_bytes) {
+                            needs_fast_path = true;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        options.inline_tlb &= has_mem_ops && needs_fast_path;
 
         let needs_code_page_version_import =
             options.code_version_guard_import && has_code_version_guards;
