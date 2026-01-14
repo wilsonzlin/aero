@@ -431,7 +431,7 @@ A permissive starting point for a single app origin:
     "AllowedOrigins": ["https://app.example.com"],
     "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
     "AllowedHeaders": ["Range", "If-Range", "If-None-Match", "If-Modified-Since", "Authorization", "Content-Type", "Origin"],
-    "ExposeHeaders": ["Accept-Ranges", "Content-Range", "Content-Length", "ETag"],
+    "ExposeHeaders": ["Accept-Ranges", "Content-Range", "Content-Length", "ETag", "Content-Encoding"],
     "MaxAgeSeconds": 86400
   }
 ]

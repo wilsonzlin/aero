@@ -127,6 +127,7 @@ variable "cors_expose_headers" {
   type        = list(string)
   default = [
     "Accept-Ranges",
+    "Content-Encoding",
     "Content-Length",
     "Content-Range",
     "ETag",

@@ -337,6 +337,7 @@ If you must fetch cross-origin from S3 (directly or via a CDN that forwards pref
     <ExposeHeader>Accept-Ranges</ExposeHeader>
     <ExposeHeader>Content-Range</ExposeHeader>
     <ExposeHeader>Content-Length</ExposeHeader>
+    <ExposeHeader>Content-Encoding</ExposeHeader>
     <ExposeHeader>ETag</ExposeHeader>
     <ExposeHeader>Last-Modified</ExposeHeader>
     <MaxAgeSeconds>86400</MaxAgeSeconds>
@@ -365,6 +366,7 @@ If you must fetch cross-origin from S3 (directly or via a CDN that forwards pref
         "Accept-Ranges",
         "Content-Range",
         "Content-Length",
+        "Content-Encoding",
         "ETag",
         "Last-Modified"
       ],
