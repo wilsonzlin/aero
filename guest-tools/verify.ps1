@@ -830,16 +830,17 @@ function Read-TextFileWithEncodingDetectionEx([string]$path) {
         $encName = "utf-16be-bom"
     } else {
         # BOM-less heuristic for UTF-16.
-        if (($bytes.Length % 2) -eq 0 -and $bytes.Length -ge 2) {
+        if ($bytes.Length -ge 2) {
             $evenZero = 0
             $oddZero = 0
 
             # Sample up to 4KiB for speed; INF files are small but keep this bounded.
             $sampleLen = $bytes.Length
             if ($sampleLen -gt 4096) { $sampleLen = 4096 }
+            if (($sampleLen % 2) -ne 0) { $sampleLen-- } # ensure pairs
 
             $i = 0
-            while ($i -lt $sampleLen) {
+            while (($i + 1) -lt $sampleLen) {
                 if ($bytes[$i] -eq 0) { $evenZero++ }
                 if ($bytes[$i + 1] -eq 0) { $oddZero++ }
                 $i += 2
@@ -1226,7 +1227,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.17"
+         version = "2.5.18"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
