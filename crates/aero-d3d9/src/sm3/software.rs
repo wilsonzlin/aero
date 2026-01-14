@@ -243,9 +243,7 @@ fn exec_src(
             .unwrap_or(Vec4::ZERO),
         // Pixel shader builtins.
         (RegFile::MiscType, Some(0)) => builtins.frag_pos,
-        (RegFile::MiscType, Some(1)) => {
-            Vec4::splat(if builtins.front_facing { 1.0 } else { -1.0 })
-        }
+        (RegFile::MiscType, Some(1)) => Vec4::splat(if builtins.front_facing { 1.0 } else { -1.0 }),
         _ => Vec4::ZERO,
     };
     let v = swizzle(v, src.swizzle);
@@ -557,6 +555,82 @@ fn exec_block(
                 }
 
                 // Restore the loop register to the pre-loop value.
+                loops[loop_idx] = saved_loop_reg;
+
+                if discarded {
+                    Flow::Discard
+                } else {
+                    Flow::Continue
+                }
+            }
+            Stmt::Rep { count_reg, body } => {
+                // D3D9 SM2/3 `rep i#` repeats the loop body `i#.x` times, using `aL.x` as the loop
+                // counter. Keep the same safety cap as `loop` for determinism.
+                let count_v = exec_src(
+                    &Src {
+                        reg: count_reg.clone(),
+                        swizzle: Swizzle::identity(),
+                        modifier: SrcModifier::None,
+                    },
+                    temps,
+                    addrs,
+                    loops,
+                    preds,
+                    inputs_v,
+                    inputs_t,
+                    constants,
+                    builtins,
+                );
+                let count = count_v.x as i32;
+
+                // `rep` implicitly uses `aL` (loop register 0).
+                let loop_idx = 0usize;
+                if loop_idx >= loops.len() {
+                    return Flow::Continue;
+                }
+
+                // Save/restore loop register value to emulate nested-loop stack semantics.
+                let saved_loop_reg = loops[loop_idx];
+                loops[loop_idx].x = 0.0;
+
+                let mut discarded = false;
+                for _ in 0..MAX_LOOP_ITERS {
+                    let counter = loops[loop_idx].x as i32;
+                    if counter >= count {
+                        break;
+                    }
+
+                    match exec_block(
+                        body,
+                        depth + 1,
+                        temps,
+                        addrs,
+                        loops,
+                        preds,
+                        inputs_v,
+                        inputs_t,
+                        constants,
+                        builtins,
+                        sampler_types,
+                        textures,
+                        sampler_states,
+                        o_pos,
+                        o_attr,
+                        o_tex,
+                        o_out,
+                        o_color,
+                    ) {
+                        Flow::Continue => {}
+                        Flow::Break => break,
+                        Flow::Discard => {
+                            discarded = true;
+                            break;
+                        }
+                    }
+
+                    loops[loop_idx].x = counter.wrapping_add(1) as f32;
+                }
+
                 loops[loop_idx] = saved_loop_reg;
 
                 if discarded {
@@ -1030,8 +1104,9 @@ fn exec_op(
             sampler,
             ..
         } => {
-            let coord_v =
-                exec_src(coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants, builtins);
+            let coord_v = exec_src(
+                coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants, builtins,
+            );
             let sampler_u16 = u16::try_from(*sampler).ok();
 
             if let Some(s) = sampler_u16 {
@@ -1359,6 +1434,10 @@ fn collect_used_pixel_inputs(block: &Block, out: &mut BTreeSet<(RegFile, u32)>) 
                 collect_used_pixel_inputs_reg(&init.ctrl_reg, out);
                 collect_used_pixel_inputs(body, out);
             }
+            Stmt::Rep { count_reg, body } => {
+                collect_used_pixel_inputs_reg(count_reg, out);
+                collect_used_pixel_inputs(body, out);
+            }
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_used_pixel_inputs_cond(cond, out),
             Stmt::Discard { src } => collect_used_pixel_inputs_src(src, out),
@@ -1519,6 +1598,13 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             src2,
             modifiers,
             ..
+        }
+        | IrOp::Dp2Add {
+            src0,
+            src1,
+            src2,
+            modifiers,
+            ..
         } => {
             collect_used_pixel_inputs_src(src0, out);
             collect_used_pixel_inputs_src(src1, out);
@@ -1594,10 +1680,16 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
 
     let vs_constants = prepare_constants(constants, vs);
     let ps_constants = prepare_constants(constants, ps);
-    let vs_sampler_types: HashMap<u32, TextureType> =
-        vs.samplers.iter().map(|s| (s.index, s.texture_type)).collect();
-    let ps_sampler_types: HashMap<u32, TextureType> =
-        ps.samplers.iter().map(|s| (s.index, s.texture_type)).collect();
+    let vs_sampler_types: HashMap<u32, TextureType> = vs
+        .samplers
+        .iter()
+        .map(|s| (s.index, s.texture_type))
+        .collect();
+    let ps_sampler_types: HashMap<u32, TextureType> = ps
+        .samplers
+        .iter()
+        .map(|s| (s.index, s.texture_type))
+        .collect();
 
     let mut vs_output_semantics = HashMap::<u32, Semantic>::new();
     for decl in &vs.outputs {

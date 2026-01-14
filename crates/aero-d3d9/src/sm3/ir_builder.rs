@@ -183,6 +183,30 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 };
                 push_stmt(&mut stack, Stmt::Loop { init, body })?;
             }
+            Opcode::Rep => {
+                if stack.len() > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+                    return Err(err(
+                        inst,
+                        format!(
+                            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
+                        ),
+                    ));
+                }
+                stack.push(Frame::Rep {
+                    count_reg: build_rep_init(inst)?,
+                    body: Block::new(),
+                })
+            }
+            Opcode::EndRep => {
+                let frame = stack
+                    .pop()
+                    .ok_or_else(|| err(inst, "endrep without matching rep"))?;
+                let (count_reg, body) = match frame {
+                    Frame::Rep { count_reg, body } => (count_reg, body),
+                    _ => return Err(err(inst, "endrep without matching rep")),
+                };
+                push_stmt(&mut stack, Stmt::Rep { count_reg, body })?;
+            }
             Opcode::Break => push_stmt(&mut stack, Stmt::Break)?,
             Opcode::Breakc => {
                 let cond = build_cmp_cond(inst)?;
@@ -697,6 +721,26 @@ fn build_loop_init(inst: &DecodedInstruction) -> Result<LoopInit, BuildError> {
     })
 }
 
+fn build_rep_init(inst: &DecodedInstruction) -> Result<RegRef, BuildError> {
+    let count_reg = match inst.operands.first() {
+        Some(Operand::Src(src)) => src,
+        _ => return Err(err(inst, "rep missing integer constant operand")),
+    };
+    if count_reg.reg.file != RegisterFile::ConstInt {
+        return Err(err(
+            inst,
+            "rep operand must be an integer constant register (i#)",
+        ));
+    }
+    if !matches!(count_reg.modifier, SrcModifier::None) {
+        return Err(err(
+            inst,
+            "rep integer constant operand cannot have a source modifier",
+        ));
+    }
+    Ok(to_ir_reg(inst, &count_reg.reg)?)
+}
+
 fn map_semantic(usage: &DclUsage, index: u8) -> Semantic {
     match usage {
         DclUsage::Position => Semantic::Position(index),
@@ -758,6 +802,7 @@ fn collect_used_input_regs_block(block: &Block, out: &mut BTreeSet<u32>) {
                 }
             }
             Stmt::Loop { init: _, body } => collect_used_input_regs_block(body, out),
+            Stmt::Rep { body, .. } => collect_used_input_regs_block(body, out),
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_used_input_regs_cond(cond, out),
             Stmt::Discard { src } => collect_used_input_regs_src(src, out),
@@ -1074,6 +1119,7 @@ fn remap_input_regs_in_block(block: &mut Block, remap: &HashMap<u32, u32>) {
                 }
             }
             Stmt::Loop { init: _, body } => remap_input_regs_in_block(body, remap),
+            Stmt::Rep { body, .. } => remap_input_regs_in_block(body, remap),
             Stmt::Break => {}
             Stmt::BreakIf { cond } => remap_input_regs_in_cond(cond, remap),
             Stmt::Discard { src } => remap_input_regs_in_src(src, remap),
@@ -1732,6 +1778,7 @@ fn push_stmt(stack: &mut [Frame], stmt: Stmt) -> Result<(), BuildError> {
     match stack.last_mut() {
         Some(Frame::Root(block)) => block.stmts.push(stmt),
         Some(Frame::Loop { body, .. }) => body.stmts.push(stmt),
+        Some(Frame::Rep { body, .. }) => body.stmts.push(stmt),
         Some(Frame::If {
             then_block,
             else_block,
@@ -1838,6 +1885,10 @@ enum Frame {
     },
     Loop {
         init: LoopInit,
+        body: Block,
+    },
+    Rep {
+        count_reg: RegRef,
         body: Block,
     },
 }

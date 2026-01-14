@@ -749,6 +749,7 @@ fn collect_used_samplers_block(block: &sm3::ir::Block, out: &mut BTreeSet<u16>) 
                 }
             }
             sm3::ir::Stmt::Loop { body, .. } => collect_used_samplers_block(body, out),
+            sm3::ir::Stmt::Rep { body, .. } => collect_used_samplers_block(body, out),
             sm3::ir::Stmt::Break
             | sm3::ir::Stmt::BreakIf { .. }
             | sm3::ir::Stmt::Discard { .. } => {}

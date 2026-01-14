@@ -280,3 +280,90 @@ fn nested_loops_restore_al() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn lowers_rep_with_defi_to_bounded_wgsl() {
+    // ps_3_0:
+    //   defi i0, 3, 0, 0, 0      ; repeat count = 3
+    //   def  c0, 0,0,0,0
+    //   def  c1, 1,0,0,0
+    //   def  c2, 2,0,0,0
+    //   def  c3, 3,0,0,0
+    //   mov r0, c0
+    //   rep i0
+    //     add r0, r0, c1[aL]
+    //   endrep
+    //   mov oC0, r0
+    //   end
+    let mut tokens = Vec::new();
+    tokens.push(version_token(ShaderStage::Pixel, 3, 0));
+
+    // defi i0, 3, 0, 0, 0
+    tokens.push(opcode_token(82, 5));
+    tokens.push(dst_token(7, 0, 0xF));
+    tokens.extend([3u32, 0u32, 0u32, 0u32]);
+
+    let def_c = |idx: u32, x_bits: u32, out: &mut Vec<u32>| {
+        out.push(opcode_token(81, 5));
+        out.push(dst_token(2, idx, 0xF));
+        out.extend([x_bits, 0u32, 0u32, 0u32]);
+    };
+    def_c(0, 0x0000_0000, &mut tokens); // 0.0
+    def_c(1, 0x3F80_0000, &mut tokens); // 1.0
+    def_c(2, 0x4000_0000, &mut tokens); // 2.0
+    def_c(3, 0x4040_0000, &mut tokens); // 3.0
+
+    // mov r0, c0
+    tokens.push(opcode_token(1, 2));
+    tokens.push(dst_token(0, 0, 0xF));
+    tokens.push(src_token(2, 0, 0xE4, 0));
+
+    // rep i0
+    tokens.push(opcode_token(38, 1));
+    tokens.push(src_token(7, 0, 0xE4, 0));
+
+    // add r0, r0, c1[aL]
+    let mut c1_rel = src_token(2, 1, 0xE4, 0);
+    c1_rel |= 0x0000_2000; // RELATIVE flag
+    tokens.push(opcode_token(2, 4));
+    tokens.push(dst_token(0, 0, 0xF));
+    tokens.push(src_token(0, 0, 0xE4, 0));
+    tokens.push(c1_rel);
+    tokens.push(src_token(15, 0, 0x00, 0)); // aL.x
+
+    // endrep
+    tokens.push(opcode_token(39, 0));
+
+    // mov oC0, r0
+    tokens.push(opcode_token(1, 2));
+    tokens.push(dst_token(8, 0, 0xF));
+    tokens.push(src_token(0, 0, 0xE4, 0));
+
+    // end
+    tokens.push(0x0000_FFFF);
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+
+    // Ensure `rep` initializes `aL.x` to 0 and uses i0.x as the repeat count.
+    assert!(wgsl.contains("aL.x = 0;"), "{wgsl}");
+    assert!(wgsl.contains("_aero_rep_count: i32 = (i0).x;"), "{wgsl}");
+    // Ensure `aL` is used for relative constant addressing.
+    assert!(
+        wgsl.contains("aero_read_const(u32(clamp(i32(1) + (aL.x)"),
+        "{wgsl}"
+    );
+    // Ensure the bounded-loop safety cap exists.
+    assert!(wgsl.contains(">= 1024u"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

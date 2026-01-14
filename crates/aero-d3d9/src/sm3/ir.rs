@@ -77,6 +77,14 @@ pub enum Stmt {
         init: LoopInit,
         body: Block,
     },
+    /// Repeat loop (`rep`/`endrep`).
+    ///
+    /// The repeat count is sourced from `count_reg.x` (an `i#` register). The loop counter is
+    /// stored in `aL.x` and is incremented by 1 each iteration.
+    Rep {
+        count_reg: RegRef,
+        body: Block,
+    },
     Break,
     BreakIf {
         cond: Cond,
@@ -330,7 +338,9 @@ pub enum IrOp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TexSampleKind {
-    ImplicitLod { project: bool },
+    ImplicitLod {
+        project: bool,
+    },
     /// Texture sampling with an implicit LOD and a bias (`texldb`).
     Bias,
     ExplicitLod,
@@ -622,6 +632,11 @@ fn fmt_stmt(f: &mut fmt::Formatter<'_>, stmt: &Stmt, indent: usize) -> fmt::Resu
                 format_reg(&init.loop_reg),
                 format_reg(&init.ctrl_reg)
             )?;
+            fmt_block(f, body, indent + 1)?;
+            writeln!(f, "{}}}", pad)
+        }
+        Stmt::Rep { count_reg, body } => {
+            writeln!(f, "{}rep {} {{", pad, format_reg(count_reg))?;
             fmt_block(f, body, indent + 1)?;
             writeln!(f, "{}}}", pad)
         }

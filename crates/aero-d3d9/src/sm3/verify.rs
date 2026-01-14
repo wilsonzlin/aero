@@ -60,6 +60,14 @@ fn verify_block(
                 }
                 verify_block(body, stage, depth + 1, loop_depth + 1)?;
             }
+            Stmt::Rep { count_reg, body } => {
+                if count_reg.file != RegFile::ConstInt {
+                    return Err(VerifyError {
+                        message: "rep init refers to a non-integer-constant register".to_owned(),
+                    });
+                }
+                verify_block(body, stage, depth + 1, loop_depth + 1)?;
+            }
             Stmt::Break => {
                 if loop_depth == 0 {
                     return Err(VerifyError {
@@ -337,7 +345,8 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             }
             if *kind == TexSampleKind::Bias && stage != ShaderStage::Pixel {
                 return Err(VerifyError {
-                    message: "texldb/Bias texture sampling is only valid in pixel shaders".to_owned(),
+                    message: "texldb/Bias texture sampling is only valid in pixel shaders"
+                        .to_owned(),
                 });
             }
             verify_src(coord, stage)?;
@@ -352,7 +361,9 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                     verify_src(ddx, stage)?;
                     verify_src(ddy, stage)?;
                 }
-                TexSampleKind::ImplicitLod { .. } | TexSampleKind::Bias | TexSampleKind::ExplicitLod => {
+                TexSampleKind::ImplicitLod { .. }
+                | TexSampleKind::Bias
+                | TexSampleKind::ExplicitLod => {
                     if ddx.is_some() || ddy.is_some() {
                         return Err(VerifyError {
                             message: "non-gradient texture sampling includes gradient operands"

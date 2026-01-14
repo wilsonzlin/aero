@@ -393,6 +393,17 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage, depth: usize) -> Resul
                 collect_reg_ref_usage(&init.ctrl_reg, usage, RegAccess::Read);
                 collect_reg_usage(body, usage, depth + 1)?;
             }
+            Stmt::Rep { count_reg, body } => {
+                // `rep` implicitly uses the `aL` loop register as the counter.
+                let loop_reg = RegRef {
+                    file: RegFile::Loop,
+                    index: 0,
+                    relative: None,
+                };
+                collect_reg_ref_usage(&loop_reg, usage, RegAccess::Write);
+                collect_reg_ref_usage(count_reg, usage, RegAccess::Read);
+                collect_reg_usage(body, usage, depth + 1)?;
+            }
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_cond_usage(cond, usage),
             Stmt::Discard { src } => collect_src_usage(src, usage),
@@ -2143,6 +2154,66 @@ fn emit_stmt(
             )?;
 
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
+            let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
+            let _ = writeln!(wgsl, "{pad1}}}");
+            let _ = writeln!(wgsl, "{pad1}{loop_reg} = _aero_saved_loop_reg;");
+            let _ = writeln!(wgsl, "{pad}}}");
+        }
+        Stmt::Rep { count_reg, body } => {
+            // D3D9 SM2/3 `rep i#` repeats the block `i#.x` times using `aL.x` as the loop counter.
+            //
+            // Emit a bounded WGSL loop to avoid hanging the GPU on malformed shaders.
+            const MAX_ITERS: u32 = 1024;
+
+            if count_reg.file != RegFile::ConstInt {
+                return Err(err("rep init uses a non-integer-constant register"));
+            }
+            if count_reg.relative.is_some() {
+                return Err(err(
+                    "relative addressing is not supported in rep count operands",
+                ));
+            }
+
+            let loop_reg = reg_var_name(&RegRef {
+                file: RegFile::Loop,
+                index: 0,
+                relative: None,
+            })?;
+            let count = reg_var_name(count_reg)?;
+
+            let pad1 = "  ".repeat(indent + 1);
+            let pad2 = "  ".repeat(indent + 2);
+
+            let _ = writeln!(wgsl, "{pad}{{");
+            let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
+            let _ = writeln!(
+                wgsl,
+                "{pad1}let _aero_saved_loop_reg: vec4<i32> = {loop_reg};"
+            );
+            let _ = writeln!(wgsl, "{pad1}let _aero_rep_count: i32 = ({count}).x;");
+            let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = 0;");
+            let _ = writeln!(wgsl, "{pad1}loop {{");
+
+            let _ = writeln!(
+                wgsl,
+                "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}"
+            );
+            let _ = writeln!(
+                wgsl,
+                "{pad2}if ({loop_reg}.x >= _aero_rep_count) {{ break; }}"
+            );
+
+            emit_block(
+                wgsl,
+                body,
+                indent + 2,
+                depth + 1,
+                stage,
+                f32_defs,
+                sampler_types,
+            )?;
+
+            let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + 1;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
             let _ = writeln!(wgsl, "{pad1}}}");
             let _ = writeln!(wgsl, "{pad1}{loop_reg} = _aero_saved_loop_reg;");

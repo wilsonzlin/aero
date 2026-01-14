@@ -113,6 +113,12 @@ pub enum Opcode {
     EndIf,
     Loop,
     EndLoop,
+    /// Repeat loop (`rep` / `endrep`).
+    ///
+    /// D3D9 `rep` repeats the enclosed block a fixed number of times (derived from an integer
+    /// constant register). The loop counter is stored in the `aL` loop register.
+    Rep,
+    EndRep,
     Break,
     Breakc,
     Call,
@@ -164,6 +170,8 @@ impl Opcode {
             27 => Self::Loop,
             28 => Self::Ret,
             29 => Self::EndLoop,
+            38 => Self::Rep,
+            39 => Self::EndRep,
             31 => Self::Dcl,
             32 => Self::Pow,
             33 => Self::Crs,    // 0x21
@@ -243,6 +251,8 @@ impl Opcode {
             Self::Loop => 27,
             Self::Ret => 28,
             Self::EndLoop => 29,
+            Self::Rep => 38,
+            Self::EndRep => 39,
             Self::Dcl => 31,
             Self::Pow => 32,
             Self::If => 40,
@@ -316,6 +326,8 @@ impl Opcode {
             Self::EndIf => "endif",
             Self::Loop => "loop",
             Self::EndLoop => "endloop",
+            Self::Rep => "rep",
+            Self::EndRep => "endrep",
             Self::Break => "break",
             Self::Breakc => "breakc",
             Self::Call => "call",
@@ -779,9 +791,11 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             length_candidates[1] = 0;
         }
 
-        let decode_predicate = |pred_token: u32, abs_token_index: usize| -> Result<Predicate, DecodeError> {
-            let (pred_src, consumed) = decode_src_operand(&[pred_token], 0, stage, major)
-                .map_err(|mut err| {
+        let decode_predicate = |pred_token: u32,
+                                abs_token_index: usize|
+         -> Result<Predicate, DecodeError> {
+            let (pred_src, consumed) =
+                decode_src_operand(&[pred_token], 0, stage, major).map_err(|mut err| {
                     err.token_index += abs_token_index;
                     err
                 })?;
@@ -794,10 +808,7 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             if pred_src.reg.file != RegisterFile::Predicate {
                 return Err(DecodeError {
                     token_index: abs_token_index,
-                    message: format!(
-                        "expected predicate register, got {:?}",
-                        pred_src.reg.file
-                    ),
+                    message: format!("expected predicate register, got {:?}", pred_src.reg.file),
                 });
             }
 
@@ -869,7 +880,10 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
                         (Some(pred), &operand_tokens_full[1..])
                     } else {
                         let pred_abs = token_index + length - 1;
-                        let pred = match decode_predicate(*operand_tokens_full.last().unwrap(), pred_abs) {
+                        let pred = match decode_predicate(
+                            *operand_tokens_full.last().unwrap(),
+                            pred_abs,
+                        ) {
                             Ok(p) => p,
                             Err(err) => {
                                 last_err = Some(err);
@@ -961,6 +975,7 @@ fn decode_operands_and_extras(
         | Opcode::Else
         | Opcode::EndIf
         | Opcode::EndLoop
+        | Opcode::EndRep
         | Opcode::Break
         | Opcode::Ret => {
             if !operand_tokens.is_empty() {
@@ -1222,6 +1237,18 @@ fn decode_operands_and_extras(
                 major,
                 operand_tokens,
                 &[OperandKind::Src, OperandKind::Src],
+                &mut operands,
+            )?;
+        }
+        Opcode::Rep => {
+            // SM2/3 `rep` takes 1 operand: an integer constant register that specifies the repeat
+            // count (in `.x`).
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Src],
                 &mut operands,
             )?;
         }
