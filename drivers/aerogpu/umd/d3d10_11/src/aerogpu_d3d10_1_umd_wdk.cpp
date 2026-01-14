@@ -9117,12 +9117,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
-    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize =
-        &CalcPrivateGeometryShaderSize;
-    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader =
-        &CreateGeometryShader;
-    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader =
-        &DestroyGeometryShader;
+    // Geometry shaders are accepted by the Win7 D3D10 runtime at FL10_0; forward
+    // DXBC to the host and bind via the legacy GS slot in BIND_SHADERS.reserved0.
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
   }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
