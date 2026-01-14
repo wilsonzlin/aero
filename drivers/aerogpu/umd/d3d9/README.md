@@ -23,6 +23,12 @@ The command stream does **not** reference resources by a per-submission “alloc
   - For **shared** allocations, dxgkrnl preserves and replays the private-data blob on `OpenResource`/`OpenAllocation` so all guest processes observe consistent IDs.
   - `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
 
+## Stub checklist
+
+The canonical list of missing / stubbed D3D9UMDDI entrypoints lives later in this README: [Currently stubbed DDIs](#currently-stubbed-ddis).
+
+If you add or remove a DDI stub, update that list so other workstreams can quickly assess bring-up risk.
+
 ## D3D9 device cursor (hardware cursor + software fallback)
 
 The Win7 D3D9 runtime exposes a device-managed cursor API (`SetCursorProperties`, `SetCursorPosition`, `ShowCursor`).
