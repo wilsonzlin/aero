@@ -192,6 +192,14 @@ where
         .copied()
         .max()
         .expect("groups.is_empty handled above");
+
+    let max_bind_groups = device.limits().max_bind_groups;
+    if max_group >= max_bind_groups {
+        bail!(
+            "pipeline requires bind group indices 0..={max_group} ({} total), but device supports max_bind_groups={max_bind_groups}",
+            max_group.saturating_add(1)
+        );
+    }
     let mut group_layouts = Vec::with_capacity(max_group as usize + 1);
     let mut group_bindings = Vec::with_capacity(max_group as usize + 1);
 
@@ -1169,6 +1177,13 @@ mod tests {
             };
             let device = rt.device();
             let mut layout_cache = BindGroupLayoutCache::new();
+            if device.limits().max_bind_groups <= INTERNAL_GROUP {
+                skip_or_panic(
+                    module_path!(),
+                    "adapter does not support 5 bind groups (required for @group(4))",
+                );
+                return;
+            }
 
             let guest = vec![crate::Binding {
                 group: 0,
@@ -1240,6 +1255,13 @@ mod tests {
             let mut layout_cache = BindGroupLayoutCache::new();
 
             let internal_only_group = MAX_GUEST_BIND_GROUP_INDEX + 1;
+            if device.limits().max_bind_groups <= internal_only_group {
+                skip_or_panic(
+                    module_path!(),
+                    "adapter does not support 5 bind groups (required for @group(4))",
+                );
+                return;
+            }
             let guest = vec![crate::Binding {
                 group: internal_only_group,
                 binding: BINDING_BASE_TEXTURE,
