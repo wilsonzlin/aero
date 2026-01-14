@@ -5403,44 +5403,106 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
 
     if (!aerogpu::d3d10_11::SupportsTransfer(dev)) {
+      // No transfer backend: commit the updated bytes to the destination backing
+      // store via UPLOAD_RESOURCE (host-owned) or RESOURCE_DIRTY_RANGE (guest-backed).
+      if (!did_staging_upload) {
+        const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_sub.row_pitch_bytes);
+        const uint64_t upload_offset =
+            dst_sub.offset_bytes + static_cast<uint64_t>(dst_y_blocks) * row_pitch_u64;
+        const uint64_t upload_size = static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
+        EmitUploadLocked(hDevice, dev, dst, upload_offset, upload_size);
+      }
       return;
     }
 
+    // Transfer backend available: prefer COPY_TEXTURE2D. If we cannot record the
+    // packet (OOM while growing the cmd stream or allocation list), fall back to
+    // a row-range upload so the host sees the updated bytes.
+    const auto cmd_checkpoint = dev->cmd.checkpoint();
+    const WddmAllocListCheckpoint alloc_checkpoint(dev);
+
+    bool emitted_copy = false;
     if (did_staging_upload) {
-      if (!TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) ||
-          !TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
-        return;
+      // COPY_TEXTURE2D is optional when the staging upload fallback already ran.
+      if (TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) &&
+          TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+        if (cmd) {
+          cmd->dst_texture = dst->handle;
+          cmd->src_texture = src->handle;
+          cmd->dst_mip_level = dst_sub.mip_level;
+          cmd->dst_array_layer = dst_sub.array_layer;
+          cmd->src_mip_level = src_sub.mip_level;
+          cmd->src_array_layer = src_sub.array_layer;
+          cmd->dst_x = dstX;
+          cmd->dst_y = dstY;
+          cmd->src_x = src_left;
+          cmd->src_y = src_top;
+          cmd->width = copy_width;
+          cmd->height = copy_height;
+          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+          if (dst->backing_alloc_id != 0 &&
+              dst->usage == kD3D10UsageStaging &&
+              (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
+            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+          }
+          cmd->flags = copy_flags;
+          cmd->reserved0 = 0;
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
+          emitted_copy = true;
+        }
       }
     } else {
+      // Required COPY_TEXTURE2D path: use poisoning tracking, but rollback if it
+      // fails so earlier packets can still be submitted safely.
       TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
       TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+      if (!dev->wddm_submit_allocation_list_oom) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+        if (cmd) {
+          cmd->dst_texture = dst->handle;
+          cmd->src_texture = src->handle;
+          cmd->dst_mip_level = dst_sub.mip_level;
+          cmd->dst_array_layer = dst_sub.array_layer;
+          cmd->src_mip_level = src_sub.mip_level;
+          cmd->src_array_layer = src_sub.array_layer;
+          cmd->dst_x = dstX;
+          cmd->dst_y = dstY;
+          cmd->src_x = src_left;
+          cmd->src_y = src_top;
+          cmd->width = copy_width;
+          cmd->height = copy_height;
+          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+          if (dst->backing_alloc_id != 0 &&
+              dst->usage == kD3D10UsageStaging &&
+              (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
+            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+          }
+          cmd->flags = copy_flags;
+          cmd->reserved0 = 0;
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
+          emitted_copy = true;
+        }
+      }
     }
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
-    if (!cmd) {
-      // COPY_TEXTURE2D is an optimization; the CPU copy + upload has already run.
+
+    if (emitted_copy) {
       return;
     }
-    cmd->dst_texture = dst->handle;
-    cmd->src_texture = src->handle;
-    cmd->dst_mip_level = dst_sub.mip_level;
-    cmd->dst_array_layer = dst_sub.array_layer;
-    cmd->src_mip_level = src_sub.mip_level;
-    cmd->src_array_layer = src_sub.array_layer;
-    cmd->dst_x = dstX;
-    cmd->dst_y = dstY;
-    cmd->src_x = src_left;
-    cmd->src_y = src_top;
-    cmd->width = copy_width;
-    cmd->height = copy_height;
-    uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-    if (dst->backing_alloc_id != 0 &&
-        dst->usage == kD3D10UsageStaging &&
-        (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
-      copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+
+    dev->cmd.rollback(cmd_checkpoint);
+    alloc_checkpoint.rollback();
+
+    if (did_staging_upload) {
+      // Upload fallback already ran; COPY_TEXTURE2D is purely an optimization.
+      return;
     }
-    cmd->flags = copy_flags;
-    cmd->reserved0 = 0;
-    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
+
+    const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_sub.row_pitch_bytes);
+    const uint64_t upload_offset =
+        dst_sub.offset_bytes + static_cast<uint64_t>(dst_y_blocks) * row_pitch_u64;
+    const uint64_t upload_size = static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
+    EmitUploadLocked(hDevice, dev, dst, upload_offset, upload_size);
     return;
   }
 
