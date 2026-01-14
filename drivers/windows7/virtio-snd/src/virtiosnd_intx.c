@@ -287,10 +287,10 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
                     (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
                 }
                 /*
-                 * If WaveRT uses eventq PERIOD_ELAPSED to queue additional DPC
-                 * wakeups, keep a per-stream sequence+timestamp for the WaveRT
-                 * timer path to coalesce duplicate ticks (avoid double packet
-                 * count increments).
+                 * Diagnostic bookkeeping:
+                 * Track a per-stream PERIOD_ELAPSED sequence + timestamp so
+                 * telemetry/diagnostics can correlate WaveRT behavior with eventq
+                 * delivery.
                  */
                 if (evt.Data < RTL_NUMBER_OF(dx->PcmPeriodSeq)) {
                     (VOID)InterlockedIncrement(&dx->PcmPeriodSeq[evt.Data]);

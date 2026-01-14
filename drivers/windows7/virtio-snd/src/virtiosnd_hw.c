@@ -783,8 +783,10 @@ VirtIoSndHwDrainEventqUsed(
                     (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
                 }
                 /*
-                 * Keep per-stream PERIOD_ELAPSED bookkeeping for WaveRT's DPC
-                 * routine to coalesce timer ticks vs event-driven wakeups.
+                 * Diagnostic bookkeeping:
+                 * Track a per-stream PERIOD_ELAPSED sequence + timestamp so
+                 * telemetry/diagnostics can correlate WaveRT behavior with eventq
+                 * delivery.
                  */
                 if (evt.Data < RTL_NUMBER_OF(dx->PcmPeriodSeq)) {
                     (VOID)InterlockedIncrement(&dx->PcmPeriodSeq[evt.Data]);
