@@ -21,7 +21,6 @@ use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
-use aero_usb::MemoryBus;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::xhci::XhciController;
 use aero_usb::xhci::context::{XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT};
