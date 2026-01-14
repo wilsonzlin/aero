@@ -25,8 +25,24 @@ const {
 function writePng(filePath, width, height, rgba) {
   const png = new PNG({ width, height });
   png.data = Buffer.from(rgba);
+  const out = PNG.sync.write(png);
+
+  // Avoid rewriting files unnecessarily (helps keep `npm run test:unit` from touching
+  // timestamps on a clean checkout).
+  try {
+    const existing = fs.readFileSync(filePath);
+    if (existing.equals(out)) {
+      return false;
+    }
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, PNG.sync.write(png));
+  fs.writeFileSync(filePath, out);
+  return true;
 }
 
 function generateGpuSmokeQuadrantsRGBA(width, height) {
@@ -77,29 +93,52 @@ function generateSolidColorRGBA(width, height, r, g, b, a) {
 
 function main() {
   const outDir = __dirname;
+  let wrote = 0;
 
   const vga = renderVgaTextModeSceneRGBA();
-  writePng(path.join(outDir, 'vga_text_mode.png'), VGA_TEXT_MODE_WIDTH, VGA_TEXT_MODE_HEIGHT, vga.rgba);
+  if (writePng(path.join(outDir, 'vga_text_mode.png'), VGA_TEXT_MODE_WIDTH, VGA_TEXT_MODE_HEIGHT, vga.rgba)) {
+    wrote++;
+  }
 
   const vbe = renderVbeLfbColorBarsRGBA();
-  writePng(path.join(outDir, 'vbe_lfb_color_bars_320x200.png'), VBE_LFB_WIDTH, VBE_LFB_HEIGHT, vbe.rgba);
+  if (
+    writePng(path.join(outDir, 'vbe_lfb_color_bars_320x200.png'), VBE_LFB_WIDTH, VBE_LFB_HEIGHT, vbe.rgba)
+  ) {
+    wrote++;
+  }
 
   const quad64 = generateQuadrantsImageRGBA(64, 64);
-  writePng(path.join(outDir, 'webgl2_quadrants_64.png'), 64, 64, quad64);
-  writePng(path.join(outDir, 'webgpu_quadrants_64.png'), 64, 64, quad64);
+  if (writePng(path.join(outDir, 'webgl2_quadrants_64.png'), 64, 64, quad64)) {
+    wrote++;
+  }
+  if (writePng(path.join(outDir, 'webgpu_quadrants_64.png'), 64, 64, quad64)) {
+    wrote++;
+  }
 
   const smoke64 = generateGpuSmokeQuadrantsRGBA(64, 64);
-  writePng(path.join(outDir, 'gpu_smoke_quadrants_64.png'), 64, 64, smoke64);
+  if (writePng(path.join(outDir, 'gpu_smoke_quadrants_64.png'), 64, 64, smoke64)) {
+    wrote++;
+  }
 
   // Trace replay "triangle" fixture is expected to clear/present solid red.
   const traceRed64 = generateSolidColorRGBA(64, 64, 255, 0, 0, 255);
-  writePng(path.join(outDir, 'gpu_trace_triangle_red_64.png'), 64, 64, traceRed64);
+  if (writePng(path.join(outDir, 'gpu_trace_triangle_red_64.png'), 64, 64, traceRed64)) {
+    wrote++;
+  }
   // Trace replay fixtures using the AeroGPU A3A0 command stream ABI are also expected to render solid red.
-  writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_triangle_64.png'), 64, 64, traceRed64);
-  writePng(path.join(outDir, 'gpu_trace_aerogpu_a3a0_clear_red_64.png'), 64, 64, traceRed64);
+  if (writePng(path.join(outDir, 'gpu_trace_aerogpu_cmd_triangle_64.png'), 64, 64, traceRed64)) {
+    wrote++;
+  }
+  if (writePng(path.join(outDir, 'gpu_trace_aerogpu_a3a0_clear_red_64.png'), 64, 64, traceRed64)) {
+    wrote++;
+  }
 
   // eslint-disable-next-line no-console
-  console.log(`Wrote goldens to ${outDir}`);
+  if (wrote === 0) {
+    console.log(`Goldens already up to date in ${outDir}`);
+  } else {
+    console.log(`Wrote ${wrote} golden(s) to ${outDir}`);
+  }
 }
 
 main();
