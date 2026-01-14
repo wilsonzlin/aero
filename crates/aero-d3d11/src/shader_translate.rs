@@ -1540,7 +1540,8 @@ impl IoMaps {
     }
 
     fn outputs_reflection_pixel(&self) -> Vec<IoParam> {
-        self.outputs
+        let mut out: Vec<IoParam> = self
+            .outputs
             .values()
             .map(|p| {
                 let is_target = p.sys_value == Some(D3D_NAME_TARGET);
@@ -1554,7 +1555,25 @@ impl IoMaps {
                     stream: p.param.stream,
                 }
             })
-            .collect()
+            .collect();
+
+        // Pixel depth outputs (`SV_Depth*`) use a dedicated register file (`oDepth`) and may share a
+        // register index with `SV_Target` outputs in the signature table. Keep them out of the
+        // regular `outputs` map to avoid false conflicts, but still expose them via reflection so
+        // callers see the full pixel output signature.
+        if let Some(p) = &self.ps_sv_depth {
+            out.push(IoParam {
+                semantic_name: p.param.semantic_name.clone(),
+                semantic_index: p.param.semantic_index,
+                register: p.param.register,
+                location: None,
+                builtin: None,
+                mask: p.param.mask,
+                stream: p.param.stream,
+            });
+        }
+
+        out
     }
 
     fn emit_vs_structs(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {

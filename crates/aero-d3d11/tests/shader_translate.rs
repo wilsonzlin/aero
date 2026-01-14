@@ -780,6 +780,16 @@ fn translates_pixel_depth_output_with_overlapping_signature_registers() {
         "expected dedicated oDepth temp when signature registers overlap:\n{}",
         translated.wgsl
     );
+
+    assert!(
+        translated.reflection.outputs.iter().any(|p| {
+            p.semantic_name.eq_ignore_ascii_case("SV_Depth")
+                && p.register == 0
+                && p.location.is_none()
+        }),
+        "expected pixel depth output in reflection: {:#?}",
+        translated.reflection.outputs
+    );
 }
 
 #[test]
