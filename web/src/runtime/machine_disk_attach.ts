@@ -1,6 +1,7 @@
 import type { MachineHandle } from "./wasm_loader";
 import type { DiskImageMetadata } from "../storage/metadata";
-import { opfsPathForDisk } from "../storage/opfs_paths";
+import { opfsOverlayPathForCow, opfsPathForDisk } from "../storage/opfs_paths";
+import { DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES } from "./boot_disks_protocol";
 
 export type MachineBootDiskRole = "hdd" | "cd";
 
@@ -17,6 +18,60 @@ export type MachineBootDiskPlan = {
   /** Non-fatal warnings (e.g. unknown format assumptions). */
   warnings: string[];
 };
+
+const AEROSPARSE_HEADER_SIZE_BYTES = 64;
+const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
+
+function isPowerOfTwo(n: number): boolean {
+  return n > 0 && (n & (n - 1)) === 0;
+}
+
+async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string): Promise<number | null> {
+  if (!path) return null;
+  // In CI/unit tests there is no `navigator` / OPFS environment. Treat this as best-effort.
+  const storage = (globalThis as unknown as { navigator?: unknown }).navigator as { storage?: unknown } | undefined;
+  const getDirectory = (storage?.storage as { getDirectory?: unknown } | undefined)?.getDirectory;
+  if (typeof getDirectory !== "function") return null;
+
+  // Overlay refs are expected to be relative OPFS paths. Refuse to interpret `..` to avoid path traversal.
+  const parts = path.split("/").filter((p) => p && p !== ".");
+  if (parts.length === 0 || parts.some((p) => p === "..")) return null;
+
+  try {
+    let dir = (await (getDirectory as () => Promise<FileSystemDirectoryHandle>)()) as FileSystemDirectoryHandle;
+    for (const part of parts.slice(0, -1)) {
+      dir = await dir.getDirectoryHandle(part, { create: false });
+    }
+    const file = await dir.getFileHandle(parts[parts.length - 1]!, { create: false }).then((h) => h.getFile());
+    if (file.size < AEROSPARSE_HEADER_SIZE_BYTES) return null;
+    const buf = await file.slice(0, AEROSPARSE_HEADER_SIZE_BYTES).arrayBuffer();
+    if (buf.byteLength < AEROSPARSE_HEADER_SIZE_BYTES) return null;
+
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < AEROSPARSE_MAGIC.length; i += 1) {
+      if (bytes[i] !== AEROSPARSE_MAGIC[i]) return null;
+    }
+    const dv = new DataView(buf);
+    const version = dv.getUint32(8, true);
+    const headerSize = dv.getUint32(12, true);
+    const blockSizeBytes = dv.getUint32(16, true);
+    if (version !== 1 || headerSize !== AEROSPARSE_HEADER_SIZE_BYTES) return null;
+
+    // Mirror the Rust-side aerosparse header validation (looser, but enough to avoid nonsense).
+    if (
+      blockSizeBytes === 0 ||
+      blockSizeBytes % 512 !== 0 ||
+      !isPowerOfTwo(blockSizeBytes) ||
+      blockSizeBytes > 64 * 1024 * 1024
+    ) {
+      return null;
+    }
+
+    return blockSizeBytes;
+  } catch {
+    return null;
+  }
+}
 
 function diskLabel(meta: DiskImageMetadata): string {
   const name = (meta as { name?: unknown }).name;
@@ -87,7 +142,7 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
   return { opfsPath: opfsPathForDisk(meta), format: "iso", warnings };
 }
 
-async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan): Promise<void> {
+async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta: DiskImageMetadata): Promise<void> {
   if (plan.format === "aerospar") {
     if (typeof machine.set_disk_aerospar_opfs_open_and_set_overlay_ref === "function") {
       await machine.set_disk_aerospar_opfs_open_and_set_overlay_ref(plan.opfsPath);
@@ -99,6 +154,15 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan): Pro
       return;
     }
     throw new Error("WASM build missing Machine.set_disk_aerospar_opfs_open* exports");
+  }
+
+  const setPrimaryCow = machine.set_primary_hdd_opfs_cow;
+  if (typeof setPrimaryCow === "function") {
+    const overlayPath = opfsOverlayPathForCow(meta);
+    const blockSizeBytes =
+      (await tryReadAerosparseBlockSizeBytesFromOpfs(overlayPath)) ?? DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
+    await setPrimaryCow(plan.opfsPath, overlayPath, blockSizeBytes);
+    return;
   }
 
   // Prefer the explicit canonical primary HDD helper when available.
@@ -117,7 +181,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan): Pro
     return;
   }
   throw new Error(
-    "WASM build missing raw HDD OPFS attach exports (expected Machine.set_primary_hdd_opfs_existing or Machine.set_disk_opfs_existing*).",
+    "WASM build missing raw HDD OPFS attach exports (expected Machine.set_primary_hdd_opfs_cow, Machine.set_primary_hdd_opfs_existing, or Machine.set_disk_opfs_existing*).",
   );
 }
 
@@ -163,7 +227,7 @@ export async function attachMachineBootDisk(
 ): Promise<{ warnings: string[] }> {
   const plan = planMachineBootDiskAttachment(meta, role);
   if (role === "hdd") {
-    await attachHdd(machine, plan);
+    await attachHdd(machine, plan, meta);
   } else {
     await attachCd(machine, plan);
   }

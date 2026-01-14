@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { MachineHandle } from "./wasm_loader";
 import { attachMachineBootDisk, planMachineBootDiskAttachment } from "./machine_disk_attach";
 import type { DiskImageMetadata } from "../storage/metadata";
+import { OPFS_DISKS_PATH } from "../storage/metadata";
+import { DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES } from "./boot_disks_protocol";
 
 describe("runtime/machine_disk_attach (metadata compatibility)", () => {
   it("rejects IDB-backed disks for machine runtime", () => {
@@ -235,5 +237,33 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(gotPath).toBe(plan.opfsPath);
     expect(gotRef).toEqual({ base: plan.opfsPath, overlay: "" });
     expect(plan.opfsPath).toContain("win7.iso");
+  });
+
+  it("prefers set_primary_hdd_opfs_cow for raw HDDs when present", async () => {
+    const meta: DiskImageMetadata = {
+      source: "local",
+      id: "hdd1",
+      name: "Disk 1",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const attach = vi.fn(async (_basePath: string, _overlayPath: string, _blockSizeBytes: number) => {});
+    const machine = {
+      set_primary_hdd_opfs_cow: attach,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(attach).toHaveBeenCalledWith(
+      plan.opfsPath,
+      `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`,
+      DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
+    );
   });
 });
