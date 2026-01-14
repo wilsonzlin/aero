@@ -1287,6 +1287,57 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_invalid_has_data_bool_encoding() {
+        // Encode an inflight control transfer but corrupt the `has_data` bool discriminator.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket
+            .u8(0)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            // has_data bool (invalid)
+            .u8(2)
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_inflight_data_payload_over_limit_before_reading_bytes() {
+        // Intentionally truncate the snapshot after the oversized inflight control data length.
+        // If the implementation tried to read the payload, we'd get UnexpectedEof instead of an
+        // InvalidFieldEncoding bounds-check error.
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket
+            .u8(0)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            // has_data
+            .bool(true)
+            // data length
+            .u32(MAX_DATA_BYTES + 1)
+            .finish();
+        let mut dev = UsbPassthroughDevice::new();
+        let err = dev.snapshot_load(&bytes).unwrap_err();
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
     fn snapshot_load_rejects_trailing_bytes() {
         let bytes = Encoder::new()
             .u32(1)
