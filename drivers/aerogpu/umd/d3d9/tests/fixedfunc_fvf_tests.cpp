@@ -8242,10 +8242,10 @@ bool TestStage0SignatureCacheDoesNotPointAtEvictedShaders() {
 
   // Validate that the signature->shader map does not retain pointers to evicted
   // shaders (use-after-free). All cached shader pointers must reference a live
-  // entry in the bounded `fixedfunc_stage0_ps_variants` array.
+  // entry in the bounded fixed-function PS variant array.
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::unordered_set<const Shader*> live;
-  for (const Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+  for (const Shader* ps : dev->fixedfunc_ps_variants) {
     if (ps) {
       live.insert(ps);
     }
@@ -8253,10 +8253,10 @@ bool TestStage0SignatureCacheDoesNotPointAtEvictedShaders() {
   if (!Check(live.size() == 100, "stage0 PS variant array cache is capped at 100 entries")) {
     return false;
   }
-  if (!Check(!dev->fixedfunc_stage0_ps_variant_cache.empty(), "stage0 signature cache populated")) {
+  if (!Check(!dev->fixedfunc_ps_variant_cache.empty(), "stage0 signature cache populated")) {
     return false;
   }
-  for (const auto& it : dev->fixedfunc_stage0_ps_variant_cache) {
+  for (const auto& it : dev->fixedfunc_ps_variant_cache) {
     const uint64_t sig = it.first;
     const Shader* ps = it.second;
     if (!ps) {
