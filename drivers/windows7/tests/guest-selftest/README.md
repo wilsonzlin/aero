@@ -51,6 +51,15 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - at least one **relative-mouse-only** HID device exists (X/Y reported as *Relative*)
     - additional **tablet / absolute-pointer** virtio-input HID devices are allowed and are counted separately
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
+  - Optional interrupt-mode diagnostics (`virtio-input-msix`):
+    - The selftest queries the virtio-input HID minidriver for its interrupt configuration via a diagnostics IOCTL and emits:
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix>|messages=<n>|mapping=...|...`.
+    - This marker is informational by default (so older configurations that fall back to INTx can still PASS overall).
+    - Use `--require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`) to make the selftest **FAIL**
+      when virtio-input is not using MSI-X (mode != `msix`).
+    - The host harness can also enforce this marker:
+      - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioInputMsix`
+      - Python: `invoke_aero_virtio_win7_tests.py --require-virtio-input-msix`
   - Optional end-to-end **event delivery** smoke test (`virtio-input-events`):
     - Disabled by default (so the selftest remains fully headless and does not depend on host-side input injection).
     - Enable with `--test-input-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`).
@@ -181,6 +190,7 @@ The host harness parses these markers from COM1 serial:
  # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-<dev>|PASS` with no extra fields.
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...|irq_mode=msi|irq_message_count=1
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|mapping=per-queue|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set

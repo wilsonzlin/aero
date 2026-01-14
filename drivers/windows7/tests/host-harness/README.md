@@ -151,10 +151,12 @@ MSI-X as disabled on the corresponding PCI function (best-effort introspection v
   - `-RequireVirtioNetMsix`
   - `-RequireVirtioBlkMsix`
   - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`)*
+  - `-RequireVirtioInputMsix` *(requires a guest selftest binary that emits `virtio-input-msix` markers)*
 - Python:
   - `--require-virtio-net-msix`
   - `--require-virtio-blk-msix`
   - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`)*
+  - `--require-virtio-input-msix` *(requires a guest selftest binary that emits `virtio-input-msix` markers)*
 
 Notes:
 
@@ -165,6 +167,8 @@ Notes:
   host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
   - Exception: for virtio-blk, `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix` also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
+  - Exception: for virtio-input, `-RequireVirtioInputMsix` / `--require-virtio-input-msix` requires the guest marker
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
 
 Example (PowerShell):
 
