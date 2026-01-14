@@ -390,10 +390,12 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 7. (Optional) query/reset driver diagnostics counters:
    ```bat
    hidtest.exe --counters
+   hidtest.exe --counters --json
    hidtest.exe --reset-counters
 
    REM Reset and immediately verify that monotonic counters are cleared:
    hidtest.exe --reset-counters --counters
+   hidtest.exe --reset-counters --counters --json
    hidtest.exe --reset-counters --counters-json
    ```
      Note: `--reset-counters` requires opening the HID interface with write access; if it fails, rerun elevated.
@@ -409,8 +411,10 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 8. (Optional) query driver state / interrupt mode diagnostics:
    ```bat
    hidtest.exe --keyboard --state
+   hidtest.exe --keyboard --state --json
    hidtest.exe --keyboard --state-json
    hidtest.exe --keyboard --interrupt-info
+   hidtest.exe --keyboard --interrupt-info --json
    hidtest.exe --keyboard --interrupt-info-json
 
    REM Probe short-buffer negotiation (expect ERROR_INSUFFICIENT_BUFFER):
