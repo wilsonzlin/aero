@@ -467,13 +467,17 @@ impl Sm3TranslateFailure {
             // IR build errors are generally higher-level semantic issues. We treat explicit
             // "not supported" messages as fallbackable feature gaps.
             Sm3TranslateFailure::Build(e) => {
-                let msg = e.message.to_ascii_lowercase();
                 // Unknown opcodes are treated as feature gaps: the legacy translator skips unknown
                 // opcodes so we can keep games running while the strict pipeline gains coverage.
-                if msg.contains("unsupported opcode") {
+                //
+                // Prefer matching the structured opcode value instead of substring matching on
+                // `BuildError::message` so future message changes don't silently alter fallback
+                // policy.
+                if matches!(e.opcode, sm3::decode::Opcode::Unknown(_)) {
                     return true;
                 }
 
+                let msg = e.message.to_ascii_lowercase();
                 if msg.contains("not supported") {
                     return true;
                 }
