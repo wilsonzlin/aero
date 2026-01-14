@@ -6,10 +6,58 @@ export type MachineSnapshotDiskOverlayRef = Readonly<{
   overlay_image: string;
 }>;
 
+const DEFAULT_COW_OVERLAY_BLOCK_SIZE_BYTES = 1024 * 1024;
+const AEROSPARSE_HEADER_SIZE_BYTES = 64;
+const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
+
 function formatPrefix(prefix: string | undefined): string {
   if (!prefix) return "[machine.snapshot]";
   if (prefix.startsWith("[")) return prefix;
   return `[${prefix}]`;
+}
+
+function isPowerOfTwo(n: number): boolean {
+  return n > 0 && (n & (n - 1)) === 0;
+}
+
+async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string, prefix: string): Promise<number | null> {
+  if (!path) return null;
+  // In CI/unit tests there is no `navigator` / OPFS environment. Treat this as best-effort.
+  const storage = (globalThis as unknown as { navigator?: unknown }).navigator as { storage?: unknown } | undefined;
+  const getDirectory = (storage?.storage as { getDirectory?: unknown } | undefined)?.getDirectory;
+  if (typeof getDirectory !== "function") return null;
+
+  // Overlay refs are expected to be relative OPFS paths. Refuse to interpret `..` to avoid path traversal.
+  const parts = path.split("/").filter((p) => p && p !== ".");
+  if (parts.length === 0 || parts.some((p) => p === "..")) return null;
+
+  try {
+    let dir = (await (getDirectory as () => Promise<FileSystemDirectoryHandle>)()) as FileSystemDirectoryHandle;
+    for (const part of parts.slice(0, -1)) {
+      dir = await dir.getDirectoryHandle(part, { create: false });
+    }
+    const file = await dir.getFileHandle(parts[parts.length - 1]!, { create: false }).then((h) => h.getFile());
+    if (file.size < AEROSPARSE_HEADER_SIZE_BYTES) return null;
+    const buf = await file.slice(0, AEROSPARSE_HEADER_SIZE_BYTES).arrayBuffer();
+    if (buf.byteLength < AEROSPARSE_HEADER_SIZE_BYTES) return null;
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < AEROSPARSE_MAGIC.length; i += 1) {
+      if (bytes[i] !== AEROSPARSE_MAGIC[i]) return null;
+    }
+    const dv = new DataView(buf);
+    const version = dv.getUint32(8, true);
+    const headerSize = dv.getUint32(12, true);
+    const blockSizeBytes = dv.getUint32(16, true);
+    if (version !== 1 || headerSize !== AEROSPARSE_HEADER_SIZE_BYTES) return null;
+    // Mirror the Rust-side aerosparse header validation (looser, but enough to avoid nonsense).
+    if (blockSizeBytes === 0 || blockSizeBytes % 512 !== 0 || !isPowerOfTwo(blockSizeBytes) || blockSizeBytes > 64 * 1024 * 1024) {
+      return null;
+    }
+    return blockSizeBytes;
+  } catch (err) {
+    console.warn(`${prefix} Failed to read aerosparse overlay header from OPFS path=${path}:`, err);
+    return null;
+  }
 }
 
 function isMachineSnapshotDiskOverlayRef(value: unknown): value is MachineSnapshotDiskOverlayRef {
@@ -34,6 +82,8 @@ async function callMaybeAsync(fn: (...args: unknown[]) => unknown, thisArg: unkn
  * - `base_image` and `overlay_image` are OPFS-relative paths (e.g. `"aero/disks/win7.base"`),
  *   suitable for passing directly to the Machine's `*_opfs_*` attachment APIs.
  * - The strings are *paths*, not opaque IDs. They are relative to `navigator.storage.getDirectory()`.
+ * - Empty strings indicate "no backend configured" and should be ignored (the snapshot format may
+ *   still emit placeholder entries for canonical disk slots).
  */
 export async function reattachMachineSnapshotDisks(opts: {
   api: WasmApi;
@@ -72,8 +122,23 @@ export async function reattachMachineSnapshotDisks(opts: {
     // Back-compat shim: some builds may expose a different spelling; keep this list small and
     // update alongside the wasm-bindgen surface.
     (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
+  const setPrimaryNeedsBlockSize = typeof setPrimary === "function" && setPrimary.length >= 3;
+
+  const setDiskExisting =
+    (machine as unknown as { set_disk_opfs_existing?: unknown }).set_disk_opfs_existing ??
+    (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
+
   const attachIso =
+    // Prefer restore-aware helpers when available; they preserve guest-visible ATAPI media state.
+    (machine as unknown as { attach_install_media_iso_opfs_for_restore?: unknown }).attach_install_media_iso_opfs_for_restore ??
+    (machine as unknown as { attachInstallMediaIsoOpfsForRestore?: unknown }).attachInstallMediaIsoOpfsForRestore ??
+    (machine as unknown as { attach_install_media_iso_opfs_for_restore_and_set_overlay_ref?: unknown })
+      .attach_install_media_iso_opfs_for_restore_and_set_overlay_ref ??
+    (machine as unknown as { attachInstallMediaIsoOpfsForRestoreAndSetOverlayRef?: unknown })
+      .attachInstallMediaIsoOpfsForRestoreAndSetOverlayRef ??
+    // Generic attach helpers (new + legacy spellings).
     (machine as unknown as { attach_install_media_iso_opfs?: unknown }).attach_install_media_iso_opfs ??
+    (machine as unknown as { attachInstallMediaIsoOpfs?: unknown }).attachInstallMediaIsoOpfs ??
     (machine as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso ??
     (machine as unknown as { attachInstallMediaOpfsIso?: unknown }).attachInstallMediaOpfsIso;
 
@@ -84,6 +149,18 @@ export async function reattachMachineSnapshotDisks(opts: {
     }
 
     const diskId = entry.disk_id >>> 0;
+    const base = entry.base_image;
+    const overlay = entry.overlay_image;
+
+    // Treat empty `{base_image, overlay_image}` as "slot unused" instead of as an error.
+    // The canonical machine snapshot format emits placeholder entries for some disk_ids.
+    if (!base) {
+      if (!overlay) continue;
+      console.warn(
+        `${prefix} Ignoring restored disk overlay ref for disk_id=${diskId} with empty base_image and non-empty overlay_image=${overlay}.`,
+      );
+      continue;
+    }
 
     if (diskId === (diskIdPrimary >>> 0)) {
       if (typeof setPrimary !== "function") {
@@ -91,7 +168,22 @@ export async function reattachMachineSnapshotDisks(opts: {
           "Snapshot restore requires Machine.set_primary_hdd_opfs_cow(base_image, overlay_image) but it is unavailable in this WASM build.",
         );
       }
-      await callMaybeAsync(setPrimary as (...args: unknown[]) => unknown, machine, [entry.base_image, entry.overlay_image]);
+      if (!overlay) {
+        if (typeof setDiskExisting !== "function") {
+          throw new Error(
+            "Snapshot restore requires Machine.set_disk_opfs_existing(path) to reattach a base-only primary disk, but it is unavailable in this WASM build.",
+          );
+        }
+        await callMaybeAsync(setDiskExisting as (...args: unknown[]) => unknown, machine, [base]);
+        continue;
+      }
+      const args: unknown[] = [base, overlay];
+      if (setPrimaryNeedsBlockSize) {
+        const blockSizeBytes =
+          (await tryReadAerosparseBlockSizeBytesFromOpfs(overlay, prefix)) ?? DEFAULT_COW_OVERLAY_BLOCK_SIZE_BYTES;
+        args.push(blockSizeBytes);
+      }
+      await callMaybeAsync(setPrimary as (...args: unknown[]) => unknown, machine, args);
       continue;
     }
 
@@ -101,19 +193,19 @@ export async function reattachMachineSnapshotDisks(opts: {
           "Snapshot restore requires Machine.attach_install_media_iso_opfs(path) / Machine.attach_install_media_opfs_iso(path) but it is unavailable in this WASM build.",
         );
       }
-      if (entry.overlay_image && entry.overlay_image !== entry.base_image) {
+      if (overlay) {
         // The canonical install-media ISO is read-only. Preserve the `DISKS` overlay ref entry for
         // forward compatibility, but ignore `overlay_image` when using the ISO attach helper.
         console.warn(
-          `${prefix} Ignoring overlay_image for install media disk_id=${diskId} (base_image=${entry.base_image}, overlay_image=${entry.overlay_image}).`,
+          `${prefix} Ignoring overlay_image for install media disk_id=${diskId} (base_image=${base}, overlay_image=${overlay}).`,
         );
       }
-      await callMaybeAsync(attachIso as (...args: unknown[]) => unknown, machine, [entry.base_image]);
+      await callMaybeAsync(attachIso as (...args: unknown[]) => unknown, machine, [base]);
       continue;
     }
 
     console.warn(
-      `${prefix} Snapshot restore reported an unknown disk_id=${diskId} (base_image=${entry.base_image}, overlay_image=${entry.overlay_image}); ignoring.`,
+      `${prefix} Snapshot restore reported an unknown disk_id=${diskId} (base_image=${base}, overlay_image=${overlay}); ignoring.`,
     );
   }
 }

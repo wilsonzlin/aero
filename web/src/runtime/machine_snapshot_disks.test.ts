@@ -90,4 +90,37 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
     expect(events).toEqual(["restore", "take", "primary"]);
   });
+
+  it("supplies overlay block size when set_primary_hdd_opfs_cow requires it (legacy wasm signature)", async () => {
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {});
+
+    const take_restored_disk_overlays = vi.fn(() => [
+      { disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "aero/disks/win7.overlay" },
+    ]);
+
+    // Older wasm-bindgen exports require a third `overlayBlockSizeBytes` argument.
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string, _blockSizeBytes: number) => {});
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_primary_hdd_opfs_cow,
+      attach_install_media_opfs_iso: vi.fn(),
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith(
+      "aero/disks/win7.base",
+      "aero/disks/win7.overlay",
+      1024 * 1024,
+    );
+  });
 });
