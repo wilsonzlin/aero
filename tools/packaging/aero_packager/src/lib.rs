@@ -180,6 +180,13 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     let mut files = collect_files(config, &driver_plan, devices_cmd_bytes)?;
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
+    // Ensure all packaged paths are safe to unpack and use on Windows (target guest),
+    // even when packaging on Unix hosts where file naming rules differ.
+    for f in &files {
+        validate_windows_safe_rel_path(&f.rel_path)
+            .with_context(|| format!("validate package path {}", f.rel_path))?;
+    }
+
     // Hash all files that will be included, except the manifest which is generated below.
     let file_entries: Vec<ManifestFileEntry> = files
         .iter()
@@ -1906,6 +1913,57 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
+}
+
+fn validate_windows_safe_rel_path(rel_path: &str) -> Result<()> {
+    for component in rel_path.split('/') {
+        if component.is_empty() {
+            bail!("package path {rel_path:?} contains an empty component");
+        }
+        if component == "." || component == ".." {
+            bail!(
+                "package path {rel_path:?} contains an invalid component: {component:?}"
+            );
+        }
+        if component.ends_with('.') || component.ends_with(' ') {
+            bail!(
+                "package path {rel_path:?} contains a Windows-invalid component (trailing '.' or space): {component:?}"
+            );
+        }
+        if let Some(c) = component.chars().find(|c| {
+            matches!(
+                c,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            )
+        }) {
+            bail!(
+                "package path {rel_path:?} contains a Windows-invalid component (invalid character {c:?}): {component:?}"
+            );
+        }
+        let base = component.split('.').next().unwrap_or("");
+        if is_reserved_windows_device_name(base) {
+            bail!(
+                "package path {rel_path:?} contains a Windows-invalid reserved device name: {component:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn is_reserved_windows_device_name(base_name: &str) -> bool {
+    let upper = base_name.to_ascii_uppercase();
+    match upper.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            if let Some(n) = upper.strip_prefix("COM") {
+                return matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
+            }
+            if let Some(n) = upper.strip_prefix("LPT") {
+                return matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
+            }
+            false
+        }
+    }
 }
 
 fn canonicalize_json_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
