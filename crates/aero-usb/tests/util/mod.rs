@@ -15,6 +15,19 @@ pub const USBINTR_IOC: u16 = regs::USBINTR_IOC;
 // Root hub PORTSC bits (UHCI spec).
 pub const PORTSC_PR: u16 = 1 << 9;
 
+/// Convenience helper used by xHCI integration tests.
+///
+/// xHCI transfer execution is gated on `USBCMD.RUN`. This helper sets the bit using
+/// fully-qualified register constants so individual tests don't need to import `aero_usb::xhci::regs`
+/// (avoids "missing import" vs "unused import" churn under `-D warnings`).
+pub fn xhci_set_run(ctrl: &mut aero_usb::xhci::XhciController) {
+    ctrl.mmio_write(
+        aero_usb::xhci::regs::REG_USBCMD,
+        4,
+        u64::from(aero_usb::xhci::regs::USBCMD_RUN),
+    );
+}
+
 // UHCI link pointer bits.
 pub const LINK_PTR_T: u32 = 1 << 0;
 pub const LINK_PTR_Q: u32 = 1 << 1;

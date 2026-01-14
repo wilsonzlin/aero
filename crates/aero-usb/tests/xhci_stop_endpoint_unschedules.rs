@@ -1,12 +1,11 @@
 mod util;
 
 use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
-use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 #[derive(Clone, Debug)]
 struct AlwaysInDevice;
@@ -45,11 +44,7 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
-    xhci.mmio_write(
-        aero_usb::xhci::regs::REG_USBCMD,
-        4,
-        u64::from(aero_usb::xhci::regs::USBCMD_RUN),
-    );
+    xhci_set_run(&mut xhci);
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
