@@ -232,9 +232,12 @@ PortCls miniports:
 
 - Registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology` (PortTopology + IMiniportTopology) subdevices.
 - Physically bridges them via `PcRegisterPhysicalConnection`.
-- Exposes fixed-format endpoints:
+- Exposes contract-v1 endpoints by default:
   - Render (stream 0): 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
   - Capture (stream 1): 48,000 Hz, mono (1ch), 16-bit PCM LE (S16_LE)
+- When virtio-snd `PCM_INFO` advertises additional formats/rates/channel counts, the WaveRT miniport can dynamically
+  generate pin data ranges and expose extra Windows formats (while still requiring and preferring the contract-v1
+  baseline).
 - Uses a QPC-based clock (`KeQueryPerformanceCounter`) for position reporting (virtqueue completions are not a reliable clock in Aero).
 - Uses a periodic timer/DPC “software DMA” model that:
   - for render: submits one period of PCM to a backend callback and advances play position (backpressure-aware)
@@ -242,7 +245,7 @@ PortCls miniports:
 
 * `src/adapter.c` — PortCls adapter driver (`PcInitializeAdapterDriver` / `PcAddAdapterDevice`)
 * `src/topology.c` — topology miniport (speaker + microphone jacks + channel config properties)
-* `src/wavert.c` — WaveRT miniport + stream (fixed-format render + capture)
+* `src/wavert.c` — WaveRT miniport + stream (dynamic format table from `PCM_INFO` when available; fixed fallback)
 
 Backend layer (WaveRT ↔ virtio-snd):
 
@@ -341,6 +344,9 @@ package exposes both streams via PortCls/WaveRT:
 
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
+
+When a virtio-snd implementation advertises additional `PCM_INFO` capabilities, the driver can optionally expose extra
+formats/rates/channels via dynamic WaveRT format tables (non-contract).
 
 Basic playback uses `controlq` + `txq`. Capture uses `controlq` + `rxq`; the emulator fills silence
 when host input is unavailable.
