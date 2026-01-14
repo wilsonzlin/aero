@@ -35,6 +35,28 @@ static void virtio_rmb(const virtio_os_ops_t *os, void *ctx)
     }
 }
 
+static void virtio_mb(const virtio_os_ops_t *os, void *ctx)
+{
+    if (os == NULL) {
+        return;
+    }
+    if (os->mb != NULL) {
+        os->mb(ctx);
+        return;
+    }
+    /*
+     * Best-effort fallback: if only one-way barriers are available, invoke both.
+     * This is intended for unit tests / simple shims; real transports should
+     * provide a full mb() implementation.
+     */
+    if (os->wmb != NULL) {
+        os->wmb(ctx);
+    }
+    if (os->rmb != NULL) {
+        os->rmb(ctx);
+    }
+}
+
 static size_t virtqueue_split_avail_size(uint16_t queue_size, virtio_bool_t event_idx)
 {
     size_t size;
@@ -613,10 +635,17 @@ virtio_bool_t virtqueue_split_enable_interrupts(virtqueue_split_t *vq)
     }
 
     vq->avail->flags = (uint16_t)(vq->avail->flags & (uint16_t)~VRING_AVAIL_F_NO_INTERRUPT);
-    virtio_wmb(vq->os, vq->os_ctx);
+    /*
+     * Ensure used_event/flags are visible to the device before we check whether
+     * new completions have raced with re-arming.
+     *
+     * This must be a full barrier (store->load ordering), otherwise a weakly
+     * ordered implementation could observe used->idx first and miss an
+     * interrupt.
+     */
+    virtio_mb(vq->os, vq->os_ctx);
 
     used_idx = vq->used->idx;
-    virtio_rmb(vq->os, vq->os_ctx);
 
     return (used_idx != vq->last_used_idx) ? VIRTIO_TRUE : VIRTIO_FALSE;
 }

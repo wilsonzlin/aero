@@ -101,6 +101,109 @@ static void test_ring_size_event_idx(void)
     assert(virtqueue_split_ring_size(qsz, 4096, VIRTIO_TRUE) == 8192);
 }
 
+static void test_interrupt_suppression_helpers(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    vring_device_sim_t sim;
+    virtio_sg_entry_t sg;
+    uint16_t head;
+    void *cookie_out;
+    uint32_t used_len;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    /*
+     * Legacy interrupt suppression (no EVENT_IDX): toggles VRING_AVAIL_F_NO_INTERRUPT.
+     */
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4096, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4096,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+    assert((vq.avail->flags & VRING_AVAIL_F_NO_INTERRUPT) == 0);
+
+    virtqueue_split_disable_interrupts(&vq);
+    assert((vq.avail->flags & VRING_AVAIL_F_NO_INTERRUPT) != 0);
+    assert(vq.used_event == NULL);
+
+    /* No completions -> enable returns FALSE. */
+    assert(virtqueue_split_enable_interrupts(&vq) == VIRTIO_FALSE);
+    assert((vq.avail->flags & VRING_AVAIL_F_NO_INTERRUPT) == 0);
+
+    /* Pre-existing completion -> enable returns TRUE (needs drain). */
+    vq.used->idx = 1;
+    assert(virtqueue_split_enable_interrupts(&vq) == VIRTIO_TRUE);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+
+    /*
+     * EVENT_IDX suppression: uses used_event and also keeps NO_INTERRUPT in sync
+     * for best-effort compatibility.
+     */
+    test_os_ctx_init(&os_ctx);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4096, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4096,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+    assert(vq.used_event != NULL);
+    assert(vq.avail_event != NULL);
+
+    /* Prime the simulated device state. */
+    memset(&sim, 0, sizeof(sim));
+    sim.vq = &vq;
+    sim.notify_batch = 1;
+
+    sg.addr = 0x200000u;
+    sg.len = 512;
+    sg.device_writes = VIRTIO_FALSE;
+
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)0x1u, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    (void)head;
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+    sim_process(&sim);
+
+    cookie_out = NULL;
+    used_len = 0;
+    assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+    assert(cookie_out == (void *)(uintptr_t)0x1u);
+    assert(used_len == sg.len);
+    assert(vq.last_used_idx == 1);
+
+    virtqueue_split_disable_interrupts(&vq);
+    assert((vq.avail->flags & VRING_AVAIL_F_NO_INTERRUPT) != 0);
+    assert(*vq.used_event == 0); /* last_used_idx - 1 */
+
+    assert(virtqueue_split_enable_interrupts(&vq) == VIRTIO_FALSE);
+    assert((vq.avail->flags & VRING_AVAIL_F_NO_INTERRUPT) == 0);
+    assert(*vq.used_event == vq.last_used_idx);
+
+    /* Pre-existing completion -> enable returns TRUE (needs drain). */
+    vq.used->idx = (uint16_t)(vq.last_used_idx + 1u);
+    assert(virtqueue_split_enable_interrupts(&vq) == VIRTIO_TRUE);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void validate_queue(const virtqueue_split_t *vq)
 {
     uint8_t stack_seen[256];
@@ -1397,6 +1500,7 @@ static void test_pci_legacy_integration(void)
 int main(void)
 {
     test_ring_size_event_idx();
+    test_interrupt_suppression_helpers();
     test_wraparound();
     test_wraparound_event_idx();
     test_small_queue_align();
