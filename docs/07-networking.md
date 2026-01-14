@@ -119,6 +119,13 @@ contributors.
     tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). This is
     safer for public deployments. You can switch to full-cone behavior with
     `UDP_INBOUND_FILTER_MODE=any` (**less safe**; accepts inbound UDP from any remote endpoint).
+  - DoS hardening: the relay configures pion/SCTP message-size caps to prevent malicious peers from
+    sending extremely large WebRTC DataChannel messages that would otherwise be buffered/allocated
+    before `DataChannel.OnMessage` runs. See:
+    `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP hint) and `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES`
+    (hard receive-side cap).
+  - Session leak hardening: the relay closes server-side PeerConnections that never connect within
+    `WEBRTC_SESSION_CONNECT_TIMEOUT` (default `30s`).
 
 ### Phase 1: introduce `L2TunnelBackend` (frame pipe) and keep slirp as fallback
 
