@@ -52,6 +52,7 @@ path = "../crates/aero-d3d11"
 
 [dependencies.aero-d3d9]
 path = "../crates/aero-d3d9"
+features = ["dxbc-robust"]
 
 [dependencies.aero-audio]
 path = "../crates/aero-audio"

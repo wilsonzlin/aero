@@ -623,7 +623,7 @@ fn fuzz_translate_dxbc_bytes(bytes: &[u8]) {
     // The bootstrap translator is token-stream driven and should not panic on malformed input.
     let _ = aero_d3d11::translate_sm4_to_wgsl_bootstrap(&program);
 
-    let Ok(module) = program.decode() else {
+    let Ok(module) = aero_d3d11::sm4::decode_program(&program) else {
         return;
     };
 
