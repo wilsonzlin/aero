@@ -11,6 +11,7 @@ export const VM_SNAPSHOT_DEVICE_I8042_KIND = "input.i8042";
 export const VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND = "input.virtio_input";
 export const VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND = "audio.hda";
 export const VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND = "audio.virtio_snd";
+export const VM_SNAPSHOT_DEVICE_GPU_AEROGPU_KIND = "gpu.aerogpu";
 export const VM_SNAPSHOT_DEVICE_E1000_KIND = "net.e1000";
 export const VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND = "net.virtio_net";
 export const VM_SNAPSHOT_DEVICE_NET_STACK_KIND = "net.stack";
@@ -34,6 +35,9 @@ export const VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET = 23;
 // `aero_snapshot::DeviceId::VIRTIO_INPUT` (see `docs/16-snapshots.md`).
 // NOTE: This must match the Rust `DeviceId` assignment.
 export const VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT = 24;
+// `aero_snapshot::DeviceId::AEROGPU` (see `docs/16-snapshots.md`).
+// NOTE: This must match the Rust `DeviceId` assignment.
+export const VM_SNAPSHOT_DEVICE_ID_AEROGPU = 25;
 // `aero_snapshot::DeviceId::NET_STACK` (see `docs/16-snapshots.md`).
 // NOTE: This must match the Rust `DeviceId` assignment.
 export const VM_SNAPSHOT_DEVICE_ID_NET_STACK = 20;
@@ -170,6 +174,7 @@ export function vmSnapshotDeviceIdToKind(id: number): string {
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_I8042) return VM_SNAPSHOT_DEVICE_I8042_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA) return VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND) return VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND;
+  if (idU32 === VM_SNAPSHOT_DEVICE_ID_AEROGPU) return VM_SNAPSHOT_DEVICE_GPU_AEROGPU_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_E1000) return VM_SNAPSHOT_DEVICE_E1000_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET) return VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT) return VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND;
@@ -183,6 +188,7 @@ export function vmSnapshotDeviceKindToId(kind: string): number | null {
   if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) return VM_SNAPSHOT_DEVICE_ID_I8042;
   if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) return VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA;
   if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) return VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND;
+  if (kind === VM_SNAPSHOT_DEVICE_GPU_AEROGPU_KIND) return VM_SNAPSHOT_DEVICE_ID_AEROGPU;
   if (kind === VM_SNAPSHOT_DEVICE_E1000_KIND) return VM_SNAPSHOT_DEVICE_ID_E1000;
   if (kind === VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND) return VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET;
   if (kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND) return VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT;
