@@ -41,6 +41,34 @@ describe("io/devices/I8042Controller", () => {
     expect(irqEvents).toEqual(["raise:1", "lower:1", "raise:1", "lower:1"]);
   });
 
+  it("pulses IRQ1 for consecutive identical keyboard bytes", () => {
+    const irqEvents: string[] = [];
+    const irqSink: IrqSink = {
+      raiseIrq: vi.fn((irq: number) => irqEvents.push(`raise:${irq}`)),
+      lowerIrq: vi.fn((irq: number) => irqEvents.push(`lower:${irq}`)),
+    };
+
+    const dev = new I8042Controller(irqSink);
+
+    // Enable IRQ1 in the command byte (bit 0).
+    dev.portWrite(0x0064, 1, 0x60);
+    dev.portWrite(0x0060, 1, 0x01);
+
+    // Inject two identical bytes. The controller should still pulse IRQ1 once per byte becoming
+    // available, even when consecutive bytes are identical.
+    dev.injectKeyboardBytes(Uint8Array.from([0x1c, 0x1c]));
+
+    expect(irqEvents).toEqual(["raise:1", "lower:1"]);
+    expect(dev.portRead(0x0060, 1)).toBe(0x1c);
+
+    // Reading the first byte should make the second byte available, generating another pulse.
+    expect(irqEvents).toEqual(["raise:1", "lower:1", "raise:1", "lower:1"]);
+    expect(dev.portRead(0x0060, 1)).toBe(0x1c);
+
+    // No additional queued bytes.
+    expect(irqEvents).toEqual(["raise:1", "lower:1", "raise:1", "lower:1"]);
+  });
+
   it("does not pulse IRQ1 when interrupts are disabled", () => {
     const irqEvents: string[] = [];
     const irqSink: IrqSink = {
