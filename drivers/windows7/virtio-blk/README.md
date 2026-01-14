@@ -81,10 +81,11 @@ You can also use `aero-virtio-selftest.exe`:
 - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` markers on stdout/COM1.
 - The `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` marker includes interrupt diagnostics from the miniport IOCTL query:
   - `irq_mode=<intx|msi|msix>`
+  - `irq_message_count=<n>`
   - `msix_config_vector=0x....`
   - `msix_queue_vector=0x....` (queue0)
 - The selftest may also emit an informational standalone miniport IRQ line (useful for log scraping):
-  - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+  - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|messages=<n>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
 - To make MSI/MSI-X a hard requirement in the in-tree QEMU harness:
   - Host:
     - request a larger MSI-X table size (best-effort): `-VirtioMsixVectors N` / `--virtio-msix-vectors N` (global) or

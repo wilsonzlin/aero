@@ -58,7 +58,7 @@ If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.
 
 For `virtio-blk`, the selftest may also emit a richer miniport-IOCTL-derived line (best-effort; depends on the installed miniport contract):
 
-- `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+- `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|messages=<n>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
 
 Notes:
 
