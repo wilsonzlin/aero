@@ -80,13 +80,46 @@ class QmpInputSendEventTests(unittest.TestCase):
         h = self.harness
 
         ev = h._qmp_deterministic_tablet_events()
-        types = [e["type"] for e in ev]
-        self.assertIn("abs", types)
-        self.assertIn("btn", types)
+        self.assertEqual(len(ev), 6)
+
+        # Reset move (0,0) so repeated injections still produce movement reports.
+        self.assertEqual(ev[0]["type"], "abs")
+        self.assertEqual(ev[0]["data"]["axis"], "x")
+        self.assertEqual(ev[0]["data"]["value"], 0)
+        self.assertEqual(ev[1]["type"], "abs")
+        self.assertEqual(ev[1]["data"]["axis"], "y")
+        self.assertEqual(ev[1]["data"]["value"], 0)
+
+        # Target move.
+        self.assertEqual(ev[2]["type"], "abs")
+        self.assertEqual(ev[2]["data"]["axis"], "x")
+        self.assertEqual(ev[2]["data"]["value"], 10000)
+        self.assertEqual(ev[3]["type"], "abs")
+        self.assertEqual(ev[3]["data"]["axis"], "y")
+        self.assertEqual(ev[3]["data"]["value"], 20000)
+
+        # Left click.
+        self.assertEqual(ev[4]["type"], "btn")
+        self.assertEqual(ev[4]["data"]["button"], "left")
+        self.assertTrue(ev[4]["data"]["down"])
+        self.assertEqual(ev[5]["type"], "btn")
+        self.assertEqual(ev[5]["data"]["button"], "left")
+        self.assertFalse(ev[5]["data"]["down"])
 
         abs_axes = {e["data"]["axis"] for e in ev if e["type"] == "abs"}
         self.assertIn("x", abs_axes)
         self.assertIn("y", abs_axes)
+
+    def test_tablet_events_support_custom_target_coords(self) -> None:
+        h = self.harness
+
+        ev = h._qmp_deterministic_tablet_events(x=1234, y=5678)
+        self.assertEqual(ev[2]["type"], "abs")
+        self.assertEqual(ev[2]["data"]["axis"], "x")
+        self.assertEqual(ev[2]["data"]["value"], 1234)
+        self.assertEqual(ev[3]["type"], "abs")
+        self.assertEqual(ev[3]["data"]["axis"], "y")
+        self.assertEqual(ev[3]["data"]["value"], 5678)
 
 
 if __name__ == "__main__":

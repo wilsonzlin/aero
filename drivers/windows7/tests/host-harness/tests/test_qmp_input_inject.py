@@ -200,6 +200,30 @@ class QmpInputInjectionTests(unittest.TestCase):
             for cmd in sent:
                 self.assertEqual(cmd["execute"], "input-send-event")
                 self.assertEqual(cmd["arguments"]["device"], h._VIRTIO_INPUT_QMP_TABLET_ID)
+
+            # Reset move, target move, click down, click up.
+            self.assertEqual(
+                sent[0]["arguments"]["events"],
+                [
+                    {"type": "abs", "data": {"axis": "x", "value": 0}},
+                    {"type": "abs", "data": {"axis": "y", "value": 0}},
+                ],
+            )
+            self.assertEqual(
+                sent[1]["arguments"]["events"],
+                [
+                    {"type": "abs", "data": {"axis": "x", "value": 10000}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20000}},
+                ],
+            )
+            self.assertEqual(
+                sent[2]["arguments"]["events"],
+                [{"type": "btn", "data": {"down": True, "button": "left"}}],
+            )
+            self.assertEqual(
+                sent[3]["arguments"]["events"],
+                [{"type": "btn", "data": {"down": False, "button": "left"}}],
+            )
         finally:
             h._qmp_connect = old_connect
             h._qmp_send_command = old_send
