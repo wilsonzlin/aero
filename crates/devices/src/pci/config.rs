@@ -893,6 +893,7 @@ mod tests {
     use super::{PciBarDefinition, PciConfigSpace, PciDevice};
     use crate::pci::msi::{MsiCapability, PCI_CAP_ID_MSI};
     use crate::pci::msix::{MsixCapability, PCI_CAP_ID_MSIX};
+    use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 
     #[test]
     fn capability_list_traversal_finds_msi() {
@@ -922,6 +923,51 @@ mod tests {
         assert!(msi.enabled());
         assert_eq!(msi.message_address(), 0xfee0_0000);
         assert_eq!(msi.message_data(), 0x0045);
+    }
+
+    #[test]
+    fn config_write_preserves_device_managed_msi_pending_bits() {
+        // Regression test: device models may mutate MSI capability state internally (pending bits)
+        // without immediately syncing it into the raw backing byte array. A subsequent config-space
+        // write must not clobber that device-managed state.
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+        let cap_offset = config.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+
+        // Program and enable MSI.
+        config.write(cap_offset + 0x04, 4, 0xfee0_0000);
+        config.write(cap_offset + 0x08, 4, 0);
+        config.write(cap_offset + 0x0c, 2, 0x0045);
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        config.write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        let is_64bit = (ctrl & (1 << 7)) != 0;
+        let per_vector_masking = (ctrl & (1 << 8)) != 0;
+        assert!(per_vector_masking, "test requires per-vector masking support");
+        let mask_off = if is_64bit {
+            cap_offset + 0x10
+        } else {
+            cap_offset + 0x0c
+        };
+
+        // Mask the vector so triggering will set the pending bit instead of delivering.
+        config.write(mask_off, 4, 1);
+
+        struct Sink;
+        impl MsiTrigger for Sink {
+            fn trigger_msi(&mut self, _message: MsiMessage) {}
+        }
+
+        // Trigger while masked to set the pending bit in the capability state.
+        {
+            let msi = config.capability_mut::<MsiCapability>().unwrap();
+            assert!(!msi.trigger(&mut Sink));
+            assert_eq!(msi.pending_bits() & 1, 1);
+        }
+
+        // Unmask via a config-space write. This write must not clear the pending bit.
+        config.write(mask_off, 4, 0);
+        assert_eq!(config.capability::<MsiCapability>().unwrap().pending_bits() & 1, 1);
     }
 
     #[test]
