@@ -24,6 +24,7 @@ extern POBJECT_TYPE* MmSectionObjectType;
  */
 extern BOOLEAN NTAPI SeSinglePrivilegeCheck(_In_ LUID PrivilegeValue, _In_ KPROCESSOR_MODE PreviousMode);
 extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
+extern VOID NTAPI PsDereferencePrimaryToken(_In_ PACCESS_TOKEN PrimaryToken);
 
 /*
  * AeroGPU exposes a single system-memory-backed segment (Aperture + CpuVisible).
@@ -5501,7 +5502,7 @@ static BOOLEAN AeroGpuDbgctlCallerIsAdminOrSeDebug(_In_ KPROCESSOR_MODE Previous
     PACCESS_TOKEN token = PsReferencePrimaryToken(PsGetCurrentProcess());
     if (token) {
         isAdmin = SeTokenIsAdmin(token) ? TRUE : FALSE;
-        ObDereferenceObject(token);
+        PsDereferencePrimaryToken(token);
     }
 
     LUID debugLuid;
