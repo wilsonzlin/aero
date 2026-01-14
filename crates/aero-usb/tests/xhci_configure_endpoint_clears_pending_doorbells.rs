@@ -2,7 +2,7 @@ use std::boxed::Box;
 
 use aero_usb::xhci::context::{InputControlContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
@@ -124,14 +124,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
 
-    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint reads the
-    // Slot Context from the output Device Context and mirrors it back into controller-local state;
-    // if we leave it zeroed, the slot would no longer resolve to the attached device when
-    // executing transfers after dropping endpoints.
-    let mut out_slot_ctx = SlotContext::default();
-    out_slot_ctx.set_root_hub_port_number(1);
-    out_slot_ctx.write_to(&mut mem, dev_ctx);
-
     // Ensure the output Slot Context in guest memory is populated. Configure Endpoint updates the
     // controller-local Slot Context from the output Device Context; if we leave it zeroed, the slot
     // would no longer resolve to an attached device after the drop command completes.
@@ -157,8 +149,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
-    // Transfer execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick(&mut mem);
 
     let mut buf = [0u8; 8];
@@ -223,8 +213,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
-    // Transfer execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick(&mut mem);
 
     let mut buf = [0u8; 8];
