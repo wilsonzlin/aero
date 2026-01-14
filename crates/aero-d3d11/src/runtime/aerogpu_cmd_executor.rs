@@ -21274,6 +21274,7 @@ fn hs_main() {{
                         rdef: None,
                     },
                     sm4_metadata: Sm4ShaderMetadata::default(),
+                    sm4_module: None,
                     wgsl_source: wgsl.clone(),
                 },
             );
