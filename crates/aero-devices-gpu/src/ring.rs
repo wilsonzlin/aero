@@ -196,6 +196,40 @@ mod tests {
     }
 
     #[test]
+    fn ring_header_validation_rejects_bad_entry_count() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.entry_count = 0;
+        assert!(!hdr.is_valid(0xFFFF));
+
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.entry_count = 3; // not a power-of-two
+        // size_bytes must be >= required for validate_prefix to reach BadEntryCount.
+        hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+        assert!(!hdr.is_valid(0xFFFF));
+    }
+
+    #[test]
+    fn ring_header_validation_rejects_bad_stride_and_size() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+
+        // Stride too small.
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES - 1;
+        // size_bytes must be >= required for validate_prefix to reach BadStrideField.
+        hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+        assert!(!hdr.is_valid(0xFFFF));
+
+        // size_bytes too small for declared entry_count/stride.
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.size_bytes = hdr.size_bytes - 1;
+        assert!(!hdr.is_valid(0xFFFF));
+    }
+
+    #[test]
     fn ring_abi_matches_c_header() {
         use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -287,6 +321,41 @@ mod tests {
         assert!(matches!(
             hdr.validate_prefix(),
             Err(protocol_ring::AerogpuRingDecodeError::BadMagic { .. })
+        ));
+    }
+
+    #[test]
+    fn alloc_table_header_validate_prefix_rejects_bad_stride_and_size() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let entry_count = 1u32;
+
+        // Stride too small.
+        let hdr = AeroGpuAllocTableHeader {
+            magic: AEROGPU_ALLOC_TABLE_MAGIC,
+            abi_version,
+            size_bytes: protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32,
+            entry_count,
+            entry_stride_bytes: 1,
+            reserved0: 0,
+        };
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadStrideField { .. })
+        ));
+
+        // size_bytes too small for declared entry_count/stride.
+        let entry_stride = AeroGpuAllocEntry::SIZE_BYTES;
+        let hdr = AeroGpuAllocTableHeader {
+            magic: AEROGPU_ALLOC_TABLE_MAGIC,
+            abi_version,
+            size_bytes: protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32,
+            entry_count,
+            entry_stride_bytes: entry_stride,
+            reserved0: 0,
+        };
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadSizeField { .. })
         ));
     }
 }
