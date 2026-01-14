@@ -153,8 +153,8 @@ fn xhci_hce_sets_hchalted_even_when_run_set() {
     let mut xhci = XhciController::new();
 
     // With RUN set, HCHalted should normally clear.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_eq!(
         sts & regs::USBSTS_HCHALTED,
         0,
@@ -165,7 +165,7 @@ fn xhci_hce_sets_hchalted_even_when_run_set() {
 
     // Real hardware halts the controller on fatal errors. Mirror that behaviour by reporting
     // HCHalted even if USBCMD.RUN remains set.
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts & regs::USBSTS_HCE, 0);
     assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
 }
