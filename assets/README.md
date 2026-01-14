@@ -1,7 +1,8 @@
 # `assets/` provenance
 
 This directory contains **tiny, deterministic, redistribution-safe** binary assets that are
-intentionally committed to the repository (and allowlisted by CI policy checks).
+intentionally committed to the repository (and allowlisted by CI policy checks in
+`scripts/ci/check-repo-policy.sh`).
 
 ## `bios.bin`
 
@@ -21,7 +22,7 @@ with:
 cargo xtask fixtures
 ```
 
-To verify the checked-in blob is up to date:
+To verify the checked-in blobs are up to date:
 
 ```bash
 cargo xtask fixtures --check
