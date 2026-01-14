@@ -799,8 +799,14 @@ class InfRegDwordOccurrence:
 
 
 @dataclass(frozen=True)
+class InfRegLineOccurrence:
+    line_no: int
+    raw_line: str
+
+
+@dataclass(frozen=True)
 class InfMsiInterruptSettingsScan:
-    interrupt_management_key_lines: tuple[str, ...]
+    interrupt_management_key_lines: tuple[InfRegLineOccurrence, ...]
     msi_supported: tuple[InfRegDwordOccurrence, ...]
     message_number_limit: tuple[InfRegDwordOccurrence, ...]
 
@@ -815,7 +821,7 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
 
     errors: list[str] = []
 
-    interrupt_mgmt_lines: list[str] = []
+    interrupt_mgmt_lines: list[InfRegLineOccurrence] = []
     msi_supported: list[InfRegDwordOccurrence] = []
     msg_limit: list[InfRegDwordOccurrence] = []
 
@@ -846,9 +852,9 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
             # but accept other ways of explicitly creating/touching the key.
             flags = _try_parse_inf_int(parts[3] if len(parts) > 3 else "")
             if value_name == "" and flags is not None and (flags & 0x10):
-                interrupt_mgmt_lines.append(f"{file.as_posix()}:{line_no}: {line}")
+                interrupt_mgmt_lines.append(InfRegLineOccurrence(line_no=line_no, raw_line=f"{file.as_posix()}:{line_no}: {line}"))
             elif value_name:
-                interrupt_mgmt_lines.append(f"{file.as_posix()}:{line_no}: {line}")
+                interrupt_mgmt_lines.append(InfRegLineOccurrence(line_no=line_no, raw_line=f"{file.as_posix()}:{line_no}: {line}"))
             continue
 
         if subkey != "interrupt management\\messagesignaledinterruptproperties":
@@ -892,6 +898,63 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
     )
 
 
+def _parse_inf_line_sections(text: str) -> dict[int, str]:
+    """
+    Return a mapping from (1-indexed) line number -> current INF section name (lowercase).
+
+    Comment-only and blank lines are ignored (no mapping entry).
+    """
+
+    out: dict[int, str] = {}
+    current_section: str | None = None
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        if raw.lstrip().startswith(";"):
+            continue
+        active = _strip_inf_inline_comment(raw).strip()
+        if not active:
+            continue
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", active)
+        if m:
+            current_section = m.group("section").strip().lower()
+            continue
+        if current_section is None:
+            continue
+        out[line_no] = current_section
+    return out
+
+
+def _parse_inf_referenced_addreg_sections(text: str) -> set[str]:
+    """
+    Return the set of AddReg section names referenced by `AddReg = ...` directives.
+
+    Section names are returned lowercased for case-insensitive matching.
+    """
+
+    out: set[str] = set()
+    current_section: str | None = None
+    for raw in text.splitlines():
+        if raw.lstrip().startswith(";"):
+            continue
+        active = _strip_inf_inline_comment(raw).strip()
+        if not active:
+            continue
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", active)
+        if m:
+            current_section = m.group("section").strip()
+            continue
+        if current_section is None:
+            continue
+        m = re.match(r"^\s*AddReg\s*=\s*(?P<rhs>.+)$", active, flags=re.I)
+        if not m:
+            continue
+        rhs = m.group("rhs").strip()
+        for token in _split_inf_csv_fields(rhs):
+            name = _unquote_inf_token(token).strip()
+            if name:
+                out.add(name.lower())
+    return out
+
+
 def _self_test_scan_inf_msi_interrupt_settings() -> None:
     sample = r"""
 ; full-line comment should be ignored:
@@ -923,10 +986,39 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
     """
 
     errors: list[str] = []
-    scan, scan_errors = scan_inf_msi_interrupt_settings(read_text(inf_path), file=inf_path)
+    text = read_text(inf_path)
+    scan, scan_errors = scan_inf_msi_interrupt_settings(text, file=inf_path)
     errors.extend(scan_errors)
 
-    if not scan.interrupt_management_key_lines:
+    # Guard against "dead" MSI registry settings: the HKR lines must live in a
+    # section referenced by an AddReg directive, otherwise they will never be
+    # applied during installation.
+    referenced_addreg_sections = _parse_inf_referenced_addreg_sections(text)
+    if not referenced_addreg_sections:
+        errors.append(
+            format_error(
+                f"{inf_path.as_posix()}: INF contains no AddReg directives (MSI settings would be inert):",
+                [
+                    "expected at least one 'AddReg = ...' directive referencing a section that contains the MSI registry keys",
+                ],
+            )
+        )
+
+    line_sections = _parse_inf_line_sections(text)
+
+    def _is_in_referenced_addreg_section(line_no: int) -> bool:
+        sect = line_sections.get(line_no)
+        return sect is not None and sect in referenced_addreg_sections
+
+    interrupt_key_lines = scan.interrupt_management_key_lines
+    msi_supported_entries = scan.msi_supported
+    msg_limit_entries = scan.message_number_limit
+    if referenced_addreg_sections:
+        interrupt_key_lines = tuple(o for o in interrupt_key_lines if _is_in_referenced_addreg_section(o.line_no))
+        msi_supported_entries = tuple(o for o in msi_supported_entries if _is_in_referenced_addreg_section(o.line_no))
+        msg_limit_entries = tuple(o for o in msg_limit_entries if _is_in_referenced_addreg_section(o.line_no))
+
+    if not interrupt_key_lines:
         errors.append(
             format_error(
                 f"{inf_path.as_posix()}: missing Interrupt Management key creation AddReg entry:",
@@ -937,7 +1029,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
             )
         )
 
-    if not scan.msi_supported:
+    if not msi_supported_entries:
         errors.append(
             format_error(
                 f"{inf_path.as_posix()}: missing MSISupported AddReg entry:",
@@ -947,21 +1039,21 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
             )
         )
     else:
-        values = {o.value for o in scan.msi_supported}
+        values = {o.value for o in msi_supported_entries}
         if values != {1}:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: MSISupported must be 1:",
                     [
                         f"values found: {sorted(values)}",
-                        *[o.raw_line for o in scan.msi_supported],
+                        *[o.raw_line for o in msi_supported_entries],
                     ],
                 )
             )
 
     min_limit = WIN7_VIRTIO_INF_MIN_MESSAGE_NUMBER_LIMIT.get(device_name)
 
-    if not scan.message_number_limit:
+    if not msg_limit_entries:
         errors.append(
             format_error(
                 f"{inf_path.as_posix()}: missing MessageNumberLimit AddReg entry:",
@@ -971,14 +1063,14 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
             )
         )
     else:
-        limits = {o.value for o in scan.message_number_limit}
+        limits = {o.value for o in msg_limit_entries}
         if len(limits) != 1:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: MessageNumberLimit must be consistent (found multiple values):",
                     [
                         f"values found: {sorted(limits)}",
-                        *[o.raw_line for o in scan.message_number_limit],
+                        *[o.raw_line for o in msg_limit_entries],
                     ],
                 )
             )
@@ -990,7 +1082,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                         f"{inf_path.as_posix()}: MessageNumberLimit must be a positive integer:",
                         [
                             f"got: {limit}",
-                            *[o.raw_line for o in scan.message_number_limit],
+                            *[o.raw_line for o in msg_limit_entries],
                         ],
                     )
                 )
@@ -1002,7 +1094,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                         [
                             f"got: {limit}",
                             "expected: <= 2048 (PCI MSI-X Table Size limit)",
-                            *[o.raw_line for o in scan.message_number_limit],
+                            *[o.raw_line for o in msg_limit_entries],
                         ],
                     )
                 )
@@ -1013,7 +1105,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                         [
                             f"minimum: {min_limit}",
                             f"got:     {limit}",
-                            *[o.raw_line for o in scan.message_number_limit],
+                            *[o.raw_line for o in msg_limit_entries],
                         ],
                     )
                 )
