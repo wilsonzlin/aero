@@ -7,7 +7,7 @@ pipeline.
 This document describes:
 
 - what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for a small set of IA input topologies (`PointList`, `LineList`, `TriangleList`, `LineListAdj`, and `TriangleListAdj`) via the translated GS prepass), and
-- the **next steps** (broaden VS-as-compute feeding for GS inputs (currently **very** minimal: `mov`/`add` only + no draw instancing), then grow opcode/system-value/resource-binding coverage and bring up HS/DS emulation).
+- the **next steps** (broaden VS-as-compute feeding for GS inputs (currently **very** minimal: `mov`/`add` only + incomplete draw-instancing coverage), then grow opcode/system-value/resource-binding coverage and bring up HS/DS emulation).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 >
@@ -432,7 +432,8 @@ Known limitations include:
   - Translated-GS prepass paths can execute once per draw instance (prepass expands all instances and
     emits a non-instanced indirect draw; `instance_count = 1`), and this is exercised by
     `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`.
-  - Some translated prepass variants still fail-fast when `instance_count != 1` (bring-up limitation).
+  - Some translated prepass variants still fail-fast when `instance_count != 1` (bring-up limitation;
+    notably the `LineList` translated prepass path).
 - **Limited output topology / payload**
   - Output topology is limited to `pointlist`, `linestrip`, and `trianglestrip` (stream 0 only).
     Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,

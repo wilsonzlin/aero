@@ -505,9 +505,12 @@ bring up correctness incrementally:
   - Initial P1b limitations (explicit):
     - no stream-out / transform feedback (SO targets are unsupported),
     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
-    - draw instancing (`instance_count > 1`) in the **translated-GS prepass** is still bring-up only:
-      the in-tree implementation currently assumes `instance_count == 1` when executing translated GS
-      DXBC. (GS instancing via `[instance(n)]` / `SV_GSInstanceID` is supported.)
+    - draw instancing (`instance_count > 1`) in the **translated-GS prepass** is partially supported:
+      the prepass can dispatch once per draw instance and flatten instances into the expanded output
+      (the indirect args emitted by the finalize step use `instance_count = 1` because all instances
+      are already expanded). Coverage is still incomplete: the `LINELIST` translated prepass path
+      currently requires `instance_count == 1` (VS-as-compute bring-up limitation). (GS instancing
+      via `[instance(n)]` / `SV_GSInstanceID` is supported.)
     - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`):
       - The required IA primitive assembly ordering is specified in section 2.1.1b.
       - The in-tree translated-GS execution path is currently wired for list topologies:
@@ -1137,12 +1140,15 @@ To populate `gs_inputs`, the runtime must:
        - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
          VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
          IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
-   - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency) requires
-     the input-fill pass to implement the primitive assembly rules in section 2.1.1b, including
-     primitive restart for indexed strips.
-   - Note: translated GS prepass execution currently assumes `instance_count == 1` (draw instancing is
-     not implemented yet for this path), so in practice `draw_instance_id` is always 0 and the
-     indexing formula reduces to a single-instance packed layout.
+    - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency) requires
+      the input-fill pass to implement the primitive assembly rules in section 2.1.1b, including
+      primitive restart for indexed strips.
+    - Note: translated GS prepass execution can run with `instance_count > 1` by dispatching across
+      draw instances and using `draw_instance_id` (the `global_invocation_id.y` value) as an internal
+      selector when indexing the per-instance `gs_inputs` payload. The finalize step emits a
+      non-instanced indirect draw (`instance_count = 1`) because the expanded output already includes
+      all draw instances. Some translated prepass variants still require `instance_count == 1` today
+      (notably `LINELIST`).
 
 Note: an alternative design is to have the translated GS code read directly from the upstream stage
 register buffer, eliminating the extra packing step. This is a follow-up optimization.
@@ -1966,8 +1972,9 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
           - `prim_id = global_invocation_id.x` (`SV_PrimitiveID` in the translated GS),
           - `draw_instance_id = global_invocation_id.y` (used to select per-instance `gs_inputs`),
           and loops `gs_instance_id` in `0..gs_instance_count` (matching `SV_GSInstanceID` semantics).
-        - Note: the in-tree executor currently runs this path only for `instance_count == 1`, so it
-          dispatches `dispatch_workgroups(input_prim_count, 1, 1)` in practice.
+        - Note: the finalize step emits a non-instanced indirect draw (`instance_count = 1`) because
+          the prepass already expands all draw instances into a single output stream. Some translated
+          prepass variants still require `instance_count == 1` today (notably `LINELIST`).
         - Output allocation uses atomic counters; strip→list conversion and `cut`/restart semantics
           are handled in WGSL.
         - After `gs_main`, dispatch a 1-workgroup finalize entry point (`cs_finalize`) to write

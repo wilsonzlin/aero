@@ -555,7 +555,8 @@ Known gaps / limitations (enforced by code/tests):
     - Strip and adjacency-strip IA topologies (`LINESTRIP`, `TRIANGLESTRIP`, `LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not supported end-to-end yet (until Tasks 705/708/711 equivalents land).
     - Draw instancing (`instance_count > 1`) is now exercised for the translated-GS prepass (pointlist)
       by `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`, but
-      coverage is still incomplete (some translated prepass paths fail-fast when `instance_count != 1`).
+      coverage is still incomplete (the `LINELIST` translated prepass path still fails-fast when
+      `instance_count != 1`).
     - Some downlevel backends have very low per-stage storage-buffer limits (commonly `max_storage_buffers_per_shader_stage = 4`), which can block compute-prepass execution.
   - Owning doc: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
     - GS DXBC + ILAY fixtures: [`crates/aero-d3d11/tests/fixtures/README.md`](../../crates/aero-d3d11/tests/fixtures/README.md)
