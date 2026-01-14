@@ -555,7 +555,23 @@ struct aerogpu_cmd_bind_shaders {
   aerogpu_handle_t vs; /* 0 = unbound */
   aerogpu_handle_t ps; /* 0 = unbound */
   aerogpu_handle_t cs; /* 0 = unbound */
-  /* If non-zero, interpreted as the geometry shader (GS) handle. Struct remains a packed 24 bytes. */
+  /*
+   * If non-zero, interpreted as the geometry shader (GS) handle.
+   *
+   * ABI note (append-only extension for additional stages):
+   * `BIND_SHADERS` packets may be extended by appending additional stage handles after this base
+   * struct. Decoders MUST treat `hdr.size_bytes` as a minimum size and ignore any trailing bytes
+   * they do not understand.
+   *
+   * Extended payload (if `hdr.size_bytes >= sizeof(struct aerogpu_cmd_bind_shaders) + 12`):
+   *   aerogpu_handle_t gs; (0 = unbound)
+   *   aerogpu_handle_t hs; (0 = unbound)
+   *   aerogpu_handle_t ds; (0 = unbound)
+   *
+   * Note: the extended payload redundantly includes `gs` even though it can be encoded in
+   * `reserved0` for backwards compatibility with hosts that only understand the base 24-byte
+   * struct.
+   */
   uint32_t reserved0;
 };
 #pragma pack(pop)
