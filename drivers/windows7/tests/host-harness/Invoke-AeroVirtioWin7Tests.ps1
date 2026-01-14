@@ -1384,12 +1384,15 @@ function Try-EmitAeroVirtioNetLargeMarker {
   }
 
   if (-not (
+      $fields.ContainsKey("large_ok") -or
       $fields.ContainsKey("large_bytes") -or
       $fields.ContainsKey("large_mbps") -or
       $fields.ContainsKey("large_fnv1a64") -or
       $fields.ContainsKey("upload_ok") -or
       $fields.ContainsKey("upload_bytes") -or
-      $fields.ContainsKey("upload_mbps")
+      $fields.ContainsKey("upload_mbps") -or
+      $fields.ContainsKey("msi") -or
+      $fields.ContainsKey("msi_messages")
     )) {
     return
   }
@@ -1404,7 +1407,7 @@ function Try-EmitAeroVirtioNetLargeMarker {
   elseif ($fields.ContainsKey("large_ok") -and $fields["large_ok"] -eq "1" -and (-not $fields.ContainsKey("upload_ok") -or $fields["upload_ok"] -eq "1")) { $status = "PASS" }
 
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|$status"
-  foreach ($k in @("large_ok", "large_bytes", "large_fnv1a64", "large_mbps", "upload_ok", "upload_bytes", "upload_mbps")) {
+  foreach ($k in @("large_ok", "large_bytes", "large_fnv1a64", "large_mbps", "upload_ok", "upload_bytes", "upload_mbps", "msi", "msi_messages")) {
     if ($fields.ContainsKey($k)) {
       $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
     }
