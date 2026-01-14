@@ -387,14 +387,20 @@ trample compute-shader state, Aero reserves a fourth bind group:
 - The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
   extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
 - Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
-  args) are internal to the compute-expansion pipeline. The **target** design places these in
-  `@group(3)` in a reserved binding-number range that does not overlap the D3D register mappings (see
-  “Internal bindings” below).
-  - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
-    for its output buffers, but vertex pulling has adopted the reserved internal binding range
-    (starting at `@binding(BINDING_BASE_INTERNAL)` where `BINDING_BASE_INTERNAL = 256`) so it can
-    coexist with D3D register bindings.
-    See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
+   args) are internal to the compute-expansion pipeline. The **target** design places these in
+   `@group(3)` in a reserved binding-number range that does not overlap the D3D register mappings (see
+   “Internal bindings” below).
+   - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
+     for its output buffers, but vertex pulling has adopted the reserved internal binding range
+     (starting at `@binding(BINDING_BASE_INTERNAL)` where `BINDING_BASE_INTERNAL = 256`) so it can
+     coexist with D3D register bindings.
+     - Implementation detail: the in-tree vertex pulling WGSL currently uses a dedicated internal
+       bind group index (`@group(4)`, see `VERTEX_PULLING_GROUP` in
+       `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline layouts with empty groups
+       so indices line up. Because the binding numbers are already in the reserved `>= 256` range, it
+       can be merged into `@group(3)` later if we need to run on devices where `maxBindGroups == 4`
+       (the WebGPU minimum is `>= 4`, so some devices may expose only 4 bind groups).
+     See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
 
@@ -1062,12 +1068,15 @@ Expansion compute pipelines require additional buffers that are not part of the 
 
 Implementation note: the layout described below is the **target** binding scheme. The current
 executor’s placeholder compute-prepass still uses a separate bind group layout for its output
-buffers, but vertex pulling already uses the reserved expansion-internal binding range (starting at
-`BINDING_BASE_INTERNAL = 256`), so it does not collide with the D3D register binding
-ranges. Future work is to unify all emulation kernels on the shared internal layout.
+buffers. Vertex pulling already uses the reserved expansion-internal binding range (starting at
+`BINDING_BASE_INTERNAL = 256`), but is currently bound in a dedicated internal bind group
+(`@group(4)`, `VERTEX_PULLING_GROUP`). Future work is to unify all emulation kernels on the shared
+internal layout (ideally `@group(3)` so we stay within the baseline 4 bind groups).
 
-These are not part of the D3D binding model, so they use a reserved binding-number range within the
-reserved internal group (`@group(3)`) to avoid colliding with D3D register mappings.
+These are not part of the D3D binding model, so they use a reserved binding-number range starting at
+`BINDING_BASE_INTERNAL = 256`. In the baseline design they live in the same bind group as GS/HS/DS
+resources (`@group(3)`), but implementations may temporarily place them in a dedicated internal group
+(`@group(4)`) as long as the device supports at least 5 bind groups.
 
 Let:
 
@@ -1078,8 +1087,8 @@ Let:
   - `@binding(BINDING_BASE_UAV..BINDING_BASE_UAV + MAX_UAV_SLOTS)` for UAVs
 - Expansion-internal bindings start at `BINDING_BASE_INTERNAL = 256`.
 
-Within `@group(3)`, the expansion-internal bindings are reserved and stable so the runtime can share
-common helper WGSL across VS/GS/HS/DS compute variants:
+Within the chosen internal group, the expansion-internal bindings are reserved and stable so the
+runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 
 - `@binding(256)`: `ExpandParams` (uniform/storage; draw parameters + topology info)
 - `@binding(257..=264)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)
@@ -1141,6 +1150,7 @@ WGSL-side, this is typically declared as:
 
 ```wgsl
 struct ExpandParams { /* same fields */ }
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources).
 @group(3) @binding(256) var<uniform> params: ExpandParams;
 ```
 
