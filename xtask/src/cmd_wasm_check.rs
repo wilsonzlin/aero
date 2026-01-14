@@ -13,8 +13,8 @@ Usage:
 
 Currently checked:
   - aero-devices-gpu
-  - aero-machine
-  - aero-wasm
+  - aero-wasm (standalone, to avoid feature unification masking)
+  - aero-machine + aero-wasm (together)
 "
     );
 }
@@ -46,6 +46,20 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             cmd.arg("--locked");
         }
         runner.run_step("Rust: cargo check (wasm32, aero-devices-gpu)", &mut cmd)?;
+    }
+
+    {
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root)
+            .arg("check")
+            .arg("--target")
+            .arg("wasm32-unknown-unknown")
+            .arg("-p")
+            .arg("aero-wasm");
+        if cargo_locked {
+            cmd.arg("--locked");
+        }
+        runner.run_step("Rust: cargo check (wasm32, aero-wasm)", &mut cmd)?;
     }
 
     {
