@@ -129,7 +129,10 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
 
     // ATAPI install media on PIIX3 IDE secondary master.
     let mut iso_bytes = vec![0u8; AtapiCdrom::SECTOR_SIZE];
-    iso_bytes[0..8].copy_from_slice(b"ATAPIDMA");
+    for (i, b) in iso_bytes.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_add(0x40);
+    }
+    let expected_iso = iso_bytes.clone();
     let cdrom = AtapiCdrom::new(Some(Box::new(MemIso { bytes: iso_bytes })));
 
     let mut pc = PcPlatform::new_with_windows7_storage_topology(
@@ -140,7 +143,11 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
     // Optional Win7 topology slot: IDE primary master ATA disk (disk_id=2).
     let ide_capacity = 8 * SECTOR_SIZE as u64;
     let mut ide_disk = RawDisk::create(MemBackend::new(), ide_capacity).unwrap();
-    ide_disk.write_at(0, b"ATADMA!!").unwrap();
+    let mut expected_ata = [0u8; SECTOR_SIZE];
+    for (i, b) in expected_ata.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_add(0x10);
+    }
+    ide_disk.write_at(0, &expected_ata).unwrap();
     pc.attach_ide_primary_master_disk(Box::new(ide_disk)).unwrap();
 
     // Locate the BMIDE BAR4 base and enable bus mastering.
@@ -193,9 +200,9 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
         "expected BMIDE primary status IRQ=1, ACTIVE=0, ERR=0"
     );
 
-    let mut got = [0u8; 8];
+    let mut got = [0u8; SECTOR_SIZE];
     mem_read(&mut pc, ata_buf, &mut got);
-    assert_eq!(&got, b"ATADMA!!");
+    assert_eq!(got, expected_ata);
 
     // Stop + clear status bits to mimic typical driver behavior.
     pc.io.write(bm_base, 1, 0);
@@ -234,8 +241,7 @@ fn win7_storage_topology_piix3_ide_busmaster_dma_ata_and_atapi() {
         "expected BMIDE secondary status IRQ=1, ACTIVE=0, ERR=0"
     );
 
-    let mut got = [0u8; 8];
+    let mut got = [0u8; AtapiCdrom::SECTOR_SIZE];
     mem_read(&mut pc, atapi_buf, &mut got);
-    assert_eq!(&got, b"ATAPIDMA");
+    assert_eq!(&got[..], expected_iso.as_slice());
 }
-
