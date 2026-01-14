@@ -691,10 +691,21 @@ fn default_edid_1024x768() -> [u8; 128] {
     edid[22] = 0;
     // Gamma: 2.2 => (2.2*100)-100 = 120.
     edid[23] = 120;
-    // Features: default to RGB + preferred timing.
-    edid[24] = 0x0a;
+    // Features: sRGB + preferred timing.
+    edid[24] = 0x06;
 
-    // Chromaticity coordinates (leave as zero).
+    // Chromaticity coordinates (sRGB-ish; matches the canonical Aero EDID).
+    edid[25] = 0xEE;
+    edid[26] = 0x91;
+    edid[27] = 0xA3;
+    edid[28] = 0x54;
+    edid[29] = 0x4C;
+    edid[30] = 0x99;
+    edid[31] = 0x26;
+    edid[32] = 0x0F;
+    edid[33] = 0x50;
+    edid[34] = 0x54;
+
     // Established timings: 640x480@60, 800x600@60, 1024x768@60.
     edid[35] = 0x21;
     edid[36] = 0x08;
