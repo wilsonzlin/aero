@@ -5974,6 +5974,51 @@ static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
   dev->fixedfunc_lighting_dirty = false;
   return S_OK;
 }
+
+struct FixedFuncShaderBytes {
+  const void* bytes = nullptr;
+  uint32_t size_bytes = 0;
+};
+
+struct FixedFuncVsTableEntry {
+  FixedFuncShaderBytes base{};
+  FixedFuncShaderBytes fog{};
+  FixedFuncShaderBytes lit{};
+  FixedFuncShaderBytes lit_fog{};
+};
+
+#define AEROGPU_FIXEDFUNC_VS_BYTES(sym) \
+  FixedFuncShaderBytes { fixedfunc::sym, static_cast<uint32_t>(sizeof(fixedfunc::sym)) }
+
+static constexpr FixedFuncVsTableEntry kFixedFuncVsTable[] = {
+    /*NONE*/ {},
+    /*RHW_COLOR*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColor)},
+    /*RHW_COLOR_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColorTex1),
+                        AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColorTex1Fog)},
+    /*XYZ_COLOR*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosColor), AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosColorFog)},
+    /*XYZ_COLOR_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosColorTex0), AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosColorTex0Fog)},
+    /*RHW_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosWhiteTex1),
+                  AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosWhiteTex1Fog)},
+    /*XYZ_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsTransformPosWhiteTex1),
+                  AEROGPU_FIXEDFUNC_VS_BYTES(kVsTransformPosWhiteTex1Fog)},
+    /*XYZ_NORMAL*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosNormalWhite), {}, AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpLitPosNormal)},
+    /*XYZ_NORMAL_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosNormalWhiteTex0),
+                         {},
+                         AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpLitPosNormalTex1)},
+    /*XYZ_NORMAL_COLOR*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosNormalDiffuse),
+                          AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosNormalDiffuseFog),
+                          AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpLitPosNormalDiffuse),
+                          AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpLitPosNormalDiffuseFog)},
+    /*XYZ_NORMAL_COLOR_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosNormalDiffuseTex1),
+                               AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosNormalDiffuseTex1Fog),
+                               AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpLitPosNormalDiffuseTex1),
+                               AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpLitPosNormalDiffuseTex1Fog)},
+};
+static_assert(sizeof(kFixedFuncVsTable) / sizeof(kFixedFuncVsTable[0]) == static_cast<size_t>(FixedFuncVariant::COUNT),
+              "kFixedFuncVsTable must match FixedFuncVariant::COUNT");
+
+#undef AEROGPU_FIXEDFUNC_VS_BYTES
+
 HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -6044,138 +6089,32 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     }
   }
 
-  Shader** vs_slot = &pipe.vs;
-  const void* vs_bytes = nullptr;
-  uint32_t vs_size = 0;
-  switch (variant) {
-    case FixedFuncVariant::RHW_COLOR:
-      vs_bytes = fixedfunc::kVsPassthroughPosColor;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
-      break;
-    case FixedFuncVariant::XYZ_COLOR:
-      // Fixed-function non-pretransformed XYZ vertices use a WVP transform VS.
-      if (use_fog_vs) {
-        vs_slot = &pipe.vs_fog;
-        vs_bytes = fixedfunc::kVsWvpPosColorFog;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorFog));
-      } else {
-        vs_bytes = fixedfunc::kVsWvpPosColor;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColor));
-      }
-      break;
-    case FixedFuncVariant::RHW_COLOR_TEX1:
-      if (use_fog_vs) {
-        vs_slot = &pipe.vs_fog;
-        vs_bytes = fixedfunc::kVsPassthroughPosColorTex1Fog;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1Fog));
-      } else {
-        vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
-      }
-      break;
-    case FixedFuncVariant::RHW_TEX1:
-      if (use_fog_vs) {
-        vs_slot = &pipe.vs_fog;
-        vs_bytes = fixedfunc::kVsPassthroughPosWhiteTex1Fog;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1Fog));
-      } else {
-        vs_bytes = fixedfunc::kVsPassthroughPosWhiteTex1;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1));
-      }
-      break;
-    case FixedFuncVariant::XYZ_COLOR_TEX1:
-      if (use_fog_vs) {
-        vs_slot = &pipe.vs_fog;
-        vs_bytes = fixedfunc::kVsWvpPosColorTex0Fog;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0Fog));
-      } else {
-        vs_bytes = fixedfunc::kVsWvpPosColorTex0;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
-      }
-      break;
-    case FixedFuncVariant::XYZ_TEX1:
-      if (use_fog_vs) {
-        vs_slot = &pipe.vs_fog;
-        vs_bytes = fixedfunc::kVsTransformPosWhiteTex1Fog;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1Fog));
-      } else {
-        vs_bytes = fixedfunc::kVsTransformPosWhiteTex1;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1));
-      }
-      break;
-    case FixedFuncVariant::XYZ_NORMAL:
-      if (fixedfunc_lighting_active) {
-        vs_slot = &pipe.vs_lit;
-        vs_bytes = fixedfunc::kVsWvpLitPosNormal;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormal));
-      } else {
-        vs_bytes = fixedfunc::kVsWvpPosNormalWhite;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalWhite));
-      }
-      break;
-    case FixedFuncVariant::XYZ_NORMAL_TEX1:
-      if (fixedfunc_lighting_active) {
-        vs_slot = &pipe.vs_lit;
-        vs_bytes = fixedfunc::kVsWvpLitPosNormalTex1;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalTex1));
-      } else {
-        vs_bytes = fixedfunc::kVsWvpPosNormalWhiteTex0;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalWhiteTex0));
-      }
-      break;
-    case FixedFuncVariant::XYZ_NORMAL_COLOR:
-      if (fixedfunc_lighting_active) {
-        if (use_fog_vs) {
-          vs_slot = &pipe.vs_lit_fog;
-          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseFog;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseFog));
-        } else {
-          vs_slot = &pipe.vs_lit;
-          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuse;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuse));
-        }
-      } else {
-        if (use_fog_vs) {
-          vs_slot = &pipe.vs_fog;
-          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseFog;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseFog));
-        } else {
-          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuse;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuse));
-        }
-      }
-      break;
-    case FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1:
-      if (fixedfunc_lighting_active) {
-        if (use_fog_vs) {
-          vs_slot = &pipe.vs_lit_fog;
-          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseTex1Fog;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1Fog));
-        } else {
-          vs_slot = &pipe.vs_lit;
-          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseTex1;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1));
-        }
-      } else {
-        if (use_fog_vs) {
-          vs_slot = &pipe.vs_fog;
-          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseTex1Fog;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1Fog));
-        } else {
-          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseTex1;
-          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1));
-        }
-      }
-      break;
-    default:
-      return D3DERR_INVALIDCALL;
+  const size_t variant_index = static_cast<size_t>(variant);
+  if (variant_index >= static_cast<size_t>(FixedFuncVariant::COUNT)) {
+    return D3DERR_INVALIDCALL;
   }
-  if (!vs_slot || !vs_bytes || vs_size == 0) {
+  const FixedFuncVsTableEntry& vs_desc = kFixedFuncVsTable[variant_index];
+
+  // Select a VS variant (priority: lit+fog > lit > fog > base).
+  Shader** vs_slot = &pipe.vs;
+  FixedFuncShaderBytes shader = vs_desc.base;
+  if (needs_lighting && use_fog_vs && vs_desc.lit_fog.bytes) {
+    vs_slot = &pipe.vs_lit_fog;
+    shader = vs_desc.lit_fog;
+  } else if (needs_lighting && vs_desc.lit.bytes) {
+    vs_slot = &pipe.vs_lit;
+    shader = vs_desc.lit;
+  } else if (use_fog_vs && vs_desc.fog.bytes) {
+    vs_slot = &pipe.vs_fog;
+    shader = vs_desc.fog;
+  }
+
+  if (!vs_slot || !shader.bytes || shader.size_bytes == 0) {
     return E_FAIL;
   }
 
   if (!*vs_slot) {
-    *vs_slot = create_internal_shader_locked(dev, kD3d9ShaderStageVs, vs_bytes, vs_size);
+    *vs_slot = create_internal_shader_locked(dev, kD3d9ShaderStageVs, shader.bytes, shader.size_bytes);
     if (!*vs_slot) {
       return E_OUTOFMEMORY;
     }
