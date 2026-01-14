@@ -238,7 +238,7 @@ resource "aws_cloudfront_response_headers_policy" "cors" {
       items {
         header   = "Cross-Origin-Resource-Policy"
         value    = var.cross_origin_resource_policy
-        override = false
+        override = true
       }
     }
   }
