@@ -370,6 +370,264 @@ fn sm4_gs_float_arithmetic_ops_translate_to_wgsl_compute_prepass() {
         wgsl.contains("max(("),
         "expected max to translate via WGSL max() intrinsic:\n{wgsl}"
     );
+
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_pointlist_output_topology_translates_to_wgsl_compute_prepass() {
+    // Minimal gs_4_0 token stream with pointlist output:
+    // - dcl_inputprimitive point
+    // - dcl_outputtopology pointlist
+    // - dcl_maxvertexcount 1
+    // - mov o0, v0[0]; emit; ret
+    let version_token = 0x0003_0040u32; // nominal gs_4_0 (decoder uses program.stage/model)
+    let mut tokens = vec![version_token, 0];
+
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(1); // point
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    tokens.push(1); // pointlist
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(1);
+
+    // dcl_input v0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F012); // v0.xyzw (1D indexing)
+    tokens.push(0); // v0
+
+    // dcl_output o0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+
+    // dcl_output o1.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o1.xyzw
+    tokens.push(1);
+
+    // mov o0.xyzw, v0[0].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[0].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(0); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // ret
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        tokens,
+    };
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("// Point list index emission."),
+        "expected point list index emission path in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("out_indices.data[base] = vtx_idx;"),
+        "expected point list to emit one index per vertex:\n{wgsl}"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_linestrip_output_topology_translates_to_wgsl_compute_prepass() {
+    // Minimal gs_4_0 token stream with linestrip output (tokenized-format encoding):
+    // - dcl_inputprimitive line
+    // - dcl_outputtopology linestrip
+    // - dcl_maxvertexcount 4
+    // - emit two vertices, cut, emit two vertices, ret
+    let version_token = 0x0003_0040u32; // nominal gs_4_0 (decoder uses program.stage/model)
+    let mut tokens = vec![version_token, 0];
+
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(2); // line
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    tokens.push(2); // linestrip (tokenized shader format)
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(4);
+
+    // dcl_input v0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F012); // v0.xyzw (1D indexing)
+    tokens.push(0); // v0
+
+    // dcl_output o0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+
+    // dcl_output o1.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o1.xyzw
+    tokens.push(1);
+
+    // mov o0.xyzw, v0[0].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[0].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(0); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // mov o0.xyzw, v0[1].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[1].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(1); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // cut
+    tokens.push(opcode_token(OPCODE_CUT, 1));
+
+    // mov o0.xyzw, v0[0].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[0].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(0); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // mov o0.xyzw, v0[1].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[1].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(1); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // ret
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        tokens,
+    };
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("// Line strip -> line list index emission."),
+        "expected line strip index emission path in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("out_indices.data[base] = *strip_prev0;"),
+        "expected line strip to emit line-list indices:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("out_indices.data[base + 1u] = vtx_idx;"),
+        "expected line strip to emit pairs of indices:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("gs_cut(&strip_len)"),
+        "expected cut lowering to reset strip_len:\n{wgsl}"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_linestrip_output_topology_d3d_encoding_translates() {
+    // Some toolchains encode `dcl_outputtopology` using D3D primitive topology constants.
+    // For linestrip that means `3` (D3D10_PRIMITIVE_TOPOLOGY_LINESTRIP).
+    //
+    // Use a triangle input encoded as `4` (D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST) so the translator
+    // can infer the encoding style and disambiguate output_topology=3 (line strip vs triangle strip).
+    let version_token = 0x0003_0040u32; // nominal gs_4_0 (decoder uses program.stage/model)
+    let mut tokens = vec![version_token, 0];
+
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(4); // triangle (D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    tokens.push(3); // linestrip (D3D10_PRIMITIVE_TOPOLOGY_LINESTRIP)
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(2);
+
+    // dcl_input v0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F012); // v0.xyzw (1D indexing)
+    tokens.push(0); // v0
+
+    // dcl_output o0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+
+    // dcl_output o1.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o1.xyzw
+    tokens.push(1);
+
+    // mov o0.xyzw, v0[0].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[0].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(0); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // mov o0.xyzw, v0[1].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[1].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(1); // vertex
+
+    // emit
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+
+    // ret
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        tokens,
+    };
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("// Line strip -> line list index emission."),
+        "expected d3d-encoded line strip output topology to translate:\n{wgsl}"
+    );
     assert_wgsl_validates(&wgsl);
 }
 
@@ -777,10 +1035,10 @@ fn gs_translate_rejects_regfile_output_depth_source() {
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
             Sm4Decl::GsInputPrimitive {
-                primitive: GsInputPrimitive::Triangle,
+                primitive: GsInputPrimitive::Triangle(3),
             },
             Sm4Decl::GsOutputTopology {
-                topology: GsOutputTopology::TriangleStrip,
+                topology: GsOutputTopology::TriangleStrip(3),
             },
             Sm4Decl::GsMaxOutputVertexCount { max: 3 },
         ],
@@ -826,10 +1084,10 @@ fn gs_translate_rejects_regfile_input_without_siv_decl() {
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
             Sm4Decl::GsInputPrimitive {
-                primitive: GsInputPrimitive::Triangle,
+                primitive: GsInputPrimitive::Triangle(3),
             },
             Sm4Decl::GsOutputTopology {
-                topology: GsOutputTopology::TriangleStrip,
+                topology: GsOutputTopology::TriangleStrip(3),
             },
             Sm4Decl::GsMaxOutputVertexCount { max: 3 },
         ],
@@ -875,10 +1133,10 @@ fn gs_translate_rejects_regfile_output_depth_destination() {
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
             Sm4Decl::GsInputPrimitive {
-                primitive: GsInputPrimitive::Triangle,
+                primitive: GsInputPrimitive::Triangle(3),
             },
             Sm4Decl::GsOutputTopology {
-                topology: GsOutputTopology::TriangleStrip,
+                topology: GsOutputTopology::TriangleStrip(3),
             },
             Sm4Decl::GsMaxOutputVertexCount { max: 3 },
         ],

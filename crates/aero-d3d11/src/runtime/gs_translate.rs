@@ -4,8 +4,8 @@
 //! shaders by translating the decoded [`crate::sm4_ir::Sm4Module`] into a WGSL compute shader that
 //! performs a "geometry prepass":
 //! - Executes the GS instruction stream per input primitive.
-//! - Expands `emit`/`cut` output into a triangle-list index buffer (triangle strip assembly with
-//!   restart semantics).
+//! - Expands `emit`/`cut` output into a list index buffer, performing strip→list conversion for
+//!   `linestrip`/`trianglestrip` output topologies with correct restart (`cut`) semantics.
 //! - Writes a `DrawIndexedIndirectArgs` struct so the render pass can consume the expanded
 //!   geometry via `draw_indexed_indirect`.
 //!
@@ -182,6 +182,65 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputTopologyKind {
+    PointList,
+    LineStrip,
+    TriangleStrip,
+}
+
+fn input_primitive_token(prim: GsInputPrimitive) -> u32 {
+    match prim {
+        GsInputPrimitive::Point(v)
+        | GsInputPrimitive::Line(v)
+        | GsInputPrimitive::Triangle(v)
+        | GsInputPrimitive::LineAdjacency(v)
+        | GsInputPrimitive::TriangleAdjacency(v)
+        | GsInputPrimitive::Unknown(v) => v,
+    }
+}
+
+fn decode_output_topology(
+    topology: GsOutputTopology,
+    input_primitive: GsInputPrimitive,
+) -> Result<OutputTopologyKind, GsTranslateError> {
+    let input_prim_token = input_primitive_token(input_primitive);
+    let likely_d3d_encoding = matches!(input_prim_token, 4 | 10 | 11 | 12 | 13);
+
+    match topology {
+        GsOutputTopology::Point(_) => Ok(OutputTopologyKind::PointList),
+        GsOutputTopology::LineStrip(_) => Ok(OutputTopologyKind::LineStrip),
+        // `3` is ambiguous:
+        // - tokenized shader format: trianglestrip=3.
+        // - D3D primitive topology enum: linestrip=3.
+        //
+        // Prefer the tokenized interpretation by default, but accept the D3D encoding when the
+        // input primitive encoding strongly suggests the toolchain is emitting D3D topology
+        // constants for GS declarations (e.g. triangle=4, triadj=12).
+        GsOutputTopology::TriangleStrip(3) => {
+            if likely_d3d_encoding {
+                Ok(OutputTopologyKind::LineStrip)
+            } else {
+                Ok(OutputTopologyKind::TriangleStrip)
+            }
+        }
+        GsOutputTopology::TriangleStrip(_) => Ok(OutputTopologyKind::TriangleStrip),
+        GsOutputTopology::Unknown(other) => match other {
+            1 => Ok(OutputTopologyKind::PointList),
+            2 => Ok(OutputTopologyKind::LineStrip),
+            3 => {
+                if likely_d3d_encoding {
+                    Ok(OutputTopologyKind::LineStrip)
+                } else {
+                    Ok(OutputTopologyKind::TriangleStrip)
+                }
+            }
+            5 => Ok(OutputTopologyKind::TriangleStrip),
+            _ => Err(GsTranslateError::UnsupportedOutputTopology { topology: other }),
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GsPrepassInfo {
     /// Number of vertices in each input primitive (point=1, line=2, triangle=3, etc).
     pub input_verts_per_primitive: u32,
@@ -265,30 +324,17 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     let gs_instance_count = gs_instance_count.unwrap_or(1).max(1);
 
     let verts_per_primitive = match input_primitive {
-        GsInputPrimitive::Point => 1,
-        GsInputPrimitive::Line => 2,
-        GsInputPrimitive::Triangle => 3,
-        GsInputPrimitive::LineAdjacency => 4,
-        GsInputPrimitive::TriangleAdjacency => 6,
+        GsInputPrimitive::Point(_) => 1,
+        GsInputPrimitive::Line(_) => 2,
+        GsInputPrimitive::Triangle(_) => 3,
+        GsInputPrimitive::LineAdjacency(_) => 4,
+        GsInputPrimitive::TriangleAdjacency(_) => 6,
         GsInputPrimitive::Unknown(other) => {
             return Err(GsTranslateError::UnsupportedInputPrimitive { primitive: other })
         }
     };
 
-    fn output_topology_token(t: GsOutputTopology) -> u32 {
-        match t {
-            GsOutputTopology::Point => 1,
-            GsOutputTopology::LineStrip => 2,
-            GsOutputTopology::TriangleStrip => 5,
-            GsOutputTopology::Unknown(other) => other,
-        }
-    }
-
-    if output_topology != GsOutputTopology::TriangleStrip {
-        return Err(GsTranslateError::UnsupportedOutputTopology {
-            topology: output_topology_token(output_topology),
-        });
-    }
+    let output_topology_kind = decode_output_topology(output_topology, input_primitive)?;
 
     // Scan the instruction stream for:
     // - register indices so we can declare a local register file,
@@ -581,8 +627,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("}");
     w.line("");
 
-    // Emit semantics: append a vertex (built from o0/o1) and produce triangle-list indices from
-    // triangle strip assembly state.
+    // Emit semantics: append a vertex (built from o0/o1) and produce list indices based on the
+    // GS output topology (point list, line strip, triangle strip).
     w.line("fn gs_emit(");
     w.indent();
     w.line("o0: vec4<f32>,");
@@ -613,50 +659,92 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("out_vertices.data[vtx_idx].o1 = o1;");
     w.line("*out_vertex_count = vtx_idx + 1u;");
     w.line("");
-    w.line("// Triangle strip -> triangle list index emission.");
-    w.line("if (*strip_len == 0u) {");
-    w.indent();
-    w.line("*strip_prev0 = vtx_idx;");
-    w.dedent();
-    w.line("} else if (*strip_len == 1u) {");
-    w.indent();
-    w.line("*strip_prev1 = vtx_idx;");
-    w.dedent();
-    w.line("} else {");
-    w.indent();
-    w.line("let i = *strip_len;");
-    w.line("var a: u32;");
-    w.line("var b: u32;");
-    w.line("if ((i & 1u) == 0u) {");
-    w.indent();
-    w.line("a = *strip_prev0;");
-    w.line("b = *strip_prev1;");
-    w.dedent();
-    w.line("} else {");
-    w.indent();
-    w.line("a = *strip_prev1;");
-    w.line("b = *strip_prev0;");
-    w.dedent();
-    w.line("}");
-    w.line("");
-    w.line("let base = *out_index_count;");
-    w.line("let idx_cap = arrayLength(&out_indices.data);");
-    w.line("if (base + 2u >= idx_cap) {");
-    w.indent();
-    w.line("*overflow = true;");
-    w.line("return;");
-    w.dedent();
-    w.line("}");
-    w.line("out_indices.data[base] = a;");
-    w.line("out_indices.data[base + 1u] = b;");
-    w.line("out_indices.data[base + 2u] = vtx_idx;");
-    w.line("*out_index_count = base + 3u;");
-    w.line("");
-    w.line("// Advance strip assembly window.");
-    w.line("*strip_prev0 = *strip_prev1;");
-    w.line("*strip_prev1 = vtx_idx;");
-    w.dedent();
-    w.line("}");
+    match output_topology_kind {
+        OutputTopologyKind::PointList => {
+            w.line("// Point list index emission.");
+            w.line("let base = *out_index_count;");
+            w.line("let idx_cap = arrayLength(&out_indices.data);");
+            w.line("if (base >= idx_cap) {");
+            w.indent();
+            w.line("*overflow = true;");
+            w.line("return;");
+            w.dedent();
+            w.line("}");
+            w.line("out_indices.data[base] = vtx_idx;");
+            w.line("*out_index_count = base + 1u;");
+        }
+        OutputTopologyKind::LineStrip => {
+            w.line("// Line strip -> line list index emission.");
+            w.line("if (*strip_len == 0u) {");
+            w.indent();
+            w.line("*strip_prev0 = vtx_idx;");
+            w.dedent();
+            w.line("} else {");
+            w.indent();
+            w.line("let base = *out_index_count;");
+            w.line("let idx_cap = arrayLength(&out_indices.data);");
+            w.line("if (base + 1u >= idx_cap) {");
+            w.indent();
+            w.line("*overflow = true;");
+            w.line("return;");
+            w.dedent();
+            w.line("}");
+            w.line("out_indices.data[base] = *strip_prev0;");
+            w.line("out_indices.data[base + 1u] = vtx_idx;");
+            w.line("*out_index_count = base + 2u;");
+            w.line("");
+            w.line("// Advance strip assembly window.");
+            w.line("*strip_prev0 = vtx_idx;");
+            w.dedent();
+            w.line("}");
+        }
+        OutputTopologyKind::TriangleStrip => {
+            w.line("// Triangle strip -> triangle list index emission.");
+            w.line("if (*strip_len == 0u) {");
+            w.indent();
+            w.line("*strip_prev0 = vtx_idx;");
+            w.dedent();
+            w.line("} else if (*strip_len == 1u) {");
+            w.indent();
+            w.line("*strip_prev1 = vtx_idx;");
+            w.dedent();
+            w.line("} else {");
+            w.indent();
+            w.line("let i = *strip_len;");
+            w.line("var a: u32;");
+            w.line("var b: u32;");
+            w.line("if ((i & 1u) == 0u) {");
+            w.indent();
+            w.line("a = *strip_prev0;");
+            w.line("b = *strip_prev1;");
+            w.dedent();
+            w.line("} else {");
+            w.indent();
+            w.line("a = *strip_prev1;");
+            w.line("b = *strip_prev0;");
+            w.dedent();
+            w.line("}");
+            w.line("");
+            w.line("let base = *out_index_count;");
+            w.line("let idx_cap = arrayLength(&out_indices.data);");
+            w.line("if (base + 2u >= idx_cap) {");
+            w.indent();
+            w.line("*overflow = true;");
+            w.line("return;");
+            w.dedent();
+            w.line("}");
+            w.line("out_indices.data[base] = a;");
+            w.line("out_indices.data[base + 1u] = b;");
+            w.line("out_indices.data[base + 2u] = vtx_idx;");
+            w.line("*out_index_count = base + 3u;");
+            w.line("");
+            w.line("// Advance strip assembly window.");
+            w.line("*strip_prev0 = *strip_prev1;");
+            w.line("*strip_prev1 = vtx_idx;");
+            w.dedent();
+            w.line("}");
+        }
+    }
     w.line("*strip_len = *strip_len + 1u;");
     w.line("*emitted_count = *emitted_count + 1u;");
     w.dedent();
@@ -1347,10 +1435,10 @@ mod tests {
             model: ShaderModel { major: 4, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Point,
+                    primitive: GsInputPrimitive::Point(1),
                 },
                 Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip,
+                    topology: GsOutputTopology::TriangleStrip(3),
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: 1 },
                 Sm4Decl::InputSiv {
@@ -1440,10 +1528,10 @@ mod tests {
             model: ShaderModel { major: 5, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Point,
+                    primitive: GsInputPrimitive::Point(1),
                 },
                 Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip,
+                    topology: GsOutputTopology::TriangleStrip(3),
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: 1 },
                 Sm4Decl::GsInstanceCount { count: 2 },

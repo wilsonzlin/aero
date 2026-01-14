@@ -38,11 +38,28 @@ pub enum Sm4TestBool {
 /// This corresponds to `dcl_inputprimitive` in SM4/SM5 assembly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GsInputPrimitive {
-    Point,
-    Line,
-    Triangle,
-    LineAdjacency,
-    TriangleAdjacency,
+    /// Point input primitive.
+    ///
+    /// The payload value is preserved so downstream stages can distinguish tokenized enums from
+    /// D3D primitive-topology constants when necessary.
+    Point(u32),
+    /// Line (line list) input primitive.
+    Line(u32),
+    /// Triangle input primitive.
+    ///
+    /// Some toolchains encode this as `3` (tokenized enum) or `4` (D3D topology constant for
+    /// triangle list). Both map to this variant with the original token value preserved.
+    Triangle(u32),
+    /// Line adjacency input primitive.
+    ///
+    /// Some toolchains encode this as `6` (tokenized enum) or `10`/`11` (D3D topology constants for
+    /// line list/strip adjacency). The original token value is preserved.
+    LineAdjacency(u32),
+    /// Triangle adjacency input primitive.
+    ///
+    /// Some toolchains encode this as `7` (tokenized enum) or `12`/`13` (D3D topology constants for
+    /// triangle list/strip adjacency). The original token value is preserved.
+    TriangleAdjacency(u32),
     /// Unknown/unsupported input primitive encoding.
     Unknown(u32),
 }
@@ -52,9 +69,15 @@ pub enum GsInputPrimitive {
 /// This corresponds to `dcl_outputtopology` in SM4/SM5 assembly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GsOutputTopology {
-    Point,
-    LineStrip,
-    TriangleStrip,
+    /// Point list output topology.
+    Point(u32),
+    /// Line strip output topology.
+    LineStrip(u32),
+    /// Triangle strip output topology.
+    ///
+    /// Some toolchains encode this as `3` (tokenized enum) or `5` (D3D topology constant for
+    /// triangle strip). The original token value is preserved.
+    TriangleStrip(u32),
     /// Unknown/unsupported output topology encoding.
     Unknown(u32),
 }
@@ -902,11 +925,11 @@ impl GsInputPrimitive {
         //
         // To avoid decoding failures across fixtures, accept both encodings when unambiguous.
         match value {
-            1 => Self::Point,
-            2 => Self::Line,
-            3 | 4 => Self::Triangle,
-            6 | 10 | 11 => Self::LineAdjacency,
-            7 | 12 | 13 => Self::TriangleAdjacency,
+            1 => Self::Point(value),
+            2 => Self::Line(value),
+            3 | 4 => Self::Triangle(value),
+            6 | 10 | 11 => Self::LineAdjacency(value),
+            7 | 12 | 13 => Self::TriangleAdjacency(value),
             other => Self::Unknown(other),
         }
     }
@@ -922,9 +945,9 @@ impl GsOutputTopology {
         // The only topology currently required by our GS compute-emulation path is triangle strip,
         // so we accept both common encodings.
         match value {
-            1 => Self::Point,
-            2 => Self::LineStrip,
-            3 | 5 => Self::TriangleStrip,
+            1 => Self::Point(value),
+            2 => Self::LineStrip(value),
+            3 | 5 => Self::TriangleStrip(value),
             other => Self::Unknown(other),
         }
     }

@@ -405,21 +405,27 @@ fn parses_and_decodes_sm4_gs_passthrough_fixture() {
 
     let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
-        module.decls.iter().any(|d| matches!(
-            d,
-            Sm4Decl::GsInputPrimitive {
-                primitive: GsInputPrimitive::Triangle
-            }
-        )),
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Triangle(_)
+                }
+            )),
         "expected triangle input primitive decl"
     );
     assert!(
-        module.decls.iter().any(|d| matches!(
-            d,
-            Sm4Decl::GsOutputTopology {
-                topology: GsOutputTopology::TriangleStrip
-            }
-        )),
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(_)
+                }
+            )),
         "expected triangle strip output topology decl"
     );
     assert!(

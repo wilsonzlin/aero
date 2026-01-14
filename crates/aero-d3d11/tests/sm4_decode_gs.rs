@@ -184,10 +184,10 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
             model: ShaderModel { major: 4, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Triangle
+                    primitive: GsInputPrimitive::Triangle(PRIM_TRIANGLE)
                 },
                 Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip
+                    topology: GsOutputTopology::TriangleStrip(TOPO_TRIANGLE_STRIP)
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: MAX_VERTS },
                 Sm4Decl::Input {
