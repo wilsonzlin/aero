@@ -3876,7 +3876,17 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
                                                   const D3D11DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                                   D3D11DDI_HRENDERTARGETVIEW hView,
                                                   D3D11DDI_HRTRENDERTARGETVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyRenderTargetView11 is safe even
+  // if we reject the descriptor.
+  auto* rtv = new (hView.pDrvPrivate) RenderTargetView();
+  rtv->texture = 0;
+  rtv->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -3980,7 +3990,6 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
     }
   }
 
-  auto* rtv = new (hView.pDrvPrivate) RenderTargetView();
   rtv->texture = res->handle;
   rtv->resource = res;
   return S_OK;
@@ -3990,7 +3999,9 @@ void AEROGPU_APIENTRY DestroyRenderTargetView11(D3D11DDI_HDEVICE, D3D11DDI_HREND
   if (!hView.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(hView)->~RenderTargetView();
+  auto* view = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(hView);
+  view->~RenderTargetView();
+  new (view) RenderTargetView();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilViewSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATEDEPTHSTENCILVIEW*) {
@@ -4001,7 +4012,17 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
                                                   const D3D11DDIARG_CREATEDEPTHSTENCILVIEW* pDesc,
                                                   D3D11DDI_HDEPTHSTENCILVIEW hView,
                                                   D3D11DDI_HRTDEPTHSTENCILVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyDepthStencilView11 is safe even
+  // if we reject the descriptor.
+  auto* dsv = new (hView.pDrvPrivate) DepthStencilView();
+  dsv->texture = 0;
+  dsv->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -4119,7 +4140,6 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  auto* dsv = new (hView.pDrvPrivate) DepthStencilView();
   dsv->texture = res->handle;
   dsv->resource = res;
   return S_OK;
@@ -4129,7 +4149,9 @@ void AEROGPU_APIENTRY DestroyDepthStencilView11(D3D11DDI_HDEVICE, D3D11DDI_HDEPT
   if (!hView.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hView)->~DepthStencilView();
+  auto* view = FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hView);
+  view->~DepthStencilView();
+  new (view) DepthStencilView();
 }
 
 struct ShaderResourceView {
@@ -4226,7 +4248,19 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
                                                     const D3D11DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
                                                     D3D11DDI_HSHADERRESOURCEVIEW hView,
                                                     D3D11DDI_HRTSHADERRESOURCEVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyShaderResourceView11 is safe even
+  // if we reject the descriptor.
+  auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
+  srv->kind = ShaderResourceView::Kind::Texture2D;
+  srv->texture = 0;
+  srv->buffer = {};
+  srv->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -4343,7 +4377,6 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
       }
     }
 
-    auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
     srv->resource = res;
     srv->kind = ShaderResourceView::Kind::Texture2D;
     srv->texture = res->handle;
@@ -4420,7 +4453,6 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
     binding.offset_bytes = clamped_off > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(clamped_off);
     binding.size_bytes = clamped_sz > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(clamped_sz);
 
-    auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
     srv->resource = res;
     srv->kind = ShaderResourceView::Kind::Buffer;
     srv->texture = 0;
@@ -4436,7 +4468,9 @@ void AEROGPU_APIENTRY DestroyShaderResourceView11(D3D11DDI_HDEVICE, D3D11DDI_HSH
   if (!hView.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(hView)->~ShaderResourceView();
+  auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(hView);
+  view->~ShaderResourceView();
+  new (view) ShaderResourceView();
 }
 
 struct UnorderedAccessView {
@@ -5112,21 +5146,26 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
   auto* state = new (hState.pDrvPrivate) BlendState();
+  const auto set_defaults = [&]() {
+    state->blend_enable = 0;
+    state->src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
+    state->dest_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+    state->blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+    state->src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
+    state->dest_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
+    state->blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
+    state->render_target_write_mask = 0xFu;
+  };
   const auto fail = [&](HRESULT hr) -> HRESULT {
     // The runtime does not necessarily call DestroyBlendState on failed creates.
     // Ensure we run the destructor so future additions to BlendState (handles,
     // allocations, etc.) don't leak on error paths.
     state->~BlendState();
+    new (state) BlendState();
+    set_defaults();
     return hr;
   };
-  state->blend_enable = 0;
-  state->src_blend = static_cast<uint32_t>(D3D11_BLEND_ONE);
-  state->dest_blend = static_cast<uint32_t>(D3D11_BLEND_ZERO);
-  state->blend_op = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
-  state->src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
-  state->dest_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
-  state->blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
-  state->render_target_write_mask = 0xFu;
+  set_defaults();
 
   if (!pDesc) {
     return S_OK;
@@ -5272,7 +5311,9 @@ void AEROGPU_APIENTRY DestroyBlendState11(D3D11DDI_HDEVICE, D3D11DDI_HBLENDSTATE
   if (!hState.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HBLENDSTATE, BlendState>(hState)->~BlendState();
+  auto* state = FromHandle<D3D11DDI_HBLENDSTATE, BlendState>(hState);
+  state->~BlendState();
+  new (state) BlendState();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATERASTERIZERSTATE*) {
@@ -5356,6 +5397,13 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState11(D3D11DDI_HDEVICE hDevice,
       break;
     default:
       state->~RasterizerState();
+      new (state) RasterizerState();
+      state->fill_mode = static_cast<uint32_t>(D3D11_FILL_SOLID);
+      state->cull_mode = static_cast<uint32_t>(D3D11_CULL_BACK);
+      state->front_ccw = 0u;
+      state->scissor_enable = 0u;
+      state->depth_bias = 0;
+      state->depth_clip_enable = 1u;
       return E_NOTIMPL;
   }
   return S_OK;
@@ -5365,7 +5413,9 @@ void AEROGPU_APIENTRY DestroyRasterizerState11(D3D11DDI_HDEVICE, D3D11DDI_HRASTE
   if (!hState.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState)->~RasterizerState();
+  auto* state = FromHandle<D3D11DDI_HRASTERIZERSTATE, RasterizerState>(hState);
+  state->~RasterizerState();
+  new (state) RasterizerState();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilStateSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATEDEPTHSTENCILSTATE*) {
@@ -5469,7 +5519,9 @@ void AEROGPU_APIENTRY DestroyDepthStencilState11(D3D11DDI_HDEVICE, D3D11DDI_HDEP
   if (!hState.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HDEPTHSTENCILSTATE, DepthStencilState>(hState)->~DepthStencilState();
+  auto* state = FromHandle<D3D11DDI_HDEPTHSTENCILSTATE, DepthStencilState>(hState);
+  state->~DepthStencilState();
+  new (state) DepthStencilState();
 }
 
 // -------------------------------------------------------------------------------------------------

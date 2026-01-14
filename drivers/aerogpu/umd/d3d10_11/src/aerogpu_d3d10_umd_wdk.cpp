@@ -5537,7 +5537,17 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                         D3D10DDI_HRENDERTARGETVIEW hView,
                                         D3D10DDI_HRTRENDERTARGETVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyRenderTargetView is safe even if
+  // we reject the descriptor (some runtimes may still call Destroy on failure).
+  auto* rtv = new (hView.pDrvPrivate) AeroGpuRenderTargetView();
+  rtv->texture = 0;
+  rtv->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -5698,7 +5708,6 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  auto* rtv = new (hView.pDrvPrivate) AeroGpuRenderTargetView();
   rtv->texture = res->handle;
   rtv->resource = res;
   return S_OK;
@@ -5710,6 +5719,7 @@ void APIENTRY DestroyRenderTargetView(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVI
   }
   auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hView);
   view->~AeroGpuRenderTargetView();
+  new (view) AeroGpuRenderTargetView();
 }
 
 SIZE_T APIENTRY CalcPrivateDepthStencilViewSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEDEPTHSTENCILVIEW*) {
@@ -5720,7 +5730,17 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATEDEPTHSTENCILVIEW* pDesc,
                                         D3D10DDI_HDEPTHSTENCILVIEW hView,
                                         D3D10DDI_HRTDEPTHSTENCILVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyDepthStencilView is safe even if
+  // we reject the descriptor.
+  auto* dsv = new (hView.pDrvPrivate) AeroGpuDepthStencilView();
+  dsv->texture = 0;
+  dsv->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -5889,7 +5909,6 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  auto* dsv = new (hView.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->texture = res->handle;
   dsv->resource = res;
   return S_OK;
@@ -5901,6 +5920,7 @@ void APIENTRY DestroyDepthStencilView(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVI
   }
   auto* view = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hView);
   view->~AeroGpuDepthStencilView();
+  new (view) AeroGpuDepthStencilView();
 }
 
 SIZE_T APIENTRY CalcPrivateShaderResourceViewSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATESHADERRESOURCEVIEW*) {
@@ -5911,7 +5931,17 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
                                           const D3D10DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
                                           D3D10DDI_HSHADERRESOURCEVIEW hView,
                                           D3D10DDI_HRTSHADERRESOURCEVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyShaderResourceView is safe even
+  // if we reject the descriptor.
+  auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
+  srv->texture = 0;
+  srv->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -6101,7 +6131,6 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
   srv->texture = res->handle;
   srv->resource = res;
   return S_OK;
@@ -6113,6 +6142,7 @@ void APIENTRY DestroyShaderResourceView(D3D10DDI_HDEVICE, D3D10DDI_HSHADERRESOUR
   }
   auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(hView);
   view->~AeroGpuShaderResourceView();
+  new (view) AeroGpuShaderResourceView();
 }
 
 size_t dxbc_size_from_header(const void* pCode) {
@@ -6420,6 +6450,15 @@ HRESULT APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
   }
 
   aerogpu::d3d10_11::AerogpuBlendStateBase base{};
+  // Always construct the state object so DestroyBlendState is safe even if we
+  // reject the descriptor (some runtimes may still call Destroy on failure).
+  auto* s = new (hState.pDrvPrivate) AeroGpuBlendState();
+  s->state = base;
+  const auto fail = [&](HRESULT hr) -> HRESULT {
+    s->~AeroGpuBlendState();
+    new (s) AeroGpuBlendState();
+    return hr;
+  };
 
   if (pDesc) {
     aerogpu::d3d10_11::D3dRtBlendDesc rts[AEROGPU_MAX_RENDER_TARGETS]{};
@@ -6451,12 +6490,11 @@ HRESULT APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
       const HRESULT hr =
           aerogpu::d3d10_11::ValidateAndConvertBlendDesc(rts, AEROGPU_MAX_RENDER_TARGETS, alpha_to_coverage, &base);
       if (FAILED(hr)) {
-        return hr;
+        return fail(hr);
       }
     }
   }
 
-  auto* s = new (hState.pDrvPrivate) AeroGpuBlendState();
   s->state = base;
   return S_OK;
 }
@@ -6466,6 +6504,7 @@ void APIENTRY DestroyBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE hState) {
   }
   auto* s = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
   s->~AeroGpuBlendState();
+  new (s) AeroGpuBlendState();
 }
 
 SIZE_T APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATERASTERIZERSTATE*) {
@@ -6540,6 +6579,7 @@ void APIENTRY DestroyRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE
   }
   auto* s = FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState);
   s->~AeroGpuRasterizerState();
+  new (s) AeroGpuRasterizerState();
 }
 
 SIZE_T APIENTRY CalcPrivateDepthStencilStateSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEDEPTHSTENCILSTATE*) {
@@ -6614,6 +6654,7 @@ void APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILS
   }
   auto* s = FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState);
   s->~AeroGpuDepthStencilState();
+  new (s) AeroGpuDepthStencilState();
 }
 
 SIZE_T APIENTRY CalcPrivateSamplerSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATESAMPLER*) {
