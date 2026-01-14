@@ -199,6 +199,10 @@ impl StorageBackend for MemBackend {
 /// I/O is performed using platform-specific `FileExt` offset methods (`read_at`/`write_at` on
 /// Unix, `seek_read`/`seek_write` on Windows) so the OS file cursor is not disturbed.
 ///
+/// When opened in read-only mode, [`StorageBackend::write_at`] and [`StorageBackend::set_len`]
+/// return [`DiskError::NotSupported`] ("read-only backend"). [`StorageBackend::flush`] is a no-op
+/// for read-only handles.
+///
 /// `flush()` uses [`File::sync_all`] (data + metadata). This is the safest default for disk
 /// images, especially when writes may extend the file length.
 #[cfg(not(target_arch = "wasm32"))]
