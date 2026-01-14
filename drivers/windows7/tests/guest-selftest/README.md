@@ -24,6 +24,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       mode (expected **MSI/MSI-X**).
     - Useful when running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors` or per-device
       `--virtio-<dev>-vectors`) or when validating MSI/MSI-X support end-to-end.
+    - If you provision the guest scheduled task via `host-harness/New-AeroWin7TestImage.ps1`, bake this in with
+      `-ExpectBlkMsi` (adds `--expect-blk-msi`).
   - Issue a SCSI pass-through `REPORT_LUNS` (0xA0) command (via `IOCTL_SCSI_PASS_THROUGH_DIRECT`) and validate a sane
     single-LUN response.
   - Create a temporary file on a **virtio-backed volume** and perform:
