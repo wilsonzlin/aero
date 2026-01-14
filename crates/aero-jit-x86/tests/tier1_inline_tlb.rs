@@ -1059,6 +1059,204 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_all_offsets() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_handles_all_offsets_w32() {
+    // For a W32 load, any address in the last 3 bytes of a 4KiB page crosses into the next page.
+    for addr in 0xFFDu64..=0xFFFu64 {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.load(Width::W32, a0);
+        b.write_reg(
+            GuestReg::Gpr {
+                reg: Gpr::Rax,
+                width: Width::W32,
+                high8: false,
+            },
+            v0,
+        );
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let mut ram = vec![0u8; 0x2000];
+        for (i, b) in ram.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let expected =
+            u32::from_le_bytes(ram[addr as usize..addr as usize + 4].try_into().unwrap()) as u64;
+
+        let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            None,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(
+            got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+            expected,
+            "addr={addr:#x}"
+        );
+        assert!(host_state.mmu_translate_calls <= 2, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_reads, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_handles_all_offsets_w32() {
+    const VALUE: u64 = 0x1122_3344_5566_7788;
+
+    // For a W32 store, any address in the last 3 bytes of a 4KiB page crosses into the next page.
+    for addr in 0xFFDu64..=0xFFFu64 {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.const_int(Width::W32, VALUE);
+        b.store(Width::W32, a0, v0);
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let ram = vec![0xccu8; 0x2000];
+        let mut expected_ram = ram.clone();
+        let bytes = Width::W32.truncate(VALUE).to_le_bytes();
+        expected_ram[addr as usize..addr as usize + 4].copy_from_slice(&bytes[..4]);
+
+        let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            None,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_ram, expected_ram, "addr={addr:#x}");
+        assert!(host_state.mmu_translate_calls <= 2, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_handles_all_offsets_w16() {
+    // For a W16 load, only the very last byte of a 4KiB page crosses into the next page.
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W16, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W16,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    for (i, b) in ram.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    let expected = u16::from_le_bytes(ram[addr as usize..addr as usize + 2].try_into().unwrap())
+        as u64;
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], expected);
+    assert!(host_state.mmu_translate_calls <= 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_handles_all_offsets_w16() {
+    const VALUE: u64 = 0x1122_3344_5566_7788;
+
+    // For a W16 store, only the very last byte of a 4KiB page crosses into the next page.
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W16, VALUE);
+    b.store(Width::W16, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0xccu8; 0x2000];
+    let mut expected_ram = ram.clone();
+    let bytes = Width::W16.truncate(VALUE).to_le_bytes();
+    expected_ram[addr as usize..addr as usize + 2].copy_from_slice(&bytes[..2]);
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_ram, expected_ram);
+    assert!(host_state.mmu_translate_calls <= 2);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages() {
     let addr = 0xFF9u64;
 
