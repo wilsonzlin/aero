@@ -1030,7 +1030,7 @@ impl XhciController {
         }
 
         let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
-        let ep0_ctx = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+        let mut ep0_ctx = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
 
         let port_id = slot_ctx.root_hub_port_number();
         if port_id == 0 || port_id > self.port_count {
@@ -1141,6 +1141,12 @@ impl XhciController {
         //
         // This model uses the slot ID as the assigned address.
         slot_ctx.set_usb_device_address(slot_id);
+
+        // Endpoint state is controller-owned. Preserve the existing state if the output context
+        // already has one, otherwise set the endpoint to Running.
+        let prev_ep0 = EndpointContext::read_from(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+        let prev_state = prev_ep0.endpoint_state();
+        ep0_ctx.set_endpoint_state(if prev_state == 0 { 1 } else { prev_state });
 
         // Mirror contexts to the output Device Context.
         slot_ctx.write_to(mem, dev_ctx_ptr);
@@ -1324,9 +1330,16 @@ impl XhciController {
 
             // Input context layout: [ICC][Slot][EP0][EP1 OUT][EP1 IN]...
             let input_off = (endpoint_id as u64 + 1) * CONTEXT_SIZE as u64;
-            let ep_ctx = EndpointContext::read_from(mem, input_ctx_ptr + input_off);
+            let mut ep_ctx = EndpointContext::read_from(mem, input_ctx_ptr + input_off);
 
-            ep_ctx.write_to(mem, dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64));
+            // Endpoint state is controller-owned. Preserve an existing non-zero state (e.g.
+            // Stopped/Halted) so Configure Endpoint does not implicitly clear error conditions.
+            let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
+            let prev = EndpointContext::read_from(mem, out_addr);
+            let prev_state = prev.endpoint_state();
+            ep_ctx.set_endpoint_state(if prev_state == 0 { 1 } else { prev_state });
+
+            ep_ctx.write_to(mem, out_addr);
 
             let slot_state = &mut self.slots[slot_idx];
             let idx = usize::from(endpoint_id - 1);
@@ -2453,6 +2466,16 @@ impl XhciController {
             return EndpointOutcome::idle();
         }
 
+        // Stop/Reset Endpoint commands update the Endpoint Context "Endpoint State" field. Enforce
+        // basic doorbell gating semantics: only Running endpoints execute transfers. If the Endpoint
+        // Context cannot be read (e.g. test harnesses that only configure controller-local ring
+        // cursors), fall back to the legacy behavior and allow progress.
+        if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id) {
+            if !matches!(state, context::EndpointState::Running) {
+                return EndpointOutcome::idle();
+            }
+        }
+
         // Bulk/interrupt endpoints are delegated to `transfer::XhciTransferExecutor` and execute at
         // most one TD per controller tick.
         if endpoint_id != 1 {
@@ -2957,6 +2980,28 @@ impl XhciController {
             return None;
         }
         Some((dequeue_ptr, ep_ctx.dcs()))
+    }
+
+    fn read_endpoint_state_from_context(
+        &self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> Option<context::EndpointState> {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return None;
+        }
+        if self.dcbaap == 0 {
+            return None;
+        }
+        let dcbaa = context::Dcbaa::new(self.dcbaap);
+        let dev_ctx_ptr = dcbaa.read_device_context_ptr(mem, slot_id).ok()? & !0x3f;
+        if dev_ctx_ptr == 0 {
+            return None;
+        }
+        let dev_ctx = context::DeviceContext32::new(dev_ctx_ptr);
+        let ep_ctx = dev_ctx.endpoint_context(mem, endpoint_id).ok()?;
+        Some(ep_ctx.endpoint_state_enum())
     }
 
     fn write_endpoint_dequeue_to_context(
