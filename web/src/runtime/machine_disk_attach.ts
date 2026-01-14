@@ -101,6 +101,12 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan): Pro
     throw new Error("WASM build missing Machine.set_disk_aerospar_opfs_open* exports");
   }
 
+  // Prefer the explicit canonical primary HDD helper when available.
+  if (typeof machine.set_primary_hdd_opfs_existing === "function") {
+    await machine.set_primary_hdd_opfs_existing(plan.opfsPath);
+    return;
+  }
+
   if (typeof machine.set_disk_opfs_existing_and_set_overlay_ref === "function") {
     await machine.set_disk_opfs_existing_and_set_overlay_ref(plan.opfsPath);
     return;

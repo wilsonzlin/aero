@@ -207,7 +207,10 @@ export async function reattachMachineSnapshotDisks(opts: {
       if (!overlay) {
         const isAerosparBase = base.toLowerCase().endsWith(".aerospar");
         if (isAerosparBase) {
-          const openAerospar = typeof setDiskAerosparOpenAndSetOverlayRef === "function" ? setDiskAerosparOpenAndSetOverlayRef : setDiskAerosparOpen;
+          const openAerospar =
+            typeof setDiskAerosparOpenAndSetOverlayRef === "function"
+              ? setDiskAerosparOpenAndSetOverlayRef
+              : setDiskAerosparOpen;
           if (typeof openAerospar !== "function") {
             throw new Error(
               `${prefix} Snapshot restore reported an aerosparse base disk for disk_id=${diskId}, but this WASM build cannot open it (missing Machine.set_disk_aerospar_opfs_open* exports).`,

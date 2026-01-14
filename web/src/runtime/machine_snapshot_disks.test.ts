@@ -53,6 +53,77 @@ describe("runtime/machine_snapshot_disks", () => {
     warn.mockRestore();
   });
 
+  it("reattaches a base-only primary disk via set_primary_hdd_opfs_existing when available", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "" }];
+    });
+    const set_primary_hdd_opfs_existing = vi.fn(async (_path: string) => {
+      events.push("primary-existing");
+    });
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {
+      events.push("disk-existing");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_primary_hdd_opfs_existing,
+      set_disk_opfs_existing,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
+    expect(set_primary_hdd_opfs_existing).toHaveBeenCalledWith("aero/disks/win7.base");
+    expect(set_disk_opfs_existing).not.toHaveBeenCalled();
+    expect(events).toEqual(["restore", "take", "primary-existing"]);
+  });
+
+  it("falls back to set_disk_opfs_existing for base-only primary disks when set_primary_hdd_opfs_existing is unavailable", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "" }];
+    });
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {
+      events.push("disk-existing");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_disk_opfs_existing,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
+    expect(set_disk_opfs_existing).toHaveBeenCalledWith("aero/disks/win7.base");
+    expect(events).toEqual(["restore", "take", "disk-existing"]);
+  });
+
   it("falls back to stable disk IDs when Machine.disk_id_* helpers are unavailable", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
