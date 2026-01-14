@@ -637,6 +637,9 @@ Current behavior is intentionally bring-up level, with two paths:
   `Unlock`.
   - When `D3DPV_DONOTCOPYDATA` is set and the source is a pre-transformed `XYZRHW*` FVF, the memcpy fallback copies only the
     first 16 bytes (the `POSITIONT` float4) and preserves the remaining destination bytes.
+  - In-place overlap safety: when the source and destination buffers alias the same resource and the strided ranges overlap
+    (notably when `src_stride != dest_stride`), the implementation stages the source bytes before writing destinations to
+    avoid self-overwrite and match “read all source first, then write all destinations” semantics.
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 

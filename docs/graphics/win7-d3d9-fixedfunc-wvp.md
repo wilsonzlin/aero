@@ -73,6 +73,9 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - Destination stride: when `DestStride` is present but 0 (or absent in older header vintages), the UMD infers the
     effective stride from **stream 0** of `hVertexDecl` when possible, otherwise falling back to the currently-bound stream
     0 stride.
+  - In-place overlap safety: when the source and destination buffers alias the same resource and the strided ranges overlap
+    (notably when `src_stride != dest_stride`), the implementation stages the source bytes before writing destinations to
+    avoid self-overwrite.
   - For `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport
     transform for `x/y`, and writes `XYZRHW` (screen space). For `D3DFVF_XYZW*`, the input `w` component is respected.
     - `z` stays in D3D9 NDC depth (`0..1`); viewport `MinZ`/`MaxZ` are currently ignored.
