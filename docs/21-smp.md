@@ -8,12 +8,19 @@ The canonical machine integrations:
 - `aero_machine::PcMachine` (`crates/aero-machine`)
 - `aero_pc_platform::PcPlatform` (`crates/aero-pc-platform`)
 
-are currently **BSP-only execution**: they execute only vCPU0 and do not yet schedule application
-processors (APs) end-to-end.
+are still **SMP bring-up only**, but progress has landed:
+
+- `aero_machine::Machine` can be configured with `cpu_count > 1` and includes basic SMP plumbing:
+  per-vCPU LAPIC instances/MMIO routing, AP wait-for-SIPI state, INIT+SIPI delivery via the LAPIC
+  ICR, and a bounded cooperative AP execution loop inside `Machine::run_slice`.
+  This is sufficient for SMP contract/bring-up tests, but it is **not** a full SMP scheduler or
+  parallel vCPU execution environment yet.
+- `aero_machine::PcMachine` and `aero_pc_platform::PcPlatform` still execute only the BSP today;
+  `cpu_count > 1` there is primarily for firmware-table enumeration tests.
 
 `cpu_count` is allowed to be `>= 1` so firmware can publish SMP-capable CPU topology (ACPI/SMBIOS)
-and platform code can size per-vCPU state (for example LAPIC instances), but a multi-vCPU guest will
-not actually run correctly yet.
+and platform code can size per-vCPU state (for example LAPIC instances). Multi-vCPU guests are not
+expected to run robustly yet (especially OS SMP), but the building blocks are now testable.
 
 Attempting to construct a canonical machine with `cpu_count == 0` fails with
 `MachineError::InvalidCpuCount`.
@@ -24,21 +31,24 @@ The project has building blocks for multi-vCPU guests (ACPI table generation can
 entries, and there is a prototype SMP model in `crates/aero-smp-model/`), but the end-to-end
 full-system wiring is not complete yet.
 
-Key missing pieces include:
+Key missing pieces include (what’s still left even with the current bring-up support):
 
-1. **Multiple vCPU execution + scheduling**
-   - The canonical machine owns a single `aero_cpu_core::CpuCore`.
-   - SMP requires `Vec<CpuCore>` plus a scheduler (deterministic time-slicing baseline; optional
-     multi-worker execution later).
+1. **Robust multi-vCPU execution + scheduling**
+   - `aero_machine::Machine` now owns a BSP `CpuCore` plus AP `CpuCore`s and runs APs cooperatively,
+     but this is still a minimal bring-up scheduler.
+   - Remaining work includes fairness, guest-driven AP execution (not just host-driven bring-up),
+     and eventually parallel execution.
 
 2. **AP startup (BSP + AP bring-up)**
    - APs must start in a wait-for-SIPI state.
    - BSP must be able to deliver INIT/SIPI via the Local APIC ICR.
-   - Requires a low-memory trampoline region and the associated memory/firmware contract.
+   - Basic INIT/SIPI bring-up is now implemented in `aero_machine::Machine`, but full guest OS AP
+     bring-up sequences still need hardening and coverage.
 
 3. **LAPIC/IPI plumbing**
-   - `PcPlatform` currently models one Local APIC for interrupt delivery to the single BSP.
-   - SMP requires per-vCPU LAPIC state and IPI delivery between vCPUs.
+   - Per-vCPU LAPIC state exists and IOAPIC destination routing works for non-BSP LAPICs.
+   - Remaining work includes full IPI delivery semantics (AP→BSP/AP, broadcast modes), per-vCPU
+     interrupt injection, and safety/determinism under nested interrupt activity.
 
 4. **Firmware topology and OS discovery**
    - ACPI MADT must enumerate all CPUs and their APIC IDs.
@@ -48,8 +58,9 @@ Key missing pieces include:
      multi-vCPU execution is not wired end-to-end yet.
 
 5. **Snapshot/restore**
-   - `aero-snapshot` supports multi-vCPU `CPUS` state, but the canonical machine currently snapshots
-     a single CPU.
+   - `aero-snapshot` supports multi-vCPU `CPUS` state, but `aero_machine::Machine` snapshots/restores
+     only the BSP CPU state today. AP CPU state + LAPIC/IPI state must be included in a stable,
+     deterministic multi-vCPU snapshot contract.
    - SMP bring-up must define the per-vCPU snapshot contract and deterministic restore ordering.
 
 ## Where to track progress
