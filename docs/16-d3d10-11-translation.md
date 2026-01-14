@@ -623,6 +623,10 @@ struct aerogpu_cmd_set_texture {
 - For compute, `stage_ex = 0` remains valid legacy encoding (old guests write zeros for reserved
   fields):
   - CS: `shader_stage = COMPUTE`, `stage_ex = 0`
+- Robustness note: some older/broken command writers may incorrectly use the DXBC program-type value
+  for compute (`stage_ex = AEROGPU_SHADER_STAGE_EX_COMPUTE = 5`) instead of the reserved `0`
+  sentinel in binding packets. Hosts MAY treat `stage_ex = 5` as equivalent to `0` for compute-stage
+  bindings for best-effort compatibility (the in-tree executor does this).
 - `stage_ex` encoding is enabled by setting `shader_stage = COMPUTE` and a non-zero `stage_ex`:
   - GS resources: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (2)
   - HS resources: `shader_stage = COMPUTE`, `stage_ex = HULL`     (3)
