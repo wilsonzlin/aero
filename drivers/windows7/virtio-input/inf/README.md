@@ -22,17 +22,16 @@ aero_virtio_tablet.cat
 
 - `virtio-input.inf.disabled` is a legacy filename alias for workflows/tools that still reference `virtio-input.inf`
   instead of `aero_virtio_input.inf`.
-  - Rename it to `virtio-input.inf` to enable it.
-- Policy:
-  - The canonical keyboard/mouse INF (`aero_virtio_input.inf`) is intentionally **SUBSYS-only** (no strict generic fallback).
-  - The alias INF is allowed to diverge from `aero_virtio_input.inf` **only** in the models sections
-    (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds the opt-in strict revision-gated generic fallback HWID (no `SUBSYS`):
-    - `PCI\VEN_1AF4&DEV_1052&REV_01` (**Aero VirtIO Input Device**)
-  - Outside those models sections, from the first section header (`[Version]`) onward, it is expected to remain byte-for-byte
-    identical to `aero_virtio_input.inf` (only the leading banner/comments may differ; see `..\scripts\check-inf-alias.py`).
-  - Enabling the alias **does** change HWID matching behavior (it enables generic fallback binding).
+  - Rename it to `virtio-input.inf` to enable it (disabled by default).
+- Policy: the alias INF is a *filename alias only*:
+  - From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to
+    `aero_virtio_input.inf` (only the leading banner/comments may differ; see `..\scripts\check-inf-alias.py`).
+  - Because it is identical, it does **not** change HWID matching behavior.
+- The canonical keyboard/mouse INF (`aero_virtio_input.inf`) already includes the strict revision-gated generic fallback HWID
+  (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`. Enabling the alias is **not** required for fallback binding.
 - The alias INF is checked in as `*.inf.disabled` to avoid accidentally shipping/installing **two** overlapping
-  INFs. If you enable the alias, do **not** ship it alongside `aero_virtio_input.inf` (install only one basename at a time).
+  keyboard/mouse INFs. If you enable the alias, do **not** ship/install it alongside `aero_virtio_input.inf`
+  (ship/install only one of the two filenames).
 
 ## Notes
 
@@ -43,24 +42,19 @@ aero_virtio_tablet.cat
 expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
 distinct keyboard vs mouse `DeviceDesc` strings, INF binding/identity guardrails, and MSI interrupt settings).
 
-The validator targets the canonical keyboard/mouse INF (`aero_virtio_input.inf`) by default. It expects the following contract-v1 HWIDs to be
-present in both `[Aero.NTx86]` and `[Aero.NTamd64]`:
+The validator targets the canonical keyboard/mouse INF (`aero_virtio_input.inf`) by default, and can also be pointed at the legacy
+filename alias INF (`virtio-input.inf` / `virtio-input.inf.disabled`).
+
+It expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]` and `[Aero.NTamd64]`:
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no `SUBSYS`)
 
-It also enforces that the canonical INF is **SUBSYS-only** (must not contain the strict generic fallback HWID string anywhere,
-even in comments: `PCI\VEN_1AF4&DEV_1052&REV_01`), so generic fallback binding is available only via the legacy alias INF when
-enabled.
+The legacy filename alias INF is expected to be functionally identical, so the same HWID set is required when validating it.
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
 devices bind via `aero_virtio_tablet.inf` when that INF is installed.
-
-If a legacy filename alias INF exists (`virtio-input.inf` / `virtio-input.inf.disabled`), the validator also checks that it:
-
-- stays byte-for-byte identical to the canonical INF outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) from the first
-  section header (`[Version]`) onward (banner/comments may differ), and
-- includes the opt-in strict generic fallback model entry (`PCI\VEN_1AF4&DEV_1052&REV_01`) in both models sections.
 
 Run it from any PowerShell prompt:
 

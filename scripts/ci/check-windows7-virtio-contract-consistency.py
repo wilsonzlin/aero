@@ -2281,7 +2281,7 @@ def validate_virtio_input_model_lines(
         elif fb:
             errors.append(
                 format_error(
-                    f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}); canonical virtio-input INF must be SUBSYS-only:",
+                    f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}) (policy forbids the strict generic fallback here):",
                     [e.raw_line for e in fb],
                 )
             )
@@ -4573,10 +4573,13 @@ def main() -> None:
         # DeviceDesc strings for each function so they appear separately in Device Manager.
         #
         # Policy note:
-        # - The canonical virtio-input keyboard/mouse INF includes subsystem-qualified
-        #   keyboard/mouse HWIDs for distinct naming, plus the strict REV-qualified
-        #   generic fallback HWID (no SUBSYS) for environments where subsystem IDs are
-        #   not exposed/recognized.
+        # - The canonical virtio-input INF binds to the SUBSYS-qualified keyboard/mouse
+        #   HWIDs for distinct naming *and* includes a strict, revision-gated generic
+        #   fallback HWID (no SUBSYS) for environments where subsystem IDs are not
+        #   exposed/recognized.
+        # - A legacy filename alias INF exists only for compatibility with the legacy
+        #   `virtio-input.inf` basename, and must remain byte-identical to the canonical
+        #   INF from the first section header (`[Version]`) onward (banner/comments may differ).
         if device_name == "virtio-input":
             validate_virtio_input_model_lines(
                 inf_path=inf_path,
@@ -4593,34 +4596,23 @@ def main() -> None:
     virtio_input_canonical = virtio_input_inf_dir / "aero_virtio_input.inf"
     virtio_input_alias_enabled = virtio_input_inf_dir / "virtio-input.inf"
     virtio_input_alias_disabled = virtio_input_inf_dir / "virtio-input.inf.disabled"
-    if virtio_input_alias_enabled.exists():
-        virtio_input_alias = virtio_input_alias_enabled
-    elif virtio_input_alias_disabled.exists():
-        virtio_input_alias = virtio_input_alias_disabled
-    else:
-        virtio_input_alias = None
-
-    if virtio_input_alias is not None:
-        virtio_input_contract_any = contract_ids["virtio-input (keyboard)"]
-        base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
-        strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
-
-        # The legacy alias INF is kept for compatibility with workflows/tools that reference
-        # the legacy `virtio-input.inf` name.
-        #
-        # Policy: it is a filename alias only. From the first section header (`[Version]`)
-        # onward it must remain byte-for-byte identical to the canonical INF (only the
-        # leading banner/comments may differ).
-        validate_virtio_input_model_lines(
-            inf_path=virtio_input_alias,
-            strict_hwid=strict_hwid,
-            contract_rev=contract_rev,
-            require_fallback=True,
-            errors=errors,
+    if virtio_input_alias_enabled.exists() and virtio_input_alias_disabled.exists():
+        errors.append(
+            f"{virtio_input_inf_dir.as_posix()}: both virtio-input.inf and virtio-input.inf.disabled exist; keep only one to avoid multiple matching INFs."
         )
+
+    # Policy: `virtio-input.inf.disabled` is a filename-only alias kept for legacy
+    # compatibility. From the first section header (`[Version]`) onward it must be
+    # byte-for-byte identical to the canonical INF (only the leading banner/comments
+    # may differ).
+    if not virtio_input_alias_disabled.exists():
+        errors.append(
+            f"missing required legacy filename alias INF: {virtio_input_alias_disabled.as_posix()} (keep it checked in disabled-by-default; developers may locally enable it by renaming to virtio-input.inf)"
+        )
+    else:
         drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
-            alias=virtio_input_alias,
+            alias=virtio_input_alias_disabled,
             repo_root=REPO_ROOT,
             label="virtio-input",
         )
