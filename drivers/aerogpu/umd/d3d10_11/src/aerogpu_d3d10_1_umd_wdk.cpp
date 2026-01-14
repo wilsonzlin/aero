@@ -3761,6 +3761,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (rt_state_changed) {
     EmitSetRenderTargetsLocked(dev);
   }
+  bool oom = false;
   // Unbind any IA vertex buffer slots that reference this resource.
   for (uint32_t slot = 0; slot < dev->current_vb_resources.size(); ++slot) {
     if (dev->current_vb_resources[slot] != res) {
@@ -3780,15 +3781,18 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     binding.stride_bytes = 0;
     binding.offset_bytes = 0;
     binding.reserved0 = 0;
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                             &binding,
-                                                                             sizeof(binding));
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
-      break;
+    if (!oom) {
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
+                                                                               &binding,
+                                                                               sizeof(binding));
+      if (!cmd) {
+        set_error(dev, E_OUTOFMEMORY);
+        oom = true;
+      } else {
+        cmd->start_slot = slot;
+        cmd->buffer_count = 1;
+      }
     }
-    cmd->start_slot = slot;
-    cmd->buffer_count = 1;
   }
   if (dev->current_ib_res == res) {
     dev->current_ib_res = nullptr;
@@ -3806,43 +3810,52 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
     if (dev->current_vs_srvs[slot] == res) {
       dev->current_vs_srvs[slot] = nullptr;
-      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-      if (!cmd) {
-        set_error(dev, E_OUTOFMEMORY);
-        break;
+      if (!oom) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+        if (!cmd) {
+          set_error(dev, E_OUTOFMEMORY);
+          oom = true;
+        } else {
+          cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+          cmd->slot = slot;
+          cmd->texture = 0;
+          cmd->reserved0 = 0;
+        }
       }
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-      cmd->slot = slot;
-      cmd->texture = 0;
-      cmd->reserved0 = 0;
     }
   }
   for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
     if (dev->current_ps_srvs[slot] == res) {
       dev->current_ps_srvs[slot] = nullptr;
-      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-      if (!cmd) {
-        set_error(dev, E_OUTOFMEMORY);
-        break;
+      if (!oom) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+        if (!cmd) {
+          set_error(dev, E_OUTOFMEMORY);
+          oom = true;
+        } else {
+          cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+          cmd->slot = slot;
+          cmd->texture = 0;
+          cmd->reserved0 = 0;
+        }
       }
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-      cmd->slot = slot;
-      cmd->texture = 0;
-      cmd->reserved0 = 0;
     }
   }
   for (uint32_t slot = 0; slot < dev->current_gs_srvs.size(); ++slot) {
     if (dev->current_gs_srvs[slot] == res) {
       dev->current_gs_srvs[slot] = nullptr;
-      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-      if (!cmd) {
-        set_error(dev, E_OUTOFMEMORY);
-        break;
+      if (!oom) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+        if (!cmd) {
+          set_error(dev, E_OUTOFMEMORY);
+          oom = true;
+        } else {
+          cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+          cmd->slot = slot;
+          cmd->texture = 0;
+          cmd->reserved0 = 0;
+        }
       }
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
-      cmd->slot = slot;
-      cmd->texture = 0;
-      cmd->reserved0 = 0;
     }
   }
 
