@@ -4008,11 +4008,7 @@ impl AerogpuD3d11Executor {
         }
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
 
-        // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
-        // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
-        // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
-        // placeholder path so apps that accidentally bind tessellation stages (or select patchlist
-        // topologies) do not crash.
+        // Tessellation (HS/DS) and geometry-shader emulation share this compute-prepass entrypoint.
 
         let Some(next) = stream.iter.peek() else {
             return Ok(());
@@ -4385,7 +4381,367 @@ impl AerogpuD3d11Executor {
             None
         };
 
-        if let Some((gs_handle, gs_meta)) = gs_prepass {
+        if self.state.hs.is_some() || self.state.ds.is_some() {
+            // Tessellation (HS/DS) emulation: expand the patch list into an indexed triangle list
+            // and render via `draw_indexed_indirect`.
+            use_indexed_indirect = true;
+
+            let hs_handle = self
+                .state
+                .hs
+                .ok_or_else(|| anyhow!("tessellation draw requires a bound HS"))?;
+            let ds_handle = self
+                .state
+                .ds
+                .ok_or_else(|| anyhow!("tessellation draw requires a bound DS"))?;
+
+            let control_points: u32 = match self.state.primitive_topology {
+                CmdPrimitiveTopology::PatchList { control_points } => u32::from(control_points),
+                _ => bail!(
+                    "tessellation draw requires patchlist primitive topology (got {:?})",
+                    self.state.primitive_topology
+                ),
+            };
+            // P0: triangle-domain integer partitioning + 3-control-point patches.
+            if control_points != 3 {
+                bail!(
+                    "tessellation emulation currently supports only 3-control-point patchlists (got {control_points})"
+                );
+            }
+
+            let hs = self
+                .resources
+                .shaders
+                .get(&hs_handle)
+                .ok_or_else(|| anyhow!("unknown HS shader {hs_handle}"))?;
+            if hs.stage != ShaderStage::Hull {
+                bail!("shader {hs_handle} is not a hull shader");
+            }
+
+            let ds = self
+                .resources
+                .shaders
+                .get(&ds_handle)
+                .ok_or_else(|| anyhow!("unknown DS shader {ds_handle}"))?;
+            if ds.stage != ShaderStage::Domain {
+                bail!("shader {ds_handle} is not a domain shader");
+            }
+
+            // Expand all instances into a single expanded draw (indirect args `instance_count=1`).
+            let patch_count_total = primitive_count.checked_mul(instance_count).ok_or_else(|| {
+                anyhow!(
+                    "tessellation patch_count_total overflows u32 (primitive_count={primitive_count} instance_count={instance_count})"
+                )
+            })?;
+
+            // Expanded draw layout is fixed to `(pos: vec4) + (o1: vec4)` for now.
+            let out_reg_count: u32 = 2;
+
+            let draw_scratch = self
+                .tessellation
+                .alloc_draw_scratch(
+                    &self.device,
+                    &mut self.expansion_scratch,
+                    super::tessellation::buffers::TessellationSizingParams::new_with_max_tess_factor(
+                        patch_count_total,
+                        control_points,
+                        out_reg_count,
+                    ),
+                )
+                .map_err(|e| anyhow!("tessellation: alloc_draw_scratch failed: {e}"))?;
+
+            // --- VS-as-compute (vertex pulling) ---
+            let layout_handle = self
+                .state
+                .input_layout
+                .ok_or_else(|| anyhow!("tessellation emulation requires an input layout"))?;
+
+            let vs = self
+                .resources
+                .shaders
+                .get(&vs_handle)
+                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
+                .clone();
+            if vs.stage != ShaderStage::Vertex {
+                bail!("shader {vs_handle} is not a vertex shader");
+            }
+
+            let layout = self
+                .resources
+                .input_layouts
+                .get(&layout_handle)
+                .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
+
+            // Strides come from IASetVertexBuffers state, not from ILAY.
+            let slot_strides: Vec<u32> = self
+                .state
+                .vertex_buffers
+                .iter()
+                .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
+                .collect();
+            let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+            let pulling = VertexPullingLayout::new(&binding, &vs.vs_input_signature).map_err(|e| {
+                anyhow!(
+                    "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
+                )
+            })?;
+
+            // Build per-slot uniform data + buffer list in pulling-slot order.
+            let mut slots: Vec<VertexPullingSlot> =
+                Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+            let mut buffers: Vec<&wgpu::Buffer> =
+                Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+            for &d3d_slot in &pulling.pulling_slot_to_d3d_slot {
+                let vb = self
+                    .state
+                    .vertex_buffers
+                    .get(d3d_slot as usize)
+                    .and_then(|v| *v)
+                    .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
+                let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
+                    anyhow!(
+                        "vertex buffer slot {d3d_slot} offset {} out of range",
+                        vb.offset_bytes
+                    )
+                })?;
+
+                let buf = self
+                    .resources
+                    .buffers
+                    .get(&vb.buffer)
+                    .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+                slots.push(VertexPullingSlot {
+                    base_offset_bytes,
+                    stride_bytes: vb.stride_bytes,
+                });
+                buffers.push(&buf.buffer);
+            }
+
+            // NOTE: Keep uniform buffers separate from the expansion scratch storage buffer.
+            // wgpu treats `storage, read_write` buffer usage as exclusive within a compute dispatch,
+            // so binding different slices of the same underlying buffer as both storage and uniform
+            // triggers validation errors.
+            let create_uniform_buffer =
+                |label: &'static str, bytes: &[u8]| -> (wgpu::Buffer, u64) {
+                    assert!(
+                        !bytes.is_empty(),
+                        "uniform buffer payload must be non-empty"
+                    );
+                    let size = bytes.len() as u64;
+                    // Ensure the backing buffer is large enough for the declared binding size and keeps a
+                    // 16-byte granularity (uniform struct alignment).
+                    let size = size.saturating_add(15) & !15;
+                    let mut padded = vec![0u8; size as usize];
+                    padded[..bytes.len()].copy_from_slice(bytes);
+                    let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(label),
+                        size,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    self.queue.write_buffer(&buffer, 0, &padded);
+                    (buffer, size)
+                };
+
+            let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
+            let (ia_uniform_buffer, ia_uniform_size) = create_uniform_buffer(
+                "aerogpu_cmd tessellation prepass IA uniform",
+                &uniform_bytes,
+            );
+            let ia_uniform_binding = wgpu::BufferBinding {
+                buffer: &ia_uniform_buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(ia_uniform_size),
+            };
+
+            let mut index_params_buffer: Option<wgpu::Buffer> = None;
+            let mut index_params_size: u64 = 0;
+            let index_buffer_words: Option<&wgpu::Buffer> = if opcode == OPCODE_DRAW_INDEXED {
+                let ib = self
+                    .state
+                    .index_buffer
+                    .expect("DRAW_INDEXED precondition checked above");
+                let ib_buf = self
+                    .resources
+                    .buffers
+                    .get(&ib.buffer)
+                    .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+
+                let index_format = match ib.format {
+                    wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
+                    wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
+                };
+                let params = IndexPullingParams {
+                    first_index: vertex_pulling_draw.first_index,
+                    base_vertex: vertex_pulling_draw.base_vertex,
+                    index_format,
+                    _pad0: 0,
+                };
+                let params_bytes = params.to_le_bytes();
+                let (buf, size) = create_uniform_buffer(
+                    "aerogpu_cmd tessellation prepass index pulling params",
+                    &params_bytes,
+                );
+                index_params_buffer = Some(buf);
+                index_params_size = size;
+                Some(&ib_buf.buffer)
+            } else {
+                None
+            };
+
+            let index_params_binding: Option<wgpu::BufferBinding<'_>> =
+                index_params_buffer.as_ref().map(|buf| wgpu::BufferBinding {
+                    buffer: buf,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(index_params_size),
+                });
+
+            let vs_pipeline = self
+                .tessellation
+                .pipelines_mut()
+                .vs_as_compute(
+                    &self.device,
+                    &pulling,
+                    super::tessellation::vs_as_compute::VsAsComputeConfig {
+                        control_point_count: control_points,
+                        out_reg_count,
+                        indexed: opcode == OPCODE_DRAW_INDEXED,
+                    },
+                )
+                .context("tessellation: create VS-as-compute pipeline")?;
+            let vs_bg = vs_pipeline.create_bind_group_group3(
+                &self.device,
+                &pulling,
+                buffers.as_slice(),
+                ia_uniform_binding,
+                index_params_binding,
+                index_buffer_words,
+                &draw_scratch.vs_out,
+            )?;
+            self.encoder_has_commands = true;
+            vs_pipeline.dispatch(encoder, element_count, instance_count, &vs_bg)?;
+
+            // --- HS pass-through (placeholder) ---
+            let hs_pipeline = self
+                .tessellation
+                .pipelines_mut()
+                .hs_passthrough(&self.device)
+                .context("tessellation: create HS passthrough pipeline")?;
+
+            // HS params uniform: `{patch_count, control_points, out_reg_count, tess_factor}`.
+            let mut hs_params_bytes = [0u8; 16];
+            hs_params_bytes[0..4].copy_from_slice(&patch_count_total.to_le_bytes());
+            hs_params_bytes[4..8].copy_from_slice(&control_points.to_le_bytes());
+            hs_params_bytes[8..12].copy_from_slice(&out_reg_count.to_le_bytes());
+            hs_params_bytes[12..16].copy_from_slice(&4.0f32.to_le_bytes()); // P0 tess factor
+            let (hs_params_buffer, hs_params_size) = create_uniform_buffer(
+                "aerogpu_cmd tessellation prepass HS params",
+                &hs_params_bytes,
+            );
+            let hs_params_alloc = super::expansion_scratch::ExpansionScratchAlloc {
+                buffer: Arc::new(hs_params_buffer),
+                offset: 0,
+                size: hs_params_size,
+            };
+            let hs_bg = hs_pipeline.create_bind_group_group3(
+                &self.device,
+                &hs_params_alloc,
+                &draw_scratch.vs_out,
+                &draw_scratch.hs_out,
+                &draw_scratch.hs_patch_constants,
+            )?;
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("aero-d3d11 tessellation HS pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(hs_pipeline.pipeline());
+                pass.set_bind_group(crate::binding_model::BIND_GROUP_INTERNAL_EMULATION, &hs_bg, &[]);
+                pass.dispatch_workgroups(control_points, patch_count_total, 1);
+            }
+
+            // --- Layout pass (tess factor -> counts/offsets + indirect args) ---
+            let layout_pipeline = self
+                .tessellation
+                .pipelines_mut()
+                .layout_pass(&self.device)
+                .context("tessellation: create layout pass pipeline")?;
+
+            let max_vertices: u32 = draw_scratch
+                .sizes
+                .expanded_vertex_count_total
+                .try_into()
+                .map_err(|_| anyhow!("tessellation: max_vertices out of range"))?;
+            let max_indices: u32 = draw_scratch
+                .sizes
+                .expanded_index_count_total
+                .try_into()
+                .map_err(|_| anyhow!("tessellation: max_indices out of range"))?;
+            let layout_params = super::tessellation::TessellationLayoutParams {
+                patch_count: patch_count_total,
+                max_vertices,
+                max_indices,
+                _pad0: 0,
+            };
+            let layout_params_bytes = layout_params.to_le_bytes();
+            let (layout_params_buffer, layout_params_size) = create_uniform_buffer(
+                "aerogpu_cmd tessellation prepass layout params",
+                &layout_params_bytes,
+            );
+            let layout_params_alloc = super::expansion_scratch::ExpansionScratchAlloc {
+                buffer: Arc::new(layout_params_buffer),
+                offset: 0,
+                size: layout_params_size,
+            };
+            let debug_alloc = self
+                .expansion_scratch
+                .alloc_metadata(&self.device, 4, 4)
+                .map_err(|e| anyhow!("tessellation prepass: alloc layout debug: {e}"))?;
+            let layout_bg = layout_pipeline.create_bind_group_group3(
+                &self.device,
+                &layout_params_alloc,
+                &draw_scratch.hs_patch_constants,
+                &draw_scratch.tess_metadata,
+                &draw_scratch.indirect_args,
+                &debug_alloc,
+            )?;
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("aero-d3d11 tessellation layout pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(layout_pipeline.pipeline());
+                pass.set_bind_group(crate::binding_model::BIND_GROUP_INTERNAL_EMULATION, &layout_bg, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+
+            // --- DS expansion (placeholder) ---
+            let ds_pipeline = self
+                .tessellation
+                .pipelines_mut()
+                .ds_passthrough(&self.device)
+                .context("tessellation: create DS passthrough pipeline")?;
+            let ds_bg = ds_pipeline.create_bind_group_group3(
+                &self.device,
+                &draw_scratch.hs_out,
+                &draw_scratch.tess_metadata,
+                &draw_scratch.expanded_vertices,
+                &draw_scratch.expanded_indices,
+            )?;
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("aero-d3d11 tessellation DS pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(ds_pipeline.pipeline());
+                pass.set_bind_group(crate::binding_model::BIND_GROUP_INTERNAL_EMULATION, &ds_bg, &[]);
+                pass.dispatch_workgroups(patch_count_total, 1, 1);
+            }
+
+            expanded_vertex_alloc = draw_scratch.expanded_vertices;
+            expanded_index_alloc = draw_scratch.expanded_indices;
+            indirect_args_alloc = draw_scratch.indirect_args;
+        } else if let Some((gs_handle, gs_meta)) = gs_prepass {
             // The GS translator writes `DrawIndexedIndirectArgs`, so always render via
             // `draw_indexed_indirect`.
             use_indexed_indirect = true;
@@ -20035,7 +20391,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
     }
 
     #[test]
-    fn tessellation_hs_ds_emulation_is_reported_as_unimplemented() {
+    fn tessellation_draw_requires_bound_ds() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
@@ -20044,28 +20400,61 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     return;
                 }
             };
-            // Force capability flags on so the draw reaches the HS/DS implementation check.
-            // This is a unit test for error reporting; the stream should fail before recording any
-            // GPU work.
-            exec.caps.supports_compute = true;
-            exec.caps.supports_indirect_execution = true;
+            if !exec.caps.supports_compute {
+                skip_or_panic(
+                    module_path!(),
+                    "tessellation emulation requires compute shaders, but this wgpu backend does not support compute",
+                );
+                return;
+            }
+            if !exec.caps.supports_indirect_execution {
+                skip_or_panic(
+                    module_path!(),
+                    "tessellation emulation requires indirect execution, but this wgpu backend does not support indirect draws",
+                );
+                return;
+            }
 
-            // Make the state look like it needs tessellation. The stream itself does not contain a
-            // tessellation bind command yet; this is a direct state injection for unit testing.
-            exec.state.render_targets.push(Some(1));
-            exec.state.hs = Some(123);
+            const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+            const HS: u32 = 4;
+
+            let vs_dxbc = include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            let ps_dxbc = include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
 
             let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AerogpuFormat::R8G8B8A8Unorm as u32,
+                8,
+                8,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.set_render_targets(&[RT], 0);
+
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, vs_dxbc);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, ps_dxbc);
+            // Bind an HS without a DS; tessellation draws must specify both.
+            //
+            // HS/DS handles are validated during draw execution, so we don't need to actually create
+            // an HS shader here.
+            writer.bind_shaders_ex(VS, PS, 0, 0, HS, 0);
             writer.draw(3, 1, 0, 0);
             let stream = writer.finish();
 
             let mut guest_mem = VecGuestMemory::new(0);
             let err = exec
                 .execute_cmd_stream(&stream, None, &mut guest_mem)
-                .expect_err("draw should fail when HS/DS tessellation emulation is not wired up");
+                .expect_err("draw should fail when HS is bound without DS");
             let msg = err.to_string();
             assert!(
-                msg.contains("tessellation (HS/DS) compute expansion is not wired up yet"),
+                msg.contains("tessellation draw requires a bound DS"),
                 "unexpected error: {err:#}"
             );
         });

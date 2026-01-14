@@ -27,27 +27,26 @@ use crate::runtime::vertex_pulling::{
     VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 
-/// `@binding` number for [`crate::runtime::index_pulling::IndexPullingParams`] when VS-as-compute
-/// needs indexed draw support.
+/// `@binding` number for the output register storage buffer (`vs_out_regs`) used by VS-as-compute.
 ///
-/// This lives in [`VERTEX_PULLING_GROUP`] alongside the vertex pulling bindings. Index pulling is
-/// bound in the same *internal* binding range as vertex pulling (`@binding >= BINDING_BASE_INTERNAL`)
-/// to avoid collisions with D3D11 register-space bindings when sharing bind group 3.
+/// VS-as-compute bindings live in [`VERTEX_PULLING_GROUP`] alongside the vertex pulling bindings.
+/// This group is shared with D3D11 extended-stage bindings (GS/HS/DS), so internal emulation
+/// bindings must live in the internal binding range (`@binding >= BINDING_BASE_INTERNAL`) to avoid
+/// collisions with D3D11 register-space bindings.
 ///
 /// Alias of [`crate::runtime::index_pulling::INDEX_PULLING_PARAMS_BINDING`].
 pub const VS_AS_COMPUTE_INDEX_PARAMS_BINDING: u32 = INDEX_PULLING_PARAMS_BINDING;
 
-/// `@binding` number for the index buffer word storage when VS-as-compute needs indexed draw support.
+/// `@binding` number for the index buffer word storage when VS-as-compute needs indexed draw
+/// support.
 ///
 /// Alias of [`crate::runtime::index_pulling::INDEX_PULLING_BUFFER_BINDING`].
 pub const VS_AS_COMPUTE_INDEX_BUFFER_BINDING: u32 = INDEX_PULLING_BUFFER_BINDING;
 
 /// `@binding` number for the output register storage buffer (`vs_out_regs`).
 ///
-/// This is placed immediately after the index pulling bindings so it remains disjoint from:
-/// - vertex pulling's per-slot vertex buffers (`VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot`)
-/// - index pulling's params + index buffer bindings
-/// - future internal emulation buffers (reserved from `BINDING_BASE_INTERNAL + 64` onward)
+/// This is placed immediately after the index pulling bindings so VS-as-compute can optionally
+/// include index pulling in the same bind group.
 pub const VS_AS_COMPUTE_VS_OUT_REGS_BINDING: u32 = VS_AS_COMPUTE_INDEX_BUFFER_BINDING + 1;
 
 fn vs_as_compute_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
@@ -62,7 +61,7 @@ fn vs_as_compute_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
     out
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VsAsComputeConfig {
     /// Number of control points per patch (e.g. 3 for `D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST`).
     pub control_point_count: u32,
@@ -211,7 +210,7 @@ impl VsAsComputePipeline {
                 resource: wgpu::BindingResource::Buffer(index_params.unwrap()),
             });
             entries.push(wgpu::BindGroupEntry {
-                binding: VS_AS_COMPUTE_INDEX_BUFFER_BINDING,
+                binding: INDEX_PULLING_BUFFER_BINDING,
                 resource: index_buffer_words.unwrap().as_entire_binding(),
             });
         }
@@ -340,7 +339,7 @@ fn create_vs_as_compute_bind_group_layout(
     if cfg.indexed {
         // Index pulling params + index buffer view.
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: VS_AS_COMPUTE_INDEX_PARAMS_BINDING,
+            binding: INDEX_PULLING_PARAMS_BINDING,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
@@ -350,7 +349,7 @@ fn create_vs_as_compute_bind_group_layout(
             count: None,
         });
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: VS_AS_COMPUTE_INDEX_BUFFER_BINDING,
+            binding: INDEX_PULLING_BUFFER_BINDING,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -391,8 +390,8 @@ fn build_vs_as_compute_passthrough_wgsl(
     if cfg.indexed {
         wgsl.push_str(&wgsl_index_pulling_lib(
             VERTEX_PULLING_GROUP,
-            VS_AS_COMPUTE_INDEX_PARAMS_BINDING,
-            VS_AS_COMPUTE_INDEX_BUFFER_BINDING,
+            INDEX_PULLING_PARAMS_BINDING,
+            INDEX_PULLING_BUFFER_BINDING,
         ));
         wgsl.push('\n');
     }

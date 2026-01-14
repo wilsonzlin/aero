@@ -193,16 +193,17 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         )
         .unwrap();
 
+        let ia_uniform_binding = wgpu::BufferBinding {
+            buffer: &ia_uniform,
+            offset: 0,
+            size: wgpu::BufferSize::new(ia_uniform_bytes.len() as u64),
+        };
         let bg = pipeline
             .create_bind_group_group3(
                 &device,
                 &pulling,
                 &[&vb],
-                wgpu::BufferBinding {
-                    buffer: &ia_uniform,
-                    offset: 0,
-                    size: None,
-                },
+                ia_uniform_binding,
                 None,
                 None,
                 &vs_out_regs,
@@ -516,21 +517,23 @@ fn vs_as_compute_supports_index_pulling() {
         )
         .unwrap();
 
+        let ia_uniform_binding = wgpu::BufferBinding {
+            buffer: &ia_uniform,
+            offset: 0,
+            size: wgpu::BufferSize::new(ia_uniform_bytes.len() as u64),
+        };
+        let index_params_binding = wgpu::BufferBinding {
+            buffer: &params_buf,
+            offset: 0,
+            size: wgpu::BufferSize::new(16),
+        };
         let bg = pipeline
             .create_bind_group_group3(
                 &device,
                 &pulling,
                 &[&vb],
-                wgpu::BufferBinding {
-                    buffer: &ia_uniform,
-                    offset: 0,
-                    size: None,
-                },
-                Some(wgpu::BufferBinding {
-                    buffer: &params_buf,
-                    offset: 0,
-                    size: None,
-                }),
+                ia_uniform_binding,
+                Some(index_params_binding),
                 Some(&ib),
                 &vs_out_regs,
             )
@@ -1160,16 +1163,17 @@ fn vs_as_compute_rejects_non_multiple_of_control_points() {
         )
         .unwrap();
 
+        let ia_uniform_binding = wgpu::BufferBinding {
+            buffer: &ia_uniform,
+            offset: 0,
+            size: wgpu::BufferSize::new(ia_uniform_bytes.len() as u64),
+        };
         let bg = pipeline
             .create_bind_group_group3(
                 &device,
                 &pulling,
                 &[&vb],
-                wgpu::BufferBinding {
-                    buffer: &ia_uniform,
-                    offset: 0,
-                    size: None,
-                },
+                ia_uniform_binding,
                 None,
                 None,
                 &vs_out_regs,

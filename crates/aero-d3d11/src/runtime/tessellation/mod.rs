@@ -251,6 +251,10 @@ impl TessellationRuntime {
         self.pipelines.reset();
     }
 
+    pub(crate) fn pipelines_mut(&mut self) -> &mut pipeline::TessellationPipelines {
+        &mut self.pipelines
+    }
+
     /// Allocate per-draw scratch buffers for tessellation expansion.
     ///
     /// The returned allocations are all subranges of the shared [`ExpansionScratchAllocator`]

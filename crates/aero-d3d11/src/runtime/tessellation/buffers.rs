@@ -13,9 +13,9 @@ use crate::runtime::indirect_args::DrawIndexedIndirectArgs;
 
 const REGISTER_STRIDE_BYTES: u64 = 16;
 
-// Per-patch metadata layout is defined by `tessellation::TessellationLayoutPatchMeta` (written by
-// the GPU layout pass). Keep sizing helpers in sync with that layout and the WGSL `PatchMeta`
-// struct in `tessellation/layout_pass.rs`.
+// Per-patch metadata layout is defined by `runtime::tessellation::TessellationLayoutPatchMeta`
+// (written by the GPU layout pass). Keep sizing helpers in sync with that layout and the WGSL
+// `PatchMeta` struct in `tessellation/layout_pass.rs`.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TessellationSizingError {
@@ -226,12 +226,11 @@ impl TessellationDrawScratchSizes {
             "hs_out bytes",
         )?;
 
-        // Patch constants are per patch.
-        let hs_patch_constants_bytes = checked_mul_u64(
-            patch_count_total,
-            ds_output_stride_bytes,
-            "hs_patch_constants bytes",
-        )?;
+        // Hull shader patch-constant output used by the layout pass:
+        // `vec4<f32>` containing `{edge0, edge1, edge2, inside}` tess factors for triangle-domain
+        // integer partitioning.
+        let hs_patch_constants_bytes =
+            checked_mul_u64(patch_count_total, 16, "hs_patch_constants bytes")?;
 
         let (metadata_size, _metadata_align) = super::TessellationLayoutPatchMeta::layout();
         let tess_metadata_bytes =
@@ -332,7 +331,7 @@ mod tests {
         assert_eq!(sizes.control_point_count_total, 6);
         assert_eq!(sizes.vs_out_bytes, 192);
         assert_eq!(sizes.hs_out_bytes, 192);
-        assert_eq!(sizes.hs_patch_constants_bytes, 64);
+        assert_eq!(sizes.hs_patch_constants_bytes, 32);
         assert_eq!(
             sizes.tess_metadata_bytes, 40,
             "Patch meta is 5 u32s (tess_level + 4 offsets/counts)"
