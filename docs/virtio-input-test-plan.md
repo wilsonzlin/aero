@@ -309,6 +309,13 @@ Tip: `hidtest.exe --counters` can help diagnose “input buffered while no pendi
 Tip: `hidtest.exe --interrupt-info` / `--interrupt-info-json` can help diagnose the effective interrupt mode (INTx vs MSI-X),
 message count granted by Windows, and MSI-X vector routing (config vs per-queue).
 
+Tip: keyboard LED output reports exercise the **statusq** (driver → device) path. Useful probes:
+
+- `hidtest.exe --keyboard --led-cycle` (cycles the 5 HID boot keyboard LED bits: Num/Caps/Scroll/Compose/Kana)
+- `hidtest.exe --keyboard --led 0x1F` (sets all 5 bits)
+
+To stress backpressure/coalescing, use `hidtest.exe --keyboard --led-spam N` (alternates `0` and `0x1F` by default; override the "on" mask via `--led 0xMASK` / `--led-hidd` / `--led-ioctl-set-output`) and watch `hidtest.exe --counters`.
+
 After the driver is installed and confirmed working, you can optionally disable PS/2 in QEMU (`-machine ...,i8042=off`) to ensure you are not accidentally testing the emulated PS/2 devices. Only do this once you have a known-good virtio-input driver; otherwise you may lose input in the guest.
 
 ### 3.4 Expected pass/fail signals (Windows 7)

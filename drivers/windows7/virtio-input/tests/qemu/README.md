@@ -366,6 +366,13 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --keyboard --led-ioctl-set-output 0x1F
    ```
 
+   To stress the LED/statusq write path (backpressure/coalescing), run:
+   ```bat
+   hidtest.exe --keyboard --led-spam 10000
+   ```
+   By default, `--led-spam` alternates `0` and `0x1F` (all 5 defined HID boot keyboard LED bits).
+   Override the "on" value by combining with `--led 0xMASK` (or `--led-hidd` / `--led-ioctl-set-output`).
+
 7. (Optional) query/reset driver diagnostics counters:
    ```bat
    hidtest.exe --counters
