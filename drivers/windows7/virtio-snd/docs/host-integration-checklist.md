@@ -190,6 +190,7 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
 - [ ] PCM payload format matches the negotiated `PCM_SET_PARAMS` tuple.
   - Contract v1: **mono S16_LE** (payload length is a multiple of **2** bytes).
   - Optional/non-contract: if you advertise extra `PCM_INFO` caps and accept non-baseline `PCM_SET_PARAMS`, payload length is a multiple of the negotiated **frame size** (`channels * bytes_per_sample`).
+    - Note: virtio-snd format codes follow ALSA `snd_pcm_format_t`. In ALSA, `S24`/`U24` are 24-bit samples stored in a 32-bit container (`bytes_per_sample = 4`).
 - [ ] **Safety cap (contract v1):** PCM **payload** is **≤ 256 KiB** (`262,144` bytes), where payload bytes exclude:
   - the 8-byte `virtio_snd_pcm_xfer` header, and
   - the final 8-byte `virtio_snd_pcm_status` response descriptor.
