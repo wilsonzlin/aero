@@ -279,6 +279,14 @@ fn build_vbe_failed_mode_set_does_not_clear_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
+    // Ensure DS=0 so absolute memory operands hit physical 0x0000:xxxx.
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+
     // mov ax, 0x4F02
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
     i += 3;
@@ -287,6 +295,22 @@ fn build_vbe_failed_mode_set_does_not_clear_boot_sector() -> [u8; 512] {
     i += 3;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // Signal the host that mode set has completed and we are about to wait.
+    // mov word [0x0500], 0xBEEF
+    sector[i..i + 6].copy_from_slice(&[0xC7, 0x06, 0x00, 0x05, 0xEF, 0xBE]);
+    i += 6;
+
+    // Wait until the host flips the word at 0x0500 to 0xDEAD.
+    // mov ax, [0x0500]
+    sector[i..i + 3].copy_from_slice(&[0xA1, 0x00, 0x05]);
+    i += 3;
+    // cmp ax, 0xDEAD
+    sector[i..i + 3].copy_from_slice(&[0x3D, 0xAD, 0xDE]);
+    i += 3;
+    // jne -8 (back to mov ax, [0x0500])
+    sector[i..i + 2].copy_from_slice(&[0x75, 0xF8]);
     i += 2;
 
     // Attempt to set an invalid mode (should fail). Use no-clear=0 so the machine-side
@@ -313,74 +337,86 @@ fn build_vbe_failed_mode_set_does_not_clear_boot_sector() -> [u8; 512] {
 
 #[test]
 fn bios_vbe_sync_mode_and_lfb_base() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 64 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    };
+    for enable_aerogpu in [false, true] {
+        let cfg = MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: !enable_aerogpu,
+            enable_aerogpu,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            ..Default::default()
+        };
 
-    let mut m = Machine::new(cfg).unwrap();
-    for (mode, (w, h)) in [
-        (0x115u16, (800, 600)),
-        (0x118u16, (1024, 768)),
-        (0x160u16, (1280, 720)),
-    ] {
-        m.set_disk_image(build_vbe_boot_sector(mode).to_vec())
-            .unwrap();
-        m.reset();
-        run_until_halt(&mut m);
+        let mut m = Machine::new(cfg).unwrap();
+        for (mode, (w, h)) in [
+            (0x115u16, (800, 600)),
+            (0x118u16, (1024, 768)),
+            (0x160u16, (1280, 720)),
+        ] {
+            m.set_disk_image(build_vbe_boot_sector(mode).to_vec())
+                .unwrap();
+            m.reset();
+            run_until_halt(&mut m);
 
-        // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
-        let mode_info_addr = 0x0500u64;
-        let attrs = m.read_physical_u16(mode_info_addr);
-        const MODE_ATTR_SUPPORTED: u16 = 1 << 0;
-        const MODE_ATTR_COLOR: u16 = 1 << 2;
-        const MODE_ATTR_GRAPHICS: u16 = 1 << 3;
-        const MODE_ATTR_WINDOWED: u16 = 1 << 5;
-        const MODE_ATTR_LFB: u16 = 1 << 7;
-        const REQUIRED_MODE_ATTRS: u16 = MODE_ATTR_SUPPORTED
-            | MODE_ATTR_COLOR
-            | MODE_ATTR_GRAPHICS
-            | MODE_ATTR_WINDOWED
-            | MODE_ATTR_LFB;
-        assert_eq!(attrs & REQUIRED_MODE_ATTRS, REQUIRED_MODE_ATTRS);
+            // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
+            let mode_info_addr = 0x0500u64;
+            let attrs = m.read_physical_u16(mode_info_addr);
+            const MODE_ATTR_SUPPORTED: u16 = 1 << 0;
+            const MODE_ATTR_COLOR: u16 = 1 << 2;
+            const MODE_ATTR_GRAPHICS: u16 = 1 << 3;
+            const MODE_ATTR_WINDOWED: u16 = 1 << 5;
+            const MODE_ATTR_LFB: u16 = 1 << 7;
+            const REQUIRED_MODE_ATTRS: u16 = MODE_ATTR_SUPPORTED
+                | MODE_ATTR_COLOR
+                | MODE_ATTR_GRAPHICS
+                | MODE_ATTR_WINDOWED
+                | MODE_ATTR_LFB;
+            assert_eq!(attrs & REQUIRED_MODE_ATTRS, REQUIRED_MODE_ATTRS);
 
-        assert_eq!(m.read_physical_u16(mode_info_addr + 18), w as u16); // XResolution
-        assert_eq!(m.read_physical_u16(mode_info_addr + 20), h as u16); // YResolution
-        assert_eq!(m.read_physical_u16(mode_info_addr + 16), (w as u16) * 4); // BytesPerScanLine
-        assert_eq!(m.read_physical_u8(mode_info_addr + 25), 32); // BitsPerPixel
-        assert_eq!(m.read_physical_u8(mode_info_addr + 27), 0x06); // MemoryModel (direct color)
-        assert_eq!(m.read_physical_u8(mode_info_addr + 31), 8); // RedMaskSize
-        assert_eq!(m.read_physical_u8(mode_info_addr + 32), 16); // RedFieldPosition
-        assert_eq!(m.read_physical_u8(mode_info_addr + 33), 8); // GreenMaskSize
-        assert_eq!(m.read_physical_u8(mode_info_addr + 34), 8); // GreenFieldPosition
-        assert_eq!(m.read_physical_u8(mode_info_addr + 35), 8); // BlueMaskSize
-        assert_eq!(m.read_physical_u8(mode_info_addr + 36), 0); // BlueFieldPosition
-        assert_eq!(m.read_physical_u8(mode_info_addr + 37), 8); // ReservedMaskSize
-        assert_eq!(m.read_physical_u8(mode_info_addr + 38), 24); // ReservedFieldPosition
+            assert_eq!(m.read_physical_u16(mode_info_addr + 18), w as u16); // XResolution
+            assert_eq!(m.read_physical_u16(mode_info_addr + 20), h as u16); // YResolution
+            assert_eq!(m.read_physical_u16(mode_info_addr + 16), (w as u16) * 4); // BytesPerScanLine
+            assert_eq!(m.read_physical_u8(mode_info_addr + 25), 32); // BitsPerPixel
+            assert_eq!(m.read_physical_u8(mode_info_addr + 27), 0x06); // MemoryModel (direct color)
+            assert_eq!(m.read_physical_u8(mode_info_addr + 31), 8); // RedMaskSize
+            assert_eq!(m.read_physical_u8(mode_info_addr + 32), 16); // RedFieldPosition
+            assert_eq!(m.read_physical_u8(mode_info_addr + 33), 8); // GreenMaskSize
+            assert_eq!(m.read_physical_u8(mode_info_addr + 34), 8); // GreenFieldPosition
+            assert_eq!(m.read_physical_u8(mode_info_addr + 35), 8); // BlueMaskSize
+            assert_eq!(m.read_physical_u8(mode_info_addr + 36), 0); // BlueFieldPosition
+            assert_eq!(m.read_physical_u8(mode_info_addr + 37), 8); // ReservedMaskSize
+            assert_eq!(m.read_physical_u8(mode_info_addr + 38), 24); // ReservedFieldPosition
 
-        let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
-        assert_eq!(phys_base_ptr, m.vbe_lfb_base_u32());
+            let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
+            assert_eq!(phys_base_ptr, m.vbe_lfb_base_u32());
 
-        let vga = m.vga().expect("pc platform should include VGA");
-        {
-            let mut vga = vga.borrow_mut();
-            vga.present();
-            assert_eq!(vga.get_resolution(), (w, h));
+            if enable_aerogpu {
+                // Phase 2: AeroGPU-owned boot display. LFB base should be derived from BAR1.
+                let aerogpu_bdf = m.aerogpu().expect("aerogpu enabled implies device present");
+                let bar1_base = m
+                    .pci_bar_base(aerogpu_bdf, 1)
+                    .expect("aerogpu BAR1 base should be assigned");
+                let expected = bar1_base + aero_machine::VBE_LFB_OFFSET as u64;
+                assert_eq!(m.vbe_lfb_base(), expected);
+            } else {
+                let vga = m.vga().expect("pc platform should include VGA");
+                let mut vga = vga.borrow_mut();
+                vga.present();
+                assert_eq!(vga.get_resolution(), (w, h));
+            }
+
+            m.display_present();
+            assert_eq!(m.display_resolution(), (w as u32, h as u32));
+
+            // Write a single red pixel at (0,0) in packed 32bpp BGRX.
+            m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
+            m.display_present();
+            assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
         }
-
-        // Write a single red pixel at (0,0) in packed 32bpp BGRX.
-        m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
-        m.display_present();
-        let pixel0 = m.display_framebuffer()[0];
-        assert_eq!(pixel0, 0xFF00_00FF);
     }
 }
 
@@ -433,140 +469,173 @@ fn bios_vbe_sync_mode_and_custom_lfb_base() {
 
 #[test]
 fn bios_text_cursor_sync_updates_vga_crtc() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 64 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    };
-
     let row = 12u8;
     let col = 34u8;
-    let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(build_set_cursor_boot_sector(row, col).to_vec())
-        .unwrap();
-    m.reset();
-    run_until_halt(&mut m);
+    for enable_aerogpu in [false, true] {
+        let cfg = MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: !enable_aerogpu,
+            enable_aerogpu,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            ..Default::default()
+        };
 
-    let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
-    let expected = (u16::from(row)).saturating_mul(cols) + u16::from(col);
+        let mut m = Machine::new(cfg).unwrap();
+        m.set_disk_image(build_set_cursor_boot_sector(row, col).to_vec())
+            .unwrap();
+        m.reset();
+        run_until_halt(&mut m);
 
-    m.io_write(0x3D4, 1, 0x0E);
-    let hi = m.io_read(0x3D5, 1) as u8;
-    m.io_write(0x3D4, 1, 0x0F);
-    let lo = m.io_read(0x3D5, 1) as u8;
+        let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
+        let expected = (u16::from(row)).saturating_mul(cols) + u16::from(col);
 
-    let got = ((hi as u16) << 8) | (lo as u16);
-    assert_eq!(got, expected);
+        m.io_write(0x3D4, 1, 0x0E);
+        let hi = m.io_read(0x3D5, 1) as u8;
+        m.io_write(0x3D4, 1, 0x0F);
+        let lo = m.io_read(0x3D5, 1) as u8;
+
+        let got = ((hi as u16) << 8) | (lo as u16);
+        assert_eq!(got, expected);
+    }
 }
 
 #[test]
 fn bios_vbe_palette_sync_updates_vga_dac() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 64 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    };
+    for enable_aerogpu in [false, true] {
+        let cfg = MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: !enable_aerogpu,
+            enable_aerogpu,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            ..Default::default()
+        };
 
-    let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(build_vbe_palette_boot_sector().to_vec())
-        .unwrap();
-    m.reset();
-    run_until_halt(&mut m);
+        let mut m = Machine::new(cfg).unwrap();
+        m.set_disk_image(build_vbe_palette_boot_sector().to_vec())
+            .unwrap();
+        m.reset();
+        run_until_halt(&mut m);
 
-    // Write palette index 1 to the first pixel in the 8bpp framebuffer.
-    m.write_physical_u8(m.vbe_lfb_base(), 1);
+        // Write palette index 1 to the first pixel in the 8bpp framebuffer.
+        m.write_physical_u8(m.vbe_lfb_base(), 1);
+        m.display_present();
+        let pixel0 = m.display_framebuffer()[0];
 
-    let vga = m.vga().expect("machine should include VGA");
-    let pixel0 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        vga.get_framebuffer()[0]
-    };
+        // Palette entry 1 was set to red (B=0,G=0,R=0x3F).
+        assert_eq!(pixel0, 0xFF00_00FF);
 
-    // Palette entry 1 was set to red (B=0,G=0,R=0x3F).
-    assert_eq!(pixel0, 0xFF00_00FF);
+        if !enable_aerogpu {
+            let vga = m.vga().expect("machine should include VGA");
+            let pixel0_vga = {
+                let mut vga = vga.borrow_mut();
+                vga.present();
+                vga.get_framebuffer()[0]
+            };
+            assert_eq!(pixel0_vga, pixel0);
+        }
+    }
 }
 
 #[test]
 fn bios_vbe_palette_sync_accepts_8bit_input_in_6bit_mode() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 64 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    };
+    for enable_aerogpu in [false, true] {
+        let cfg = MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: !enable_aerogpu,
+            enable_aerogpu,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            ..Default::default()
+        };
 
-    let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(build_vbe_palette_boot_sector_6bit_accepts_8bit_input().to_vec())
-        .unwrap();
-    m.reset();
-    run_until_halt(&mut m);
+        let mut m = Machine::new(cfg).unwrap();
+        m.set_disk_image(build_vbe_palette_boot_sector_6bit_accepts_8bit_input().to_vec())
+            .unwrap();
+        m.reset();
+        run_until_halt(&mut m);
 
-    // Write palette index 1 to the first pixel in the 8bpp framebuffer.
-    m.write_physical_u8(m.vbe_lfb_base(), 1);
+        // Write palette index 1 to the first pixel in the 8bpp framebuffer.
+        m.write_physical_u8(m.vbe_lfb_base(), 1);
 
-    m.display_present();
-    let pixel0 = m.display_framebuffer()[0];
+        m.display_present();
+        let pixel0 = m.display_framebuffer()[0];
 
-    // Palette entry 1 was set via `4F09h set` with an 8-bit component value 0xAA in 6-bit DAC mode.
-    // The firmware should downscale it to 6-bit (0x2A), which renders back to 8-bit 0xAA.
-    assert_eq!(pixel0, 0xFF00_00AA);
+        // Palette entry 1 was set via `4F09h set` with an 8-bit component value 0xAA in 6-bit DAC mode.
+        // The firmware should downscale it to 6-bit (0x2A), which renders back to 8-bit 0xAA.
+        assert_eq!(pixel0, 0xFF00_00AA);
+    }
 }
 
 #[test]
 fn bios_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 64 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_a20_gate: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    };
+    for enable_aerogpu in [false, true] {
+        let cfg = MachineConfig {
+            ram_size_bytes: 64 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: !enable_aerogpu,
+            enable_aerogpu,
+            enable_serial: false,
+            enable_i8042: false,
+            enable_a20_gate: false,
+            enable_reset_ctrl: false,
+            enable_e1000: false,
+            ..Default::default()
+        };
 
-    let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(build_vbe_failed_mode_set_does_not_clear_boot_sector().to_vec())
-        .unwrap();
-    m.reset();
+        let mut m = Machine::new(cfg).unwrap();
+        m.set_disk_image(build_vbe_failed_mode_set_does_not_clear_boot_sector().to_vec())
+            .unwrap();
+        m.reset();
 
-    // Pre-fill the first pixel in VRAM. The boot sector sets mode 0x118 with no-clear, then
-    // attempts (and fails) to set an invalid VBE mode. The existing framebuffer contents must be
-    // preserved across the failing INT 10h call.
-    m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
+        // Run until the guest has set mode 0x118 and is spinning, waiting for host input.
+        for _ in 0..200 {
+            if m.read_physical_u16(0x0500) == 0xBEEF {
+                break;
+            }
+            match m.run_slice(50_000) {
+                RunExit::Completed { .. } => {}
+                other => panic!("unexpected exit while waiting for guest rendezvous: {other:?}"),
+            }
+        }
+        assert_eq!(
+            m.read_physical_u16(0x0500),
+            0xBEEF,
+            "guest never reached rendezvous after setting VBE mode"
+        );
 
-    run_until_halt(&mut m);
+        // Now that the VBE mode is active, pre-fill the first pixel. The guest will attempt (and
+        // fail) to set an invalid VBE mode next; the existing framebuffer contents must be
+        // preserved across the failing INT 10h call.
+        m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
 
-    let vga = m.vga().expect("machine should include VGA");
-    let pixel0 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        assert_eq!(vga.get_resolution(), (1024, 768));
-        vga.get_framebuffer()[0]
-    };
+        // Release the guest to perform the failing mode set.
+        m.write_physical_u16(0x0500, 0xDEAD);
+        run_until_halt(&mut m);
 
-    assert_eq!(pixel0, 0xFF00_00FF);
+        m.display_present();
+        assert_eq!(m.display_resolution(), (1024, 768));
+        assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
+
+        if !enable_aerogpu {
+            let vga = m.vga().expect("machine should include VGA");
+            let mut vga = vga.borrow_mut();
+            vga.present();
+            assert_eq!(vga.get_resolution(), (1024, 768));
+            assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
+        }
+    }
 }

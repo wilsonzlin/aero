@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -82,14 +81,11 @@ fn text_mode_cursor_overlay_renders_from_crtc_regs() {
     m.write_physical_u8(0xB8000, b' ');
     m.write_physical_u8(0xB8001, 0x1F);
 
-    let vga = m.vga().expect("VGA enabled");
-    let (width, px0, px1) = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        let (w, _h) = vga.get_resolution();
-        let fb = vga.get_framebuffer();
-        (w, fb[0], fb[w as usize])
-    };
+    m.display_present();
+    let (width, _height) = m.display_resolution();
+    let fb = m.display_framebuffer();
+    let px0 = fb[0];
+    let px1 = fb[width as usize];
 
     // Text mode uses fixed 80x25 cells of 9x16 pixels.
     assert_eq!(width, 80 * 9);
@@ -128,12 +124,8 @@ fn text_mode_cursor_overlay_respects_disable_bit() {
     m.write_physical_u8(0xB8000, b' ');
     m.write_physical_u8(0xB8001, 0x1F);
 
-    let vga = m.vga().expect("VGA enabled");
-    let pixel0 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        vga.get_framebuffer()[0]
-    };
+    m.display_present();
+    let pixel0 = m.display_framebuffer()[0];
 
     assert_eq!(pixel0, 0xFFAA_0000);
 }
@@ -155,13 +147,17 @@ fn text_mode_cursor_overlay_respects_crtc_start_address() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    let vga = m.vga().expect("VGA enabled");
-
-    // Force deterministic baseline.
+    // Force deterministic baseline: clear the full 32KiB text window.
     {
-        let mut vga = vga.borrow_mut();
-        vga.set_text_mode_80x25();
-        vga.vram_mut().fill(0);
+        let mut addr = 0xB8000u64;
+        let mut remaining = 0x8000usize;
+        const ZERO: [u8; 4096] = [0; 4096];
+        while remaining != 0 {
+            let len = remaining.min(ZERO.len());
+            m.write_physical(addr, &ZERO[..len]);
+            addr = addr.saturating_add(len as u64);
+            remaining -= len;
+        }
     }
 
     // Display page starting at cell 0x0800 (offset 0x1000 bytes into B8000).
@@ -187,13 +183,11 @@ fn text_mode_cursor_overlay_respects_crtc_start_address() {
     m.write_physical_u8(base, b' ');
     m.write_physical_u8(base + 1, 0x1F);
 
-    let (width, px0, px1) = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        let (w, _h) = vga.get_resolution();
-        let fb = vga.get_framebuffer();
-        (w, fb[0], fb[w as usize])
-    };
+    m.display_present();
+    let (width, _height) = m.display_resolution();
+    let fb = m.display_framebuffer();
+    let px0 = fb[0];
+    let px1 = fb[width as usize];
     assert_eq!(width, 80 * 9);
     assert_eq!(px0, 0xFFFF_FFFF);
     assert_eq!(px1, 0xFFAA_0000);

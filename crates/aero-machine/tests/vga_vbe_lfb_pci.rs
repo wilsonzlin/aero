@@ -2,6 +2,7 @@ use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
 use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
+use pretty_assertions::assert_eq;
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
@@ -43,6 +44,19 @@ fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
     sector
 }
 
+fn program_vbe_linear_64x64x32(m: &mut Machine) {
+    // Match the programming sequence used by `aero-gpu-vga`'s
+    // `vbe_linear_framebuffer_write_shows_up_in_output` test.
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
+}
+
 #[test]
 fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     // Use a non-default base *outside the BIOS PCI BAR allocator default window*
@@ -65,16 +79,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
         return;
     }
 
-    // Match the programming sequence used by `aero-gpu-vga`'s
-    // `vbe_linear_framebuffer_write_shows_up_in_output` test.
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
+    program_vbe_linear_64x64x32(&mut m);
 
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
     // changes (e.g. config-driven legacy VGA LFB vs AeroGPU BAR1-backed legacy VBE).
@@ -126,16 +131,7 @@ fn vga_vbe_lfb_base_can_be_derived_from_vram_bar_base_and_lfb_offset() {
     assert_eq!(vga_cfg.vram_bar_base, vram_bar_base);
     assert_eq!(vga_cfg.lfb_base(), expected_lfb_base);
 
-    // Match the programming sequence used by `aero-gpu-vga`'s
-    // `vbe_linear_framebuffer_write_shows_up_in_output` test.
-    m.io_write(0x01CE, 2, 0x0001);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0002);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0003);
-    m.io_write(0x01CF, 2, 32);
-    m.io_write(0x01CE, 2, 0x0004);
-    m.io_write(0x01CF, 2, 0x0041);
+    program_vbe_linear_64x64x32(&mut m);
 
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
     // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).

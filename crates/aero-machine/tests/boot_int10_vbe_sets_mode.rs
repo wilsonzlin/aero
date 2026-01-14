@@ -40,8 +40,10 @@ fn build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags: u16) -> [u8; 512] {
     // mov ax, 0x4F01
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x01, 0x4F]);
     i += 3;
-    // mov cx, 0x0118
-    sector[i..i + 3].copy_from_slice(&[0xB9, 0x18, 0x01]);
+    // mov cx, mode (strip any set-mode flags like LFB/no-clear).
+    let mode = vbe_mode_with_flags & 0x3FFF;
+    let [mode_lo, mode_hi] = mode.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xB9, mode_lo, mode_hi]);
     i += 3;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
@@ -66,11 +68,11 @@ fn run_until_halt(m: &mut Machine) {
     panic!("guest did not reach HLT");
 }
 
-fn new_deterministic_test_machine(boot_sector: [u8; 512]) -> Machine {
+fn new_deterministic_test_machine(boot_sector: [u8; 512], enable_aerogpu: bool) -> Machine {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
-        enable_vga: true,
-        enable_aerogpu: false,
+        enable_vga: !enable_aerogpu,
+        enable_aerogpu,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -87,34 +89,36 @@ fn new_deterministic_test_machine(boot_sector: [u8; 512]) -> Machine {
 }
 
 fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (u32, u32)) {
-    let boot = build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags);
-    let mut m = new_deterministic_test_machine(boot);
+    for enable_aerogpu in [false, true] {
+        let boot = build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags);
+        let mut m = new_deterministic_test_machine(boot, enable_aerogpu);
 
-    run_until_halt(&mut m);
+        run_until_halt(&mut m);
 
-    let vbe_status = (m.cpu().gpr[gpr::RAX] & 0xFFFF) as u16;
-    assert_eq!(
-        vbe_status, 0x004F,
-        "VBE set-mode should return AX=0x004F (success)"
-    );
+        let vbe_status = (m.cpu().gpr[gpr::RAX] & 0xFFFF) as u16;
+        assert_eq!(
+            vbe_status, 0x004F,
+            "VBE set-mode should return AX=0x004F (success)"
+        );
 
-    m.display_present();
-    assert_eq!(m.display_resolution(), expected_res);
+        m.display_present();
+        assert_eq!(m.display_resolution(), expected_res);
 
-    let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
-    assert_ne!(phys_base_ptr, 0);
+        let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
+        assert_ne!(phys_base_ptr, 0);
 
-    // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    let base = m.vbe_lfb_base();
-    m.write_physical_u32(base, 0x00FF_0000);
-    assert_eq!(
-        u64::from(phys_base_ptr),
-        base,
-        "BIOS VBE mode info PhysBasePtr must match Machine::vbe_lfb_base()"
-    );
+        // Write a red pixel at (0,0) in packed 32bpp BGRX.
+        let base = m.vbe_lfb_base();
+        assert_eq!(
+            u64::from(phys_base_ptr),
+            base,
+            "BIOS VBE mode info PhysBasePtr must match Machine::vbe_lfb_base()"
+        );
+        m.write_physical_u32(base, 0x00FF_0000);
 
-    m.display_present();
-    assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
+        m.display_present();
+        assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
+    }
 }
 
 #[test]

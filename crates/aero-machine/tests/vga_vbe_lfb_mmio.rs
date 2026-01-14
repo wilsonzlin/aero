@@ -1,7 +1,18 @@
-use std::rc::Rc;
-
-use aero_gpu_vga::{DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig};
+
+fn program_vbe_linear_64x64x32(m: &mut Machine) {
+    // Match the programming sequence used by `aero-gpu-vga`'s
+    // `vbe_linear_framebuffer_write_shows_up_in_output` test.
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
+}
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
@@ -22,39 +33,33 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
     };
     let mut m = Machine::new(cfg).unwrap();
 
-    // Ensure the legacy MMIO mapping is stable across resets (`map_mmio_once` persists mappings).
-    let vga_before = m.vga().expect("VGA enabled");
-    let ptr_before = Rc::as_ptr(&vga_before);
-    m.reset();
-    let vga = m.vga().expect("VGA enabled");
-    assert_eq!(
-        ptr_before,
-        Rc::as_ptr(&vga),
-        "VGA Rc identity changed across reset"
-    );
     assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
+    program_vbe_linear_64x64x32(&mut m);
 
-    // Match the programming sequence used by `aero-gpu-vga`'s
-    // `vbe_linear_framebuffer_write_shows_up_in_output` test.
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
-    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
-    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
-
-    let base = u64::from(lfb_base);
-    assert_eq!(u64::from(vga.borrow().lfb_base()), base);
+    let base = m.vbe_lfb_base();
+    assert_eq!(base, u64::from(lfb_base));
     // Write a red pixel at (0,0) in BGRX format via *machine memory*.
     m.write_physical_u8(base, 0x00); // B
     m.write_physical_u8(base + 1, 0x00); // G
     m.write_physical_u8(base + 2, 0xFF); // R
     m.write_physical_u8(base + 3, 0x00); // X
 
-    let mut vga = vga.borrow_mut();
-    vga.present();
-    assert_eq!(vga.get_resolution(), (64, 64));
-    assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
+    m.display_present();
+    assert_eq!(m.display_resolution(), (64, 64));
+    assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
+
+    // Ensure the LFB mapping remains reachable across resets (`map_mmio_once` persists mappings).
+    m.reset();
+    assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
+    program_vbe_linear_64x64x32(&mut m);
+    let base2 = m.vbe_lfb_base();
+    assert_eq!(base2, u64::from(lfb_base));
+    m.write_physical_u8(base2 + 4, 0x00); // B
+    m.write_physical_u8(base2 + 5, 0xFF); // G
+    m.write_physical_u8(base2 + 6, 0x00); // R
+    m.write_physical_u8(base2 + 7, 0x00); // X
+
+    m.display_present();
+    assert_eq!(m.display_resolution(), (64, 64));
+    assert_eq!(m.display_framebuffer()[1], 0xFF00_FF00);
 }

@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig};
 
 fn fnv1a64(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -14,9 +13,9 @@ fn fnv1a64(mut hash: u64, bytes: &[u8]) -> u64 {
     hash
 }
 
-fn framebuffer_hash(dev: &aero_gpu_vga::VgaDevice) -> u64 {
+fn framebuffer_hash(framebuffer: &[u32]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
-    for px in dev.get_framebuffer() {
+    for px in framebuffer {
         hash = fnv1a64(hash, &px.to_ne_bytes());
     }
     hash
@@ -30,13 +29,18 @@ fn vga_text_mmio_writes_show_up_in_rendered_output() {
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
-    let vga = m.vga().unwrap();
 
     // Force deterministic baseline.
     {
-        let mut vga = vga.borrow_mut();
-        vga.set_text_mode_80x25();
-        vga.vram_mut().fill(0);
+        let mut addr = 0xB8000u64;
+        let mut remaining = 0x8000usize; // 32KiB text window
+        const ZERO: [u8; 4096] = [0; 4096];
+        while remaining != 0 {
+            let len = remaining.min(ZERO.len());
+            m.write_physical(addr, &ZERO[..len]);
+            addr = addr.saturating_add(len as u64);
+            remaining -= len;
+        }
     }
 
     // Disable cursor for deterministic output (CRTC index 0x0A).
@@ -47,7 +51,9 @@ fn vga_text_mmio_writes_show_up_in_rendered_output() {
     m.write_physical_u8(0xB8000, b'A');
     m.write_physical_u8(0xB8001, 0x1F);
 
-    let mut vga = vga.borrow_mut();
-    vga.present();
-    assert_eq!(framebuffer_hash(&vga), 0x5cfe440e33546065);
+    m.display_present();
+    assert_eq!(
+        framebuffer_hash(m.display_framebuffer()),
+        0x5cfe440e33546065
+    );
 }

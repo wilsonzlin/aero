@@ -132,3 +132,4 @@ fn aerogpu_is_exposed_at_canonical_bdf_without_transitional_vga_stub_when_enable
         "expected transitional VGA PCI stub at {vga_bdf:?} to be absent when enable_aerogpu=true"
     );
 }
+

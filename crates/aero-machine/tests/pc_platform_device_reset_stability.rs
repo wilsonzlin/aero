@@ -20,7 +20,6 @@ fn pc_platform_shared_devices_keep_rc_identity_across_resets() {
 
     let vga = m.vga().expect("VGA enabled");
     let vga_ptr = Rc::as_ptr(&vga);
-
     // Mutate a PCI config-space register via the config mechanism #1 ports and verify it changes.
     //
     // We use bus0:dev0:func0 (host bridge) command register at offset 0x04. The firmware PCI
@@ -55,7 +54,6 @@ fn pc_platform_shared_devices_keep_rc_identity_across_resets() {
         vga_ptr, vga_ptr_after,
         "VGA Rc identity changed across reset"
     );
-
     // Verify internal state reset happened without swapping the instance.
     {
         let mut pci = pci_cfg_after.borrow_mut();

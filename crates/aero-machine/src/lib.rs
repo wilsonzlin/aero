@@ -6573,7 +6573,6 @@ impl Machine {
     pub fn set_cursor_state_static(&mut self, state: Option<&'static CursorState>) {
         self.cursor_state = state.map(SharedStateHandle::Static);
     }
-
     /// Debug/testing helper: returns the number of MMIO reads routed through AeroGPU BAR1 (VRAM),
     /// if AeroGPU is enabled.
     ///

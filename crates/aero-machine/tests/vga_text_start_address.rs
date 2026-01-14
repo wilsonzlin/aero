@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -19,13 +18,17 @@ fn vga_text_mode_crtc_start_address_offsets_rendered_text() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    let vga = m.vga().expect("VGA enabled");
-
-    // Force deterministic baseline.
+    // Force deterministic baseline: clear the full 32KiB text window.
     {
-        let mut vga = vga.borrow_mut();
-        vga.set_text_mode_80x25();
-        vga.vram_mut().fill(0);
+        let mut addr = 0xB8000u64;
+        let mut remaining = 0x8000usize;
+        const ZERO: [u8; 4096] = [0; 4096];
+        while remaining != 0 {
+            let len = remaining.min(ZERO.len());
+            m.write_physical(addr, &ZERO[..len]);
+            addr = addr.saturating_add(len as u64);
+            remaining -= len;
+        }
     }
 
     // Disable the cursor for deterministic pixels.
@@ -45,11 +48,14 @@ fn vga_text_mode_crtc_start_address_offsets_rendered_text() {
     m.write_physical_u8(0xB8001 + PAGE1_OFFSET_BYTES, 0x1F);
 
     // With start address 0, we should see the page 0 cell.
-    let pixel_page0 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        vga.get_framebuffer()[0]
-    };
+    // Ensure CRTC start address is 0 (page 0).
+    m.io_write(0x3D4, 1, 0x0C);
+    m.io_write(0x3D5, 1, 0x00);
+    m.io_write(0x3D4, 1, 0x0D);
+    m.io_write(0x3D5, 1, 0x00);
+
+    m.display_present();
+    let pixel_page0 = m.display_framebuffer()[0];
     assert_eq!(pixel_page0, 0xFF00_0000);
 
     // Set CRTC start address to page 1 (0x0800 cells).
@@ -58,10 +64,7 @@ fn vga_text_mode_crtc_start_address_offsets_rendered_text() {
     m.io_write(0x3D4, 1, 0x0D);
     m.io_write(0x3D5, 1, 0x00);
 
-    let pixel_page1 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        vga.get_framebuffer()[0]
-    };
+    m.display_present();
+    let pixel_page1 = m.display_framebuffer()[0];
     assert_eq!(pixel_page1, 0xFFAA_0000);
 }
