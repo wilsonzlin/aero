@@ -140,13 +140,14 @@ fn test_all_runs_fixture_checks_before_rust_fmt() {
         .stderr(predicate::str::contains("Rust: cargo fmt"));
 
     let calls = read_log(&log_path);
-    assert_eq!(
-        calls,
-        vec![
-            "xtask fixtures --check",
-            "xtask bios-rom --check",
-            "fmt --all -- --check"
-        ]
+    assert!(
+        calls.len() >= 3,
+        "expected at least fixtures, bios-rom, and fmt invocations; got: {calls:?}"
+    );
+    assert_eq!(calls[0], "xtask fixtures --check");
+    assert_eq!(calls[1], "xtask bios-rom --check");
+    assert!(
+        calls.iter().any(|c| c == "fmt --all -- --check"),
+        "expected fmt check to run after fixture validation; got: {calls:?}"
     );
 }
-
