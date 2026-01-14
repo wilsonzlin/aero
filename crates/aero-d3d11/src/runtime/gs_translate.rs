@@ -816,10 +816,16 @@ fn emit_src_vec4(
                 expand_u32_to_vec4(u32_expr, info.mask)
             }
             other => {
+                let msg = match other {
+                    RegFile::OutputDepth => {
+                        "unsupported source register file RegFile::OutputDepth".to_owned()
+                    }
+                    _ => format!("unsupported source register file {other:?}"),
+                };
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
                     opcode,
-                    msg: format!("unsupported source register file {other:?}"),
+                    msg,
                 })
             }
         },
