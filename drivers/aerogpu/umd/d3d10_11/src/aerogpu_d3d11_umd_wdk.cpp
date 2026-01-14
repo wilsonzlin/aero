@@ -3766,8 +3766,12 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
 
   if (res->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+    } else {
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+    }
   }
 
   const bool is_guest_backed = (res->backing_alloc_id != 0);

@@ -3791,10 +3791,14 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (dev->current_ib_res == res) {
     dev->current_ib_res = nullptr;
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
-    cmd->buffer = 0;
-    cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-    cmd->offset_bytes = 0;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+    } else {
+      cmd->buffer = 0;
+      cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
+      cmd->offset_bytes = 0;
+      cmd->reserved0 = 0;
+    }
   }
 
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
@@ -3877,8 +3881,12 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
 
   if (res->handle != kInvalidHandle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+    } else {
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+    }
   }
 
   const bool is_guest_backed = (res->backing_alloc_id != 0);
