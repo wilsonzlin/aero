@@ -3,7 +3,7 @@ import { FRAME_DIRTY, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSIO
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 import { probeRemoteDisk } from "./src/platform/remote_disk";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
-import type { SetBootDisksMessage } from "./src/runtime/boot_disks_protocol";
+import type { DiskImageMetadata } from "./src/storage/metadata";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -69,8 +69,9 @@ async function main() {
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
-      // Any non-null value enables the CPU worker VM loop.
-      activeDiskImage: "boot_vga_serial",
+      // `activeDiskImage` is deprecated as a "VM mode" toggle. The harness drives VM boot via
+      // `coordinator.setBootDisks(...)` instead.
+      activeDiskImage: null,
       logLevel: "info",
     } as any);
 
@@ -186,35 +187,35 @@ async function main() {
     const diskSize = probe.size;
     const diskId = typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `boot_${Date.now()}`;
 
-    ioWorker.postMessage({
-      type: "setBootDisks",
-      mounts: { hddId: diskId },
-      hdd: {
-        source: "remote",
-        id: diskId,
-        name: "boot_vga_serial.img",
-        kind: "hdd",
-        format: "raw",
-        sizeBytes: diskSize,
-        createdAtMs: Date.now(),
-        remote: {
-          imageId: "boot_vga_serial",
-          version: "1",
-          delivery: "range",
-          urls: { url: diskUrl },
-          ...(probe.etag ? { validator: { etag: probe.etag } } : probe.lastModified ? { validator: { lastModified: probe.lastModified } } : {}),
-        },
-        cache: {
-          // Use IndexedDB-backed cache/overlay so the harness works even when OPFS is unavailable.
-          backend: "idb",
-          chunkSizeBytes: 1024 * 1024,
-          fileName: `${diskId}.cache`,
-          overlayFileName: `${diskId}.overlay`,
-          overlayBlockSizeBytes: 1024 * 1024,
-        },
+    const hdd = {
+      source: "remote",
+      id: diskId,
+      name: "boot_vga_serial.img",
+      kind: "hdd",
+      format: "raw",
+      sizeBytes: diskSize,
+      createdAtMs: Date.now(),
+      remote: {
+        imageId: "boot_vga_serial",
+        version: "1",
+        delivery: "range",
+        urls: { url: diskUrl },
+        ...(probe.etag
+          ? { validator: { etag: probe.etag } }
+          : probe.lastModified
+            ? { validator: { lastModified: probe.lastModified } }
+            : {}),
       },
-      cd: null,
-    } satisfies SetBootDisksMessage);
+      cache: {
+        // Use IndexedDB-backed cache/overlay so the harness works even when OPFS is unavailable.
+        backend: "idb",
+        chunkSizeBytes: 1024 * 1024,
+        fileName: `${diskId}.cache`,
+        overlayFileName: `${diskId}.overlay`,
+        overlayBlockSizeBytes: 1024 * 1024,
+      },
+    } satisfies DiskImageMetadata;
+    coordinator.setBootDisks({ hddId: diskId }, hdd, null);
     log(`disk: ${diskUrl} (${diskSize} bytes)`);
 
     // Wait for the CPU worker to boot the sector and emit the serial signature.
