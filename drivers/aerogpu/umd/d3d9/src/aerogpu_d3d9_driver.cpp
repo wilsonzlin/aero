@@ -2921,12 +2921,14 @@ constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 // Fixed-function fallback shader constant register ranges.
 //
 // Note: D3D9 transform matrices are stored in row-major order (D3DMATRIX) and
-// fixed-function math uses row-vectors (v * WVP). The fixed-function vertex
-// shader uses `dp4 oPos.{x,y,z,w}, v0, c{0..3}` which computes dot(v, cN), so the
-// driver uploads the *columns* of the row-major WVP matrix into c0..c3 (i.e. the
-// transpose of the row-major matrix), matching the dp4-based shaders in
-// `aerogpu_d3d9_fixedfunc_shaders.h`.
-constexpr uint32_t kFixedfuncMatrixStartRegister = 0u;
+// fixed-function math uses row-vectors (v * WVP). The fixed-function vertex shader
+// uses `dp4 oPos.{x,y,z,w}, v0, c{240,241,242,243}` which computes dot(v, cN), so
+// the driver uploads the *columns* of the row-major WVP matrix into a reserved
+// high constant register range (i.e. the transpose of the row-major matrix).
+//
+// Using a high range avoids colliding with app-provided VS constants when apps
+// switch between fixed-function and programmable paths.
+constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
 constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
 // D3DTRANSFORMSTATETYPE numeric values (d3d9types.h). Use local constants so we

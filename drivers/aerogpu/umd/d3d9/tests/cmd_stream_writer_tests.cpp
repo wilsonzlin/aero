@@ -12021,7 +12021,7 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
     return false;
   }
   if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
@@ -12044,14 +12044,14 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
     return false;
   }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c0.w/c1.w/c2.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
     return false;
   }
 
@@ -13101,7 +13101,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
     return false;
   }
   if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
@@ -13125,14 +13125,14 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
     return false;
   }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c0.w/c1.w/c2.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
     return false;
   }
 
@@ -13292,7 +13292,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
     return false;
   }
   if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
@@ -13312,14 +13312,14 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
     return false;
   }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c0.w/c1.w/c2.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
     return false;
   }
 
@@ -13501,7 +13501,7 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 0, "WVP constants start at c0")) {
+  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
     return false;
   }
   if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
@@ -13521,13 +13521,13 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
     return false;
   }
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
     return false;
   }
 
@@ -13695,8 +13695,8 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   for (int i = 0; i < 16; ++i) {
     clobber[i] = 99.0f;
   }
-  hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice, kD3d9ShaderStageVs, 0, clobber, 4);
-  if (!Check(hr == S_OK, "SetShaderConstF(VS, c0..c3)")) {
+  hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice, kD3d9ShaderStageVs, 240, clobber, 4);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, c240..c243)")) {
     return false;
   }
 
@@ -13725,12 +13725,13 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
     return false;
   }
   if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
     return false;
   }
+
   const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
   // WVP is uploaded as column vectors.
   if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
@@ -13745,15 +13746,17 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
     return false;
   }
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
     return false;
   }
+
   return true;
 }
 
@@ -13795,6 +13798,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   D3D9DDIARG_CREATEDEVICE create_dev{};
   create_dev.hAdapter = open.hAdapter;
   create_dev.Flags = 0;
+
   hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
   if (!Check(hr == S_OK, "CreateDevice")) {
     return false;
@@ -13802,39 +13806,53 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
     return false;
   }
-  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
 
-  // WORLD: identity
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x42u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // D3D9 fixed-function transform convention: row vectors, row-major matrices.
+  // The driver computes WVP = World * View * Proj, transposes it to columns, and
+  // uploads it to a reserved VS constant range (c240..c243).
+  const float world_f[16] = {
+      1.0f, 2.0f, 3.0f, 4.0f,
+      0.0f, 1.0f, 0.0f, 0.0f,
+      5.0f, 6.0f, 7.0f, 8.0f,
+      9.0f, 10.0f, 11.0f, 1.0f,
+  };
+  const float view_f[16] = {
+      2.0f, 0.0f, 0.0f, 0.0f,
+      0.0f, 3.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 4.0f, 0.0f,
+      1.0f, 2.0f, 3.0f, 1.0f,
+  };
+  const float proj_f[16] = {
+      1.0f, 0.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 1.0f, 0.0f,
+      0.25f, 0.5f, 0.75f, 1.0f,
+  };
+
   D3DMATRIX world{};
-  world.m[0][0] = 1.0f;
-  world.m[1][1] = 1.0f;
-  world.m[2][2] = 1.0f;
-  world.m[3][3] = 1.0f;
-
-  // VIEW: uniform scale by 2 so the uploaded matrix isn't all-identity.
+  std::memcpy(&world.m[0][0], world_f, sizeof(world_f));
   D3DMATRIX view{};
-  view.m[0][0] = 2.0f;
-  view.m[1][1] = 2.0f;
-  view.m[2][2] = 2.0f;
-  view.m[3][3] = 1.0f;
-
-  // PROJECTION: identity
+  std::memcpy(&view.m[0][0], view_f, sizeof(view_f));
   D3DMATRIX proj{};
-  proj.m[0][0] = 1.0f;
-  proj.m[1][1] = 1.0f;
-  proj.m[2][2] = 1.0f;
-  proj.m[3][3] = 1.0f;
+  std::memcpy(&proj.m[0][0], proj_f, sizeof(proj_f));
 
   hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world);
-  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+  if (!Check(hr == S_OK, "SetTransform(WORLD0)")) {
     return false;
   }
   hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view);
@@ -13846,38 +13864,17 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
-  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x42u);
-  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
-    return false;
-  }
-
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
-  if (!Check(dev != nullptr, "device pointer")) {
-    return false;
-  }
-
-  aerogpu_handle_t internal_decl = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fvf_vertex_decl_xyz_diffuse != nullptr, "FVF internal vertex decl created")) {
-      return false;
-    }
-    internal_decl = dev->fvf_vertex_decl_xyz_diffuse->handle;
-  }
-
   struct Vertex {
     float x;
     float y;
     float z;
     uint32_t color;
   };
-
-  constexpr uint32_t kGreen = 0xFF00FF00u;
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
   Vertex verts[3]{};
-  verts[0] = {-0.5f, -0.5f, 0.0f, kGreen};
-  verts[1] = {0.5f, -0.5f, 0.0f, kGreen};
-  verts[2] = {0.0f, 0.5f, 0.0f, kGreen};
+  verts[0] = {-1.0f, -1.0f, 0.0f, kWhite};
+  verts[1] = {1.0f, -1.0f, 0.0f, kWhite};
+  verts[2] = {0.0f, 1.0f, 0.0f, kWhite};
 
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
       create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
@@ -13885,57 +13882,17 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
+  // Fixed-function shaders should have been created/bound.
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
              "fixed-function fallback creates shaders")) {
     return false;
   }
-
-  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
-  if (!Check(draw.hdr != nullptr, "draw emitted")) {
-    return false;
-  }
-
-  const CmdLoc set_layout = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted")) {
-    return false;
-  }
-  const auto* set_layout_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
-  if (!Check(set_layout_cmd->input_layout_handle == internal_decl, "set_input_layout binds internal FVF decl")) {
-    return false;
-  }
-
-  const CmdLoc consts = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(consts.hdr != nullptr, "set_shader_constants_f emitted before draw")) {
-    return false;
-  }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "set_shader_constants_f stage==VERTEX")) {
-    return false;
-  }
-  if (!Check(const_cmd->start_register == 0 && const_cmd->vec4_count == 4, "set_shader_constants_f covers c0..c3")) {
-    return false;
-  }
-
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  // WVP is uploaded as column vectors.
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[5] - 2.0f) < 1e-6f, "WVP[1][1] = 2")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[10] - 2.0f) < 1e-6f, "WVP[2][2] = 2")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
-    return false;
-  }
-
-  const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
   if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
     return false;
   }
@@ -13944,7 +13901,57 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
-  return Check(consts.offset < draw.offset, "set_shader_constants_f occurs before draw");
+  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
+  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
+    return false;
+  }
+  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
+  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+    return false;
+  }
+  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
+    return false;
+  }
+  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+    return false;
+  }
+
+  float expected_wvp[16] = {};
+  float tmp[16] = {};
+  auto mul_mat4_row_major = [](const float a[16], const float b[16], float out[16]) {
+    for (int r = 0; r < 4; ++r) {
+      for (int c = 0; c < 4; ++c) {
+        out[r * 4 + c] =
+            a[r * 4 + 0] * b[0 * 4 + c] +
+            a[r * 4 + 1] * b[1 * 4 + c] +
+            a[r * 4 + 2] * b[2 * 4 + c] +
+            a[r * 4 + 3] * b[3 * 4 + c];
+      }
+    }
+  };
+  mul_mat4_row_major(world_f, view_f, tmp);
+  mul_mat4_row_major(tmp, proj_f, expected_wvp);
+
+  float expected_cols[16] = {};
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      expected_cols[c * 4 + r] = expected_wvp[r * 4 + c];
+    }
+  }
+
+  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
+  for (int i = 0; i < 16; ++i) {
+    if (std::fabs(m[i] - expected_cols[i]) > 1e-6f) {
+      std::fprintf(stderr,
+                   "FAIL: WVP constant mismatch at %d (got %f expected %f)\n",
+                   i,
+                   static_cast<double>(m[i]),
+                   static_cast<double>(expected_cols[i]));
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
