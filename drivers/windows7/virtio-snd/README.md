@@ -128,7 +128,7 @@ How to validate (in-tree harness):
   - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - virtio-snd only: `-VirtioSndVectors N` / `--virtio-snd-vectors N`
 - Optionally fail the harness if MSI-X is not enabled on the device: `-RequireVirtioSndMsix` / `--require-virtio-snd-msix`.
-- Inspect guest diagnostics (`virtio-snd-irq|INFO|mode=...`) and the mirrored host marker (`AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|...`).
+- Inspect guest diagnostics (`virtio-snd-irq|INFO|mode=...`) and the mirrored host marker (`AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ_DIAG|...`).
   - When `-RequireVirtioSndMsix` / `--require-virtio-snd-msix` is enabled, the harness also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...` so the effective interrupt mode is validated end-to-end.
 
