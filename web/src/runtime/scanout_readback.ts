@@ -125,7 +125,7 @@ export function tryComputeScanoutRgba8ByteLength(
 export function readScanoutRgba8FromGuestRam(
   guestRam: Uint8Array,
   desc: ScanoutDescriptor,
-  dst?: Uint8Array | null,
+  dst?: Uint8Array<ArrayBuffer> | null,
 ): ScanoutReadbackResult {
   if (!(guestRam instanceof Uint8Array)) {
     throw new TypeError("guestRam must be a Uint8Array");
