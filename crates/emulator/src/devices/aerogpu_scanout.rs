@@ -2,8 +2,8 @@ use memory::MemoryBus;
 
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat as ProtocolAerogpuFormat;
 use aero_shared::scanout_state::{
-    ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB,
-    SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB,
+    ScanoutStateUpdate, SCANOUT_FORMAT_B5G5R5A1, SCANOUT_FORMAT_B5G6R5, SCANOUT_FORMAT_B8G8R8A8,
+    SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB,
 };
 
 // -----------------------------------------------------------------------------
@@ -126,6 +126,8 @@ impl AeroGpuFormat {
             Self::B8G8R8X8Unorm => Some(SCANOUT_FORMAT_B8G8R8X8),
             Self::B8G8R8A8Unorm => Some(SCANOUT_FORMAT_B8G8R8A8),
             Self::R8G8B8X8Unorm | Self::R8G8B8A8Unorm => Some(self as u32),
+            Self::B5G6R5Unorm => Some(SCANOUT_FORMAT_B5G6R5),
+            Self::B5G5R5A1Unorm => Some(SCANOUT_FORMAT_B5G5R5A1),
             Self::B8G8R8X8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8X8_SRGB),
             Self::B8G8R8A8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8A8_SRGB),
             Self::R8G8B8X8UnormSrgb | Self::R8G8B8A8UnormSrgb => Some(self as u32),
@@ -195,13 +197,11 @@ impl AeroGpuScanoutConfig {
             return Self::disabled_scanout_state_update(source);
         }
 
-        // Scanout is currently limited to 32bpp formats the scanout consumer can present.
+        // Scanout state supports only the packed pixel formats that scanout consumers can present
+        // deterministically today.
         let Some(bytes_per_pixel) = self.format.bytes_per_pixel() else {
             return Self::disabled_scanout_state_update(source);
         };
-        if bytes_per_pixel != 4 {
-            return Self::disabled_scanout_state_update(source);
-        }
 
         // Validate pitch >= width*bytes_per_pixel and that address arithmetic doesn't overflow.
         let row_bytes = u64::from(width).checked_mul(bytes_per_pixel as u64);

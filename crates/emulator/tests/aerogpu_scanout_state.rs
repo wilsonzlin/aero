@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8,
-    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_FORMAT_R8G8B8A8, SCANOUT_FORMAT_R8G8B8A8_SRGB,
-    SCANOUT_FORMAT_R8G8B8X8, SCANOUT_FORMAT_R8G8B8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT,
-    SCANOUT_SOURCE_WDDM,
+    ScanoutState, SCANOUT_FORMAT_B5G5R5A1, SCANOUT_FORMAT_B5G6R5, SCANOUT_FORMAT_B8G8R8A8,
+    SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB,
+    SCANOUT_FORMAT_R8G8B8A8, SCANOUT_FORMAT_R8G8B8A8_SRGB, SCANOUT_FORMAT_R8G8B8X8,
+    SCANOUT_FORMAT_R8G8B8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
 };
 use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
@@ -87,7 +87,7 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
     let gen0 = scanout.snapshot().generation;
 
     // Program scanout0 registers with a format that the shared scanout descriptor cannot represent
-    // (non-32bpp).
+    // (non-scanout format like depth/stencil).
     let fb_gpa: u64 = 0x1234_5678_9abc_def0;
     dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 800);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 600);
@@ -96,7 +96,7 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
         &mut mem,
         mmio::SCANOUT0_FORMAT,
         4,
-        AeroGpuFormat::B5G6R5Unorm as u32,
+        AeroGpuFormat::D24UnormS8Uint as u32,
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
@@ -216,4 +216,24 @@ fn preserves_supported_scanout_formats_in_shared_state() {
     );
     let snap = scanout.snapshot();
     assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8X8_SRGB);
+
+    // 16bpp formats should also be representable in the shared scanout descriptor.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 800 * 2);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B5G6R5Unorm as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_B5G6R5);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B5G5R5A1Unorm as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_B5G5R5A1);
 }
