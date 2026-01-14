@@ -314,7 +314,8 @@ The current implementation targets:
   `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
 - **Depth/stencil**: `D3DFMT_D24S8`
 - **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for
-  common uncompressed formats (validated by `d3d9_mipmapped_texture_smoke`).
+  common uncompressed formats (validated by `d3d9_mipmapped_texture_smoke`). BC/DXT mip chains are also supported when BC
+  formats are exposed (see “BC/DXT textures” below).
   - On the Win7/WDDM path, multi-subresource textures currently fall back to **host-backed storage** (no guest allocation /
     `alloc_id`), because guest-backed allocations are single-subresource today (see `force_host_backing` in
     `device_create_resource()`).
