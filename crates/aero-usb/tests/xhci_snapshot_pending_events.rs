@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter, SnapshotVersion};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::{regs, XhciController};
@@ -155,10 +155,15 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
 
 #[test]
 fn xhci_snapshot_load_accepts_legacy_time_tag_collision_mapping() {
-    // Current snapshot tags (v0.7+).
+    // Snapshot v0.7 briefly encoded the tick bookkeeping fields using a colliding tag layout:
+    // - tag 26: time_ms (u64), overwriting EP0_CONTROL_TD_FULL
+    // - tag 27: last_tick_dma_dword (u32)
+    // - tag 28: absent
+    //
+    // Ensure the restore path can load this encoding by detecting field "shapes" and skipping the
+    // EP0 TD full decode when tag 26 is clearly the time_ms field.
     const TAG_TIME_MS: u16 = 27;
     const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
-    // Legacy encoding bug: tag 26 was used for time_ms and tag 27 for last_tick_dma_dword.
     const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
     let mut mem = TestMemory::new(0x20_000);
@@ -196,12 +201,34 @@ fn xhci_snapshot_load_accepts_legacy_time_tag_collision_mapping() {
     }
     let legacy_bytes = w.finish();
 
+    let legacy = SnapshotReader::parse(&legacy_bytes, *b"XHCI").expect("parse legacy snapshot");
+    assert_eq!(
+        legacy
+            .bytes(TAG_EP0_CONTROL_TD_FULL)
+            .expect("missing legacy time_ms field")
+            .len(),
+        8,
+        "expected legacy tag 26 to be a u64 time_ms field"
+    );
+    assert_eq!(
+        legacy
+            .bytes(TAG_TIME_MS)
+            .expect("missing legacy last_tick_dma_dword field")
+            .len(),
+        4,
+        "expected legacy tag 27 to be a u32 last_tick_dma_dword field"
+    );
+    assert!(
+        legacy.bytes(TAG_LAST_TICK_DMA_DWORD).is_none(),
+        "expected legacy encoding to omit tag 28"
+    );
+
     let mut restored = XhciController::new();
     restored
         .load_state(&legacy_bytes)
         .expect("load legacy-collision snapshot");
 
-    // Saving the restored controller should emit the canonical v0.7 tag mapping again.
+    // Saving the restored controller should emit the canonical tag mapping again.
     let bytes2 = restored.save_state();
     let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
     assert_eq!(r2.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 2);
@@ -210,5 +237,12 @@ fn xhci_snapshot_load_accepts_legacy_time_tag_collision_mapping() {
             .expect("read last_tick_dma_dword")
             .unwrap_or(0),
         dma_value
+    );
+    assert_ne!(
+        r2.bytes(TAG_EP0_CONTROL_TD_FULL)
+            .expect("missing EP0 TD full field")
+            .len(),
+        8,
+        "expected canonical tag 26 to contain EP0 TD state (not the time_ms u64)"
     );
 }
