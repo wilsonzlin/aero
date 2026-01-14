@@ -138,6 +138,10 @@ The script looks for either:
 - `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (unified INF), or
 - `drivers/windows7/virtio-input/inf/aero_virtio_input-<arch>.inf` (per-arch INF)
 
+Regardless of input naming, the packaged ZIP always includes the INF as:
+
+`aero_virtio_input.inf`
+
 ## Notes
 
 - The script is safe to run before the driver exists: it will emit clear errors if required files (INF/SYS) are missing.

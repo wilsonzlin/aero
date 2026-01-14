@@ -485,7 +485,10 @@ function Package-OneArch(
     New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
     try {
-        $infLeaf = Split-Path -Leaf $infPath
+        # Always ship the INF in the canonical name expected by guest-side helpers.
+        # (If the source INF is per-arch, it is renamed here to keep the extracted
+        # package layout stable.)
+        $infLeaf = ("{0}.inf" -f $script:InfBaseName)
         Copy-Item -LiteralPath $infPath -Destination (Join-Path $stageDir $infLeaf) -Force
         Copy-Item -LiteralPath $sysPath -Destination (Join-Path $stageDir $sysName) -Force
 
