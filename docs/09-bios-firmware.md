@@ -31,6 +31,26 @@ as the EDD path works).
 See [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the exact structures and call
 contracts.
 
+### Canonical BIOS drive map (HDD0 + CD0)
+
+In the **canonical `aero_machine::Machine`** (Win7 storage topology), the BIOS exposes **at least
+two** INT 13h drives simultaneously:
+
+| Device | BIOS drive number (`DL`) | Sector size exposed via INT 13h | Notes |
+|---|---:|---:|---|
+| HDD0 (primary disk) | `0x80` | 512 bytes | Traditional HDD semantics. |
+| CD0 (install ISO) | `0xE0` | 2048 bytes | Via INT 13h Extensions (EDD); `AH=48h` reports 2048. |
+
+INT 13h requests are routed to the correct backing store based on **the drive number in `DL`**
+(not the configured boot drive):
+
+- For `DL` in `0x80..=0xDF` (fixed disks), EDD DAP `lba`/`count` are in **512-byte sectors**.
+- For `DL` in `0xE0..=0xEF` (CD-ROM), EDD DAP `lba`/`count` are in **2048-byte logical blocks**
+  (ISO LBAs).
+
+This routing matters when booting install media: early Windows boot code will read from the CD via
+`DL=0xE0`, but may also probe or read from the HDD via `DL=0x80`.
+
 UEFI is **not** the canonical path today. If you see older docs implying an external BIOS blob or a
 still-unimplemented firmware stack, treat those as outdated.
 
@@ -99,20 +119,32 @@ services in Rust.
 `aero_machine::Machine` owns the canonical “BIOS integration loop”:
 
 - On reset, it:
-   - constructs a `firmware::bios::Bios`,
-   - maps the ROM returned by `build_bios_rom()` into guest physical memory,
-   - runs `Bios::post_with_pci(...)`, which performs POST and then loads/jumps to boot code based on
-     `firmware::bios::BiosConfig::boot_drive` (configured via `aero_machine::MachineConfig::boot_drive`
-     at construction time, or updated via `aero_machine::Machine::set_boot_drive(...)` before reset):
-     - **HDD/floppy boot:** reads LBA0 into `0000:7C00` and jumps to `0000:7C00`.
-      - **CD-ROM boot:** when `boot_drive` is in `0xE0..=0xEF`, parses the El Torito boot catalog and
-        loads the **no-emulation** boot image to `load_segment:0000` (commonly `07C0:0000`), then
-        jumps there (see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md) for the
-        canonical Windows 7 install/recovery flow).
+  - constructs a `firmware::bios::Bios`,
+  - maps the ROM returned by `build_bios_rom()` into guest physical memory,
+  - runs `Bios::post_with_pci(...)`, which performs POST and then loads/jumps to boot code based on
+    `firmware::bios::BiosConfig::boot_drive` (configured via `aero_machine::MachineConfig::boot_drive`
+    at construction time, or updated via `aero_machine::Machine::set_boot_drive(...)` before reset):
+    - **HDD/floppy boot:** reads LBA0 into `0000:7C00` and jumps to `0000:7C00`.
+    - **CD-ROM boot:** when `boot_drive` is in `0xE0..=0xEF`, parses the El Torito boot catalog and
+      loads the **no-emulation** boot image to `load_segment:0000` (commonly `07C0:0000`), then
+      jumps there (see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md) for the
+      canonical Windows 7 install/recovery flow).
 - During execution, Tier-0 returns `BatchExit::BiosInterrupt(vector)` when a BIOS stub `HLT` is hit.
   The machine handles it by calling:
 
   - `Machine::handle_bios_interrupt(vector)` → `bios.dispatch_interrupt(vector, ...)`
+
+In the canonical machine, BIOS INT 13h is wired to a **multi-drive disk set** so that:
+
+- `DL=0x80` routes to the primary HDD backend (also attached to AHCI port 0).
+- `DL=0xE0` routes to the install-media ISO backend (also attached to IDE secondary master ATAPI).
+
+If you embed `firmware::bios` outside of `aero-machine` and only need a single boot disk, you can
+still use the legacy “single disk” adapter that exposes that disk as `DL=0x80` (HDD0).
+
+Boot selection note: `Machine` defaults to `boot_drive=0x80`. For install-media boot, callers
+should attach an ISO and set `Machine::set_boot_drive(0xE0)` **before** invoking
+`Machine::reset()`.
 
 Relevant code:
 

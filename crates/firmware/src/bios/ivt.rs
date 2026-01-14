@@ -116,13 +116,12 @@ pub fn init_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
     // *not* contribute to the fixed-disk count, otherwise guests may believe there are dozens of
     // hard disks (e.g. DL=0xE0 => 97).
     //
-    // This BIOS currently models exactly one boot device (backed by the single [`BlockDevice`]
-    // passed to POST/interrupt handlers). Reflect that in the BDA:
-    // - If booting from a floppy (`DL < 0x80`), report *no* hard disks installed.
-    // - If booting from a hard disk (`DL 0x80..=0xDF`), report enough drives to include the boot
-    //   drive.
-    // - If booting from a CD-ROM (`DL 0xE0..=0xEF`), this BIOS still only models the boot device,
-    //   so report no fixed disks.
+    // In the canonical machine, the BIOS exposes multiple drives at once (at minimum HDD0 at
+    // `DL=0x80` and CD0 at `DL=0xE0`), and INT 13h routes requests to the correct backing store
+    // based on `DL`.
+    //
+    // This means the fixed-disk count should reflect the number of installed HDDs (drive numbers
+    // `0x80..`), independent of whether the selected boot drive is a CD-ROM drive number.
     let hard_disk_count = if (0x80..=0xDF).contains(&boot_drive) {
         boot_drive.wrapping_sub(0x80).saturating_add(1)
     } else {

@@ -78,17 +78,24 @@ boot sector / El Torito boot image:
 | First fixed disk (HDD0) | `DL=0x80` | Boot from the OS disk after install. |
 | First ATAPI CD-ROM (CDROM0) | `DL=0xE0` | Boot from install/recovery ISO via El Torito. |
 
+In the canonical machine, both drives are present simultaneously and BIOS INT 13h routes requests
+to the correct backend based on `DL`:
+
+- `DL=0x80` (HDD0): 512-byte sectors.
+- `DL=0xE0` (CD0): 2048-byte logical blocks via INT 13h Extensions (EDD).
+
 ### 1) Windows 7 install / recovery flow
 
-1. Configure Aero BIOS to boot from **CD-ROM (El Torito)** by selecting the first CD-ROM drive as
-   the boot drive (recommend **`DL=0xE0`**).
+1. Select **CD0** as the BIOS boot drive (**`DL=0xE0`**) *before* reset. In `aero_machine`, this is
+   `Machine::set_boot_drive(0xE0)` followed by `Machine::reset()`. BIOS transfers control to the CD
+   boot image with that CD drive number in `DL`.
 2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
 3. BIOS performs an **El Torito no-emulation** boot from that CD drive (see
    [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the detailed El Torito + INT 13h
    expectations).
-4. If you want to boot the HDD instead (for example after installation, or if the CD is absent or
-   unbootable), set the boot drive to the first HDD so BIOS enters the HDD boot sector with
-   **`DL=0x80`** (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`, or in
+4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), the boot
+   attempt will fail; the host should fall back by selecting HDD0 as the boot drive (**`DL=0x80`**)
+   and resetting (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`, or in
    `aero_machine` call `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
    - Note: Aero’s BIOS does **not** currently probe a list of devices; `boot_drive` is an explicit
      selection.
@@ -106,8 +113,8 @@ drive number and then reset to re-run BIOS POST with the new `DL` value.
 
 ### 2) Normal boot (after installation)
 
-1. Configure Aero BIOS to boot from the **AHCI HDD** (ICH9 AHCI port 0) by selecting the first HDD
-   as the boot drive (**`DL=0x80`**).
+1. Select HDD0 as the BIOS boot drive (**`DL=0x80`**) before reset. BIOS enters the boot sector with
+   **`DL=0x80`**.
 2. The IDE CD-ROM may remain attached (useful for tooling/driver ISOs), but is not required.
 
 ---
