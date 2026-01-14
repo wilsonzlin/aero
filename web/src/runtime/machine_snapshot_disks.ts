@@ -6,7 +6,6 @@ export type MachineSnapshotDiskOverlayRef = Readonly<{
   overlay_image: string;
 }>;
 
-const DEFAULT_COW_OVERLAY_BLOCK_SIZE_BYTES = 1024 * 1024;
 const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
 
 function formatPrefix(prefix: string | undefined): string {
