@@ -7172,6 +7172,19 @@ mod tests {
         assert_eq!(cbuf.group, 3);
         assert_eq!(cbuf.binding, BINDING_BASE_CBUFFER);
         assert_eq!(cbuf.visibility, wgpu::ShaderStages::COMPUTE);
+
+        // Ensure WGSL declaration emission uses the same group mapping (prevents collisions with
+        // VS/PS resources and internal emulation groups).
+        let resources = scan_resources(&module, None).expect("scan resources");
+        let mut w = WgslWriter::new();
+        resources
+            .emit_decls(&mut w, ShaderStage::Hull)
+            .expect("emit decls");
+        let decls = w.finish();
+        assert!(
+            decls.contains("@group(3) @binding(0) var<uniform> cb0: Cb0;"),
+            "expected HS cbuffer decl in group 3, got:\n{decls}"
+        );
     }
 
     #[test]
