@@ -124,6 +124,24 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         "expected wasm-pack to include webusb_uhci_bridge, argv={wasm_pack:?}"
     );
     assert!(
+        wasm_pack
+            .iter()
+            .any(|arg| arg == "ehci_controller_bridge_snapshot_roundtrip"),
+        "expected wasm-pack to include ehci_controller_bridge_snapshot_roundtrip, argv={wasm_pack:?}"
+    );
+    assert!(
+        wasm_pack
+            .iter()
+            .any(|arg| arg == "ehci_controller_topology"),
+        "expected wasm-pack to include ehci_controller_topology, argv={wasm_pack:?}"
+    );
+    assert!(
+        wasm_pack
+            .iter()
+            .any(|arg| arg == "webusb_ehci_passthrough_harness"),
+        "expected wasm-pack to include webusb_ehci_passthrough_harness, argv={wasm_pack:?}"
+    );
+    assert!(
         wasm_pack.iter().any(|arg| arg == "xhci_webusb_bridge"),
         "expected wasm-pack to include xhci_webusb_bridge, argv={wasm_pack:?}"
     );

@@ -78,6 +78,11 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("machine_xhci_usb_attach_at_path"))
         .stdout(predicate::str::contains("usb_snapshot_host_state"))
         .stdout(predicate::str::contains("webusb_uhci_bridge"))
+        .stdout(predicate::str::contains(
+            "ehci_controller_bridge_snapshot_roundtrip",
+        ))
+        .stdout(predicate::str::contains("ehci_controller_topology"))
+        .stdout(predicate::str::contains("webusb_ehci_passthrough_harness"))
         .stdout(predicate::str::contains("xhci_webusb_bridge"))
         .stdout(predicate::str::contains("xhci_webusb_snapshot"))
         .stdout(predicate::str::contains("usb_bridge_snapshot_roundtrip"))
