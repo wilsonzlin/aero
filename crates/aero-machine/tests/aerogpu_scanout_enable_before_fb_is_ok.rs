@@ -222,18 +222,18 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer(), expected.as_slice());
 
-    // Explicit scanout disable releases WDDM ownership and returns presentation to the legacy
-    // text/VBE paths.
+    // Explicit scanout disable acts as a visibility toggle: the machine display becomes blank and
+    // the shared scanout descriptor publishes a disabled WDDM scanout.
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
     );
     m.process_aerogpu();
     m.display_present();
-    assert_eq!(m.display_resolution(), legacy_res);
-    assert!(!m.display_framebuffer().is_empty());
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
     let snap = scanout_state.snapshot();
-    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap.base_paddr(), 0);
     assert_eq!(snap.width, 0);
     assert_eq!(snap.height, 0);
@@ -242,7 +242,7 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
 }
 
 #[test]
-fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
+fn aerogpu_scanout_disable_blanks_wddm_even_with_legacy_vbe_panning_stride() {
     let bytes_per_scan_line = 4101u16;
     let x_off = 1u16;
     let y_off = 4u16;
@@ -298,7 +298,9 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
         cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
 
-    // Claim WDDM scanout, then explicitly disable it.
+    // Claim WDDM scanout, then explicitly disable it. Even though a legacy VBE scanout is
+    // configured (including non-default stride/panning), the disabled state is represented as a
+    // blank WDDM scanout.
     let w = 64u32;
     let h = 64u32;
     let pitch = w * 4;
@@ -345,10 +347,10 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
 
     let snap1 = scanout_state.snapshot();
     assert_ne!(snap1.generation, gen_wddm);
-    assert_eq!(snap1.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-    assert_eq!(snap1.base_paddr(), expected_base);
-    assert_eq!(snap1.width, 1024);
-    assert_eq!(snap1.height, 768);
-    assert_eq!(snap1.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap1.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap1.base_paddr(), 0);
+    assert_eq!(snap1.width, 0);
+    assert_eq!(snap1.height, 0);
+    assert_eq!(snap1.pitch_bytes, 0);
     assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
 }
