@@ -403,6 +403,109 @@ class VirtioInputHidClassificationTests(unittest.TestCase):
         self.assertEqual(summary.mouse_xy_relative_collections, 0)
         self.assertEqual(classify_descriptor(summary), "unknown")
 
+    def test_mouse_xy_usage_range_relative_classifies_as_mouse(self) -> None:
+        # Some HID descriptors use Usage Min/Max for X/Y instead of individual Usage items.
+        mouse_xy_range = bytes(
+            [
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x02,  # Usage (Mouse)
+                0xA1,
+                0x01,  # Collection (Application)
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x19,
+                0x30,  # Usage Minimum (X)
+                0x29,
+                0x31,  # Usage Maximum (Y)
+                0x15,
+                0x81,  # Logical Minimum (-127)
+                0x25,
+                0x7F,  # Logical Maximum (127)
+                0x75,
+                0x08,  # Report Size (8)
+                0x95,
+                0x02,  # Report Count (2)
+                0x81,
+                0x06,  # Input (Data,Var,Rel)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(mouse_xy_range)
+        self.assertEqual(summary.mouse_xy_relative_collections, 1)
+        self.assertEqual(summary.tablet_app_collections, 0)
+        self.assertEqual(classify_descriptor(summary), "mouse")
+
+    def test_mouse_xy_usage_range_absolute_classifies_as_tablet(self) -> None:
+        mouse_xy_range_abs = bytes(
+            [
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x02,  # Usage (Mouse)
+                0xA1,
+                0x01,  # Collection (Application)
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x19,
+                0x30,  # Usage Minimum (X)
+                0x29,
+                0x31,  # Usage Maximum (Y)
+                0x15,
+                0x00,  # Logical Minimum (0)
+                0x26,
+                0xFF,
+                0x7F,  # Logical Maximum (32767)
+                0x75,
+                0x10,  # Report Size (16)
+                0x95,
+                0x02,  # Report Count (2)
+                0x81,
+                0x02,  # Input (Data,Var,Abs)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(mouse_xy_range_abs)
+        self.assertEqual(summary.mouse_xy_relative_collections, 0)
+        self.assertGreaterEqual(summary.mouse_xy_absolute_collections, 1)
+        self.assertGreaterEqual(summary.tablet_app_collections, 1)
+        self.assertEqual(classify_descriptor(summary), "tablet")
+
+    def test_mouse_with_only_one_axis_is_unknown(self) -> None:
+        # A pointing device that exposes only X should not be accepted as a valid relative mouse device.
+        x_only = bytes(
+            [
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x02,  # Usage (Mouse)
+                0xA1,
+                0x01,  # Collection (Application)
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x19,
+                0x30,  # Usage Minimum (X)
+                0x29,
+                0x30,  # Usage Maximum (X)
+                0x15,
+                0x81,  # Logical Minimum (-127)
+                0x25,
+                0x7F,  # Logical Maximum (127)
+                0x75,
+                0x08,  # Report Size (8)
+                0x95,
+                0x01,  # Report Count (1)
+                0x81,
+                0x06,  # Input (Data,Var,Rel)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(x_only)
+        self.assertEqual(summary.mouse_app_collections, 1)
+        self.assertEqual(summary.mouse_xy_relative_collections, 0)
+        self.assertEqual(classify_descriptor(summary), "unknown")
+
     def test_keyboard_and_mouse_in_one_descriptor_is_ambiguous(self) -> None:
         # Minimal two-application descriptor: Keyboard + Mouse. The guest selftest treats this as an
         # ambiguous device (contract expects separate keyboard+mouse devices).
