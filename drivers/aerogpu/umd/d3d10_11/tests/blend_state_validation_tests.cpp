@@ -224,6 +224,52 @@ bool TestWriteMaskHighBitsReturnsNotImpl() {
   return true;
 }
 
+bool TestValidateAndConvertRejectsPerRtFactorMismatch() {
+  // Portable test for the shared validator: D3D10.1 blend states can encode
+  // per-render-target factors/ops, but the protocol cannot. Reject mismatches
+  // unless all RTs match RT0.
+  aerogpu::d3d10_11::D3dRtBlendDesc rts[2]{};
+  rts[0].blend_enable = true;
+  rts[0].write_mask = 0xFu;
+  rts[0].src_blend = aerogpu::d3d10_11::kD3dBlendSrcAlpha;
+  rts[0].dest_blend = aerogpu::d3d10_11::kD3dBlendInvSrcAlpha;
+  rts[0].blend_op = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  rts[0].src_blend_alpha = aerogpu::d3d10_11::kD3dBlendOne;
+  rts[0].dest_blend_alpha = aerogpu::d3d10_11::kD3dBlendZero;
+  rts[0].blend_op_alpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  rts[1] = rts[0];
+  rts[1].dest_blend = aerogpu::d3d10_11::kD3dBlendZero; // supported but mismatched vs RT0.
+
+  aerogpu::d3d10_11::AerogpuBlendStateBase out{};
+  const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(rts,
+                                                                    /*rt_count=*/2,
+                                                                    /*alpha_to_coverage_enable=*/false,
+                                                                    &out);
+  return Check(hr == E_NOTIMPL, "ValidateAndConvertBlendDesc rejects per-RT factor mismatch");
+}
+
+bool TestValidateAndConvertRejectsD3d10_1Src1Factor() {
+  // D3D10.1 adds SRC1_* blend factors. The protocol has no representation for
+  // dual-source blending, so these must be rejected when blending is enabled.
+  aerogpu::d3d10_11::D3dRtBlendDesc rt{};
+  rt.blend_enable = true;
+  rt.write_mask = 0xFu;
+  rt.src_blend = aerogpu::d3d10_11::kD3dBlendSrc1Alpha;
+  rt.dest_blend = aerogpu::d3d10_11::kD3dBlendZero;
+  rt.blend_op = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  rt.src_blend_alpha = aerogpu::d3d10_11::kD3dBlendOne;
+  rt.dest_blend_alpha = aerogpu::d3d10_11::kD3dBlendZero;
+  rt.blend_op_alpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  aerogpu::d3d10_11::AerogpuBlendStateBase out{};
+  const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(&rt,
+                                                                    /*rt_count=*/1,
+                                                                    /*alpha_to_coverage_enable=*/false,
+                                                                    &out);
+  return Check(hr == E_NOTIMPL, "ValidateAndConvertBlendDesc rejects D3D10.1 SRC1_ALPHA");
+}
+
 } // namespace
 
 int main() {
@@ -237,6 +283,12 @@ int main() {
     return 1;
   }
   if (!TestWriteMaskHighBitsReturnsNotImpl()) {
+    return 1;
+  }
+  if (!TestValidateAndConvertRejectsPerRtFactorMismatch()) {
+    return 1;
+  }
+  if (!TestValidateAndConvertRejectsD3d10_1Src1Factor()) {
     return 1;
   }
   return 0;
