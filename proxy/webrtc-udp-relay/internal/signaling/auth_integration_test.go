@@ -467,6 +467,66 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	}
 }
 
+func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_WebSocketSignal(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:    config.AuthModeJWT,
+		JWTSecret:   "supersecret",
+		MaxSessions: 2,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test_a", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test_b", now-9)
+	wsURLA := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + tokenA
+	wsURLB := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + tokenB
+
+	ws1, _, err := websocket.DefaultDialer.Dial(wsURLA, nil)
+	if err != nil {
+		t.Fatalf("dial ws1: %v", err)
+	}
+	t.Cleanup(func() { _ = ws1.Close() })
+	if err := ws1.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws1: %v", err)
+	}
+	_ = ws1.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws1.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws1: %v", err)
+	}
+	got, err := parseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws1: %v", err)
+	}
+	if got.Type != "answer" {
+		t.Fatalf("unexpected ws1 message: %#v", got)
+	}
+
+	ws2, _, err := websocket.DefaultDialer.Dial(wsURLB, nil)
+	if err != nil {
+		t.Fatalf("dial ws2: %v", err)
+	}
+	t.Cleanup(func() { _ = ws2.Close() })
+	if err := ws2.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws2: %v", err)
+	}
+	_ = ws2.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err = ws2.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws2: %v", err)
+	}
+	got, err = parseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws2: %v", err)
+	}
+	if got.Type != "answer" {
+		t.Fatalf("unexpected ws2 message: %#v", got)
+	}
+}
+
 func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:  config.AuthModeJWT,
