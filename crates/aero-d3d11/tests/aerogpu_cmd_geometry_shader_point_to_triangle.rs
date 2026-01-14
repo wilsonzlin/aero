@@ -14,12 +14,8 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 const DXBC_GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 
-fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 async fn create_executor_with_compute_and_indirect() -> Option<AerogpuD3d11Executor> {
@@ -194,7 +190,11 @@ fn build_vs_pos_only_dxbc() -> Vec<u8> {
     tokens[1] = tokens.len() as u32;
 
     let shdr = tokens_to_bytes(&tokens);
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_ps_solid_green_dxbc() -> Vec<u8> {
@@ -233,7 +233,11 @@ fn build_ps_solid_green_dxbc() -> Vec<u8> {
     tokens[1] = tokens.len() as u32;
 
     let shdr = tokens_to_bytes(&tokens);
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 #[repr(C)]

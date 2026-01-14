@@ -62,12 +62,8 @@ fn end_cmd(stream: &mut [u8], start: usize) {
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
 }
 
-fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 #[derive(Clone, Copy)]
@@ -164,7 +160,11 @@ fn build_ps_sample_t0_s0_outside_uv_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 #[repr(C)]

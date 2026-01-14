@@ -46,12 +46,8 @@ fn finish_stream(mut stream: Vec<u8>) -> Vec<u8> {
     stream
 }
 
-fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
@@ -201,7 +197,7 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
 
         const GS_SHADER: u32 = 1;
 
-        let gs_dxbc = build_dxbc(&[(*b"SHEX", build_minimal_sm4_program_chunk(2))]);
+        let gs_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(2))]);
 
         let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
         stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());

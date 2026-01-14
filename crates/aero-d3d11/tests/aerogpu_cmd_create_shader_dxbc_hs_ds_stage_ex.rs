@@ -6,12 +6,8 @@ use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStageEx;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
-fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
@@ -46,8 +42,8 @@ fn aerogpu_cmd_create_shader_dxbc_stage_ex_stores_hs_ds() {
         const HS_SHADER: u32 = 1;
         const DS_SHADER: u32 = 2;
 
-        let hs_dxbc = build_dxbc(&[(*b"SHEX", build_minimal_sm4_program_chunk(3))]);
-        let ds_dxbc = build_dxbc(&[(*b"SHEX", build_minimal_sm4_program_chunk(4))]);
+        let hs_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(3))]);
+        let ds_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(4))]);
 
         let mut writer = AerogpuCmdWriter::new();
         writer.create_shader_dxbc_ex(HS_SHADER, AerogpuShaderStageEx::Hull, &hs_dxbc);
