@@ -3132,7 +3132,6 @@ impl AerogpuD3d11Executor {
         primitive_count: u32,
         instance_count: u32,
         vertex_pulling_draw: VertexPullingDrawParams,
-        uniform_align: u64,
     ) -> Result<(
         ExpansionScratchAlloc,
         ExpansionScratchAlloc,
@@ -3212,6 +3211,7 @@ impl AerogpuD3d11Executor {
             buffers.push(&buf.buffer);
         }
 
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
         let uniform_alloc = self
             .expansion_uniform_scratch
@@ -3259,10 +3259,16 @@ impl AerogpuD3d11Executor {
             .checked_mul(16)
             .ok_or_else(|| anyhow!("GS prepass: gs_inputs buffer size overflow"))?
             .max(16);
-        let gs_inputs_alloc = self
-            .expansion_scratch
-            .alloc_metadata(&self.device, gs_inputs_size, 16)
-            .map_err(|e| anyhow!("GS prepass: alloc gs_inputs buffer: {e}"))?;
+        // Keep input buffers separate from the expansion scratch output buffer. wgpu tracks storage
+        // buffer hazards at buffer granularity, so using disjoint ranges of the same scratch buffer
+        // as both `storage, read` and `storage, read_write` in the GS prepass dispatch triggers
+        // validation errors on some backends (notably GL).
+        let gs_inputs_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd gs prepass gs_inputs buffer"),
+            size: gs_inputs_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
 
         // Map WGSL `@location` indices (used by the vertex-pulling layout) back to the original
         // D3D11 input register indices. Signature-driven translation often compacts locations, so
@@ -3378,9 +3384,9 @@ impl AerogpuD3d11Executor {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: gs_inputs_alloc.buffer.as_ref(),
-                    offset: gs_inputs_alloc.offset,
-                    size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                    buffer: &gs_inputs_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(gs_inputs_size),
                 }),
             }],
         });
@@ -3604,9 +3610,9 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: gs_inputs_alloc.buffer.as_ref(),
-                        offset: gs_inputs_alloc.offset,
-                        size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                        buffer: &gs_inputs_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(gs_inputs_size),
                     }),
                 },
             ],
@@ -4021,11 +4027,6 @@ impl AerogpuD3d11Executor {
                 CmdPrimitiveTopology::PointList
             );
 
-        // Scratch allocations that are bound as uniform buffers must respect WebGPU's uniform buffer
-        // offset alignment.
-        let uniform_align =
-            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(16);
-
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
@@ -4059,7 +4060,6 @@ impl AerogpuD3d11Executor {
                 primitive_count,
                 instance_count,
                 vertex_pulling_draw,
-                uniform_align,
             )?;
             expanded_vertex_alloc = v_alloc;
             expanded_index_alloc = i_alloc;
@@ -4732,6 +4732,46 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        if use_indexed_indirect {
+            // The compute prepass writes indices into `expanded_index_alloc` at a non-zero scratch
+            // offset. Some backends (notably wgpu's GL backend) cannot apply the index-buffer binding
+            // offset when executing `draw_indexed_indirect`, so we bind the full index buffer at
+            // offset 0 and patch the indirect args `first_index` accordingly.
+            if (expanded_index_alloc.offset % 4) != 0 {
+                bail!(
+                    "geometry prepass expanded index buffer offset {} is not 4-byte aligned",
+                    expanded_index_alloc.offset
+                );
+            }
+            let first_index_u64 = expanded_index_alloc.offset / 4;
+            let first_index: u32 = first_index_u64.try_into().map_err(|_| {
+                anyhow!(
+                    "geometry prepass expanded index buffer offset {} is too large for u32 first_index",
+                    expanded_index_alloc.offset
+                )
+            })?;
+
+            let first_index_offset = indirect_args_alloc.offset.checked_add(8).ok_or_else(|| {
+                anyhow!("geometry prepass indirect args offset overflows when patching first_index")
+            })?;
+
+            let patch_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd geometry prepass first_index patch"),
+                size: 4,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue
+                .write_buffer(&patch_buffer, 0, &first_index.to_le_bytes());
+            encoder.copy_buffer_to_buffer(
+                &patch_buffer,
+                0,
+                indirect_args_alloc.buffer.as_ref(),
+                first_index_offset,
+                4,
+            );
+        }
+
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
         let mut render_bind_groups =
@@ -4951,7 +4991,7 @@ impl AerogpuD3d11Executor {
                     pass.set_index_buffer(
                         expanded_index_alloc
                             .buffer
-                            .slice(expanded_index_alloc.offset..ib_end),
+                            .slice(0..ib_end),
                         wgpu::IndexFormat::Uint32,
                     );
                     pass.draw_indexed_indirect(
