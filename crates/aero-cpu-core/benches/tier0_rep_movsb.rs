@@ -43,40 +43,65 @@ fn bench_tier0_rep_movsb(c: &mut Criterion) {
     code.extend(std::iter::repeat_n(0x90, 16));
 
     let bus_len = (DST_ADDR + LEN as u64 + 0x1000) as usize;
-    let mut bus = FlatTestBus::new(bus_len);
-    bus.load(CODE_ADDR, &code);
+    let mut bus_base = FlatTestBus::new(bus_len);
+    bus_base.load(CODE_ADDR, &code);
 
     // Deterministic source pattern (one-time init).
     let mut src = Vec::with_capacity(LEN);
     for i in 0..LEN {
         src.push((i as u8).wrapping_mul(3) ^ 0x5A);
     }
-    bus.load(SRC_ADDR, &src);
+    bus_base.load(SRC_ADDR, &src);
 
-    let mut state = CpuState::new(CpuMode::Long);
-    state.set_rip(CODE_ADDR);
-    state.gpr[gpr::RSI] = SRC_ADDR;
-    state.gpr[gpr::RDI] = DST_ADDR;
-    state.gpr[gpr::RCX] = LEN as u64;
+    let mut bus_long = bus_base.clone();
+    let mut bus_32 = bus_base;
 
     // Sanity-check once outside measurement: should complete without assist/exception.
-    let res = run_batch(&mut state, &mut bus, 1);
+    let mut state_long = CpuState::new(CpuMode::Long);
+    state_long.set_rip(CODE_ADDR);
+    state_long.gpr[gpr::RSI] = SRC_ADDR;
+    state_long.gpr[gpr::RDI] = DST_ADDR;
+    state_long.gpr[gpr::RCX] = LEN as u64;
+    let res = run_batch(&mut state_long, &mut bus_long, 1);
     assert_eq!(res.exit, BatchExit::Completed);
     // Verify that bulk-copy did something observable.
-    assert_eq!(bus.read_u8(DST_ADDR).unwrap(), src[0]);
+    assert_eq!(bus_long.read_u8(DST_ADDR).unwrap(), src[0]);
+
+    let mut state_32 = CpuState::new(CpuMode::Bit32);
+    state_32.set_rip(CODE_ADDR);
+    state_32.gpr[gpr::RSI] = SRC_ADDR;
+    state_32.gpr[gpr::RDI] = DST_ADDR;
+    state_32.gpr[gpr::RCX] = LEN as u64;
+    let res = run_batch(&mut state_32, &mut bus_32, 1);
+    assert_eq!(res.exit, BatchExit::Completed);
+    assert_eq!(bus_32.read_u8(DST_ADDR).unwrap(), src[0]);
 
     let mut group = c.benchmark_group("tier0_string");
     group.throughput(Throughput::Bytes(LEN as u64));
     group.bench_function("rep_movsb_64kib", |b| {
         b.iter(|| {
-            state.set_rip(CODE_ADDR);
-            state.rflags = RFLAGS_RESERVED1;
-            state.lazy_flags = Default::default();
-            state.gpr[gpr::RSI] = SRC_ADDR;
-            state.gpr[gpr::RDI] = DST_ADDR;
-            state.gpr[gpr::RCX] = LEN as u64;
+            state_long.set_rip(CODE_ADDR);
+            state_long.rflags = RFLAGS_RESERVED1;
+            state_long.lazy_flags = Default::default();
+            state_long.gpr[gpr::RSI] = SRC_ADDR;
+            state_long.gpr[gpr::RDI] = DST_ADDR;
+            state_long.gpr[gpr::RCX] = LEN as u64;
 
-            let res = run_batch(black_box(&mut state), black_box(&mut bus), 1);
+            let res = run_batch(black_box(&mut state_long), black_box(&mut bus_long), 1);
+            debug_assert!(matches!(res.exit, BatchExit::Completed));
+            black_box(res.executed);
+        });
+    });
+    group.bench_function("rep_movsb_64kib_32", |b| {
+        b.iter(|| {
+            state_32.set_rip(CODE_ADDR);
+            state_32.rflags = RFLAGS_RESERVED1;
+            state_32.lazy_flags = Default::default();
+            state_32.gpr[gpr::RSI] = SRC_ADDR;
+            state_32.gpr[gpr::RDI] = DST_ADDR;
+            state_32.gpr[gpr::RCX] = LEN as u64;
+
+            let res = run_batch(black_box(&mut state_32), black_box(&mut bus_32), 1);
             debug_assert!(matches!(res.exit, BatchExit::Completed));
             black_box(res.executed);
         });

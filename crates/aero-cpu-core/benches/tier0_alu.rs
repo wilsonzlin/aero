@@ -42,41 +42,75 @@ fn make_repeated_code(pattern: &[u8], insts: usize) -> Vec<u8> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn bench_tier0_add_rax_rbx(c: &mut Criterion) {
-    // add rax, rbx
+fn bench_tier0_alu(c: &mut Criterion) {
+    // add rax, rbx (64-bit)
     const ADD_RAX_RBX: &[u8] = &[0x48, 0x01, 0xD8];
+    // add eax, ebx (32-bit)
+    const ADD_EAX_EBX: &[u8] = &[0x01, 0xD8];
     // Keep each Criterion iteration reasonably short so the CI profile (400ms target time)
     // doesn't need to auto-extend the measurement window.
-    const INSTS_PER_ITER: u64 = 25_000;
+    const INSTS_PER_ITER: u64 = 5_000;
 
-    let code = make_repeated_code(ADD_RAX_RBX, INSTS_PER_ITER as usize);
+    let code64 = make_repeated_code(ADD_RAX_RBX, INSTS_PER_ITER as usize);
+    let code32 = make_repeated_code(ADD_EAX_EBX, INSTS_PER_ITER as usize);
 
-    let mut bus = FlatTestBus::new(code.len());
-    bus.load(0, &code);
+    let mut bus64 = FlatTestBus::new(code64.len());
+    bus64.load(0, &code64);
 
-    let mut state = CpuState::new(CpuMode::Long);
-    state.set_rip(0);
-    state.gpr[gpr::RAX] = 0;
-    state.gpr[gpr::RBX] = 1;
+    let mut bus32 = FlatTestBus::new(code32.len());
+    bus32.load(0, &code32);
 
     // Sanity-check the setup once outside the measurement loop.
-    let res = run_batch(&mut state, &mut bus, 1);
+    let mut state64 = CpuState::new(CpuMode::Long);
+    state64.set_rip(0);
+    state64.gpr[gpr::RAX] = 0;
+    state64.gpr[gpr::RBX] = 1;
+    let res = run_batch(&mut state64, &mut bus64, 1);
+    assert_eq!(res.exit, BatchExit::Completed);
+
+    let mut state32 = CpuState::new(CpuMode::Bit32);
+    state32.set_rip(0);
+    state32.gpr[gpr::RAX] = 0;
+    state32.gpr[gpr::RBX] = 1;
+    let res = run_batch(&mut state32, &mut bus32, 1);
     assert_eq!(res.exit, BatchExit::Completed);
 
     let mut group = c.benchmark_group("tier0_alu");
     group.throughput(Throughput::Elements(INSTS_PER_ITER));
     group.bench_function("add_rax_rbx", |b| {
         b.iter(|| {
-            state.set_rip(0);
-            state.rflags = RFLAGS_RESERVED1;
-            state.lazy_flags = Default::default();
-            state.gpr[gpr::RAX] = 0;
-            state.gpr[gpr::RBX] = 1;
+            state64.set_rip(0);
+            state64.rflags = RFLAGS_RESERVED1;
+            state64.lazy_flags = Default::default();
+            state64.gpr[gpr::RAX] = 0;
+            state64.gpr[gpr::RBX] = 1;
 
-            let res = run_batch(black_box(&mut state), black_box(&mut bus), INSTS_PER_ITER);
+            let res = run_batch(
+                black_box(&mut state64),
+                black_box(&mut bus64),
+                INSTS_PER_ITER,
+            );
             debug_assert!(matches!(res.exit, BatchExit::Completed));
             black_box(res.executed);
-            black_box(state.gpr[gpr::RAX]);
+            black_box(state64.gpr[gpr::RAX]);
+        });
+    });
+    group.bench_function("add_eax_ebx", |b| {
+        b.iter(|| {
+            state32.set_rip(0);
+            state32.rflags = RFLAGS_RESERVED1;
+            state32.lazy_flags = Default::default();
+            state32.gpr[gpr::RAX] = 0;
+            state32.gpr[gpr::RBX] = 1;
+
+            let res = run_batch(
+                black_box(&mut state32),
+                black_box(&mut bus32),
+                INSTS_PER_ITER,
+            );
+            debug_assert!(matches!(res.exit, BatchExit::Completed));
+            black_box(res.executed);
+            black_box(state32.gpr[gpr::RAX]);
         });
     });
     group.finish();
@@ -86,7 +120,7 @@ fn bench_tier0_add_rax_rbx(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_tier0_add_rax_rbx
+    targets = bench_tier0_alu
 }
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
