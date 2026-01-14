@@ -34,15 +34,17 @@ fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
     opcode | (len_dwords << OPCODE_LEN_SHIFT)
 }
 
-fn build_gs_output_points_dxbc(max_vertex_count: u32, points: &[[f32; 4]]) -> Vec<u8> {
-    // Minimal gs_4_0 token stream with point-list output:
+fn build_gs_output_dxbc(
+    output_topology_token: u32,
+    max_vertex_count: u32,
+    points: &[[f32; 4]],
+) -> Vec<u8> {
+    // Minimal gs_4_0 token stream:
     // - dcl_inputprimitive point
-    // - dcl_outputtopology pointlist
+    // - dcl_outputtopology <output_topology_token>
     // - dcl_maxvertexcount {max_vertex_count}
     // - emit N points
     //
-    // NOTE: The point-list output is intentionally chosen to validate that the executor selects
-    // `PointList` for the expanded draw render pass (instead of forcing `TriangleList`).
     // Tokenized-program header version token:
     // - stage: Geometry (2)
     // - model: 4.0
@@ -53,7 +55,7 @@ fn build_gs_output_points_dxbc(max_vertex_count: u32, points: &[[f32; 4]]) -> Ve
     tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2)); // dcl_inputprimitive
     tokens.push(1); // point
     tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2)); // dcl_outputtopology
-    tokens.push(1); // pointlist
+    tokens.push(output_topology_token);
     tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2)); // dcl_maxvertexcount
     tokens.push(max_vertex_count);
 
@@ -88,6 +90,16 @@ fn build_gs_output_points_dxbc(max_vertex_count: u32, points: &[[f32; 4]]) -> Ve
 
     let shdr = tokens_to_bytes(&tokens);
     build_dxbc(&[(FourCC(*b"SHDR"), shdr)])
+}
+
+fn build_gs_output_points_dxbc(max_vertex_count: u32, points: &[[f32; 4]]) -> Vec<u8> {
+    // Pointlist output topology token in the tokenized shader format.
+    build_gs_output_dxbc(1, max_vertex_count, points)
+}
+
+fn build_gs_output_linestrip_dxbc(max_vertex_count: u32, points: &[[f32; 4]]) -> Vec<u8> {
+    // Line strip output topology token in the tokenized shader format.
+    build_gs_output_dxbc(2, max_vertex_count, points)
 }
 
 fn build_pointlist_cmd_stream(gs_dxbc: &[u8], w: u32, h: u32) -> Vec<u8> {
@@ -301,6 +313,75 @@ fn aerogpu_cmd_geometry_shader_output_topology_pointlist_renders_points_not_tria
         // formed by the first three emitted points. If the executor incorrectly renders the
         // expanded draw as TriangleList, this pixel will be shaded green.
         assert_eq!(px(w / 4, h / 4), [255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_geometry_shader_output_topology_linestrip_renders_lines_not_triangles() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_output_topology_linestrip_renders_lines_not_triangles"
+        );
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
+        if exec.device().limits().max_storage_buffers_per_shader_stage < 4 {
+            common::skip_or_panic(
+                test_name,
+                "backend limit max_storage_buffers_per_shader_stage < 4 (GS translate prepass requires 4 storage buffers)",
+            );
+            return;
+        }
+
+        // Use an odd render target size so NDC (0,0) maps exactly to the center pixel.
+        let w = 65u32;
+        let h = 65u32;
+        let gs_dxbc =
+            build_gs_output_linestrip_dxbc(2, &[[-1.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]]);
+        let stream = build_pointlist_cmd_stream(&gs_dxbc, w, h);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            Ok(report) => report,
+            Err(err) => {
+                if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                    return;
+                }
+                panic!("execute_cmd_stream failed: {err:#}");
+            }
+        };
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("stream should present a render target");
+        assert_eq!(render_target, 2);
+
+        let pixels = exec
+            .read_texture_rgba8(render_target)
+            .await
+            .expect("readback should succeed");
+        assert_eq!(pixels.len(), (w * h * 4) as usize);
+
+        let px = |x: u32, y: u32| -> [u8; 4] {
+            let idx = ((y * w + x) * 4) as usize;
+            pixels[idx..idx + 4].try_into().unwrap()
+        };
+
+        // The line runs through the center pixel.
+        assert_eq!(px(w / 2, h / 2), [0, 255, 0, 255]);
+        // A pixel far away from the line should remain background.
+        assert_eq!(px(0, 0), [255, 0, 0, 255]);
     });
 }
 
