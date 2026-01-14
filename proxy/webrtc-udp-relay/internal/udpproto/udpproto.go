@@ -39,7 +39,7 @@ const (
 )
 
 var (
-	ErrTooShort        = errors.New("udpproto: datagram frame too short")
+	errTooShort        = errors.New("udpproto: datagram frame too short")
 	ErrPayloadTooLarge = errors.New("udpproto: payload too large")
 )
 
@@ -115,7 +115,7 @@ func (c Codec) decodeDatagram(b []byte) (datagram, error) {
 		return datagram{}, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)
 	}
 	if len(b) < v1HeaderLen {
-		return datagram{}, ErrTooShort
+		return datagram{}, errTooShort
 	}
 	payload := b[v1HeaderLen:]
 	if len(payload) > c.MaxPayload {
@@ -216,7 +216,7 @@ func (c Codec) EncodeFrameV2(f Frame) ([]byte, error) {
 
 func (c Codec) decodeV2(b []byte) (Frame, error) {
 	if len(b) < 12 {
-		return Frame{}, ErrTooShort
+		return Frame{}, errTooShort
 	}
 	if b[3] != v2TypeDatagram {
 		return Frame{}, fmt.Errorf("udpproto: v2 unsupported message type: 0x%02x", b[3])
@@ -234,7 +234,7 @@ func (c Codec) decodeV2(b []byte) (Frame, error) {
 	case afIPv4:
 		ipLen = 4
 		if len(b) < offset+ipLen+2 {
-			return Frame{}, ErrTooShort
+			return Frame{}, errTooShort
 		}
 		var ip4 [4]byte
 		copy(ip4[:], b[offset:offset+4])
@@ -242,7 +242,7 @@ func (c Codec) decodeV2(b []byte) (Frame, error) {
 	case afIPv6:
 		ipLen = 16
 		if len(b) < offset+ipLen+2 {
-			return Frame{}, ErrTooShort
+			return Frame{}, errTooShort
 		}
 		var ip16 [16]byte
 		copy(ip16[:], b[offset:offset+16])

@@ -15,7 +15,7 @@ func FuzzDecodeDatagram(f *testing.F) {
 		switch {
 		case err == nil:
 			return "ok"
-		case errors.Is(err, ErrTooShort):
+		case errors.Is(err, errTooShort):
 			return "too_short"
 		case errors.Is(err, ErrPayloadTooLarge):
 			return "payload_too_large"
@@ -59,7 +59,7 @@ func FuzzDecodeFrame(f *testing.F) {
 		switch {
 		case err == nil:
 			return "ok"
-		case errors.Is(err, ErrTooShort):
+		case errors.Is(err, errTooShort):
 			return "too_short"
 		case errors.Is(err, ErrPayloadTooLarge):
 			return "payload_too_large"

@@ -48,8 +48,8 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 func TestDecodeTooShort(t *testing.T) {
 	for n := 0; n < v1HeaderLen; n++ {
 		_, err := DefaultCodec.decodeDatagram(make([]byte, n))
-		if !errors.Is(err, ErrTooShort) {
-			t.Fatalf("len=%d: got err=%v, want ErrTooShort", n, err)
+		if !errors.Is(err, errTooShort) {
+			t.Fatalf("len=%d: got err=%v, want errTooShort", n, err)
 		}
 	}
 }
