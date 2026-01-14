@@ -125,6 +125,20 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     };
   }
 
+  function hddMetaAerospar(): DiskImageMetadata {
+    return {
+      source: "local",
+      id: "d-aero",
+      name: "disk",
+      backend: "opfs",
+      kind: "hdd",
+      format: "aerospar",
+      fileName: "disk.aerospar",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+  }
+
   it("prefers set_primary_hdd_opfs_existing when attaching a raw HDD", async () => {
     const meta = hddMetaRaw();
     const plan = planMachineBootDiskAttachment(meta, "hdd");
@@ -147,6 +161,27 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(set_disk_opfs_existing_and_set_overlay_ref).not.toHaveBeenCalled();
     expect(set_disk_opfs_existing).not.toHaveBeenCalled();
     expect(set_ahci_port0_disk_overlay_ref).not.toHaveBeenCalled();
+  });
+
+  it("falls back to set_disk_opfs_existing(path, \"aerospar\") when attaching an aerosparse HDD and dedicated aerospar exports are unavailable", async () => {
+    const meta = hddMetaAerospar();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const calls: Array<[string, string | undefined]> = [];
+    async function set_disk_opfs_existing(path: string, baseFormat?: string): Promise<void> {
+      calls.push([path, baseFormat]);
+    }
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
+
+    const machine = {
+      set_disk_opfs_existing,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(calls).toEqual([[plan.opfsPath, "aerospar"]]);
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
   });
 
   it("falls back to set_disk_opfs_existing_and_set_overlay_ref when set_primary_hdd_opfs_existing is unavailable", async () => {

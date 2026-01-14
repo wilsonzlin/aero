@@ -153,7 +153,23 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
       machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
       return;
     }
-    throw new Error("WASM build missing Machine.set_disk_aerospar_opfs_open* exports");
+    // Newer WASM builds can open aerosparse disks via the generic OPFS existing open path when an
+    // explicit base format is provided.
+    if (
+      typeof machine.set_disk_opfs_existing_and_set_overlay_ref === "function" &&
+      machine.set_disk_opfs_existing_and_set_overlay_ref.length >= 2
+    ) {
+      await machine.set_disk_opfs_existing_and_set_overlay_ref(plan.opfsPath, "aerospar");
+      return;
+    }
+    if (typeof machine.set_disk_opfs_existing === "function" && machine.set_disk_opfs_existing.length >= 2) {
+      await machine.set_disk_opfs_existing(plan.opfsPath, "aerospar");
+      machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
+      return;
+    }
+    throw new Error(
+      "WASM build missing Machine.set_disk_aerospar_opfs_open* exports (and does not support Machine.set_disk_opfs_existing(path, \"aerospar\")).",
+    );
   }
 
   const setPrimaryCow = machine.set_primary_hdd_opfs_cow;
