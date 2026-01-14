@@ -8881,6 +8881,29 @@ static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, co
     return;
   }
 
+  const uint64_t end = off + size;
+  if (end < off) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  const uint64_t upload_offset = off & ~3ull;
+  const uint64_t upload_end = AlignUpU64(end, 4);
+  if (upload_end < upload_offset) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  const uint64_t upload_size = upload_end - upload_offset;
+  if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  const size_t upload_off = static_cast<size_t>(upload_offset);
+  const size_t upload_sz = static_cast<size_t>(upload_size);
+  if (upload_off > res->storage.size() || upload_sz > res->storage.size() - upload_off) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
   // D3D11's ClearUnorderedAccessView* for buffers is defined in terms of a 4x32-bit
   // pattern. For structured/raw buffers, this is effectively a 16-byte repeating
   // pattern; for typed buffers, the driver may interpret the components based on
@@ -8888,17 +8911,173 @@ static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, co
   uint8_t pattern_bytes[16];
   std::memcpy(pattern_bytes, pattern_u32, sizeof(pattern_bytes));
 
+  // Clearing a UAV writes into the resource; enforce the D3D11 hazard rule by
+  // unbinding any aliasing SRVs (typically already handled by UAV binding).
+  UnbindResourceFromSrvsLocked(dev, res->handle, res);
+
+  if (res->backing_alloc_id == 0) {
+    // Host-owned resource: upload an aligned byte range. The protocol requires
+    // UPLOAD_RESOURCE offsets/sizes to be 4-byte aligned for buffers.
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + upload_off, upload_sz);
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = upload_offset;
+    cmd->size_bytes = upload_size;
+
+    // Patch the copied upload payload in-place to reflect the clear without
+    // allocating a separate staging buffer. This keeps the UMD shadow copy
+    // unmodified if the command append fails (OOM).
+    uint8_t* upload_payload = reinterpret_cast<uint8_t*>(cmd) + sizeof(*cmd);
+    uint8_t* upload_dst = upload_payload + static_cast<size_t>(off - upload_offset);
+    for (uint64_t i = 0; i < size; i += sizeof(pattern_bytes)) {
+      const size_t n = static_cast<size_t>(std::min<uint64_t>(sizeof(pattern_bytes), size - i));
+      std::memcpy(upload_dst + static_cast<size_t>(i), pattern_bytes, n);
+    }
+
+    // Commit to the software shadow copy after successfully appending the
+    // upload packet.
+    uint8_t* dst = res->storage.data() + static_cast<size_t>(off);
+    for (uint64_t i = 0; i < size; i += sizeof(pattern_bytes)) {
+      const size_t n = static_cast<size_t>(std::min<uint64_t>(sizeof(pattern_bytes), size - i));
+      std::memcpy(dst + static_cast<size_t>(i), pattern_bytes, n);
+    }
+    return;
+  }
+
+  const auto* ddi = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  const auto* device_cb = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
+  const bool has_lock_unlock =
+      (ddi && ddi->pfnLockCb && ddi->pfnUnlockCb) || (device_cb && device_cb->pfnLockCb && device_cb->pfnUnlockCb);
+  if (!has_lock_unlock || !dev->runtime_device || res->wddm_allocation_handle == 0) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  auto lock_for_write = [&](D3DDDICB_LOCK* lock_args) -> HRESULT {
+    if (!lock_args || !dev->runtime_device) {
+      return E_NOTIMPL;
+    }
+    if (ddi && ddi->pfnLockCb) {
+      return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    }
+    if (device_cb && device_cb->pfnLockCb) {
+      return CallCbMaybeHandle(device_cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    }
+    return E_NOTIMPL;
+  };
+
+  auto unlock = [&](D3DDDICB_UNLOCK* unlock_args) -> HRESULT {
+    if (!unlock_args || !dev->runtime_device) {
+      return E_NOTIMPL;
+    }
+    if (ddi && ddi->pfnUnlockCb) {
+      return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), unlock_args);
+    }
+    if (device_cb && device_cb->pfnUnlockCb) {
+      return CallCbMaybeHandle(device_cb->pfnUnlockCb,
+                               MakeRtDeviceHandle(dev),
+                               MakeRtDeviceHandle10(dev),
+                               unlock_args);
+    }
+    return E_NOTIMPL;
+  };
+
+  D3DDDICB_LOCK lock_args = {};
+  lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+    lock_args.SubresourceIndex = 0;
+  }
+  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+    lock_args.SubResourceIndex = 0;
+  }
+  InitLockForWrite(&lock_args);
+
+  HRESULT hr = lock_for_write(&lock_args);
+  if (FAILED(hr)) {
+    SetError(dev, hr);
+    return;
+  }
+  if (!lock_args.pData) {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = 0;
+    }
+    (void)unlock(&unlock_args);
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update
+  // the host copy.
+  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!dirty) {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = 0;
+    }
+    (void)unlock(&unlock_args);
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  dirty->resource_handle = res->handle;
+  dirty->reserved0 = 0;
+  dirty->offset_bytes = upload_offset;
+  dirty->size_bytes = upload_size;
+
+  // Fill the guest allocation with the cleared bytes (plus any required
+  // alignment prefix/suffix) after successfully appending the dirty-range
+  // command, so OOM cannot partially update the resource.
+  uint8_t* alloc_bytes = static_cast<uint8_t*>(lock_args.pData);
+  const size_t pre = static_cast<size_t>(off - upload_offset);
+  const size_t post = static_cast<size_t>(upload_end - end);
+  if (pre) {
+    std::memcpy(alloc_bytes + upload_off, res->storage.data() + upload_off, pre);
+  }
+  uint8_t* alloc_dst = alloc_bytes + static_cast<size_t>(off);
+  for (uint64_t i = 0; i < size; i += sizeof(pattern_bytes)) {
+    const size_t n = static_cast<size_t>(std::min<uint64_t>(sizeof(pattern_bytes), size - i));
+    std::memcpy(alloc_dst + static_cast<size_t>(i), pattern_bytes, n);
+  }
+  if (post) {
+    std::memcpy(alloc_bytes + static_cast<size_t>(end),
+                res->storage.data() + static_cast<size_t>(end),
+                post);
+  }
+
+  // Commit to the software shadow copy.
   uint8_t* dst = res->storage.data() + static_cast<size_t>(off);
   for (uint64_t i = 0; i < size; i += sizeof(pattern_bytes)) {
     const size_t n = static_cast<size_t>(std::min<uint64_t>(sizeof(pattern_bytes), size - i));
     std::memcpy(dst + static_cast<size_t>(i), pattern_bytes, n);
   }
 
-  // Clearing a UAV writes into the resource; enforce the D3D11 hazard rule by
-  // unbinding any aliasing SRVs (typically already handled by UAV binding).
-  UnbindResourceFromSrvsLocked(dev, res->handle, res);
-
-  EmitUploadLocked(dev, res, off, size);
+  D3DDDICB_UNLOCK unlock_args = {};
+  unlock_args.hAllocation = lock_args.hAllocation;
+  __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+    unlock_args.SubresourceIndex = 0;
+  }
+  __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+    unlock_args.SubResourceIndex = 0;
+  }
+  hr = unlock(&unlock_args);
+  if (FAILED(hr)) {
+    SetError(dev, hr);
+    return;
+  }
 }
 
 void AEROGPU_APIENTRY ClearUnorderedAccessViewUint11(D3D11DDI_HDEVICECONTEXT hCtx,
