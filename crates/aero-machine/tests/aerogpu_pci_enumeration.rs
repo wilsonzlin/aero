@@ -29,24 +29,27 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
     let mut m = Machine::new(cfg).unwrap();
 
     let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-    let (id, class, bar0, bar1) = {
+    let (id, class, command, bar0, bar1, bar0_reg, bar1_reg) = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
 
         let cfg = bus
-            .device_config(bdf)
+            .device_config_mut(bdf)
             .expect("AeroGPU PCI function missing from canonical machine");
 
         let id = cfg.vendor_device_id();
         let class = cfg.class_code();
+        let command = cfg.command();
+        let bar0_reg = cfg.read(0x10, 4);
+        let bar1_reg = cfg.read(0x14, 4);
         let bar0 = cfg
             .bar_range(0)
             .expect("AeroGPU BAR0 should be assigned by PCI BIOS POST");
         let bar1 = cfg
             .bar_range(1)
             .expect("AeroGPU BAR1 should be assigned by PCI BIOS POST");
-        (id, class, bar0, bar1)
+        (id, class, command, bar0, bar1, bar0_reg, bar1_reg)
     };
 
     assert_eq!(id.vendor_id, 0xA3A0, "AeroGPU vendor ID drifted");
@@ -55,6 +58,15 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
     assert_eq!(class.class, 0x03, "AeroGPU base class drifted");
     assert_eq!(class.subclass, 0x00, "AeroGPU subclass drifted");
     assert_eq!(class.prog_if, 0x00, "AeroGPU programming interface drifted");
+
+    // PCI BIOS POST should have enabled memory decoding (AeroGPU exposes only MMIO BARs).
+    assert_eq!(command & 0x1, 0, "AeroGPU should not enable PCI I/O decode");
+    assert_ne!(
+        command & 0x2,
+        0,
+        "AeroGPU should enable PCI memory decode during BIOS POST"
+    );
+
     assert_eq!(bar0.kind, PciBarKind::Mmio32);
     assert_ne!(bar0.base, 0, "AeroGPU BAR0 base must be non-zero");
     assert_eq!(
@@ -63,6 +75,26 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
         "AeroGPU BAR0 size drifted"
     );
     assert_eq!(bar0.base & (bar0.size - 1), 0, "BAR0 base must be aligned");
+    assert_eq!(
+        u64::from(bar0_reg & 0xFFFF_FFF0),
+        bar0.base,
+        "BAR0 base must match config-space BAR register"
+    );
+    assert_eq!(
+        bar0_reg & 0x1,
+        0,
+        "BAR0 must be a memory BAR (bit0=0), got 0x{bar0_reg:08x}"
+    );
+    assert_eq!(
+        bar0_reg & (0b11 << 1),
+        0,
+        "BAR0 must be a 32-bit BAR (bits2:1=00), got 0x{bar0_reg:08x}"
+    );
+    assert_eq!(
+        bar0_reg & (1 << 3),
+        0,
+        "BAR0 must be non-prefetchable (bit3=0), got 0x{bar0_reg:08x}"
+    );
 
     let window_end = PCI_MMIO_BASE + PCI_MMIO_SIZE;
     assert!(
@@ -88,6 +120,26 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
         "AeroGPU BAR1 size drifted"
     );
     assert_eq!(bar1.base & (bar1.size - 1), 0, "BAR1 base must be aligned");
+    assert_eq!(
+        u64::from(bar1_reg & 0xFFFF_FFF0),
+        bar1.base,
+        "BAR1 base must match config-space BAR register"
+    );
+    assert_eq!(
+        bar1_reg & 0x1,
+        0,
+        "BAR1 must be a memory BAR (bit0=0), got 0x{bar1_reg:08x}"
+    );
+    assert_eq!(
+        bar1_reg & (0b11 << 1),
+        0,
+        "BAR1 must be a 32-bit BAR (bits2:1=00), got 0x{bar1_reg:08x}"
+    );
+    assert_ne!(
+        bar1_reg & (1 << 3),
+        0,
+        "BAR1 must be prefetchable (bit3=1), got 0x{bar1_reg:08x}"
+    );
     assert!(
         bar1.base >= PCI_MMIO_BASE && bar1.end_exclusive() <= window_end,
         "AeroGPU BAR1 (0x{:x}..0x{:x}) must lie within PCI MMIO window (0x{:x}..0x{:x})",
