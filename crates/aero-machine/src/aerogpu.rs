@@ -1408,8 +1408,8 @@ impl AeroGpuMmioDevice {
 
         self.wddm_scanout_active = snap.wddm_scanout_active;
         // Note: `wddm_scanout_active` is a sticky latch. It may remain set even when
-        // `SCANOUT0_ENABLE=0` (visibility toggle), so snapshot restore must not clear it based on
-        // the enable bit.
+        // `SCANOUT0_ENABLE=0` (visibility toggle/blanking), so snapshot restore must not clear it
+        // based on the enable bit.
 
         self.cursor_enable = snap.cursor_enable != 0;
         self.cursor_x = snap.cursor_x as i32;
@@ -3900,8 +3900,8 @@ impl IoSnapshot for AeroGpuMmioDevice {
         self.next_vblank_ns = next_vblank_ns;
         self.wddm_scanout_active = wddm_scanout_active;
         // Note: `wddm_scanout_active` is a sticky latch. It may remain set even when
-        // `SCANOUT0_ENABLE=0` (visibility toggle), so snapshot restore must not clear it based on
-        // the enable bit.
+        // `SCANOUT0_ENABLE=0` (visibility toggle/blanking), so snapshot restore must not clear it
+        // based on the enable bit.
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             self.scanout0_dirty = scanout0_dirty;
