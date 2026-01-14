@@ -6343,6 +6343,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_header_rejects_invalid_header_value() {
+        // Newlines are not permitted in header values (would be header injection).
+        let err = parse_header("X-Test: ok\r\nInjected: bad").expect_err("expected parse failure");
+        assert!(
+            err.to_string()
+                .to_ascii_lowercase()
+                .contains("invalid header value"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn resolve_verify_manifest_key_prefers_explicit_manifest_key() -> Result<()> {
         let args = VerifyArgs {
             prefix: None,
