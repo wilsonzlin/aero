@@ -64,7 +64,10 @@ fuzz_target!(|data: &[u8]| {
     // 1) Parse the bytes as-is. This will exercise the DXBC extraction path when `data` happens to
     // start with "DXBC", and will otherwise attempt to treat the input as a raw DWORD token
     // stream.
-    if let Ok(shader) = aero_d3d9_shader::D3d9Shader::parse(data) {
+    // Note: we additionally cap the bytes passed to the parser to keep instruction iteration
+    // bounded even when libFuzzer is configured with a very large `-max_len`.
+    let bounded = &data[..data.len().min(MAX_TOKEN_STREAM_BYTES)];
+    if let Ok(shader) = aero_d3d9_shader::D3d9Shader::parse(bounded) {
         disassemble_bounded(shader);
     }
 
