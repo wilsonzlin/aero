@@ -420,6 +420,28 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     cull_verts[i].color[3] = 0.5f;
   }
 
+  // Quad (triangle strip order). Used for validating primitive topology reset
+  // across ClearState.
+  Vertex quad_verts[4];
+  quad_verts[0].pos[0] = -1.0f;
+  quad_verts[0].pos[1] = -1.0f;
+  quad_verts[0].pos[2] = 0.0f;
+  quad_verts[1].pos[0] = -1.0f;
+  quad_verts[1].pos[1] = 1.0f;
+  quad_verts[1].pos[2] = 0.0f;
+  quad_verts[2].pos[0] = 1.0f;
+  quad_verts[2].pos[1] = -1.0f;
+  quad_verts[2].pos[2] = 0.0f;
+  quad_verts[3].pos[0] = 1.0f;
+  quad_verts[3].pos[1] = 1.0f;
+  quad_verts[3].pos[2] = 0.0f;
+  for (int i = 0; i < 4; ++i) {
+    quad_verts[i].color[0] = 0.0f;
+    quad_verts[i].color[1] = 1.0f;
+    quad_verts[i].color[2] = 0.0f;
+    quad_verts[i].color[3] = 1.0f;
+  }
+
   Vertex depth_front_verts[3] = {};
   memcpy(depth_front_verts, fs_verts, sizeof(fs_verts));
   for (int i = 0; i < 3; ++i) {
@@ -462,6 +484,14 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
   hr = device->CreateBuffer(&vb_desc, &vb_init, vb_cull.put());
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateBuffer(vb_cull)", hr);
+  }
+
+  ComPtr<ID3D10Buffer> vb_quad;
+  vb_desc.ByteWidth = sizeof(quad_verts);
+  vb_init.pSysMem = quad_verts;
+  hr = device->CreateBuffer(&vb_desc, &vb_init, vb_quad.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(vb_quad)", hr);
   }
 
   ComPtr<ID3D10Buffer> vb_depth_clip;
@@ -1153,6 +1183,9 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     device->RSSetState(rs_scissor_no_depth_clip.get());
     const D3D10_RECT small_scissor = {16, 16, 48, 48};
     device->RSSetScissorRects(1, &small_scissor);
+    // Also set a non-default primitive topology so we can validate ClearState
+    // restores the D3D10 default (TRIANGLELIST).
+    device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
     device->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
     SetVb(vb_fs.get());
 
@@ -1172,7 +1205,6 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     device->OMSetRenderTargets(1, rtvs, NULL);
     device->RSSetViewports(1, &vp);
     device->IASetInputLayout(input_layout.get());
-    device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     SetVb(vb_fs.get());
     device->VSSetShader(vs.get());
     device->PSSetShader(ps.get());
@@ -1210,6 +1242,68 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
                            (unsigned)center_a,
                            (unsigned)corner_a,
                            (unsigned)kExpectedAlphaHalf);
+    }
+
+    // Verify default primitive topology. ClearState should reset IA topology to
+    // TRIANGLELIST; if TRIANGLESTRIP sticks, primitive assembly changes.
+    //
+    // With 4 vertices:
+    //  - TRIANGLELIST draws only the first triangle (v0,v1,v2), leaving the top-right corner red.
+    //  - TRIANGLESTRIP draws two triangles, covering the full quad (top-right becomes green).
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    SetVb(vb_quad.get());
+    device->Draw(4, 0);
+
+    device->OMSetRenderTargets(0, NULL, NULL);
+    device->CopyResource(staging.get(), rt_tex.get());
+    device->OMSetRenderTargets(1, rtvs, NULL);
+    device->Flush();
+
+    D3D10_MAPPED_TEXTURE2D topo_map;
+    ZeroMemory(&topo_map, sizeof(topo_map));
+    hr = staging->Map(0, D3D10_MAP_READ, 0, &topo_map);
+    if (FAILED(hr)) {
+      return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(staging) [ClearState topology]", hr, device.get());
+    }
+    int topo_map_rc = ValidateStagingMap("Map(staging) [ClearState topology]", topo_map);
+    if (topo_map_rc != 0) {
+      return topo_map_rc;
+    }
+    const uint32_t bottom_left =
+        aerogpu_test::ReadPixelBGRA(topo_map.pData, (int)topo_map.RowPitch, 5, kHeight - 5);
+    const uint32_t top_right =
+        aerogpu_test::ReadPixelBGRA(topo_map.pData, (int)topo_map.RowPitch, kWidth - 5, 5);
+    if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d10_1_rs_om_state_sanity_clear_state_topology.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, topo_map.pData, (int)topo_map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: ClearState-topology BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d10_1_rs_om_state_sanity_clear_state_topology.bin",
+                      topo_map.pData,
+                      topo_map.RowPitch,
+                      kWidth,
+                      kHeight);
+    }
+    staging->Unmap(0);
+
+    const uint32_t expected_red_opaque = 0xFFFF0000u;
+    const uint32_t expected_green_opaque = 0xFF00FF00u;
+    if ((bottom_left & 0x00FFFFFFu) != (expected_green_opaque & 0x00FFFFFFu) ||
+        (top_right & 0x00FFFFFFu) != (expected_red_opaque & 0x00FFFFFFu) ||
+        ((bottom_left >> 24) & 0xFFu) != 0xFFu || ((top_right >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail(
+          "ClearState topology reset failed: bottom_left=0x%08lX expected ~0x%08lX; top_right=0x%08lX expected ~0x%08lX",
+          (unsigned long)bottom_left,
+          (unsigned long)expected_green_opaque,
+          (unsigned long)top_right,
+          (unsigned long)expected_red_opaque);
     }
 
     // Default RS state is CullMode=BACK, FrontCCW=FALSE. The CCW triangle should
