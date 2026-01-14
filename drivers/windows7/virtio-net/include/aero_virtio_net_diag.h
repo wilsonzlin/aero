@@ -49,6 +49,7 @@
 #define AEROVNET_DIAG_FLAG_SURPRISE_REMOVED 0x00000004u
 #define AEROVNET_DIAG_FLAG_ADAPTER_RUNNING 0x00000008u
 #define AEROVNET_DIAG_FLAG_ADAPTER_PAUSED 0x00000010u
+#define AEROVNET_DIAG_FLAG_MSIX_VECTOR_PROGRAMMING_FAILED 0x00000020u
 
 #pragma pack(push, 1)
 typedef struct _AEROVNET_DIAG_INFO {
@@ -128,5 +129,20 @@ typedef struct _AEROVNET_DIAG_INFO {
     uint8_t CurrentMac[6];
     uint8_t LinkUp;
     uint8_t Reserved3;
+
+    /*
+     * Optional counters (best-effort, snapshot).
+     *
+     * These are intended for end-to-end diagnostics (e.g. "did any interrupts fire?")
+     * and may wrap.
+     */
+    uint32_t InterruptCountVector0;
+    uint32_t InterruptCountVector1;
+    uint32_t InterruptCountVector2;
+    uint32_t DpcCountVector0;
+    uint32_t DpcCountVector1;
+    uint32_t DpcCountVector2;
+    uint32_t RxBuffersDrained;
+    uint32_t TxBuffersDrained;
 } AEROVNET_DIAG_INFO;
 #pragma pack(pop)
