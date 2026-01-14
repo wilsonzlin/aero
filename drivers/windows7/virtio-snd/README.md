@@ -54,6 +54,12 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
 - **Device Manager → Properties → Resources**:
   - INTx usually shows a small IRQ number (often shared).
   - MSI/MSI-X often shows a very large IRQ number (e.g. `42949672xx`) and may show multiple IRQ entries.
+- **Kernel debug output (DbgPrintEx)**:
+  - During `START_DEVICE`, the driver prints an always-on line indicating which interrupt mode was selected:
+    - `virtiosnd: interrupt mode: MSI/MSI-X ...`
+    - `virtiosnd: interrupt mode: INTx`
+    - `virtiosnd: interrupt mode: polling-only`
+  - You can view this output with a kernel debugger or Sysinternals **DebugView** (Capture Kernel).
 - **`aero-virtio-selftest.exe` markers**:
   - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
   - The selftest also emits a `virtio-snd-irq|INFO|...` line indicating which interrupt mode Windows assigned:
