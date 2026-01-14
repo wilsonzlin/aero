@@ -1167,6 +1167,9 @@ jobs:
             echo ""
             echo "- Harness step: ${{ steps.harness.outcome || 'skipped' }}"
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "- Dry run: true (QEMU not launched)"
+            fi
             if [[ -n "${runner_line}" ]]; then
               echo "- ${runner_line}"
             fi

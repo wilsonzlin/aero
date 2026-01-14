@@ -29,6 +29,7 @@ class Win7VirtioHarnessWorkflowJobSummaryDryRunQemuCmdTests(unittest.TestCase):
         )
 
         # Ensure the summary prints the QEMU and harness commands on dry_run success too.
+        self.assertIn("- Dry run: true (QEMU not launched)", self.text)
         self.assertIn(
             'if [[ ( "${{ steps.harness.outcome }}" != "success" || "${{ inputs.dry_run }}" == "true" ) && -n "${harness_cmdline}" ]]; then',
             self.text,
