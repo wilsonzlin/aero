@@ -14,6 +14,15 @@ static void init_playback_info(VIRTIO_SND_PCM_INFO* Info, UCHAR ChannelsMin, UCH
     Info->channels_max = ChannelsMax;
 }
 
+static void init_capture_info(VIRTIO_SND_PCM_INFO* Info, UCHAR ChannelsMin, UCHAR ChannelsMax)
+{
+    RtlZeroMemory(Info, sizeof(*Info));
+    Info->stream_id = VIRTIO_SND_CAPTURE_STREAM_ID;
+    Info->direction = VIRTIO_SND_D_INPUT;
+    Info->channels_min = ChannelsMin;
+    Info->channels_max = ChannelsMax;
+}
+
 static void test_select_exact_contract_default(void)
 {
     VIRTIO_SND_PCM_INFO info;
@@ -29,6 +38,57 @@ static void test_select_exact_contract_default(void)
     TEST_ASSERT(cfg.Channels == 2);
     TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S16);
     TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+}
+
+static void test_select_float_only_48000(void)
+{
+    VIRTIO_SND_PCM_INFO info;
+    VIRTIOSND_PCM_CONFIG cfg;
+    NTSTATUS status;
+
+    init_playback_info(&info, 2, 2);
+    info.formats = VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_FLOAT);
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 2);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_FLOAT);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+}
+
+static void test_select_float_prefers_float_over_float64(void)
+{
+    VIRTIO_SND_PCM_INFO info;
+    VIRTIOSND_PCM_CONFIG cfg;
+    NTSTATUS status;
+
+    init_playback_info(&info, 2, 2);
+    info.formats = VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_FLOAT) | VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_FLOAT64);
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 2);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_FLOAT);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+}
+
+static void test_select_capture_float64_44100(void)
+{
+    VIRTIO_SND_PCM_INFO info;
+    VIRTIOSND_PCM_CONFIG cfg;
+    NTSTATUS status;
+
+    init_capture_info(&info, 1, 1);
+    info.formats = VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_FLOAT64);
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_44100;
+
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_CAPTURE_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 1);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_FLOAT64);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_44100);
 }
 
 static void test_select_s16_only_44100(void)
@@ -117,6 +177,9 @@ static void test_select_unsupported_formats_fail(void)
 int main(void)
 {
     test_select_exact_contract_default();
+    test_select_float_only_48000();
+    test_select_float_prefers_float_over_float64();
+    test_select_capture_float64_44100();
     test_select_s16_only_44100();
     test_select_48k_only_s24_s32();
     test_select_s16_only_96000();
