@@ -69,6 +69,8 @@ The AeroGPU D3D9 UMD supports both models. Command emission calls `ensure_cmd_sp
 - `pDmaBufferPrivateData` is present and at least `AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES`.
 
 When the UMD acquires transient buffers via `AllocateCb`, it returns them via `DeallocateCb` after submission (or at device teardown if the buffer was never submitted).
+Some runtimes size the returned buffers to the exact requested byte count, so when using `AllocateCb` the UMD requests at
+least one page (4KB) to avoid immediately reacquiring submit buffers after tracking allocations.
 
 ### Runtime variance: pDmaBuffer vs pCommandBuffer
 
@@ -482,7 +484,7 @@ This subset is validated via:
   `d3d9_shader_stage_interop`, `d3d9ex_ps_only_triangle`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
   `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,
-  `d3d9_validate_device_sanity`, `d3d9ex_stateblock_sanity`,
+  `d3d9_caps_smoke`, `d3d9_validate_device_sanity`, `d3d9ex_getters_sanity`, `d3d9_get_state_roundtrip`, `d3d9ex_stateblock_sanity`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`,
   `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
