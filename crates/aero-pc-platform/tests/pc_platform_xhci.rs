@@ -659,3 +659,103 @@ fn pc_platform_exposes_xhci_as_pci_mmio_and_routes_mmio_through_bar0() {
         "MMIO writes should not deconfigure BAR routing"
     );
 }
+
+#[test]
+fn pc_platform_xhci_run_stop_sets_usbsts_eint_and_triggers_intx() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Locate the MMIO BAR allocated by BIOS POST.
+    let bar0_raw = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    let bar0_base = u64::from(bar0_raw & 0xffff_fff0);
+    assert_ne!(bar0_base, 0, "BAR0 should be assigned by BIOS POST");
+
+    // Ensure we can observe the routed IRQ via the legacy PIC.
+    let expected_irq =
+        u8::try_from(pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA)).unwrap();
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        if expected_irq >= 8 {
+            interrupts.pic_mut().set_masked(2, false);
+        }
+        interrupts.pic_mut().set_masked(expected_irq, false);
+    }
+
+    // Enable Bus Mastering so the device can exercise a small DMA read on the first RUN edge.
+    let command = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command | 0x0004,
+    );
+
+    // Determine CAPLENGTH so we can find the operational register block.
+    let cap = pc.memory.read_u32(bar0_base);
+    let caplength = (cap & 0xFF) as u64;
+    assert_ne!(caplength, 0);
+
+    let usbcmd_addr = bar0_base + caplength;
+    let usbsts_addr = usbcmd_addr + 4;
+    let crcr_addr = usbcmd_addr + 0x18;
+
+    // Program CRCR to point at RAM so the DMA read is valid.
+    const CRCR_BASE: u64 = 0x10_000;
+    pc.memory.write_u32(CRCR_BASE, 0x1234_5678);
+    pc.memory.write_u64(crcr_addr, CRCR_BASE);
+
+    // Start the controller (USBCMD.RUN=1).
+    pc.memory.write_u32(usbcmd_addr, 1);
+
+    // Advance by 1ms so the device model can process the RUN edge and assert an interrupt.
+    pc.tick(1_000_000);
+
+    // The device should report an Event Interrupt in USBSTS and assert legacy INTx.
+    let usbsts = pc.memory.read_u32(usbsts_addr);
+    assert_ne!(
+        usbsts & (1 << 3),
+        0,
+        "USBSTS.EINT should be set after RUN triggers an event interrupt"
+    );
+
+    pc.poll_pci_intx_lines();
+    let vector = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("xHCI INTx should be pending after RUN triggers an event interrupt");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(vector)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, expected_irq);
+
+    // Consume + EOI so we can test the deassert path.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().acknowledge(vector);
+        interrupts.pic_mut().eoi(vector);
+    }
+
+    // Clear the interrupt (USBSTS is RW1C).
+    pc.memory.write_u32(usbsts_addr, 1 << 3);
+    assert_eq!(pc.memory.read_u32(usbsts_addr) & (1 << 3), 0);
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}

@@ -24,11 +24,22 @@ use aero_io_snapshot::io::state::{
 };
 use aero_platform::interrupts::msi::MsiTrigger;
 use aero_platform::memory::MemoryBus;
-use memory::MmioHandler;
+use memory::{MemoryBus as _, MmioHandler};
 
 use crate::irq::IrqLine;
 use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use crate::pci::{profile, MsiCapability, PciBarKind, PciConfigSpace, PciConfigSpaceState, PciDevice};
+
+// Minimal xHCI register offsets / bits used by the platform integration tests.
+//
+// We keep these local to avoid coupling `aero-devices` to the canonical xHCI register model living
+// in `aero-usb`.
+const REG_USBCMD: usize = 0x40;
+const REG_USBSTS: usize = 0x44;
+const REG_CRCR: usize = 0x58;
+
+const USBCMD_RUN: u32 = 1 << 0;
+const USBSTS_EINT: u32 = 1 << 3;
 
 /// Minimal IRQ line implementation that can be shared with an underlying controller.
 #[derive(Clone, Default)]
@@ -62,6 +73,7 @@ pub struct XhciPciDevice {
     irq: AtomicIrqLine,
     msi_target: Option<Box<dyn MsiTrigger>>,
     last_irq_level: bool,
+    run_edge_pending: bool,
 }
 
 impl XhciPciDevice {
@@ -88,13 +100,41 @@ impl XhciPciDevice {
             irq,
             msi_target: None,
             last_irq_level: false,
+            run_edge_pending: false,
         };
         dev.reset_mmio_image();
         dev
     }
 
+    fn mmio_u32(&self, offset: usize) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.mmio[offset..offset + 4]);
+        u32::from_le_bytes(buf)
+    }
+
+    fn mmio_u64(&self, offset: usize) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.mmio[offset..offset + 8]);
+        u64::from_le_bytes(buf)
+    }
+
+    fn set_mmio_u32(&mut self, offset: usize, value: u32) {
+        self.mmio[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn set_usbsts_bits(&mut self, bits: u32) {
+        let v = self.mmio_u32(REG_USBSTS) | bits;
+        self.set_mmio_u32(REG_USBSTS, v);
+    }
+
+    fn clear_usbsts_bits(&mut self, bits: u32) {
+        let v = self.mmio_u32(REG_USBSTS) & !bits;
+        self.set_mmio_u32(REG_USBSTS, v);
+    }
+
     fn reset_mmio_image(&mut self) {
         self.mmio.fill(0);
+        self.run_edge_pending = false;
 
         // xHCI capability registers (spec 5.3.3).
         //
@@ -173,12 +213,17 @@ impl XhciPciDevice {
     /// Platform integrations that model the full xHCI register set should call this when the xHCI
     /// interrupt condition becomes asserted (e.g. upon adding an event TRB).
     pub fn raise_event_interrupt(&mut self) {
+        // Expose the interrupt state to guests via the USBSTS.EINT latch. Real xHCI controllers
+        // have per-interrupter IMAN/IP modelling; this simplified device ties the interrupt source
+        // directly to the global USBSTS bit.
+        self.set_usbsts_bits(USBSTS_EINT);
         self.irq.set_level(true);
         self.service_interrupts();
     }
 
     /// Clears the internal interrupt condition.
     pub fn clear_event_interrupt(&mut self) {
+        self.clear_usbsts_bits(USBSTS_EINT);
         self.irq.set_level(false);
         self.service_interrupts();
     }
@@ -197,8 +242,29 @@ impl XhciPciDevice {
 
     /// Advance the device by 1ms. For now this is used primarily to service MSI edge delivery if
     /// the interrupt condition is toggled by an underlying controller via the shared IRQ line.
-    pub fn tick_1ms(&mut self, _mem: &mut MemoryBus) {
+    pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
+        if self.run_edge_pending {
+            self.run_edge_pending = false;
+
+            // If the controller is still running, perform a single bus-master DMA read and then
+            // surface an interrupt via USBSTS.EINT. This is intentionally minimal but gives tests
+            // something deterministic to observe.
+            if (self.mmio_u32(REG_USBCMD) & USBCMD_RUN) != 0 {
+                self.dma_on_run(mem);
+                self.raise_event_interrupt();
+            }
+        }
         self.service_interrupts();
+    }
+
+    fn dma_on_run(&mut self, mem: &mut MemoryBus) {
+        // Gate DMA on PCI Bus Master Enable (bit 2).
+        if (self.config.command() & (1 << 2)) == 0 {
+            return;
+        }
+
+        let paddr = self.mmio_u64(REG_CRCR);
+        let _ = mem.read_u32(paddr);
     }
 }
 
@@ -291,8 +357,45 @@ impl MmioHandler for XhciPciDevice {
             return;
         }
 
+        let usbcmd_range = REG_USBCMD..REG_USBCMD + 4;
+        let usbsts_range = REG_USBSTS..REG_USBSTS + 4;
+
+        let overlaps_usbcmd = offset_usize < usbcmd_range.end && end > usbcmd_range.start;
+        let overlaps_usbsts = offset_usize < usbsts_range.end && end > usbsts_range.start;
+
+        let prev_usbcmd = overlaps_usbcmd.then(|| self.mmio_u32(REG_USBCMD)).unwrap_or(0);
+        let prev_usbsts = overlaps_usbsts.then(|| self.mmio_u32(REG_USBSTS)).unwrap_or(0);
+
         let bytes = value.to_le_bytes();
-        self.mmio[offset_usize..end].copy_from_slice(&bytes[..size]);
+        for i in 0..size {
+            let idx = offset_usize + i;
+            let byte = bytes[i];
+
+            // USBSTS is RW1C: writing 1 clears the bit, writing 0 has no effect.
+            if (REG_USBSTS..REG_USBSTS + 4).contains(&idx) {
+                self.mmio[idx] &= !byte;
+            } else {
+                self.mmio[idx] = byte;
+            }
+        }
+
+        if overlaps_usbcmd {
+            let new_usbcmd = self.mmio_u32(REG_USBCMD);
+            let was_running = (prev_usbcmd & USBCMD_RUN) != 0;
+            let now_running = (new_usbcmd & USBCMD_RUN) != 0;
+            if !was_running && now_running {
+                self.run_edge_pending = true;
+            }
+        }
+
+        if overlaps_usbsts {
+            let new_usbsts = self.mmio_u32(REG_USBSTS);
+            let was_eint = (prev_usbsts & USBSTS_EINT) != 0;
+            let now_eint = (new_usbsts & USBSTS_EINT) != 0;
+            if was_eint && !now_eint {
+                self.clear_event_interrupt();
+            }
+        }
     }
 }
 
@@ -399,4 +502,3 @@ mod tests {
         );
     }
 }
-
