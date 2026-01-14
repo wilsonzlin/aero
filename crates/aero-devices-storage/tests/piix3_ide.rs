@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -1734,6 +1735,125 @@ fn atapi_read_10_dma_via_bus_master() {
         0,
         "BMIDE IRQ bit should clear via RW1C"
     );
+}
+
+#[test]
+fn atapi_dma_missing_prd_eot_sets_error_status_on_secondary_channel() {
+    let mut iso = MemIso::new(1);
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(13).wrapping_add(5))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // Malformed PRD: one segment large enough to cover the entire transfer but missing EOT.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 2048);
+    mem.write_u16(prd_addr + 6, 0x0000);
+
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // ACK the packet-phase interrupt so we can observe the DMA completion interrupt.
+    assert!(ide.borrow().controller.secondary_irq_pending());
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Start the secondary bus master engine, direction=read (device -> memory).
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    assert!(
+        ide.borrow().controller.secondary_irq_pending(),
+        "DMA error should raise a secondary IRQ"
+    );
+    assert!(
+        !ide.borrow().controller.primary_irq_pending(),
+        "DMA error on secondary should not raise a primary IRQ"
+    );
+
+    let bm_st_primary = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(
+        bm_st_primary & 0x07,
+        0,
+        "primary BMIDE status bits should be unaffected"
+    );
+
+    let bm_st_secondary = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(
+        bm_st_secondary & 0x07,
+        0x06,
+        "secondary BMIDE status should have IRQ+ERR set and ACTIVE clear"
+    );
+    assert_ne!(
+        bm_st_secondary & 0x20,
+        0,
+        "secondary BMIDE DMA capability bit for master should be set"
+    );
+
+    // ATAPI uses Sector Count as interrupt reason; errors should transition to status phase.
+    assert_eq!(
+        ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8,
+        0x03
+    );
+
+    // Use ALT_STATUS so we don't accidentally clear the interrupt.
+    let st = ioports.read(SECONDARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear after DMA failure");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear after DMA failure");
+    assert_ne!(st & 0x40, 0, "DRDY should be set after DMA failure");
+    assert_ne!(st & 0x01, 0, "ERR should be set after DMA failure");
+    assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    // Even though the PRD table is malformed, the DMA engine should still have written the data
+    // before detecting the missing EOT bit.
+    let mut out = vec![0u8; 2048];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+
+    // Secondary BMIDE status should be RW1C for IRQ/ERR bits.
+    ioports.write(bm_base + 8 + 2, 1, 0x02);
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04, "clearing ERR should preserve IRQ");
+    ioports.write(bm_base + 8 + 2, 1, 0x04);
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x00);
 }
 
 #[test]
