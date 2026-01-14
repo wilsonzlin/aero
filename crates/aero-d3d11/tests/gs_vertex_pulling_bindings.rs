@@ -110,6 +110,7 @@ fn gs_stage_bindings_do_not_conflict_with_vertex_pulling() {
         let pulling = VertexPullingLayout {
             d3d_slot_to_pulling_slot: BTreeMap::from([(0u32, 0u32)]),
             pulling_slot_to_d3d_slot: vec![0u32],
+            required_strides: vec![0u32],
             attributes: Vec::new(),
         };
         let prelude = pulling.wgsl_prelude();
