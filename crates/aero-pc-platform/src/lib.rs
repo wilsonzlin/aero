@@ -2743,6 +2743,22 @@ impl PcPlatform {
             }
         }
         nvme.process(&mut self.memory);
+
+        // Mirror device-managed MSI pending bits back into the canonical PCI config space so guest
+        // config reads observe them. The canonical config space cannot infer pending bits on its
+        // own because they are latched by the runtime NVMe device model.
+        let pending_bits = nvme
+            .config()
+            .capability::<MsiCapability>()
+            .map(|msi| msi.pending_bits())
+            .unwrap_or(0);
+        drop(nvme);
+
+        if let Some(cfg) = self.pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+            if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                msi.set_pending_bits(pending_bits);
+            }
+        }
     }
 
     pub fn process_ahci(&mut self) {
@@ -2768,29 +2784,39 @@ impl PcPlatform {
             (command, msi_state)
         };
 
-        // Keep the device's internal view of the PCI command register in sync so it can apply
-        // Bus Master and INTx disable gating when used standalone.
+        let bus_master_enabled = (command & (1 << 2)) != 0;
+
+        // Keep the device's internal view of PCI config state in sync so it can apply bus mastering
+        // gating and deliver MSI during `process()`.
+        let mut ahci = ahci.borrow_mut();
         {
-            let mut ahci = ahci.borrow_mut();
-            {
-                // Note: MSI pending bits are device-managed and must not be overwritten from the
-                // canonical PCI config space (which cannot observe them).
-                let cfg = ahci.config_mut();
-                cfg.set_command(command);
-                if let Some((enabled, addr, data, mask)) = msi_state {
-                    sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
-                }
+            // Note: MSI pending bits are device-managed and must not be overwritten from the
+            // canonical PCI config space (which cannot observe them).
+            let cfg = ahci.config_mut();
+            cfg.set_command(command);
+            if let Some((enabled, addr, data, mask)) = msi_state {
+                sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
             }
         }
 
-        // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).
-        let bus_master_enabled = (command & (1 << 2)) != 0;
-        if !bus_master_enabled {
-            return;
+        if bus_master_enabled {
+            ahci.process(&mut self.memory);
         }
 
-        let mut ahci = ahci.borrow_mut();
-        ahci.process(&mut self.memory);
+        // Mirror device-managed MSI pending bits back into the canonical PCI config space so guest
+        // config reads observe them.
+        let pending_bits = ahci
+            .config()
+            .capability::<MsiCapability>()
+            .map(|msi| msi.pending_bits())
+            .unwrap_or(0);
+        drop(ahci);
+
+        if let Some(cfg) = self.pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+            if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                msi.set_pending_bits(pending_bits);
+            }
+        }
     }
 
     pub fn process_ide(&mut self) {
@@ -3104,6 +3130,22 @@ impl PcPlatform {
             while ticks != 0 {
                 xhci.tick_1ms(&mut self.memory);
                 ticks -= 1;
+            }
+
+            // Mirror device-managed MSI pending bits back into the canonical PCI config space so
+            // guest config reads observe them. This is useful even when `delta_ns == 0` (sync-only
+            // tick) so callers can observe pending bits latched by the device model.
+            let pending_bits = xhci
+                .config()
+                .capability::<MsiCapability>()
+                .map(|msi| msi.pending_bits())
+                .unwrap_or(0);
+            drop(xhci);
+
+            if let Some(cfg) = self.pci_cfg.borrow_mut().bus_mut().device_config_mut(bdf) {
+                if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+                    msi.set_pending_bits(pending_bits);
+                }
             }
         }
     }

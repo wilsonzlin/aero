@@ -115,6 +115,10 @@ fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
     pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 1); // mask
 
     let ctrl = pci_cfg_read_u16(&mut pc, bdf, base + 0x02);
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(per_vector_masking, "test requires per-vector masking support");
+    let pending_off = if is_64bit { base + 0x14 } else { base + 0x10 };
     pci_cfg_write_u16(&mut pc, bdf, base + 0x02, ctrl | 1); // MSI enable
 
     // Sync the canonical MSI state into the device model before raising interrupts.
@@ -142,8 +146,8 @@ fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
     pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 0); // unmask
     pc.tick(0);
 
-    // Pending bit should still be set inside the device model even though the canonical PCI config
-    // space cannot observe it.
+    // Pending bit should still be set inside the device model and must be visible via the MSI
+    // Pending Bits register in PCI config space.
     assert!(
         xhci.borrow()
             .config()
@@ -151,11 +155,24 @@ fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
             .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
         "canonical PCI config sync must not clear device-managed MSI pending bits"
     );
+    assert_ne!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to be guest-visible via canonical PCI config space reads"
+    );
 
     // Re-drive the interrupt condition; the device model should re-trigger MSI due to the pending
     // bit even though there's no new rising edge.
     xhci.borrow_mut().raise_event_interrupt();
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
+
+    // Sync once more so the canonical PCI config space reflects the pending-bit clear.
+    pc.tick(0);
+    assert_eq!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
+    );
 }
 
 #[test]
