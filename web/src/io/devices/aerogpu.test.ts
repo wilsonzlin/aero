@@ -132,4 +132,50 @@ describe("io/devices/aerogpu cursor forwarding", () => {
     const g2 = snapshotCursorState(cursorWords).generation >>> 0;
     expect(g2).toBe(2);
   });
+
+  it("supports cursor surfaces in the VRAM aperture (including in-place updates)", () => {
+    const guest = new Uint8Array(4096);
+    const vram = new Uint8Array(4096);
+    const vramBasePaddr = 0xe000_0000;
+    const vramOffset = 0x100;
+    const gpa = (vramBasePaddr + vramOffset) >>> 0;
+
+    // One pixel, BGRA.
+    vram.set([0, 0, 255, 255], vramOffset);
+
+    const cursorWords = wrapCursorState(new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4), 0);
+    const dev = new AeroGpuPciDevice({
+      guestU8: guest,
+      guestLayout: mkLayout(guest.byteLength),
+      cursorStateWords: cursorWords,
+      vramU8: vram,
+      vramBasePaddr,
+      vramSizeBytes: vram.byteLength,
+    });
+
+    dev.debugProgramCursor({
+      enabled: true,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      format: AerogpuFormat.B8G8R8A8Unorm,
+      fbGpa: gpa,
+      pitchBytes: 4,
+    });
+    dev.tick(0);
+
+    const s1 = snapshotCursorState(cursorWords);
+    expect(s1.generation >>> 0).toBe(1);
+    expect(s1.enable >>> 0).toBe(1);
+    expect(s1.basePaddrLo >>> 0).toBe(gpa >>> 0);
+
+    // Mutate pixel in-place and wait for the poll interval to elapse.
+    vram.set([255, 0, 0, 255], vramOffset);
+    dev.tick(65);
+    const s2 = snapshotCursorState(cursorWords);
+    expect(s2.generation >>> 0).toBe(2);
+  });
 });

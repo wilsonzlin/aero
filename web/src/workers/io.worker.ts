@@ -4379,12 +4379,15 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       try {
         if (!guestLayout) throw new Error("guestLayout is not initialized");
         const cursorStateWords = views.cursorStateI32;
+        const hasVramForCursor = !!vramU8 && vramSizeBytes > 0;
+        const vramOpts = hasVramForCursor ? { vramU8: vramU8!, vramBasePaddr, vramSizeBytes } : {};
         aerogpuDevice = new AeroGpuPciDevice(
           cursorStateWords
-            ? { guestU8, guestLayout, cursorStateWords }
+            ? { guestU8, guestLayout, cursorStateWords, ...vramOpts }
             : {
                 guestU8,
                 guestLayout,
+                ...vramOpts,
                 sink: {
                   setImage: (width, height, rgba8) => {
                     ctx.postMessage(

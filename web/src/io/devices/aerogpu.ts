@@ -62,7 +62,8 @@ type CursorImagePlan = {
   pitchBytes: number;
   rowBytes: number;
   format: number;
-  baseRamOffset: number;
+  baseOffset: number;
+  source: "ram" | "vram";
   key: string;
 };
 
@@ -112,6 +113,9 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
   readonly #guestLayout: GuestRamLayout;
   readonly #sink: AeroGpuCursorSink | null;
   readonly #cursorStateWords: Int32Array | null;
+  readonly #vramU8: Uint8Array | null;
+  readonly #vramBasePaddr: number;
+  readonly #vramSizeBytes: number;
 
   // Cursor register file.
   #cursorEnable = false;
@@ -155,11 +159,25 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
      * Legacy sink fallback used when `cursorStateWords` is unavailable.
      */
     sink?: AeroGpuCursorSink;
+    /**
+     * Optional shared VRAM aperture (BAR1 backing).
+     *
+     * When provided, cursor surfaces whose `fbGpa` lives in `[vramBasePaddr, vramBasePaddr + vramSizeBytes)`
+     * can be hashed/converted for legacy cursor forwarding and generation bumping.
+     */
+    vramU8?: Uint8Array;
+    vramBasePaddr?: number;
+    vramSizeBytes?: number;
   }) {
     this.#guestU8 = opts.guestU8;
     this.#guestLayout = opts.guestLayout;
     this.#cursorStateWords = opts.cursorStateWords ?? null;
     this.#sink = opts.sink ?? null;
+    const vram = opts.vramU8 ?? null;
+    this.#vramU8 = vram;
+    this.#vramBasePaddr = (opts.vramBasePaddr ?? 0) >>> 0;
+    const reportedVramSizeBytes = (opts.vramSizeBytes ?? (vram?.byteLength ?? 0)) >>> 0;
+    this.#vramSizeBytes = vram ? Math.min(reportedVramSizeBytes, vram.byteLength) >>> 0 : 0;
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
@@ -453,7 +471,6 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     const fbGpa64 = this.#cursorFbGpa();
     if (fbGpa64 === 0n) return null;
     if (fbGpa64 > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    const fbGpa = Number(fbGpa64);
 
     // Validate GPA arithmetic does not wrap and that the guest range is backed by RAM.
     //
@@ -465,27 +482,46 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     if (endGpa < fbGpa64) return null;
     if (endGpa > 0xffff_ffff_ffff_ffffn) return null;
 
-    let baseRamOffset: number | null = null;
-    try {
-      if (!guestRangeInBounds(this.#guestLayout, fbGpa, Number(neededBytes))) return null;
-      baseRamOffset = guestPaddrToRamOffset(this.#guestLayout, fbGpa);
-    } catch {
-      return null;
+    // Resolve the cursor surface backing store: VRAM aperture or guest RAM.
+    let baseOffset: number | null = null;
+    let source: "ram" | "vram" | null = null;
+    const vram = this.#vramU8;
+    if (vram && this.#vramSizeBytes > 0) {
+      const base = BigInt(this.#vramBasePaddr >>> 0);
+      const end = base + BigInt(this.#vramSizeBytes >>> 0);
+      if (fbGpa64 >= base && endGpa <= end) {
+        const offBig = fbGpa64 - base;
+        if (offBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
+          baseOffset = Number(offBig);
+          source = "vram";
+        }
+      }
     }
-    if (baseRamOffset === null) return null;
+    if (baseOffset === null) {
+      const fbGpa = Number(fbGpa64);
+      try {
+        if (!guestRangeInBounds(this.#guestLayout, fbGpa, Number(neededBytes))) return null;
+        baseOffset = guestPaddrToRamOffset(this.#guestLayout, fbGpa);
+      } catch {
+        return null;
+      }
+      if (baseOffset === null) return null;
+      source = "ram";
+    }
 
     const key = `${fbGpa64.toString(16)}:${pitchBytes}:${width}x${height}:${this.#cursorFormat >>> 0}`;
-    return { width, height, pitchBytes, rowBytes, format: this.#cursorFormat >>> 0, baseRamOffset, key };
+    return { width, height, pitchBytes, rowBytes, format: this.#cursorFormat >>> 0, baseOffset, source, key };
   }
 
   #hashCursor(plan: CursorImagePlan): number {
-    const src = this.#guestU8;
+    const src = plan.source === "vram" ? this.#vramU8 : this.#guestU8;
+    if (!src) return 0;
     const fmt = cursorFormatKey(plan.format);
     if (!fmt) return 0;
 
     let h = FNV1A_INIT;
     for (let y = 0; y < plan.height; y += 1) {
-      const rowOff = plan.baseRamOffset + y * plan.pitchBytes;
+      const rowOff = plan.baseOffset + y * plan.pitchBytes;
       for (let x = 0; x < plan.width; x += 1) {
         const i = rowOff + x * 4;
         const b0 = src[i + 0] ?? 0;
@@ -530,14 +566,15 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
   }
 
   #fillCursor(plan: CursorImagePlan, out: Uint8Array): number {
-    const src = this.#guestU8;
+    const src = plan.source === "vram" ? this.#vramU8 : this.#guestU8;
+    if (!src) return 0;
     const fmt = cursorFormatKey(plan.format);
     if (!fmt) return 0;
 
     let h = FNV1A_INIT;
     let dstOff = 0;
     for (let y = 0; y < plan.height; y += 1) {
-      const rowOff = plan.baseRamOffset + y * plan.pitchBytes;
+      const rowOff = plan.baseOffset + y * plan.pitchBytes;
       for (let x = 0; x < plan.width; x += 1) {
         const i = rowOff + x * 4;
         const b0 = src[i + 0] ?? 0;
