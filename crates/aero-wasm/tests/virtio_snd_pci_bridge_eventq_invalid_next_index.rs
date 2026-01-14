@@ -117,7 +117,15 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_next_index_is_out
         VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
         qsz, // out-of-range next index
     );
-    write_desc(&guest, desc_table, 1, ok_buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        &guest,
+        desc_table,
+        1,
+        ok_buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 2);
@@ -156,4 +164,3 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_next_index_is_out
     guest.read_into(bad_buf, &mut bad);
     assert_eq!(&bad, &[0xAAu8; 8]);
 }
-

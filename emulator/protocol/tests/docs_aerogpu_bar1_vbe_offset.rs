@@ -59,12 +59,7 @@ fn docs_aerogpu_bar1_vbe_lfb_offset_matches_protocol_constant() {
         "docs/abi/aerogpu-pci-identity.md",
     ] {
         let path = repo_root().join(rel);
-        assert!(
-            path.is_file(),
-            "expected doc file at {}",
-            path.display()
-        );
+        assert!(path.is_file(), "expected doc file at {}", path.display());
         assert_doc_mentions_bar1_vbe_lfb_offset(&path);
     }
 }
-

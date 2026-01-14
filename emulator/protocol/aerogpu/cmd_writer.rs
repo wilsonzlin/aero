@@ -603,7 +603,10 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
-        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), reserved0);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdBindShaders, reserved0),
+            reserved0,
+        );
 
         // ABI extension payload: trailing `{gs, hs, ds}`.
         self.write_u32_at(base + base_struct_size, gs);

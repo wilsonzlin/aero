@@ -167,7 +167,10 @@ fn bind_shaders_gs_legacy_decoding_is_size_gated() {
 
     // Legacy 24-byte packet: reserved0 is GS.
     let (cmd, ex) = decode(&legacy);
-    assert_eq!(cmd.hdr.size_bytes as usize, AerogpuCmdBindShaders::SIZE_BYTES);
+    assert_eq!(
+        cmd.hdr.size_bytes as usize,
+        AerogpuCmdBindShaders::SIZE_BYTES
+    );
     assert_eq!(ex, None);
     assert_eq!(cmd.gs(), gs_mirror);
 

@@ -4578,9 +4578,7 @@ impl AerogpuD3d11Executor {
                     wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
                     wgpu::VertexStepMode::Instance => {
                         let step_rate = attr.instance_step_rate.max(1);
-                        format!(
-                            "((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)"
-                        )
+                        format!("((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)")
                     }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
@@ -6165,9 +6163,7 @@ impl AerogpuD3d11Executor {
                     wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
                     wgpu::VertexStepMode::Instance => {
                         let step_rate = attr.instance_step_rate.max(1);
-                        format!(
-                            "((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)"
-                        )
+                        format!("((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)")
                     }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
@@ -9484,32 +9480,31 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             // `&mut self` helpers later in this scope (e.g. `ensure_bound_resources_uploaded`), and
             // having the helper hold an immutable borrow of `self.device`/`self.queue` trips the
             // borrow checker.
-            let create_uniform_buffer =
-                |device: &wgpu::Device,
-                 queue: &wgpu::Queue,
-                 label: &'static str,
-                 bytes: &[u8]|
-                 -> (wgpu::Buffer, u64) {
-                    assert!(
-                        !bytes.is_empty(),
-                        "uniform buffer payload must be non-empty"
-                    );
-                    let size = bytes.len() as u64;
-                    // Ensure the backing buffer is large enough for the declared binding size and rounds
-                    // up to the uniform-buffer alignment. This keeps any future sub-allocation offsets
-                    // well-formed for `min_uniform_buffer_offset_alignment` requirements.
-                    let size = size.div_ceil(uniform_align).saturating_mul(uniform_align);
-                    let mut padded = vec![0u8; size as usize];
-                    padded[..bytes.len()].copy_from_slice(bytes);
-                    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(label),
-                        size,
-                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
-                    queue.write_buffer(&buffer, 0, &padded);
-                    (buffer, size)
-                  };
+            let create_uniform_buffer = |device: &wgpu::Device,
+                                         queue: &wgpu::Queue,
+                                         label: &'static str,
+                                         bytes: &[u8]|
+             -> (wgpu::Buffer, u64) {
+                assert!(
+                    !bytes.is_empty(),
+                    "uniform buffer payload must be non-empty"
+                );
+                let size = bytes.len() as u64;
+                // Ensure the backing buffer is large enough for the declared binding size and rounds
+                // up to the uniform-buffer alignment. This keeps any future sub-allocation offsets
+                // well-formed for `min_uniform_buffer_offset_alignment` requirements.
+                let size = size.div_ceil(uniform_align).saturating_mul(uniform_align);
+                let mut padded = vec![0u8; size as usize];
+                padded[..bytes.len()].copy_from_slice(bytes);
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                queue.write_buffer(&buffer, 0, &padded);
+                (buffer, size)
+            };
 
             let (params_buffer, _params_buffer_size) = create_uniform_buffer(
                 &self.device,
