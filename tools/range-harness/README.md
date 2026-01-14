@@ -40,6 +40,8 @@ node tools/range-harness/index.js --url <URL> --random --json > range-results.js
 - `--seed <N>`: seed for deterministic random ranges (only affects `--random`). Useful when you want to reproduce the same random plan across multiple runs.
 - `--unique`: avoid requesting the same chunk more than once per pass (only affects `--random`). Useful when you want a cleaner pass-1-warm / pass-2-hit signal for cache verification.
 - `--header "Name: value"`: extra request header (repeatable). Useful for authenticated endpoints.
+- `--accept-encoding <value>`: set the `Accept-Encoding` request header (default: `identity`). Use `--browser-accept-encoding` (or `--accept-encoding browser`) to send a browser-like value (`gzip, deflate, br, zstd`) and detect any CDN/object-store compression transforms.
+- `--browser-accept-encoding`: shorthand for `--accept-encoding browser`.
 - `--json`: emit machine-readable JSON (suppresses the per-request text output)
 - `--strict`: exit non-zero if any request fails correctness checks (bad `Content-Range`, `416`, etc)
 - `--random`: pick random aligned chunks

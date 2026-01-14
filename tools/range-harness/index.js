@@ -24,6 +24,11 @@ const DEFAULT_CHUNK_SIZE_BYTES = 1024 * 1024;
 const DEFAULT_COUNT = 32;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_PASSES = 1;
+const DEFAULT_ACCEPT_ENCODING = 'identity';
+// Browsers automatically send a non-identity Accept-Encoding (and scripts cannot override it).
+// Use this when you want to detect CDN/object-store compression behavior that would affect real
+// browser disk streaming clients.
+const BROWSER_ACCEPT_ENCODING = 'gzip, deflate, br, zstd';
 
 function printUsage(exitCode = 0) {
   const lines = [
@@ -38,6 +43,8 @@ function printUsage(exitCode = 0) {
     `  --passes <N>           Repeat the same range plan N times (default: ${DEFAULT_PASSES}; useful for cache hit verification)`,
     '  --seed <N>             Seed for deterministic random ranges (only affects --random)',
     '  --unique               Avoid requesting the same chunk multiple times per pass (only affects --random)',
+    `  --accept-encoding <v>  Set Accept-Encoding (default: ${DEFAULT_ACCEPT_ENCODING}; use "browser" for ${BROWSER_ACCEPT_ENCODING})`,
+    '  --browser-accept-encoding  Shorthand for --accept-encoding browser',
     '  --header <k:v>         Extra request header (repeatable), e.g. --header \"Authorization: Bearer ...\"',
     '  --json                 Emit machine-readable JSON (suppresses human-readable logs)',
     '  --strict               Exit non-zero if any request fails correctness checks',
@@ -92,6 +99,7 @@ function parseArgs(argv) {
     unique: false,
     json: false,
     strict: false,
+    acceptEncoding: DEFAULT_ACCEPT_ENCODING,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -112,6 +120,18 @@ function parseArgs(argv) {
       opts.seed = parseNonNegativeInt('--seed', argv[++i]);
     } else if (arg === '--unique') {
       opts.unique = true;
+    } else if (arg === '--accept-encoding') {
+      const raw = argv[++i];
+      if (raw == null) {
+        throw new Error('Missing value for --accept-encoding');
+      }
+      const trimmed = String(raw).trim();
+      if (!trimmed) {
+        throw new Error('Invalid --accept-encoding (empty)');
+      }
+      opts.acceptEncoding = trimmed.toLowerCase() === 'browser' ? BROWSER_ACCEPT_ENCODING : trimmed;
+    } else if (arg === '--browser-accept-encoding') {
+      opts.acceptEncoding = BROWSER_ACCEPT_ENCODING;
     } else if (arg === '--header') {
       const raw = argv[++i];
       if (raw == null) {
@@ -239,12 +259,12 @@ function makeMulberry32(seed) {
   };
 }
 
-function buildBaseHeaders(extraHeaders) {
+function buildBaseHeaders(extraHeaders, acceptEncoding) {
   return {
     ...(extraHeaders ?? {}),
-    // Force identity so we can compare bytes/throughput accurately and avoid
-    // any intermediary trying to apply compression to large binary blobs.
-    'Accept-Encoding': 'identity',
+    // Accept-Encoding is controlled by the UA in browsers. Default to identity for more stable
+    // throughput measurements, but allow browser-like values to detect transforms.
+    'Accept-Encoding': acceptEncoding,
   };
 }
 
@@ -316,8 +336,8 @@ async function readBodyAndCount(body, { byteLimit, abortController }) {
   return { bytes, abortedEarly };
 }
 
-async function getResourceInfo(url, extraHeaders) {
-  const headers = buildBaseHeaders(extraHeaders);
+async function getResourceInfo(url, extraHeaders, acceptEncoding) {
+  const headers = buildBaseHeaders(extraHeaders, acceptEncoding);
 
   let headRes;
   try {
@@ -530,10 +550,10 @@ async function main() {
   log(
     `Config: chunkSize=${formatBytes(opts.chunkSize)} count=${opts.count} concurrency=${opts.concurrency} passes=${opts.passes} seed=${
       opts.seed ?? '(random)'
-    } unique=${opts.unique} mode=${opts.mode}`,
+    } unique=${opts.unique} mode=${opts.mode} acceptEncoding=${JSON.stringify(opts.acceptEncoding)}`,
   );
 
-  const info = await getResourceInfo(opts.url, opts.headers);
+  const info = await getResourceInfo(opts.url, opts.headers, opts.acceptEncoding);
   log(`HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`);
   log(
     `Resource: size=${formatBytes(info.size)} (${info.size} bytes) etag=${info.etag ?? '(missing)'} accept-ranges=${
@@ -586,7 +606,7 @@ async function main() {
           response = await fetch(opts.url, {
             method: 'GET',
             headers: {
-              ...buildBaseHeaders(opts.headers),
+              ...buildBaseHeaders(opts.headers, opts.acceptEncoding),
               Range: rangeValue,
             },
             signal: controller.signal,
@@ -615,6 +635,7 @@ async function main() {
         const contentRangeHeader = response.headers.get('content-range');
         const xCache = response.headers.get('x-cache');
         const resContentLength = response.headers.get('content-length');
+        const contentEncoding = response.headers.get('content-encoding');
 
         // If the server ignored our Range and returns 200, avoid pulling an entire
         // disk image into memory by aborting after expectedLen bytes. This still
@@ -634,6 +655,11 @@ async function main() {
 
         const warnings = [];
         let ok = true;
+
+        if (contentEncoding && contentEncoding.trim().toLowerCase() !== 'identity') {
+          ok = false;
+          warnings.push(`unexpected Content-Encoding: ${contentEncoding}`);
+        }
 
         if (status === 206) {
           const parsed = parseContentRange(contentRangeHeader);
@@ -786,6 +812,7 @@ async function main() {
             unique: opts.unique,
             mode: opts.mode,
             headers: opts.headers,
+            acceptEncoding: opts.acceptEncoding,
           },
           head: {
             status: info.headStatus,
