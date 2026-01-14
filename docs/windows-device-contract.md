@@ -255,7 +255,8 @@ Examples (illustrative) INF model entries:
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
-; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
+; Note: this SUBSYS-qualified HWID is more specific, so it wins over the opt-in generic fallback (legacy alias INF) when both
+; packages are installed.
 %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
 
 ; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)

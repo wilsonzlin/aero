@@ -239,7 +239,7 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
 - Keyboard/mouse: `aero_virtio_input.inf`
   - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
   - Canonical INF is SUBSYS-only (no strict generic fallback entry).
-- Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet). This HWID is more specific than the generic fallback, so it will win when it matches.
+- Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet). This HWID is more specific than the opt-in strict generic fallback, so it will win when it matches.
 - Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
   - Intended only for compatibility with workflows/tools that still look for `virtio-input.inf`.
   - Adds an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
@@ -257,7 +257,7 @@ If you expect distinct keyboard/mouse names, ensure the subsystem IDs are presen
 If the device reports `REV_00`, Windows will not bind (the INFs are revision-gated). Ensure `x-pci-revision=0x01` is set.
 
 If you want tablet devices to bind with the tablet Device Manager name, ensure `aero_virtio_tablet.inf` is installed as well
-(it is more specific than the fallback match, so it wins when both are present).
+(it is more specific than the opt-in fallback match, so it wins when both are present).
 
 Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they overlap on the keyboard/mouse HWIDs, which
 can lead to confusing PnP driver selection.
