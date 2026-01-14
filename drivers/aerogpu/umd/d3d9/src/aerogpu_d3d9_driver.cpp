@@ -2882,6 +2882,10 @@ constexpr uint32_t kD3dFvfPositionMask = 0x0000400Eu;
 // D3DFVF_TEXCOORDSIZE* encodes 2 bits per texcoord set starting at bit 16.
 constexpr uint32_t kD3dFvfTexCoordSizeMask = 0xFFFF0000u;
 
+constexpr uint32_t fixedfunc_fvf_base(uint32_t fvf) {
+  return fvf & ~kD3dFvfTexCoordSizeMask;
+}
+
 constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
@@ -2908,19 +2912,11 @@ bool fixedfunc_fvf_supported(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
-  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
-  // Fixed-function fallback only supports default float2 texcoords for TEX1.
-  //
-  // D3DFVF_TEXCOORDSIZE* (bits 16+) can legally contain garbage for *unused*
-  // texcoord sets; ignore those by masking them out above. However, if TEX1 is
-  // present, the texcoord-0 size bits are semantically meaningful. Our fixed-
-  // function bring-up shaders and hardcoded internal declarations assume float2.
-  if ((base & kD3dFvfTex1) != 0) {
-    // Texcoord-0 size bits (two bits at offset 16): 0 -> float2.
-    if ((fvf & (0x3u << 16u)) != 0) {
-      return false;
-    }
-  }
+  // D3DFVF_TEXCOORDSIZE* affects vertex layout, but it does not change which
+  // fixed-function emulation shader variants are needed. Ignore those bits when
+  // classifying supported fixed-function FVFs (the input layout must still match
+  // the declared texcoord sizes).
+  const uint32_t base = fixedfunc_fvf_base(fvf);
   switch (base) {
     case kSupportedFvfXyzrhwDiffuse:
     case kSupportedFvfXyzrhwDiffuseTex1:
@@ -2937,14 +2933,14 @@ constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
-  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t base = fixedfunc_fvf_base(fvf);
   return (base == kSupportedFvfXyzrhwDiffuse) ||
          (base == kSupportedFvfXyzrhwDiffuseTex1) ||
          (base == kSupportedFvfXyzrhwTex1);
 }
 
 constexpr bool fixedfunc_fvf_has_normal(uint32_t fvf) {
-  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t base = fixedfunc_fvf_base(fvf);
   return (base == kSupportedFvfXyzNormalDiffuse) ||
          (base == kSupportedFvfXyzNormalDiffuseTex1);
 }
@@ -2953,7 +2949,7 @@ constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
   // Fixed-function draws that use non-pretransformed positions (D3DFVF_XYZ*) rely
   // on internal WVP vertex shaders that read a reserved high VS constant register
   // range (c240..c243).
-  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t base = fixedfunc_fvf_base(fvf);
   return (base == kSupportedFvfXyzDiffuse) ||
          (base == kSupportedFvfXyzDiffuseTex1) ||
          (base == kSupportedFvfXyzTex1) ||
@@ -3024,26 +3020,52 @@ constexpr uint32_t kFixedfuncLightingVec4Count = 10u;
 constexpr uint32_t kD3dTransformView = 2u;
 constexpr uint32_t kD3dTransformProjection = 3u;
 constexpr uint32_t kD3dTransformWorld0 = 256u;
+uint32_t fvf_decode_texcoord_size(uint32_t fvf, uint32_t tex_index);
 
-constexpr uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
-  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
+  const uint32_t base = fixedfunc_fvf_base(fvf);
   switch (base) {
     case kSupportedFvfXyzrhwDiffuse:
       return 20u;
-    case kSupportedFvfXyzrhwDiffuseTex1:
-      return 28u;
-    case kSupportedFvfXyzrhwTex1:
-      return 24u;
+    case kSupportedFvfXyzrhwDiffuseTex1: {
+      const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
+      if (dim < 1u || dim > 4u) {
+        return 0u;
+      }
+      return 16u + 4u + dim * 4u;
+    }
+    case kSupportedFvfXyzrhwTex1: {
+      const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
+      if (dim < 1u || dim > 4u) {
+        return 0u;
+      }
+      return 16u + dim * 4u;
+    }
     case kSupportedFvfXyzDiffuse:
       return 16u;
-    case kSupportedFvfXyzDiffuseTex1:
-      return 24u;
-    case kSupportedFvfXyzTex1:
-      return 20u;
+    case kSupportedFvfXyzDiffuseTex1: {
+      const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
+      if (dim < 1u || dim > 4u) {
+        return 0u;
+      }
+      return 12u + 4u + dim * 4u;
+    }
+    case kSupportedFvfXyzTex1: {
+      const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
+      if (dim < 1u || dim > 4u) {
+        return 0u;
+      }
+      return 12u + dim * 4u;
+    }
     case kSupportedFvfXyzNormalDiffuse:
       return 28u;
-    case kSupportedFvfXyzNormalDiffuseTex1:
-      return 36u;
+    case kSupportedFvfXyzNormalDiffuseTex1: {
+      const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
+      if (dim < 1u || dim > 4u) {
+        return 0u;
+      }
+      return 12u + 12u + 4u + dim * 4u;
+    }
     default:
       return 0u;
   }
@@ -5642,7 +5664,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return D3DERR_INVALIDCALL;
   }
 
-  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
   const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
 
@@ -5812,7 +5834,7 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
   }
   constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
   const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
-  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
       return dev->fixedfunc_vs;
@@ -13433,7 +13455,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
       // Full fixed-function path: select the cache slot based on the active FVF.
-      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
@@ -14047,112 +14069,149 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   // Other FVFs may be accepted and cached so GetFVF + state blocks behave
   // deterministically, but rendering is not guaranteed for unsupported formats.
   if (fixedfunc_supported_fvf(fvf)) {
-    const uint32_t fvf_base = fvf & ~kD3dFvfTexCoordSizeMask;
+    const uint32_t fvf_base = fixedfunc_fvf_base(fvf);
     VertexDecl* decl = nullptr;
-    switch (fvf_base) {
-      case kSupportedFvfXyzrhwDiffuse: {
-        if (!dev->fvf_vertex_decl) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-              {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
-        }
-        decl = dev->fvf_vertex_decl;
-        break;
+
+    // D3DFVF_TEXCOORDSIZE* encodes per-set texcoord sizes. Only the bits for
+    // active sets matter; unused sets may contain garbage. For fixed-function
+    // bring-up we only support TEX1, so only TEXCOORDSIZE for set 0 is relevant.
+    constexpr uint32_t kTex0SizeBitsMask = 0x3u << 16u;
+    const bool has_tex1 = (fvf_base & kD3dFvfTex1) != 0;
+    const uint32_t tex0_size_bits = has_tex1 ? (fvf & kTex0SizeBitsMask) : 0u;
+    const bool needs_custom_decl = (tex0_size_bits != 0u);
+
+    if (needs_custom_decl) {
+      const uint32_t layout_key = fvf_base | tex0_size_bits;
+      FvfVertexDeclTranslation translated{};
+      if (!try_translate_fvf_to_vertex_decl(layout_key, &translated)) {
+        return trace.ret(kD3DErrInvalidCall);
       }
-      case kSupportedFvfXyzrhwDiffuseTex1: {
-        if (!dev->fvf_vertex_decl_tex1) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-              {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-              {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+      const auto it = dev->fvf_vertex_decl_cache.find(layout_key);
+      if (it != dev->fvf_vertex_decl_cache.end()) {
+        decl = it->second;
+      } else {
+        constexpr size_t kMaxCachedFvfDecls = 256;
+        if (dev->fvf_vertex_decl_cache.size() >= kMaxCachedFvfDecls) {
+          static std::once_flag warn_once;
+          std::call_once(warn_once, [] {
+            logf("aerogpu-d3d9: FVF input-layout cache overflow; refusing to create more internal declarations\n");
+          });
+          return trace.ret(E_OUTOFMEMORY);
         }
-        decl = dev->fvf_vertex_decl_tex1;
-        break;
-      }
-      case kSupportedFvfXyzrhwTex1: {
-        if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
-              {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_tex1_nodiffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+
+        const uint32_t decl_size = translated.elem_count * static_cast<uint32_t>(sizeof(D3DVERTEXELEMENT9_COMPAT));
+        decl = create_internal_vertex_decl_locked(dev, translated.elems.data(), decl_size);
+        if (!decl) {
+          return trace.ret(E_OUTOFMEMORY);
         }
-        decl = dev->fvf_vertex_decl_tex1_nodiffuse;
-        break;
+        dev->fvf_vertex_decl_cache.emplace(layout_key, decl);
       }
-      case kSupportedFvfXyzDiffuse: {
-        if (!dev->fvf_vertex_decl_xyz_diffuse) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
-              {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_xyz_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+    } else {
+      switch (fvf_base) {
+        case kSupportedFvfXyzrhwDiffuse: {
+          if (!dev->fvf_vertex_decl) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+                {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl;
+          break;
         }
-        decl = dev->fvf_vertex_decl_xyz_diffuse;
-        break;
-      }
-      case kSupportedFvfXyzDiffuseTex1: {
-        if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
-              {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-              {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_xyz_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        case kSupportedFvfXyzrhwDiffuseTex1: {
+          if (!dev->fvf_vertex_decl_tex1) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+                {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+                {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_tex1;
+          break;
         }
-        decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
-        break;
-      }
-      case kSupportedFvfXyzTex1: {
-        if (!dev->fvf_vertex_decl_xyz_tex1) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
-              {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_xyz_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        case kSupportedFvfXyzrhwTex1: {
+          if (!dev->fvf_vertex_decl_tex1_nodiffuse) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+                {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_tex1_nodiffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_tex1_nodiffuse;
+          break;
         }
-        decl = dev->fvf_vertex_decl_xyz_tex1;
-        break;
-      }
-      case kSupportedFvfXyzNormalDiffuse: {
-        if (!dev->fvf_vertex_decl_xyz_normal_diffuse) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
-              {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
-              {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_xyz_normal_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        case kSupportedFvfXyzDiffuse: {
+          if (!dev->fvf_vertex_decl_xyz_diffuse) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_diffuse;
+          break;
         }
-        decl = dev->fvf_vertex_decl_xyz_normal_diffuse;
-        break;
-      }
-      case kSupportedFvfXyzNormalDiffuseTex1: {
-        if (!dev->fvf_vertex_decl_xyz_normal_diffuse_tex1) {
-          const D3DVERTEXELEMENT9_COMPAT elems[] = {
-              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
-              {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
-              {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
-              {0, 28, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
-              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
-          };
-          dev->fvf_vertex_decl_xyz_normal_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        case kSupportedFvfXyzDiffuseTex1: {
+          if (!dev->fvf_vertex_decl_xyz_diffuse_tex1) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+                {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
+          break;
         }
-        decl = dev->fvf_vertex_decl_xyz_normal_diffuse_tex1;
-        break;
+        case kSupportedFvfXyzTex1: {
+          if (!dev->fvf_vertex_decl_xyz_tex1) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_tex1;
+          break;
+        }
+        case kSupportedFvfXyzNormalDiffuse: {
+          if (!dev->fvf_vertex_decl_xyz_normal_diffuse) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+                {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_normal_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_normal_diffuse;
+          break;
+        }
+        case kSupportedFvfXyzNormalDiffuseTex1: {
+          if (!dev->fvf_vertex_decl_xyz_normal_diffuse_tex1) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+                {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+                {0, 28, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_normal_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_normal_diffuse_tex1;
+          break;
+        }
+        default:
+          break;
       }
-      default:
-        break;
     }
 
     if (!decl) {
@@ -15432,7 +15491,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       // VS-only shader-stage interop uses the stage0 fixed-function PS fallback.
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
@@ -15942,7 +16001,7 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
     if (dev->user_vs) {
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
@@ -26159,7 +26218,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
     if (dev->user_vs) {
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:

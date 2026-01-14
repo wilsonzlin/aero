@@ -15078,6 +15078,186 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1->clip: v preserved");
 }
 
+bool TestFvfXyzrhwTex1TexcoordSize1DrawPrimitiveUpEmitsFixedfuncCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+ 
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+ 
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+ 
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+ 
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+ 
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+ 
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+ 
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+ 
+  // Reset so the stream only contains commands relevant to this test.
+  dev->cmd.reset();
+ 
+  // Use a valid viewport so XYZRHW conversion doesn't divide by 0.
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+ 
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_TEX1 (0x100) | D3DFVF_TEXCOORDSIZE1(0) (0x30000).
+  constexpr uint32_t kTexcoordSize1Tex0 = 3u << 16u;
+  constexpr uint32_t kFvf = kD3dFvfXyzRhw | kD3dFvfTex1 | kTexcoordSize1Tex0; // 0x30104
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kFvf);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1|TEXCOORDSIZE1(0))")) {
+    return false;
+  }
+  if (!Check(dev->fvf == kFvf, "GetFVF returns TEXCOORDSIZE bits")) {
+    return false;
+  }
+ 
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    float u;
+  };
+ 
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, 0.0f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, 1.0f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, 0.5f};
+ 
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|TEX1|TEXCOORDSIZE1(0))")) {
+    return false;
+  }
+ 
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+ 
+  // Verify SetFVF synthesized a matching internal input layout (POSITIONT float4 + TEXCOORD0 float1).
+  const auto it = dev->fvf_vertex_decl_cache.find(kFvf);
+  if (!Check(it != dev->fvf_vertex_decl_cache.end(), "FVF decl cached for TEXCOORDSIZE1")) {
+    return false;
+  }
+  VertexDecl* decl = it->second;
+  if (!Check(decl != nullptr, "cached decl is non-null")) {
+    return false;
+  }
+  const D3DVERTEXELEMENT9_COMPAT expected_decl[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeFloat1, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+  if (!Check(decl->blob.size() == sizeof(expected_decl), "FVF TEXCOORDSIZE1 decl blob size")) {
+    return false;
+  }
+  if (!Check(std::memcmp(decl->blob.data(), expected_decl, sizeof(expected_decl)) == 0,
+             "FVF TEXCOORDSIZE1 decl blob matches expected layout")) {
+    return false;
+  }
+  if (!Check(CountCreateInputLayoutWithHandle(buf, len, decl->handle) == 1,
+             "SetFVF(XYZRHW|TEX1|TEXCOORDSIZE1(0)) creates internal input layout once")) {
+    return false;
+  }
+ 
+  // Validate that the XYZRHW vertices were converted to clip-space and that the
+  // extra TEXCOORD field is preserved by the conversion.
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "draw emitted")) {
+    return false;
+  }
+  const CmdLoc upload = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "upload_resource emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource size matches vertex data")) {
+    return false;
+  }
+ 
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  float u0 = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+ 
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW|TEXCOORDSIZE1->clip: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "XYZRHW|TEXCOORDSIZE1->clip: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZRHW|TEXCOORDSIZE1->clip: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "XYZRHW|TEXCOORDSIZE1->clip: w preserved")) {
+    return false;
+  }
+  return Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEXCOORDSIZE1->clip: u preserved");
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -34272,6 +34452,7 @@ int main() {
   RUN_TEST(TestSetVertexDeclDerivesFixedFunctionFvf);
   RUN_TEST(TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands);
+  RUN_TEST(TestFvfXyzrhwTex1TexcoordSize1DrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFixedfuncStage0TextureStageStateRebindsPixelShader);
   RUN_TEST(TestFixedfuncStage0ApplyStateBlockRebindsInteropPixelShader);
