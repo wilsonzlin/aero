@@ -247,6 +247,70 @@ describe("InputCapture buffer recycling", () => {
     });
   });
 
+  it("does not reuse recycled buffers of the wrong size after the internal queue grows", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const postedByteLengths: number[] = [];
+      const workerSideCopies: ArrayBuffer[] = [];
+      let capture: InputCapture;
+
+      const ioWorker = {
+        postMessage: (msg: any, transfer?: any[]) => {
+          postedByteLengths.push(msg.buffer.byteLength);
+          expect(msg.recycle).toBe(true);
+          expect(transfer).toContain(msg.buffer);
+          const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+          workerSideCopies.push(workerSide);
+        },
+      };
+
+      capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
+      (capture as any).hasFocus = true;
+
+      // Flush #1: default (smaller) buffer size.
+      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      capture.flushNow();
+      expect(postedByteLengths).toHaveLength(1);
+      expect(workerSideCopies).toHaveLength(1);
+      const smallSize = postedByteLengths[0]!;
+
+      // Recycle the small buffer after flush.
+      const workerSide0 = workerSideCopies[0]!;
+      const recycled0 = structuredClone(workerSide0, { transfer: [workerSide0] });
+      (capture as any).handleWorkerMessage({
+        data: { type: "in:input-batch-recycle", buffer: recycled0 },
+      } as unknown as MessageEvent<unknown>);
+
+      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      expect(buckets.get(smallSize)).toHaveLength(1);
+
+      // Push enough events to force `InputEventQueue.grow()` (larger buffer size), then flush.
+      for (let i = 0; i < 65; i++) {
+        (capture as any).handleKeyDown(keyDownEvent("KeyA", 1 + i));
+      }
+      capture.flushNow();
+      expect(postedByteLengths).toHaveLength(2);
+      const largeSize = postedByteLengths[1]!;
+      expect(largeSize).toBeGreaterThan(smallSize);
+
+      // Growing / allocating a larger buffer must not consume the smaller recycled buffer.
+      expect(buckets.get(smallSize)).toHaveLength(1);
+      expect(buckets.get(smallSize)?.[0]).toBe(recycled0);
+
+      // The next flush should use the larger backing buffer size, not the smaller recycled one.
+      (capture as any).handleKeyDown(keyDownEvent("KeyB", 999));
+      capture.flushNow();
+      expect(postedByteLengths).toHaveLength(3);
+      expect(postedByteLengths[2]).toBe(largeSize);
+    });
+  });
+
   it("reuses ArrayBuffers returned by the worker when recycleBuffers=true", () => {
     withStubbedDocument(() => {
       const canvas = {
