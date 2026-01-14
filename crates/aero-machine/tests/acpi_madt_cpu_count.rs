@@ -3,7 +3,6 @@ use firmware::acpi::{
     parse_header, parse_rsdp_v2, parse_rsdt_entries, parse_xsdt_entries, ACPI_HEADER_SIZE,
     RSDP_V2_SIZE,
 };
-use firmware::bios::EBDA_BASE;
 use pretty_assertions::assert_eq;
 
 const RAM_SIZE_BYTES: u64 = 16 * 1024 * 1024;
@@ -83,8 +82,9 @@ fn acpi_madt_enumerates_machine_cpu_count() {
     })
     .unwrap();
 
-    // Canonical BIOS places the RSDP in the EBDA.
-    let rsdp_addr = EBDA_BASE + 0x100;
+    // Use the firmware-published RSDP address so the test stays robust even if the BIOS moves
+    // where it places the pointer (EBDA vs other regions).
+    let rsdp_addr = m.acpi_rsdp_addr().expect("firmware should publish an RSDP");
     let rsdp_bytes = m.read_physical_bytes(rsdp_addr, RSDP_V2_SIZE);
     let rsdp = parse_rsdp_v2(&rsdp_bytes).expect("RSDP v2 should parse");
 

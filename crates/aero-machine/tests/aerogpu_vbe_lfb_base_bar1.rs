@@ -92,7 +92,7 @@ fn aerogpu_bios_vbe_reports_lfb_base_inside_bar1_for_0x115_and_0x160() {
         let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
             .expect("BAR1 base + VBE_LFB_OFFSET should fit in u32");
         assert_eq!(phys_base_ptr, expected);
-        assert_eq!(phys_base_ptr, m.vbe_lfb_base());
+        assert_eq!(u64::from(phys_base_ptr), m.vbe_lfb_base());
 
         // Also sanity-check reported resolution matches the requested mode.
         let got_w = m.read_physical_u16(0x0500 + 18);

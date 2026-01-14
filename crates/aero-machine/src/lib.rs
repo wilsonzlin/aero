@@ -518,7 +518,6 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
-    AeroGpuRequiresPcPlatform,
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -547,9 +546,6 @@ impl fmt::Display for MachineError {
                 f,
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
             ),
-            MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
-            }
             MachineError::AhciRequiresPcPlatform => {
                 write!(f, "enable_ahci requires enable_pc_platform=true")
             }
@@ -4107,9 +4103,14 @@ impl Machine {
 
     /// Return the BIOS-reported VBE linear framebuffer (LFB) base address.
     ///
-    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`).
-    pub fn vbe_lfb_base(&self) -> u32 {
-        self.bios.video.vbe.lfb_base
+    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`) and is
+    /// the canonical way for host-side tests/glue code to discover where the firmware expects the
+    /// framebuffer to live.
+    ///
+    /// Note: When VGA is disabled, the firmware keeps the LFB inside conventional RAM so BIOS-only
+    /// helpers do not scribble over the canonical PCI MMIO window.
+    pub fn vbe_lfb_base(&self) -> u64 {
+        u64::from(self.bios.video.vbe.lfb_base)
     }
 
     /// Install an external scanout descriptor that should receive legacy VGA/VBE mode updates.
@@ -12242,7 +12243,7 @@ mod tests {
         );
         assert_eq!(
             dst.vbe_lfb_base(),
-            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
         );
     }
 
