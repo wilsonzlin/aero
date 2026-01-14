@@ -654,34 +654,7 @@ struct OpenResourceAllocInfoAccess<OpenT, false, true> {
 };
 
 static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res, bool write = false) {
-  if (!dev || !res) {
-    return;
-  }
-  if (dev->wddm_submit_allocation_list_oom) {
-    return;
-  }
-  if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
-    return;
-  }
-
-  const uint32_t handle = res->wddm_allocation_handle;
-  for (auto& entry : dev->wddm_submit_allocation_handles) {
-    if (entry.allocation_handle == handle) {
-      if (write) {
-        entry.write = 1;
-      }
-      return;
-    }
-  }
-  WddmSubmitAllocation entry{};
-  entry.allocation_handle = handle;
-  entry.write = write ? 1 : 0;
-  try {
-    dev->wddm_submit_allocation_handles.push_back(entry);
-  } catch (...) {
-    dev->wddm_submit_allocation_list_oom = true;
-    SetError(dev, E_OUTOFMEMORY);
-  }
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(dev, res, write, [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 struct WddmAllocListCheckpoint {

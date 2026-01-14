@@ -125,6 +125,84 @@ bool TestInternalDxgiFormatCompatHelpers() {
   return true;
 }
 
+bool TestTrackWddmAllocForSubmitLockedHelper() {
+  using aerogpu::d3d10_11::WddmSubmitAllocation;
+
+  struct TestResource {
+    uint32_t backing_alloc_id = 0;
+    uint32_t wddm_allocation_handle = 0;
+  };
+
+  struct TestDevice {
+    std::vector<WddmSubmitAllocation> wddm_submit_allocation_handles;
+    bool wddm_submit_allocation_list_oom = false;
+  };
+
+  TestDevice dev{};
+  TestResource ignored_host{};
+  ignored_host.backing_alloc_id = 0;
+  ignored_host.wddm_allocation_handle = 123;
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &ignored_host, /*write=*/false, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles.empty(), "host-owned resources are ignored")) {
+    return false;
+  }
+
+  TestResource ignored_no_handle{};
+  ignored_no_handle.backing_alloc_id = 1;
+  ignored_no_handle.wddm_allocation_handle = 0;
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &ignored_no_handle, /*write=*/false, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles.empty(), "resources without WDDM allocation handle are ignored")) {
+    return false;
+  }
+
+  TestResource res_a{};
+  res_a.backing_alloc_id = 1;
+  res_a.wddm_allocation_handle = 100;
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &res_a, /*write=*/false, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles.size() == 1, "TrackWddmAllocForSubmitLocked appends new entries")) {
+    return false;
+  }
+  if (!Check(dev.wddm_submit_allocation_handles[0].allocation_handle == 100, "allocation_handle recorded")) {
+    return false;
+  }
+  if (!Check(dev.wddm_submit_allocation_handles[0].write == 0, "read-only usage does not set write flag")) {
+    return false;
+  }
+
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &res_a, /*write=*/true, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles.size() == 1, "duplicate allocations are de-duplicated")) {
+    return false;
+  }
+  if (!Check(dev.wddm_submit_allocation_handles[0].write == 1, "write usage upgrades write flag")) {
+    return false;
+  }
+
+  // Once upgraded to write, later read-only tracking must not downgrade.
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &res_a, /*write=*/false, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles[0].write == 1, "write flag is sticky once upgraded")) {
+    return false;
+  }
+
+  TestResource res_b{};
+  res_b.backing_alloc_id = 2;
+  res_b.wddm_allocation_handle = 200;
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &res_b, /*write=*/false, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles.size() == 2, "multiple allocations are tracked")) {
+    return false;
+  }
+
+  dev.wddm_submit_allocation_list_oom = true;
+  TestResource res_c{};
+  res_c.backing_alloc_id = 3;
+  res_c.wddm_allocation_handle = 300;
+  aerogpu::d3d10_11::TrackWddmAllocForSubmitLocked(&dev, &res_c, /*write=*/false, [](HRESULT) {});
+  if (!Check(dev.wddm_submit_allocation_handles.size() == 2, "oom poison flag prevents further allocation tracking")) {
+    return false;
+  }
+
+  return true;
+}
+
 size_t AlignUp(size_t v, size_t a) {
   return (v + (a - 1)) & ~(a - 1);
 }
@@ -9294,6 +9372,7 @@ bool TestDrawAutoEncodesNoopDraw() {
 int main() {
   bool ok = true;
   ok &= TestInternalDxgiFormatCompatHelpers();
+  ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
   ok &= TestHostOwnedBufferUnmapUploads();
