@@ -15,6 +15,7 @@ use aero_jit_x86::tier2::ir::{
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
+use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_jit_x86::tier2::wasm_codegen::{
     Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
 };
@@ -769,6 +770,107 @@ fn tier2_trace_wasm_matches_interpreter_on_sar() {
     let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
     assert_eq!(got_gpr, interp_state.cpu.gpr);
     assert_eq!(got_rip, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
+fn tier2_trace_wasm_matches_interpreter_on_shift_flags_used_by_guard() {
+    // mov al, 0x81
+    // shl al, 1
+    // jc taken
+    // mov al, 0
+    // int3
+    // taken:
+    // mov al, 1
+    // int3
+    //
+    // For the given input, SHL sets CF=1, so JC must be taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x81, // mov al, 0x81
+        0xC0, 0xE0, 0x01, // shl al, 1
+        0x72, 0x03, // jc +3 (to mov al, 1)
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let mut bus = SimpleBus::new(64);
+    bus.load(0, CODE);
+    let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
+
+    let entry = func.entry;
+    let taken = func.find_block_by_rip(10).expect("taken block");
+    let not_taken = func.find_block_by_rip(7).expect("not taken block");
+
+    let mut profile = ProfileData::default();
+    profile.block_counts.insert(entry, 10_000);
+    profile.block_counts.insert(taken, 10_000);
+    profile.block_counts.insert(not_taken, 1);
+    profile.edge_counts.insert((entry, taken), 9_000);
+    profile.edge_counts.insert((entry, not_taken), 1_000);
+
+    let page_versions = PageVersionTracker::default();
+    page_versions.set_version(0, 1);
+
+    let cfg = TraceConfig {
+        hot_block_threshold: 1000,
+        max_blocks: 8,
+        max_instrs: 256,
+    };
+
+    let builder = TraceBuilder::new(&func, &profile, &page_versions, cfg);
+    let trace = builder.build_from(entry).expect("trace");
+    assert_eq!(trace.ir.kind, TraceKind::Linear);
+
+    let mut trace_ir = trace.ir.clone();
+    let opt = optimize_trace(&mut trace_ir, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace_ir, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+
+    let env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 1);
+
+    let mut interp_state = init_state.clone();
+    let expected = run_trace_with_cached_regs(
+        &trace_ir,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        1,
+        &opt.regalloc.cached,
+    );
+    assert_eq!(expected.exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(interp_state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+
+    let (mut store, memory, trace_fn) = instantiate_trace(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[1]);
+
+    let got_rip = trace_fn
+        .call(&mut store, (CPU_PTR, JIT_CTX_PTR))
+        .unwrap() as u64;
+    assert_eq!(got_rip, interp_state.cpu.rip);
+
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip_in_cpu, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip_in_cpu, interp_state.cpu.rip);
     assert_eq!(got_rflags, interp_state.cpu.rflags);
 }
 
