@@ -8867,16 +8867,11 @@ try {
         -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|" `
         -SerialLogPath $SerialLogPath
       if ($null -ne $line) {
-        if ($line -match "reason=([^|
-]+)") { $reason = $Matches[1] }
-        if ($line -match "down_sec=([^|
-]+)") { $downSec = $Matches[1] }
-        if ($line -match "up_sec=([^|
-]+)") { $upSec = $Matches[1] }
-        if ($line -match "cfg_intr_down_delta=([^|
-]+)") { $cfgDownDelta = $Matches[1] }
-        if ($line -match "cfg_intr_up_delta=([^|
-]+)") { $cfgUpDelta = $Matches[1] }
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)down_sec=([^|\r\n]+)") { $downSec = $Matches[1] }
+        if ($line -match "(?:^|\|)up_sec=([^|\r\n]+)") { $upSec = $Matches[1] }
+        if ($line -match "(?:^|\|)cfg_intr_down_delta=([^|\r\n]+)") { $cfgDownDelta = $Matches[1] }
+        if ($line -match "(?:^|\|)cfg_intr_up_delta=([^|\r\n]+)") { $cfgUpDelta = $Matches[1] }
       }
       $detailsParts = @()
       if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
