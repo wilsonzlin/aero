@@ -354,26 +354,27 @@ The AeroGPU D3D9 UMD includes a small **fixed-function fallback path** used by D
 Supported FVF combinations (bring-up subset):
 
 - **Pre-transformed** (`POSITIONT`):
-  - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
+  - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
+  - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZRHW | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white)
 - **Untransformed** (`POSITION`):
-  - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
-  - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white)
-  - Note: in the current bring-up implementation, `D3DFVF_XYZ | D3DFVF_DIFFUSE` is treated as **clip-space passthrough** (no WVP transform); see limitations below.
-  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_TEX1` use a fixed-function VS that applies the combined world/view/projection (WVP) matrix; see limitations below.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
+    - Note: in the current bring-up implementation, `D3DFVF_XYZ | D3DFVF_DIFFUSE` is treated as **clip-space passthrough** (no WVP transform); see limitations below.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform)
+  - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform)
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
   `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
   `kSupportedFvfXyzTex1`
-- `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW variants only**)
+- `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
-    (XYZRHW/XYZ with optional `DIFFUSE` and optional `TEX1`), so the draw path can bind a known input layout.
+    (see supported combinations above), so the draw path can bind a known input layout.
   - `device_set_vertex_decl()` pattern-matches common decl layouts and sets an implied `dev->fvf` so the fixed-function
     fallback path can activate even when `SetFVF` is never invoked.
 
@@ -388,10 +389,13 @@ Implementation notes (bring-up):
 - For `POSITIONT`/`XYZRHW` vertices, the fallback path converts screen-space `XYZRHW` to clip-space on the CPU
   (`convert_xyzrhw_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`) and then draws using a tiny built-in
   `vs_2_0`/`ps_2_0` pair.
+- When `D3DFVF_DIFFUSE` is omitted (supported `*TEX1` subsets), the fixed-function fallback uses internal vertex shaders
+  that supply a constant **opaque white** diffuse color.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses a fixed-function VS that applies the combined world/view/projection matrix
-  (uploaded into a reserved VS constant range by the UMD).
+- For `D3DFVF_XYZ | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the
+  combined world/view/projection matrix (uploaded into a reserved VS constant range by the UMD). When `DIFFUSE` is absent,
+  the VS uses opaque white.
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
@@ -406,9 +410,10 @@ Limitations (bring-up):
   transforms are applied). In other words, `XYZ` positions are treated as already in clip-space; transform state is cached
   for `Get*`/state blocks but is not consumed by this fixed-function path yet.
   (Task doc: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
-- For `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the combined world/view/projection matrix
-  (built from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD). Fixed-function
-  lighting/material is still not implemented.
+- For `D3DFVF_XYZ | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the
+  combined world/view/projection matrix (built from cached `SetTransform` state and uploaded into a reserved VS constant
+  range by the UMD). When `DIFFUSE` is absent, the VS uses opaque white. Fixed-function lighting/material is still not
+  implemented.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
   `d3d9ex_fixedfunc_texture_stage_state`):
