@@ -1207,6 +1207,54 @@ fn ata_pio_write_sectors_ext_uses_lba48_hob_bytes() {
 }
 
 #[test]
+fn ata_taskfile_hob_reads_expose_high_bytes_for_lba48_registers() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select master, LBA mode.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    // Program 48-bit task file values by writing the high byte first, then the low byte.
+    // Sector Count: high=0x12, low=0x34.
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x12);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x34);
+    // LBA0..2: high bytes 0x56/0x9A/0xDE, low bytes 0x78/0xBC/0xF0.
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0x56);
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0x78);
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0x9A);
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0xBC);
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0xDE);
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0xF0);
+
+    // With HOB clear, reads should return the low bytes.
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 2, 1) as u8, 0x34);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 3, 1) as u8, 0x78);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 4, 1) as u8, 0xBC);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 5, 1) as u8, 0xF0);
+
+    // Set HOB and verify reads now return the high bytes.
+    io.write(PRIMARY_PORTS.ctrl_base, 1, 0x80);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 2, 1) as u8, 0x12);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 3, 1) as u8, 0x56);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 4, 1) as u8, 0x9A);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 5, 1) as u8, 0xDE);
+
+    // Clearing HOB should restore low-byte reads.
+    io.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 2, 1) as u8, 0x34);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 4, 1) as u8, 0xBC);
+}
+
+#[test]
 fn ata_dma_write_out_of_bounds_sets_bus_master_and_ata_error() {
     let capacity = SECTOR_SIZE as u64; // 1 sector
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
@@ -1720,6 +1768,188 @@ fn ata_bus_master_dma_ext_read_write_256_sectors_roundtrip() {
     let mut out = vec![0u8; byte_len];
     mem.read_physical(read_buf, &mut out);
     assert_eq!(out, pattern);
+}
+
+#[test]
+fn ata_dma_ext_read_uses_lba48_hob_bytes() {
+    // Pick an LBA that requires the HOB LBA1 byte (bits 32..39) so we catch truncation bugs.
+    let lba: u64 = 0x01_00_00_00_00;
+
+    let expected: Vec<u8> = (0..SECTOR_SIZE as u32)
+        .map(|i| (i as u8).wrapping_mul(3).wrapping_add(0x11))
+        .collect();
+
+    let read_called = Arc::new(AtomicBool::new(false));
+
+    #[derive(Debug)]
+    struct AssertingReadDisk {
+        capacity_bytes: u64,
+        expected_offset: u64,
+        expected: Vec<u8>,
+        called: Arc<AtomicBool>,
+    }
+
+    impl VirtualDisk for AssertingReadDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.capacity_bytes
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<()> {
+            assert_eq!(offset, self.expected_offset);
+            assert_eq!(buf.len(), self.expected.len());
+            buf.copy_from_slice(&self.expected);
+            self.called.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> Result<()> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    let disk = AssertingReadDisk {
+        capacity_bytes: (lba + 16) * SECTOR_SIZE as u64,
+        expected_offset: lba * SECTOR_SIZE as u64,
+        expected: expected.clone(),
+        called: read_called.clone(),
+    };
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // READ DMA EXT (LBA48) for 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x00); // sector count high
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x01); // sector count low
+
+    let b0 = (lba & 0xFF) as u8;
+    let b1 = ((lba >> 8) & 0xFF) as u8;
+    let b2 = ((lba >> 16) & 0xFF) as u8;
+    let b3 = ((lba >> 24) & 0xFF) as u8;
+    let b4 = ((lba >> 32) & 0xFF) as u8;
+    let b5 = ((lba >> 40) & 0xFF) as u8;
+
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, b3 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, b0 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, b4 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, b1 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, b5 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, b2 as u32);
+
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x25); // READ DMA EXT
+
+    // Start bus master (direction = to memory).
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    assert!(read_called.load(Ordering::SeqCst));
+
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
+fn ata_dma_ext_write_uses_lba48_hob_bytes() {
+    // Use an LBA that requires HOB LBA1 so we catch truncation to 28-bit parameters.
+    let lba: u64 = 0x01_00_00_00_00;
+    let shared = Arc::new(Mutex::new(RecordingDisk::new(lba + 16)));
+    let disk = SharedRecordingDisk(shared.clone());
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Fill one sector of source data.
+    let payload: Vec<u8> = (0..SECTOR_SIZE as u32)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(3))
+        .collect();
+    mem.write_physical(dma_buf, &payload);
+
+    // WRITE DMA EXT (LBA48) for 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x00); // sector count high
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x01); // sector count low
+
+    let b0 = (lba & 0xFF) as u8;
+    let b1 = ((lba >> 8) & 0xFF) as u8;
+    let b2 = ((lba >> 16) & 0xFF) as u8;
+    let b3 = ((lba >> 24) & 0xFF) as u8;
+    let b4 = ((lba >> 32) & 0xFF) as u8;
+    let b5 = ((lba >> 40) & 0xFF) as u8;
+
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, b3 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, b0 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, b4 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, b1 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, b5 as u32);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, b2 as u32);
+
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x35); // WRITE DMA EXT
+
+    // Start bus master (direction = from memory).
+    ioports.write(bm_base, 1, 0x01);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    let inner = shared.lock().unwrap();
+    assert_eq!(inner.last_write_lba, Some(lba));
+    assert_eq!(inner.last_write_len, SECTOR_SIZE);
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
 }
 
 #[test]
