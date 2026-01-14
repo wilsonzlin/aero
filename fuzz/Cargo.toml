@@ -46,6 +46,7 @@ path = "../crates/aero-gpu"
 
 [dependencies.aero-dxbc]
 path = "../crates/aero-dxbc"
+features = ["test-utils"]
 
 [dependencies.aero-d3d11]
 path = "../crates/aero-d3d11"

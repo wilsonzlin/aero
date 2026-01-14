@@ -160,6 +160,14 @@ fuzz_target!(|data: &[u8]| {
     // paths quickly (while still treating the raw input as hostile below).
     let patched = build_patched_shader(data);
     decode_build_verify(&patched);
+    // Also wrap the patched SM2/3 token stream in a minimal DXBC container to exercise the DXBC
+    // parsing and shader-bytecode extraction entrypoints in `aero_d3d9::dxbc`.
+    let patched_dxbc =
+        aero_dxbc::test_utils::build_container(&[(aero_dxbc::FourCC(*b"SHDR"), patched.as_slice())]);
+    let _ = aero_d3d9::shader::parse(&patched_dxbc);
+    if let Ok(bytes) = aero_d3d9::dxbc::extract_shader_bytecode(&patched_dxbc) {
+        decode_build_verify(bytes);
+    }
 
     // Pre-filter absurd `chunk_count` values to avoid worst-case O(n) DXBC parsing time and
     // unbounded intermediate allocations.
