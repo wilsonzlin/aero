@@ -57,11 +57,11 @@ Artifacts collected:
 - per-test JSON outputs (dir):
  - per-test stdout/stderr logs (dir):
  - dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
- - failing test --dump outputs (BMP/bin) (dir):
- - dbgctl last-submission cmd dump (`--dump-last-cmd`) outputs (for example: `cmd.bin` + `cmd.bin.alloc_table.bin` + `cmd.bin.txt`; or for multi-dump: `cmd_*.bin` + siblings) (when available):
- - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
- - KMD snapshots: aerogpu_dbgctl.exe --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
-  Notes:
+  - failing test --dump outputs (BMP/bin) (dir):
+  - dbgctl last-submission cmd dump (`--dump-last-submit` / `--dump-last-cmd`) outputs (for example: `cmd.bin` + `cmd.bin.alloc_table.bin` + `cmd.bin.txt`; or for multi-dump: `cmd_*.bin` + siblings) (when available):
+  - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
+  - KMD snapshots: aerogpu_dbgctl.exe --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
+   Notes:
 ```
 
 `--dbgctl=...` is optional. In packaged installs, `aerogpu_dbgctl.exe` is shipped under the AeroGPU driver directory:
