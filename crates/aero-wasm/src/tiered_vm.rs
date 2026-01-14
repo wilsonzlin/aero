@@ -2126,9 +2126,7 @@ export function installAeroTieredMmioTestShims() {
     fn wasm_tiered_vm_writes_code_version_table_ptr_and_len_into_abi() {
         // No MMIO/JIT shims required: we only construct the VM and inspect its ABI buffer.
 
-        let mut guest = vec![0u8; 0x2000];
-        let guest_base = guest.as_mut_ptr() as u32;
-        let guest_size = guest.len() as u32;
+        let (guest_base, guest_size) = alloc_guest_region_bytes(0x2000);
 
         let vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
 
@@ -2160,9 +2158,7 @@ export function installAeroTieredMmioTestShims() {
     fn wasm_tiered_vm_code_version_table_updates_snapshot_meta() {
         // No MMIO/JIT shims required: we only use page-version tracking + meta snapshotting.
 
-        let mut guest = vec![0u8; 0x4000];
-        let guest_base = guest.as_mut_ptr() as u32;
-        let guest_size = guest.len() as u32;
+        let (guest_base, guest_size) = alloc_guest_region_bytes(0x4000);
 
         let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
 
@@ -2603,9 +2599,7 @@ export function installAeroTieredMmioTestShims() {
 
     #[wasm_bindgen_test]
     fn wasm_tiered_vm_wires_code_version_table_into_jit_abi_buffer() {
-        let mut guest = vec![0u8; 0x4000];
-        let guest_base = guest.as_mut_ptr() as u32;
-        let guest_size = guest.len() as u32;
+        let (guest_base, guest_size) = alloc_guest_region_bytes(0x4000);
 
         let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
 
