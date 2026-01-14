@@ -16,6 +16,7 @@ let originalSelf: unknown = undefined;
 afterEach(() => {
   restoreOpfs?.();
   restoreOpfs = null;
+  probeSize = 1024 * 512;
 
   if (!hadOriginalSelf) {
     Reflect.deleteProperty(globalThis as unknown as { self?: unknown }, "self");
