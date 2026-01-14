@@ -2840,6 +2840,122 @@ bool TestApplyStateBlockShaderConstIAndBEmitCommands() {
   return true;
 }
 
+bool TestApplyStateBlockSamplerStateCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetSamplerState != nullptr, "pfnSetSamplerState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  constexpr uint32_t kStage0 = 0u;
+  constexpr uint32_t kStateMagFilter = 5u; // D3DSAMP_MAGFILTER
+  constexpr uint32_t kValueA = 1u;
+  constexpr uint32_t kValueB = 0u;
+
+  // Seed sampler state A so a redundant SetSamplerState inside Begin/EndStateBlock
+  // still needs to be recorded into the state block (DDI semantics).
+  HRESULT hr = cleanup.device_funcs.pfnSetSamplerState(cleanup.hDevice, kStage0, kStateMagFilter, kValueA);
+  if (!Check(hr == S_OK, "SetSamplerState seed A")) {
+    return false;
+  }
+
+  // Record a redundant SetSamplerState(A). This should be captured into the
+  // state block even if the driver skips the redundant command emission.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(sampler state redundant)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetSamplerState(cleanup.hDevice, kStage0, kStateMagFilter, kValueA);
+  if (!Check(hr == S_OK, "SetSamplerState redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(sampler state redundant)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change the sampler state to B so ApplyStateBlock must restore A.
+  hr = cleanup.device_funcs.pfnSetSamplerState(cleanup.hDevice, kStage0, kStateMagFilter, kValueB);
+  if (!Check(hr == S_OK, "SetSamplerState change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(sampler state redundant)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->sampler_states[kStage0][kStateMagFilter] == kValueA, "ApplyStateBlock restores sampler state A")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock sampler state)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_sampler = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SAMPLER_STATE)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_sampler_state)) {
+      continue;
+    }
+    const auto* ss = reinterpret_cast<const aerogpu_cmd_set_sampler_state*>(hdr);
+    if (ss->shader_stage == AEROGPU_SHADER_STAGE_PIXEL &&
+        ss->slot == kStage0 &&
+        ss->state == kStateMagFilter &&
+        ss->value == kValueA) {
+      saw_sampler = true;
+      break;
+    }
+  }
+  if (!Check(saw_sampler, "ApplyStateBlock emits SET_SAMPLER_STATE with expected values")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -21121,6 +21237,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockShaderConstIAndBEmitCommands()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockSamplerStateCapturesRedundantSet()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
