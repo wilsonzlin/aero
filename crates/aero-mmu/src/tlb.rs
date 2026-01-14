@@ -170,6 +170,22 @@ impl TlbSet {
 
     #[inline]
     fn lookup(&self, vaddr: u64, pcid: u16, page_sizes: TlbLookupPageSizes) -> Option<&TlbEntry> {
+        // Common case: TLB contains only 4KiB entries (no large pages have been
+        // inserted since the last full flush), so we can skip page-size probes
+        // and the page-size compare in the way loop.
+        if !self.has_1g && !self.has_2m && !self.has_4m {
+            let vbase = vaddr & !0xfff;
+            let tag = vaddr >> 12;
+            let set = set_index(tag);
+            for way in 0..WAYS {
+                let entry = &self.entries[set][way];
+                if entry.vbase == vbase && entry.matches_pcid(pcid) {
+                    return Some(entry);
+                }
+            }
+            return None;
+        }
+
         macro_rules! lookup_page_size {
             ($page_size:expr) => {{
                 let page_size = $page_size;
