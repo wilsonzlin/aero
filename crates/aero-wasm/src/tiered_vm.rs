@@ -1188,6 +1188,9 @@ impl WasmTieredVm {
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
         let guest_size_u64 =
             crate::validate_shared_guest_ram_layout("WasmTieredVm", guest_base, guest_size)?;
+        if guest_size_u64 == 0 {
+            return Err(js_error("WasmTieredVm.new: guest_size must be non-zero"));
+        }
 
         let bus = WasmBus::new(guest_base, guest_size_u64);
 

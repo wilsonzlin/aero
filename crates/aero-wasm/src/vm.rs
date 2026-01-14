@@ -347,6 +347,9 @@ impl WasmVm {
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
         let guest_size_u64 =
             crate::validate_shared_guest_ram_layout("WasmVm", guest_base, guest_size)?;
+        if guest_size_u64 == 0 {
+            return Err(js_error("WasmVm.new: guest_size must be non-zero"));
+        }
 
         let cpu = CpuCore::new(CpuMode::Real);
         let assist = AssistContext::default();
