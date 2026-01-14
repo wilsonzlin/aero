@@ -67,6 +67,9 @@ For convenience when scraping CI logs, the harness may also emit stable host-sid
 do not affect PASS/FAIL):
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|PASS/FAIL/INFO|write_ok=...|write_bytes=...|write_mbps=...|flush_ok=...|read_ok=...|read_bytes=...|read_mbps=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=...|new_bytes=...|qmp_cmd=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=...|old_bytes=...|new_bytes=...|drive_id=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|PASS/FAIL/SKIP/READY|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...`
