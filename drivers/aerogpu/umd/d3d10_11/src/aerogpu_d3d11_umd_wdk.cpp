@@ -2990,6 +2990,165 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       total_bytes = updated_total_bytes;
     }
 
+    // Query the runtime/KMD-selected pitch via a LockCb round-trip so our
+    // protocol-visible layout matches the actual mapped allocation.
+    //
+    // If the reported pitch implies a larger mip0 layout than the allocation
+    // size, fail cleanly rather than silently overlapping subsequent
+    // subresources.
+    if (dev->runtime_device && res->wddm_allocation_handle != 0) {
+      const auto* wddm_cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+      const auto* device_cb = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
+      enum class LockCbPath {
+        Wddm,
+        Device,
+      };
+      LockCbPath lock_path{};
+      if (wddm_cb && wddm_cb->pfnLockCb && wddm_cb->pfnUnlockCb) {
+        lock_path = LockCbPath::Wddm;
+      } else if (device_cb && device_cb->pfnLockCb && device_cb->pfnUnlockCb) {
+        lock_path = LockCbPath::Device;
+      } else {
+        // LockCb/UnlockCb are optional; if we cannot query, fall back to the
+        // pitch we already negotiated via private allocation metadata.
+        goto SkipLockPitchQuery;
+      }
+
+      {
+        const auto lock_for_query = [&](D3DDDICB_LOCK* args) -> HRESULT {
+          if (!args) {
+            return E_INVALIDARG;
+          }
+          if (lock_path == LockCbPath::Wddm) {
+            return CallCbMaybeHandle(wddm_cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+          }
+          if (lock_path == LockCbPath::Device) {
+            return CallCbMaybeHandle(device_cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+          }
+          return E_NOTIMPL;
+        };
+
+        const auto unlock_query = [&](D3DDDICB_UNLOCK* args) -> HRESULT {
+          if (!args) {
+            return E_INVALIDARG;
+          }
+          if (lock_path == LockCbPath::Wddm) {
+            return CallCbMaybeHandle(wddm_cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+          }
+          if (lock_path == LockCbPath::Device) {
+            return CallCbMaybeHandle(device_cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), args);
+          }
+          return E_NOTIMPL;
+        };
+
+        D3DDDICB_LOCK lock_args = {};
+        lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+        __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+          lock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+          lock_args.SubResourceIndex = 0;
+        }
+        InitLockForWrite(&lock_args);
+
+        HRESULT lock_hr = lock_for_query(&lock_args);
+        if (SUCCEEDED(lock_hr) && lock_args.pData) {
+          uint32_t lock_pitch = 0;
+          __if_exists(D3DDDICB_LOCK::Pitch) {
+            lock_pitch = lock_args.Pitch;
+          }
+
+          if (lock_pitch != 0 && lock_pitch != res->row_pitch_bytes) {
+            LogTexture2DPitchMismatchRateLimited("CreateResource11",
+                                                 res,
+                                                 /*subresource=*/0,
+                                                 res->row_pitch_bytes,
+                                                 lock_pitch);
+
+            if (lock_pitch < row_bytes) {
+              D3DDDICB_UNLOCK unlock_args = {};
+              unlock_args.hAllocation = lock_args.hAllocation;
+              __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+                unlock_args.SubresourceIndex = 0;
+              }
+              __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+                unlock_args.SubResourceIndex = 0;
+              }
+              (void)unlock_query(&unlock_args);
+              SetError(dev, E_INVALIDARG);
+              deallocate_if_needed();
+              res->~Resource();
+              return E_INVALIDARG;
+            }
+
+            std::vector<Texture2DSubresourceLayout> updated_layouts;
+            uint64_t updated_total_bytes = 0;
+            if (!build_texture2d_subresource_layouts(aer_fmt,
+                                                     res->width,
+                                                     res->height,
+                                                     res->mip_levels,
+                                                     res->array_size,
+                                                     lock_pitch,
+                                                     &updated_layouts,
+                                                     &updated_total_bytes)) {
+              D3DDDICB_UNLOCK unlock_args = {};
+              unlock_args.hAllocation = lock_args.hAllocation;
+              __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+                unlock_args.SubresourceIndex = 0;
+              }
+              __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+                unlock_args.SubResourceIndex = 0;
+              }
+              (void)unlock_query(&unlock_args);
+              SetError(dev, E_FAIL);
+              deallocate_if_needed();
+              res->~Resource();
+              return E_FAIL;
+            }
+
+            uint64_t backing_size = total_bytes;
+            if (alloc_priv.size_bytes != 0) {
+              backing_size = static_cast<uint64_t>(alloc_priv.size_bytes);
+            } else if (pDesc->pAllocationInfo) {
+              backing_size = static_cast<uint64_t>(pDesc->pAllocationInfo[0].Size);
+            }
+            if (updated_total_bytes == 0 || updated_total_bytes > backing_size || updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+              D3DDDICB_UNLOCK unlock_args = {};
+              unlock_args.hAllocation = lock_args.hAllocation;
+              __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+                unlock_args.SubresourceIndex = 0;
+              }
+              __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+                unlock_args.SubResourceIndex = 0;
+              }
+              (void)unlock_query(&unlock_args);
+              SetError(dev, E_INVALIDARG);
+              deallocate_if_needed();
+              res->~Resource();
+              return E_INVALIDARG;
+            }
+
+            res->row_pitch_bytes = lock_pitch;
+            res->tex2d_subresources = std::move(updated_layouts);
+            total_bytes = updated_total_bytes;
+          }
+        }
+
+        if (SUCCEEDED(lock_hr)) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock_query(&unlock_args);
+        }
+      }
+    }
+  SkipLockPitchQuery:;
+
     try {
       res->storage.resize(static_cast<size_t>(total_bytes));
     } catch (...) {
