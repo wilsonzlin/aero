@@ -516,30 +516,35 @@ impl UhciRuntime {
     }
 
     pub fn webhid_drain_output_reports(&mut self) -> JsValue {
-        let out = Array::new();
+        // Keep the hot poll path allocation-free when idle by only allocating the JS array once we
+        // observe the first pending report.
+        let mut out: Option<Array> = None;
         for (&device_id, state) in self.webhid_devices.iter_mut() {
-            loop {
-                let report = state.dev.pop_output_report();
-                let Some(report) = report else { break };
-                out.push(&webhid_output_report_to_js(device_id, report));
+            while let Some(report) = state.dev.pop_output_report() {
+                let arr = out.get_or_insert_with(Array::new);
+                arr.push(&webhid_output_report_to_js(device_id, report));
             }
         }
-        out.into()
+        out.map(|arr| arr.into()).unwrap_or(JsValue::NULL)
     }
 
     /// Drain pending HID GET_REPORT(Feature) passthrough requests from all attached WebHID-backed
     /// passthrough devices.
     ///
     /// Returns `Array<{ deviceId, requestId, reportId }>` where `requestId` is an opaque u32 that
-    /// must be echoed back into [`UhciRuntime::webhid_push_feature_report_result`].
+    /// must be echoed back into [`UhciRuntime::webhid_push_feature_report_result`]. Returns `null`
+    /// when idle to keep worker-side polling allocation-free.
     pub fn webhid_drain_feature_report_requests(&mut self) -> JsValue {
-        let out = Array::new();
+        // Keep the hot poll path allocation-free when idle by returning `null` until we observe the
+        // first queued request.
+        let mut out: Option<Array> = None;
         for (&device_id, state) in self.webhid_devices.iter_mut() {
             while let Some(req) = state.dev.pop_feature_report_request() {
-                out.push(&webhid_feature_report_request_to_js(device_id, req));
+                let arr = out.get_or_insert_with(Array::new);
+                arr.push(&webhid_feature_report_request_to_js(device_id, req));
             }
         }
-        out.into()
+        out.map(|arr| arr.into()).unwrap_or(JsValue::NULL)
     }
 
     /// Complete a pending HID GET_REPORT(Feature) passthrough request.

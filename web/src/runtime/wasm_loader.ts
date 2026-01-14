@@ -1184,13 +1184,13 @@ export interface WasmApi {
         webhid_attach_hub?(guestPath: number[], portCount?: number): void;
         webhid_detach(deviceId: number): void;
         webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
-        webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;
+        webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> | null;
         /**
          * Drain pending `GET_REPORT (Feature)` requests issued by the guest.
          *
          * Optional for older WASM builds.
          */
-        webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }>;
+        webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }> | null;
         webhid_complete_feature_report_request?(deviceId: number, requestId: number, reportId: number, data: Uint8Array): void;
         webhid_fail_feature_report_request?(deviceId: number, requestId: number, reportId: number): void;
 

@@ -33,9 +33,9 @@ export type UhciRuntimeHidApi = {
 
   webhid_detach(deviceId: number): void;
   webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
-  webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;
+  webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> | null;
 
-  webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }>;
+  webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }> | null;
   webhid_push_feature_report_result?(
     deviceId: number,
     requestId: number,
@@ -145,7 +145,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   }
 
   poll(): void {
-    let drained: Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> = [];
+    let drained: Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> | null = null;
     try {
       drained = this.#uhci.webhid_drain_output_reports();
     } catch {
@@ -170,7 +170,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
     // The underlying runtime drain is destructive; only attempt it when supported.
     if (typeof drainFeatureRequests !== "function") return;
 
-    let drainedFeature: Array<{ deviceId: number; requestId: number; reportId: number }> = [];
+    let drainedFeature: Array<{ deviceId: number; requestId: number; reportId: number }> | null = null;
     try {
       drainedFeature = drainFeatureRequests.call(this.#uhci);
     } catch {
