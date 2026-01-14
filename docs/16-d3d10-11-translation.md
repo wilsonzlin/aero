@@ -836,6 +836,13 @@ For GS emulation (and for any fixed-function logic that depends on IA primitive 
 expansion pipeline needs a deterministic way to map an input `primitive_id` into the **vertex shader
 invocations** that form that primitive.
 
+Note: in this section, `primitive_id` is the **per-instance** primitive index in
+`0..input_prim_count`. If the implementation flattens instancing into a single `prim_id` dimension
+(`prim_id in 0..(input_prim_count * instance_count)`), derive:
+
+- `instance_id = prim_id / input_prim_count`
+- `primitive_id = prim_id % input_prim_count`
+
 Key point: the expansion path models the input stream in terms of **vertex invocations**
 (`input_vertex_invocations`), not unique vertices. There is no vertex cache: for indexed draws the
 VS may run multiple times for the same underlying vertex index (legal in D3D; results should be
