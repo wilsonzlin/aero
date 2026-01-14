@@ -1526,8 +1526,43 @@ pub fn generate_wgsl_with_options(
             wgsl.push('\n');
 
             let mut indent = 1usize;
+            let mut skip_ops = BTreeSet::<usize>::new();
             let mut i = 0usize;
             while i < ir.ops.len() {
+                if skip_ops.remove(&i) {
+                    i += 1;
+                    continue;
+                }
+
+                // If the `else` block begins with a uniformity-sensitive op, hoist it out of the
+                // branch by emitting it as a conditional `select` assignment *before* the `if`.
+                //
+                // This handles patterns like:
+                //   if (...) { ... } else { texld ...; ... }
+                if matches!(ir.ops[i].op, Op::If | Op::Ifc) {
+                    if let Some(cond) =
+                        if_condition_expr(&ir.ops[i], &ir.const_defs_f32, const_base)
+                    {
+                        if let Some(else_op_idx) = find_else_first_op_index(&ir.ops, i) {
+                            if matches!(ir.ops[else_op_idx].op, Op::Texld | Op::Dsx | Op::Dsy) {
+                                let pred = format!("!({cond})");
+                                if try_emit_uniform_control_flow_predicated_op_assignment(
+                                    &mut wgsl,
+                                    indent,
+                                    &pred,
+                                    &ir.ops[else_op_idx],
+                                    &ir.const_defs_f32,
+                                    const_base,
+                                    ir.version.stage,
+                                    &ir.sampler_texture_types,
+                                ) {
+                                    skip_ops.insert(else_op_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if i + 2 < ir.ops.len()
                     && matches!(ir.ops[i].op, Op::If | Op::Ifc)
                     && matches!(ir.ops[i + 2].op, Op::EndIf)
@@ -1758,6 +1793,29 @@ fn if_condition_expr(
         }
         _ => None,
     }
+}
+
+fn find_else_first_op_index(ops: &[Instruction], if_index: usize) -> Option<usize> {
+    // Walk forward until we find the matching `else` (if any) for the `if` at `if_index`.
+    // Track nested `if` depth so we ignore inner `else` tokens.
+    let mut depth = 0usize;
+    for (idx, inst) in ops.iter().enumerate().skip(if_index + 1) {
+        match inst.op {
+            Op::If | Op::Ifc => depth += 1,
+            Op::EndIf => {
+                if depth == 0 {
+                    // Reached the end of the current `if` without seeing an `else`.
+                    return None;
+                }
+                depth -= 1;
+            }
+            Op::Else if depth == 0 => {
+                return ops.get(idx + 1).map(|_| idx + 1);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
