@@ -92,7 +92,8 @@ Note: VBE LFB routing depends on `enable_pc_platform`:
 - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
   PCI function (currently `00:0c.0`, `1234:1111`) and routes the VBE LFB through its BAR0 inside the ACPI-reported
   PCI MMIO window / BAR router (BAR base assigned by BIOS POST / the PCI allocator, and may be
-  relocated when other PCI devices are present).
+  relocated when other PCI devices are present). The machine mirrors the assigned BAR base into the
+  BIOS VBE `PhysBasePtr` and the VGA device model so guests observe a coherent LFB base.
 
 Code pointers:
 

@@ -308,7 +308,13 @@ Important ABI notes:
 - `MachineConfig::enable_vga` and `MachineConfig::enable_aerogpu` are mutually exclusive.
 - The canonical **AeroGPU PCI identity** is reserved at `00:07.0` (`VID:DID = A3A0:0001`) and documented in:
   - `docs/abi/aerogpu-pci-identity.md`
-- When `enable_vga=true` and the PC platform is enabled (`enable_pc_platform=true`), the canonical machine exposes a minimal Bochs/QEMU-compatible “Standard VGA” PCI stub (currently `00:0c.0`, `1234:1111`) and routes the VBE linear framebuffer (LFB) through its BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator unless pinned via `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`).
+- When `enable_vga=true` and the PC platform is enabled (`enable_pc_platform=true`), the canonical
+  machine exposes a minimal Bochs/QEMU-compatible “Standard VGA” PCI stub (currently `00:0c.0`,
+  `1234:1111`) and routes the VBE linear framebuffer (LFB) through its BAR0 inside the PCI MMIO
+  window.
+  The BAR base is assigned by BIOS POST / the PCI allocator unless pinned via
+  `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`, and the machine mirrors the assigned base into
+  the BIOS VBE `PhysBasePtr` and the VGA device model so guests observe a coherent LFB base.
 
 ## Presenter backends and color/alpha policy
 
