@@ -101,9 +101,19 @@ inline bool HasLiveCookie(const void* pDrvPrivate, uint32_t expected_cookie) {
   if (!pDrvPrivate) {
     return false;
   }
+#if defined(_WIN32) && defined(_MSC_VER)
+  __try {
+    uint32_t cookie = 0;
+    std::memcpy(&cookie, pDrvPrivate, sizeof(cookie));
+    return cookie == expected_cookie;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+#else
   uint32_t cookie = 0;
   std::memcpy(&cookie, pDrvPrivate, sizeof(cookie));
   return cookie == expected_cookie;
+#endif
 }
 
 // Decodes a WDDM allocation-private-data blob into the latest (v2) struct layout.
