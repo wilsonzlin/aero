@@ -6119,14 +6119,16 @@ fn emit_instructions(
                     // - `workgroupBarrier()` for control + workgroup-memory synchronization.
                     // - `storageBarrier()` for storage-buffer memory ordering.
                     //
-                    // We conservatively emit both. This preserves the semantics of
-                    // `DeviceMemoryBarrierWithGroupSync()` / `AllMemoryBarrierWithGroupSync()` in
-                    // addition to `GroupMemoryBarrierWithGroupSync()`.
+                    // Emit `storageBarrier()` only when the shader requested UAV/storage ordering
+                    // semantics; `GroupMemoryBarrierWithGroupSync()` only requires a workgroup
+                    // barrier.
                     //
                     // Order matters if `storageBarrier()` is treated as a memory fence without an
                     // execution barrier: we want all invocations to execute it before
                     // synchronizing.
-                    w.line("storageBarrier();");
+                    if (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0 {
+                        w.line("storageBarrier();");
+                    }
                     w.line("workgroupBarrier();");
                 } else {
                     // Fence-only variants (no `THREAD_GROUP_SYNC`) do not require all threads to

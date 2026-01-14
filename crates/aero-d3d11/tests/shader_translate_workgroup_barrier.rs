@@ -51,7 +51,10 @@ fn translates_sync_with_group_sync_to_wgsl() {
     assert_eq!(translated.stage, ShaderStage::Compute);
     assert!(translated.wgsl.contains("@compute"));
     assert!(translated.wgsl.contains("workgroupBarrier()"));
-    assert!(translated.wgsl.contains("storageBarrier()"));
+    assert!(
+        !translated.wgsl.contains("storageBarrier()"),
+        "TGSM-only barriers should not emit a storage barrier"
+    );
     assert_wgsl_validates(&translated.wgsl);
 }
 
@@ -178,7 +181,10 @@ fn translates_sync_with_group_sync_inside_control_flow_to_wgsl() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert!(translated.wgsl.contains("if ("));
-    assert!(translated.wgsl.contains("storageBarrier()"));
+    assert!(
+        !translated.wgsl.contains("storageBarrier()"),
+        "TGSM-only barriers should not emit a storage barrier"
+    );
     assert!(translated.wgsl.contains("workgroupBarrier()"));
     assert_wgsl_validates(&translated.wgsl);
 }

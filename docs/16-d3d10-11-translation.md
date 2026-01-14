@@ -441,7 +441,7 @@ Remaining gaps (planned follow-ups) include:
 
 - **Explicit ordering/barriers**: partially supported via SM5 `sync` (`GroupMemoryBarrier*` /
   `DeviceMemoryBarrier*`).
-  - Full barriers (`*WithGroupSync`) map onto WGSL `workgroupBarrier()` + `storageBarrier()`.
+  - Full barriers (`*WithGroupSync`) map onto WGSL `workgroupBarrier()` and (when UAV/storage ordering is requested) `storageBarrier()`.
     Barriers that appear after potentially conditional returns are rejected (to avoid generating
     WGSL that can deadlock when not all invocations reach the barrier).
   - Fence-only variants (no thread-group sync) do **not** have a perfect WGSL/WebGPU mapping today:
