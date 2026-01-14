@@ -1775,6 +1775,9 @@ static VOID AerovNetCtrlUpdateRxMode(_Inout_ AEROVNET_ADAPTER* Adapter) {
   UCHAR UnicastMac[ETH_LENGTH_OF_ADDRESS];
   UCHAR On;
   BOOLEAN WantPromisc;
+  BOOLEAN WantUnicast;
+  BOOLEAN WantBroadcast;
+  BOOLEAN WantMulticast;
   BOOLEAN WantAllMulti;
   BOOLEAN WantTableMulticast;
   NDIS_STATUS TableStatus;
@@ -1812,8 +1815,24 @@ static VOID AerovNetCtrlUpdateRxMode(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // Best-effort: if called at DISPATCH_LEVEL, AerovNetCtrlSendCommand will
   // fail fast and we will keep relying on software filtering.
   WantPromisc = (Filter & NDIS_PACKET_TYPE_PROMISCUOUS) ? TRUE : FALSE;
+  WantUnicast = WantPromisc ? TRUE : ((Filter & NDIS_PACKET_TYPE_DIRECTED) != 0);
+  WantBroadcast = WantPromisc ? TRUE : ((Filter & NDIS_PACKET_TYPE_BROADCAST) != 0);
+  WantMulticast = WantPromisc ? TRUE : ((Filter & (NDIS_PACKET_TYPE_MULTICAST | NDIS_PACKET_TYPE_ALL_MULTICAST)) != 0);
+
   On = WantPromisc ? 1u : 0u;
   (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_PROMISC, &On, sizeof(On), NULL);
+
+  // Explicitly program drop toggles for unicast/multicast/broadcast so device
+  // models that implement virtio-net RX filtering behave consistently with the
+  // NDIS packet filter.
+  On = WantUnicast ? 0u : 1u;
+  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOUNI, &On, sizeof(On), NULL);
+
+  On = WantMulticast ? 0u : 1u;
+  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOMULTI, &On, sizeof(On), NULL);
+
+  On = WantBroadcast ? 0u : 1u;
+  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOBCAST, &On, sizeof(On), NULL);
 
   TableStatus = NDIS_STATUS_SUCCESS;
   WantTableMulticast = (!WantPromisc && (Filter & NDIS_PACKET_TYPE_MULTICAST) != 0 && (Filter & NDIS_PACKET_TYPE_ALL_MULTICAST) == 0 &&
