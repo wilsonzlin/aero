@@ -17192,6 +17192,99 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
   return true;
 }
 
+bool TestFixedfuncLightingConstantsSanitizeNaNLightDirection() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormal);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Enable a directional light with a NaN direction; the driver should keep the
+  // uploaded lighting constants finite.
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {nan, nan, nan};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0; NaN direction)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormal tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormal));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL; NaN light direction)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(NaN light direction)")) {
+    return false;
+  }
+
+  if (!Check(CountVsConstantUploads(buf,
+                                    len,
+                                    kFixedfuncLightingStartRegister,
+                                    kFixedfuncLightingVec4Count) == 1,
+             "NaN light direction: lighting constant upload emitted once")) {
+    return false;
+  }
+
+  const float* lighting = FindVsConstantsPayload(buf,
+                                                 len,
+                                                 kFixedfuncLightingStartRegister,
+                                                 kFixedfuncLightingVec4Count);
+  if (!Check(lighting != nullptr, "NaN light direction: lighting constants payload present")) {
+    return false;
+  }
+
+  // Directional slot0 direction lives at c211 (relative to c208 lighting start).
+  constexpr uint32_t kDir0Register = 211u;
+  constexpr uint32_t kDir0Rel = kDir0Register - kFixedfuncLightingStartRegister;
+  const float* dir = lighting + kDir0Rel * 4u;
+  if (!Check(std::isfinite(dir[0]) && std::isfinite(dir[1]) && std::isfinite(dir[2]) && std::isfinite(dir[3]),
+             "NaN light direction: direction constant is finite")) {
+    return false;
+  }
+  if (!Check(dir[0] == 0.0f && dir[1] == 0.0f && dir[2] == 0.0f && dir[3] == 0.0f,
+             "NaN light direction: direction constant sanitized to 0")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalTex1EmitsLightingConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -24833,6 +24926,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalEmitsLightingConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncLightingConstantsSanitizeNaNLightDirection()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalTex1EmitsLightingConstants()) {

@@ -5918,14 +5918,6 @@ static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
                           dev->transform_matrices[kD3dTransformView],
                           world_view);
 
-  // c208..c210: world*view columns 0..2 (w contains translation).
-  for (uint32_t c = 0; c < 3; ++c) {
-    regs[c * 4u + 0] = world_view[0 * 4u + c];
-    regs[c * 4u + 1] = world_view[1 * 4u + c];
-    regs[c * 4u + 2] = world_view[2 * 4u + c];
-    regs[c * 4u + 3] = world_view[3 * 4u + c];
-  }
-
   const auto write_reg = [&](uint32_t reg_index, const float v[4]) {
     if (reg_index < kFixedfuncLightingStartRegister) {
       return;
@@ -5934,8 +5926,23 @@ static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
     if (rel >= kFixedfuncLightingVec4Count) {
       return;
     }
-    std::memcpy(&regs[rel * 4u], v, 4u * sizeof(float));
+    float clean[4] = {v[0], v[1], v[2], v[3]};
+    for (float& f : clean) {
+      if (!std::isfinite(f)) {
+        f = 0.0f;
+      }
+    }
+    std::memcpy(&regs[rel * 4u], clean, 4u * sizeof(float));
   };
+
+  // c208..c210: world*view columns 0..2 (w contains translation).
+  for (uint32_t c = 0; c < 3; ++c) {
+    const float col[4] = {world_view[0 * 4u + c],
+                          world_view[1 * 4u + c],
+                          world_view[2 * 4u + c],
+                          world_view[3 * 4u + c]};
+    write_reg(208u + c, col);
+  }
 
   const float* view = dev->transform_matrices[kD3dTransformView];
 
