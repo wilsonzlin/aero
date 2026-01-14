@@ -1944,10 +1944,24 @@ pub fn decode_cmd_stream_listing(
                         let group_count_x = u32_le_at(pkt.payload, 0).unwrap();
                         let group_count_y = u32_le_at(pkt.payload, 4).unwrap();
                         let group_count_z = u32_le_at(pkt.payload, 8).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
                         let _ = write!(
                             line,
                             " group_count_x={group_count_x} group_count_y={group_count_y} group_count_z={group_count_z}"
                         );
+                        // `DISPATCH.reserved0` is repurposed as a `stage_ex` selector for
+                        // extended-stage compute execution (GS/HS/DS compute emulation). Gate
+                        // interpretation by ABI minor to avoid misinterpreting garbage in older
+                        // cmd streams.
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage_ex != 0 {
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
+                        }
                     }
                     AerogpuCmdOpcode::SetVertexBuffers => {
                         let (cmd, bindings) =

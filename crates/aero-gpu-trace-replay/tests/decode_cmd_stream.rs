@@ -696,6 +696,83 @@ fn stage_ex_is_gated_by_cmd_stream_abi_minor_in_listings() {
 }
 
 #[test]
+fn dispatch_stage_ex_is_decoded_in_listings() {
+    // `DISPATCH.reserved0` is repurposed as a `stage_ex` selector for extended-stage compute
+    // execution. Ensure both the stable and JSON listings surface it when ABI permits, and gate it
+    // for older captures.
+    let mut bytes = Vec::new();
+    push_u32_le(&mut bytes, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32_le(&mut bytes, AEROGPU_ABI_VERSION_U32);
+    push_u32_le(&mut bytes, 0); // patched later
+    push_u32_le(&mut bytes, 0); // flags
+    push_u32_le(&mut bytes, 0); // reserved0
+    push_u32_le(&mut bytes, 0); // reserved1
+    assert_eq!(bytes.len(), 24);
+
+    // DISPATCH(1,2,3) with stage_ex=Hull (3) encoded in reserved0.
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1);
+    push_u32_le(&mut payload, 2);
+    push_u32_le(&mut payload, 3);
+    push_u32_le(&mut payload, 3); // reserved0 / stage_ex = Hull
+    assert_eq!(payload.len(), 16);
+    push_packet(&mut bytes, AerogpuCmdOpcode::Dispatch as u32, &payload);
+
+    // Patch header.size_bytes.
+    let size_bytes = bytes.len() as u32;
+    bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+
+    // Current ABI: stage_ex should be decoded.
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed");
+    assert!(listing.contains("Dispatch"), "{listing}");
+    assert!(listing.contains("stage_ex=3"), "{listing}");
+    assert!(listing.contains("stage_ex_name=Hull"), "{listing}");
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+    let records = v["records"].as_array().expect("records array");
+    let dispatch = records
+        .iter()
+        .find(|r| r["type"] == "packet" && r["opcode"] == "Dispatch")
+        .expect("missing Dispatch packet");
+    assert_eq!(dispatch["decoded"]["stage_ex"], 3);
+    assert_eq!(dispatch["decoded"]["stage_ex_name"], "Hull");
+
+    // ABI 1.2: stage_ex must be ignored.
+    let mut legacy = bytes.clone();
+    legacy[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes()); // ABI 1.2
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&legacy, false)
+        .expect("decode should succeed");
+    assert!(listing.contains("abi=1.2"), "{listing}");
+    assert!(
+        !listing.contains("stage_ex="),
+        "stage_ex tags should be suppressed for ABI minor<3 (listing={listing})"
+    );
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &legacy,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+    let records = v["records"].as_array().expect("records array");
+    let dispatch = records
+        .iter()
+        .find(|r| r["type"] == "packet" && r["opcode"] == "Dispatch")
+        .expect("missing Dispatch packet");
+    assert!(
+        dispatch["decoded"].get("stage_ex").is_none(),
+        "stage_ex should be omitted from JSON decode for ABI minor<3"
+    );
+    assert_eq!(dispatch["decoded"]["reserved0"], 3);
+}
+
+#[test]
 fn stage_ex_vertex_program_type_is_reported_as_invalid() {
     // `stage_ex=1` matches the DXBC Vertex program type, but it is intentionally invalid in AeroGPU:
     // Vertex shaders must be encoded via the legacy `shader_stage = VERTEX` encoding.

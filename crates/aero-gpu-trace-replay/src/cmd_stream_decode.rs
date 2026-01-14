@@ -1108,6 +1108,17 @@ fn decode_known_fields(
             if let Some(v) = read_u32_le(pkt.payload, 8) {
                 out.insert("group_count_z".into(), json!(v));
             }
+            // `DISPATCH.reserved0` is repurposed as a `stage_ex` selector for extended-stage
+            // compute execution (GS/HS/DS compute emulation). Gate interpretation by ABI minor to
+            // avoid misinterpreting garbage in older streams.
+            if let Some(stage_ex) = read_u32_le(pkt.payload, 12) {
+                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage_ex != 0 {
+                    out.insert("stage_ex".into(), json!(stage_ex));
+                    out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                } else if stage_ex != 0 {
+                    out.insert("reserved0".into(), json!(stage_ex));
+                }
+            }
         }
         AerogpuCmdOpcode::Clear => {
             if pkt.payload.len() < 28 {
