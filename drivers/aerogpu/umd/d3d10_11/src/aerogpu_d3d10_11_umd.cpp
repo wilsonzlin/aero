@@ -601,6 +601,11 @@ struct AeroGpuDevice {
   // the list of referenced allocations alongside each submission.
   const AEROGPU_D3D10_11_DEVICECALLBACKS* device_callbacks = nullptr;
   std::vector<AEROGPU_WDDM_SUBMIT_ALLOCATION> referenced_allocs;
+  // True if we failed to grow `referenced_allocs` due to OOM while recording
+  // commands. Submitting with an incomplete allocation list is unsafe for
+  // guest-backed resources because the host may not be able to resolve
+  // `backing_alloc_id` references.
+  bool referenced_alloc_list_oom = false;
 
   // Fence tracking for WDDM-backed synchronization. Higher-level D3D10/11 code (e.g. Map READ on
   // staging resources) can use these values to wait for GPU completion.
@@ -651,6 +656,8 @@ struct AeroGpuDevice {
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
 };
 
+inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr);
+
 void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   if (!dev || !dst) {
     return;
@@ -670,14 +677,25 @@ void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
       dev->pending_staging_writes.end()) {
     return;
   }
-  dev->pending_staging_writes.push_back(dst);
+  try {
+    dev->pending_staging_writes.push_back(dst);
+  } catch (...) {
+    D3D10DDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = dev;
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  }
 }
 
-void AddLiveResourceLocked(AeroGpuDevice* dev, AeroGpuResource* res) {
+bool AddLiveResourceLocked(AeroGpuDevice* dev, AeroGpuResource* res) {
   if (!dev || !res) {
-    return;
+    return false;
   }
-  dev->live_resources.push_back(res);
+  try {
+    dev->live_resources.push_back(res);
+  } catch (...) {
+    return false;
+  }
+  return true;
 }
 
 void RemoveLiveResourceLocked(AeroGpuDevice* dev, const AeroGpuResource* res) {
@@ -694,6 +712,9 @@ void track_alloc_for_submit_locked(AeroGpuDevice* dev, AEROGPU_WDDM_ALLOCATION_H
   if (!dev || alloc_handle == 0) {
     return;
   }
+  if (dev->referenced_alloc_list_oom) {
+    return;
+  }
 
   auto& allocs = dev->referenced_allocs;
   for (auto& entry : allocs) {
@@ -708,7 +729,14 @@ void track_alloc_for_submit_locked(AeroGpuDevice* dev, AEROGPU_WDDM_ALLOCATION_H
   AEROGPU_WDDM_SUBMIT_ALLOCATION entry{};
   entry.handle = alloc_handle;
   entry.write = write ? 1 : 0;
-  allocs.push_back(entry);
+  try {
+    allocs.push_back(entry);
+  } catch (...) {
+    dev->referenced_alloc_list_oom = true;
+    D3D10DDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = dev;
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  }
 }
 
 void track_resource_alloc_for_submit_locked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
@@ -1234,7 +1262,25 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
   if (out_hr) {
     *out_hr = S_OK;
   }
-  if (!dev || dev->cmd.empty()) {
+  if (!dev) {
+    return 0;
+  }
+  if (dev->referenced_alloc_list_oom) {
+    // Submitting with an incomplete allocation list is unsafe for guest-backed
+    // resources because the host may not be able to resolve backing_alloc_id
+    // references.
+    if (out_hr) {
+      *out_hr = E_OUTOFMEMORY;
+    }
+    dev->pending_staging_writes.clear();
+    dev->referenced_allocs.clear();
+    dev->cmd.reset();
+    dev->referenced_alloc_list_oom = false;
+    return 0;
+  }
+  if (dev->cmd.empty()) {
+    dev->referenced_allocs.clear();
+    dev->referenced_alloc_list_oom = false;
     return 0;
   }
 
@@ -1250,6 +1296,16 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
   // non-WDK builds).
   if (dev->device_callbacks && dev->device_callbacks->pfnSubmitCmdStream) {
     track_current_state_allocs_for_submit_locked(dev);
+    if (dev->referenced_alloc_list_oom) {
+      if (out_hr) {
+        *out_hr = E_OUTOFMEMORY;
+      }
+      dev->cmd.reset();
+      dev->referenced_allocs.clear();
+      dev->pending_staging_writes.clear();
+      dev->referenced_alloc_list_oom = false;
+      return 0;
+    }
 
     const auto* cb = dev->device_callbacks;
     const AEROGPU_WDDM_SUBMIT_ALLOCATION* allocs = dev->referenced_allocs.empty() ? nullptr : dev->referenced_allocs.data();
@@ -1260,9 +1316,10 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
                                               dev->cmd.data(),
                                               static_cast<uint32_t>(dev->cmd.size()),
                                               allocs,
-                                              alloc_count,
-                                              &fence);
+                                               alloc_count,
+                                               &fence);
     dev->referenced_allocs.clear();
+    dev->referenced_alloc_list_oom = false;
 
     if (FAILED(hr)) {
       if (out_hr) {
@@ -1334,6 +1391,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
   dev->pending_staging_writes.clear();
 
   dev->referenced_allocs.clear();
+  dev->referenced_alloc_list_oom = false;
   dev->cmd.reset();
   return fence;
 }
@@ -1553,7 +1611,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    AddLiveResourceLocked(dev, res);
+    if (!AddLiveResourceLocked(dev, res)) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return FailCreateResource(res, E_OUTOFMEMORY);
+    }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     if (!cmd) {
@@ -1804,7 +1865,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    AddLiveResourceLocked(dev, res);
+    if (!AddLiveResourceLocked(dev, res)) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return FailCreateResource(res, E_OUTOFMEMORY);
+    }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     if (!cmd) {
@@ -6121,7 +6185,12 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
 
   // Validate that we're rotating swapchain backbuffers (Texture2D render targets).
   std::vector<AeroGpuResource*> resources;
-  resources.reserve(numResources);
+  try {
+    resources.reserve(numResources);
+  } catch (...) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   for (uint32_t i = 0; i < numResources; ++i) {
     auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]) : nullptr;
     if (!res) {
@@ -6139,7 +6208,12 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     if (res->is_shared || res->is_shared_alias || res->share_token != 0) {
       return;
     }
-    resources.push_back(res);
+    try {
+      resources.push_back(res);
+    } catch (...) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
   }
 
   const AeroGpuResource* ref = resources[0];
@@ -6270,9 +6344,19 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
   // Capture the pre-rotation AeroGPU handles so we can remap bound SRV slots
   // (which store raw handles, not resource pointers).
   std::vector<aerogpu_handle_t> old_handles;
-  old_handles.reserve(resources.size());
+  try {
+    old_handles.reserve(resources.size());
+  } catch (...) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return;
+  }
   for (auto* res : resources) {
-    old_handles.push_back(res ? res->handle : 0);
+    try {
+      old_handles.push_back(res ? res->handle : 0);
+    } catch (...) {
+      ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+      return;
+    }
   }
 
   // Rotate the full resource identity bundle. This matches Win7 DXGI's
