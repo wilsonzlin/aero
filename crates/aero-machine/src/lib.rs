@@ -17794,6 +17794,166 @@ mod tests {
         assert_eq!(m.vbe_lfb_base(), expected);
     }
 
+    fn push_u32_le(out: &mut Vec<u8>, v: u32) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn push_u64_le(out: &mut Vec<u8>, v: u64) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn push_aerogpu_snapshot_bar0_prefix(out: &mut Vec<u8>) {
+        // Field order must match `decode_aerogpu_snapshot_v1` / `apply_aerogpu_snapshot_v2`.
+        push_u32_le(out, 0); // abi_version
+        push_u64_le(out, 0); // features
+
+        push_u64_le(out, 0); // ring_gpa
+        push_u32_le(out, 0); // ring_size_bytes
+        push_u32_le(out, 0); // ring_control
+
+        push_u64_le(out, 0); // fence_gpa
+        push_u64_le(out, 0); // completed_fence
+
+        push_u32_le(out, 0); // irq_status
+        push_u32_le(out, 0); // irq_enable
+
+        push_u32_le(out, 0); // scanout0_enable
+        push_u32_le(out, 0); // scanout0_width
+        push_u32_le(out, 0); // scanout0_height
+        push_u32_le(out, 0); // scanout0_format
+        push_u32_le(out, 0); // scanout0_pitch_bytes
+        push_u64_le(out, 0); // scanout0_fb_gpa
+
+        push_u64_le(out, 0); // scanout0_vblank_seq
+        push_u64_le(out, 0); // scanout0_vblank_time_ns
+        push_u32_le(out, 0); // scanout0_vblank_period_ns
+
+        push_u32_le(out, 0); // cursor_enable
+        push_u32_le(out, 0); // cursor_x
+        push_u32_le(out, 0); // cursor_y
+        push_u32_le(out, 0); // cursor_hot_x
+        push_u32_le(out, 0); // cursor_hot_y
+        push_u32_le(out, 0); // cursor_width
+        push_u32_le(out, 0); // cursor_height
+        push_u32_le(out, 0); // cursor_format
+        push_u64_le(out, 0); // cursor_fb_gpa
+        push_u32_le(out, 0); // cursor_pitch_bytes
+
+        out.push(0); // wddm_scanout_active
+    }
+
+    fn push_aerogpu_snapshot_error_payload(out: &mut Vec<u8>) {
+        push_u32_le(out, 0); // error_code
+        push_u64_le(out, 0); // error_fence
+        push_u32_le(out, 0); // error_count
+    }
+
+    fn push_aerogpu_snapshot_dacp(out: &mut Vec<u8>, pel_mask: u8, palette: &[[u8; 3]; 256]) {
+        out.extend_from_slice(b"DACP");
+        out.push(pel_mask);
+        for entry in palette {
+            out.extend_from_slice(entry);
+        }
+    }
+
+    fn new_minimal_aerogpu_device_for_snapshot_tests() -> AeroGpuDevice {
+        AeroGpuDevice {
+            vram: Vec::new(),
+            vram_mmio_reads: Cell::new(0),
+            vbe_mode_active: false,
+            vbe_bank: 0,
+            vbe_dispi_index: 0,
+            vbe_dispi_xres: 0,
+            vbe_dispi_yres: 0,
+            vbe_dispi_bpp: 0,
+            vbe_dispi_enable: 0,
+            vbe_dispi_virt_width: 0,
+            vbe_dispi_virt_height: 0,
+            vbe_dispi_x_offset: 0,
+            vbe_dispi_y_offset: 0,
+            vbe_dispi_guest_owned: false,
+            misc_output: 0,
+            seq_index: 0,
+            seq_regs: [0; 256],
+            gc_index: 0,
+            gc_regs: [0; 256],
+            crtc_index: 0,
+            crtc_regs: [0; 256],
+            attr_index: 0,
+            attr_regs: AeroGpuDevice::default_attr_regs(),
+            attr_flip_flop: false,
+            pel_mask: 0xFF,
+            dac_write_index: 0,
+            dac_write_subindex: 0,
+            dac_write_latch: [0; 3],
+            dac_read_index: 0,
+            dac_read_subindex: 0,
+            dac_palette: AeroGpuDevice::default_dac_palette(),
+        }
+    }
+
+    #[test]
+    fn decode_aerogpu_snapshot_v1_does_not_parse_dacp_as_pending_fb_gpa() {
+        // Regression test for older v1 snapshots: the optional pending FB_GPA pairs were added
+        // after the error payload, but pre-existing snapshots may have `DACP` immediately after the
+        // error fields. Restoring them must not treat the `DACP` payload as `(pending_lo, flag)`.
+        let pel_mask = 0xEE;
+        let mut palette = [[0u8; 3]; 256];
+        palette[0] = [1, 2, 3];
+        palette[255] = [4, 5, 6];
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+        push_aerogpu_snapshot_dacp(&mut bytes, pel_mask, &palette);
+
+        let snap = decode_aerogpu_snapshot_v1(&bytes).expect("snapshot v1 should decode");
+        assert_eq!(snap.bar0.scanout0_fb_gpa_pending_lo, 0);
+        assert!(!snap.bar0.scanout0_fb_gpa_lo_pending);
+        assert_eq!(snap.bar0.cursor_fb_gpa_pending_lo, 0);
+        assert!(!snap.bar0.cursor_fb_gpa_lo_pending);
+
+        let dac = snap.vga_dac.expect("DACP tag should be parsed");
+        assert_eq!(dac.pel_mask, pel_mask);
+        assert_eq!(dac.palette[0], [1, 2, 3]);
+        assert_eq!(dac.palette[255], [4, 5, 6]);
+    }
+
+    #[test]
+    fn apply_aerogpu_snapshot_v2_does_not_parse_dacp_as_pending_fb_gpa() {
+        // Same regression as `decode_aerogpu_snapshot_v1_*`, but through the v2 sparse page
+        // snapshot restore path.
+        let pel_mask = 0xEE;
+        let mut palette = [[0u8; 3]; 256];
+        palette[0] = [1, 2, 3];
+        palette[255] = [4, 5, 6];
+
+        let mut bytes = Vec::new();
+        push_aerogpu_snapshot_bar0_prefix(&mut bytes);
+        push_u32_le(&mut bytes, 0); // vram_len
+        push_u32_le(&mut bytes, 4096); // page_size
+        push_u32_le(&mut bytes, 0); // page_count
+        push_aerogpu_snapshot_error_payload(&mut bytes);
+        push_aerogpu_snapshot_dacp(&mut bytes, pel_mask, &palette);
+
+        let mut vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut bar0 = AeroGpuMmioDevice::default();
+        let restored_dac = apply_aerogpu_snapshot_v2(&bytes, &mut vram, &mut bar0)
+            .expect("snapshot v2 should apply");
+        assert!(restored_dac);
+
+        let regs = bar0.snapshot_v1();
+        assert_eq!(regs.scanout0_fb_gpa_pending_lo, 0);
+        assert!(!regs.scanout0_fb_gpa_lo_pending);
+        assert_eq!(regs.cursor_fb_gpa_pending_lo, 0);
+        assert!(!regs.cursor_fb_gpa_lo_pending);
+
+        assert_eq!(vram.pel_mask, pel_mask);
+        assert_eq!(vram.dac_palette[0], [1, 2, 3]);
+        assert_eq!(vram.dac_palette[255], [4, 5, 6]);
+    }
+
     #[test]
     fn restore_snapshot_ignores_vga_state_when_vga_is_disabled() {
         // Restoring a VGA-enabled snapshot into a headless machine should not panic due to MMIO
