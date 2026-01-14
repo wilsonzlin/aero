@@ -80,6 +80,7 @@
     <ClCompile Include="..\virtio\common\os_shim\virtio_os_ndis.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClInclude Include="include\aero_virtio_net.h" />
+    <ClInclude Include="include\aero_virtio_net_diag.h" />
     <ClInclude Include="include\aero_virtio_net_offload.h" />
     <ClInclude Include="include\virtio_net_hdr_offload.h" />
     <None Include="inf\aero_virtio_net.inf" />

@@ -30,6 +30,7 @@ static const WCHAR g_AerovNetDiagSddl[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;
 #define AEROVNET_DIAG_DEVICE_NAME L"\\Device\\AeroVirtioNetDiag"
 #define AEROVNET_DIAG_SYMBOLIC_NAME L"\\DosDevices\\AeroVirtioNetDiag"
 
+C_ASSERT(AEROVNET_DIAG_IOCTL_QUERY == CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS));
 C_ASSERT(sizeof(AEROVNET_DIAG_INFO) <= 256);
 
 static NTSTATUS AerovNetDiagDispatchCreateClose(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);

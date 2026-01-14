@@ -535,6 +535,8 @@ struct AerovblkQueryInfoResult {
 };
 
 static_assert(sizeof(AEROVNET_DIAG_INFO) <= 256, "AEROVNET_DIAG_INFO size");
+static_assert(AEROVNET_DIAG_IOCTL_QUERY == CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS),
+              "AEROVNET_DIAG_IOCTL_QUERY value");
 
 static std::string VirtioFeaturesToString(ULONGLONG f) {
   char buf[64];
