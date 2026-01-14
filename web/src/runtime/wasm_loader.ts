@@ -34,6 +34,14 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     cpu_count?(): number;
+    /**
+     * Set the SMBIOS System UUID seed used by firmware.
+     *
+     * This only takes effect after the next {@link reset}.
+     *
+     * Optional for older WASM builds.
+     */
+    set_smbios_uuid_seed?(seed: bigint): void;
     reset(): void;
     /**
      * Set the BIOS boot drive number (`DL`) used when transferring control to the boot sector.
@@ -188,6 +196,28 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     set_disk_aerospar_opfs_open?(path: string): Promise<void>;
+    /**
+     * Create a new OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
+     * canonical disk.
+     *
+     * Notes:
+     * - `diskSizeBytes` is the guest-visible disk capacity.
+     * - `blockSizeBytes` must be a power-of-two multiple of 512.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_aerospar_opfs_create?(path: string, diskSizeBytes: bigint, blockSizeBytes: number): Promise<void>;
+    /**
+     * Like {@link set_disk_aerospar_opfs_create}, but also records `base_image=path, overlay_image=\"\"`
+     * in the snapshot `DISKS` overlay refs (`disk_id=0`).
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_aerospar_opfs_create_and_set_overlay_ref?(
+        path: string,
+        diskSizeBytes: bigint,
+        blockSizeBytes: number,
+    ): Promise<void>;
     /**
      * Open an existing OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
      * canonical disk, recording snapshot overlay refs (DISKS entry) for `disk_id=0`.
@@ -1747,6 +1777,14 @@ export interface WasmApi {
      */
     Machine: {
         new (ramSizeBytes: number): MachineHandle;
+        /**
+         * Create a canonical machine with a custom SMBIOS System UUID seed.
+         *
+         * wasm-bindgen exports this using a camelCase name (`newWithSmbiosUuidSeed`).
+         *
+         * Optional for older WASM builds.
+         */
+        newWithSmbiosUuidSeed?: (ramSizeBytes: number, smbiosUuidSeed: bigint) => MachineHandle;
         /**
          * Create a machine with explicit graphics configuration.
          *

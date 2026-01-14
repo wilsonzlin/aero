@@ -12,6 +12,7 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     // encoded via `@ts-expect-error` comments and validated in CI by `tsc`.
     const machine = {
       set_boot_drive: (_drive: number) => {},
+      set_smbios_uuid_seed: (_seed: bigint) => {},
       set_ahci_port0_disk_overlay_ref: (_base: string, _overlay: string) => {},
       clear_ahci_port0_disk_overlay_ref: () => {},
       set_ide_secondary_master_atapi_overlay_ref: (_base: string, _overlay: string) => {},
@@ -33,6 +34,12 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       ) => {},
       set_disk_cow_opfs_create: async (_base: string, _overlay: string, _blockSize: number) => {},
       set_disk_cow_opfs_open: async (_base: string, _overlay: string) => {},
+      set_disk_aerospar_opfs_create: async (_path: string, _diskSizeBytes: bigint, _blockSizeBytes: number) => {},
+      set_disk_aerospar_opfs_create_and_set_overlay_ref: async (
+        _path: string,
+        _diskSizeBytes: bigint,
+        _blockSizeBytes: number,
+      ) => {},
       attach_ide_primary_master_disk_opfs_and_set_overlay_ref: async (_path: string, _create: boolean, _sizeBytes: bigint) => {},
       attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref: async (_path: string) => {},
       reattach_restored_disks_from_opfs: async () => {},
@@ -48,6 +55,7 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       disk_id_primary_hdd: () => 0,
       disk_id_install_media: () => 1,
       disk_id_ide_primary_master: () => 2,
+      newWithSmbiosUuidSeed: (_ramSizeBytes: number, _smbiosUuidSeed: bigint) => machine,
       new_shared: (_guestBase: number, _guestSize: number) => machine,
       new_win7_storage_shared: (_guestBase: number, _guestSize: number) => machine,
       new_win7_storage: (_ramBytes: number) => machine,
@@ -69,6 +77,10 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       machine.clear_ide_primary_master_ata_overlay_ref();
       // @ts-expect-error set_boot_drive may be undefined
       machine.set_boot_drive(0x80);
+      // @ts-expect-error set_smbios_uuid_seed may be undefined
+      machine.set_smbios_uuid_seed(123n);
+      // @ts-expect-error seed must be bigint (wasm-bindgen u64), not a number
+      machine.set_smbios_uuid_seed?.(123);
       // @ts-expect-error set_disk_opfs_and_set_overlay_ref may be undefined
       void machine.set_disk_opfs_and_set_overlay_ref("disk.img", true, 1024n);
       // @ts-expect-error set_disk_opfs_with_progress may be undefined
@@ -79,6 +91,14 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       void machine.set_disk_cow_opfs_create("base.img", "overlay.aerospar", 1024 * 1024);
       // @ts-expect-error set_disk_cow_opfs_open may be undefined
       void machine.set_disk_cow_opfs_open("base.img", "overlay.aerospar");
+      // @ts-expect-error set_disk_aerospar_opfs_create may be undefined
+      void machine.set_disk_aerospar_opfs_create("disk.aerospar", 1024n, 32 * 1024);
+      // @ts-expect-error diskSizeBytes must be bigint (wasm-bindgen u64), not a number
+      void machine.set_disk_aerospar_opfs_create?.("disk.aerospar", 1024, 32 * 1024);
+      // @ts-expect-error blockSizeBytes must be number (wasm-bindgen u32), not a bigint
+      void machine.set_disk_aerospar_opfs_create?.("disk.aerospar", 1024n, 32n);
+      // @ts-expect-error set_disk_aerospar_opfs_create_and_set_overlay_ref may be undefined
+      void machine.set_disk_aerospar_opfs_create_and_set_overlay_ref("disk.aerospar", 1024n, 32 * 1024);
       // @ts-expect-error attach_ide_primary_master_disk_opfs_and_set_overlay_ref may be undefined
       void machine.attach_ide_primary_master_disk_opfs_and_set_overlay_ref("d2.img", true, 1024n);
       // @ts-expect-error attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref may be undefined
@@ -113,6 +133,12 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       machineCtor.new_win7_storage_shared(0, 0);
       // @ts-expect-error new_win7_storage may be undefined
       machineCtor.new_win7_storage(0);
+      // @ts-expect-error newWithSmbiosUuidSeed may be undefined
+      machineCtor.newWithSmbiosUuidSeed(2 * 1024 * 1024, 123n);
+      // @ts-expect-error ramSizeBytes must be number
+      machineCtor.newWithSmbiosUuidSeed?.("2mb", 123n);
+      // @ts-expect-error smbiosUuidSeed must be bigint (wasm-bindgen u64), not a number
+      machineCtor.newWithSmbiosUuidSeed?.(2 * 1024 * 1024, 123);
     }
     void assertStrictNullChecksEnforced;
 
@@ -137,6 +163,9 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     if (machine.set_boot_drive) {
       machine.set_boot_drive(0x80);
     }
+    if (machine.set_smbios_uuid_seed) {
+      machine.set_smbios_uuid_seed(123n);
+    }
     if (machine.set_disk_opfs_and_set_overlay_ref) {
       void machine.set_disk_opfs_and_set_overlay_ref("disk.img", true, 1024n);
     }
@@ -151,6 +180,12 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     }
     if (machine.set_disk_cow_opfs_open) {
       void machine.set_disk_cow_opfs_open("base.img", "overlay.aerospar");
+    }
+    if (machine.set_disk_aerospar_opfs_create) {
+      void machine.set_disk_aerospar_opfs_create("disk.aerospar", 1024n, 32 * 1024);
+    }
+    if (machine.set_disk_aerospar_opfs_create_and_set_overlay_ref) {
+      void machine.set_disk_aerospar_opfs_create_and_set_overlay_ref("disk.aerospar", 1024n, 32 * 1024);
     }
     if (machine.attach_ide_primary_master_disk_opfs_and_set_overlay_ref) {
       void machine.attach_ide_primary_master_disk_opfs_and_set_overlay_ref("d2.img", true, 1024n);
@@ -197,6 +232,9 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     }
     if (machineCtor.new_win7_storage) {
       machineCtor.new_win7_storage(0);
+    }
+    if (machineCtor.newWithSmbiosUuidSeed) {
+      machineCtor.newWithSmbiosUuidSeed(2 * 1024 * 1024, 123n);
     }
 
     expect(true).toBe(true);
