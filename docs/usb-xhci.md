@@ -44,6 +44,12 @@ Related docs:
 - Canonical PCI layout + INTx routing: [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md)
 - IRQ line semantics in the web runtime: [`docs/irq-semantics.md`](./irq-semantics.md)
 
+Regression tests:
+
+- `crates/aero-wasm/tests/xhci_bme_event_ring.rs` asserts that the WASM xHCI bridge only DMAs and
+  drains the guest event ring when PCI `COMMAND.BME` is enabled (and that doing so asserts INTx via
+  `irq_asserted()`).
+
 ---
 
 ## Goals and scope (MVP)
@@ -250,7 +256,7 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
     disabled (the controller still updates register state, but must not touch guest RAM).
   - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
     ring work (endpoint 0 control + bulk/interrupt Normal TRBs) and drains queued events
-    (`XhciController::tick_1ms_and_service_event_ring`).
+    (`XhciController::tick_1ms`).
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
   - WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
@@ -331,9 +337,10 @@ guest transfer ring:
 This engine is currently a standalone transfer-plane component used by tests; `XhciController` has
 its own minimal doorbell-driven endpoint-0 executor (driven by slot doorbells +
 `XhciController::tick()`), so `Ep0TransferEngine` is not wired into the guest-visible MMIO model.
-Note: the web/WASM bridge’s `step_frames()` path runs `tick_1ms_and_service_event_ring` when PCI BME
-is enabled, so doorbelled endpoint transfers (endpoint 0 + bulk/interrupt Normal TRBs) can make
-forward progress and queued events are drained.
+Note: the web/WASM bridge’s `step_frames()` path runs the DMA-capable
+`XhciController::tick_1ms` when PCI BME is enabled (and `tick_1ms_no_dma` when BME is disabled), so
+doorbelled endpoint transfers (endpoint 0 + bulk/interrupt Normal TRBs) can make forward progress
+and queued events are drained into the guest-configured event ring.
 
 ### Device model layer
 
@@ -372,8 +379,8 @@ Dedicated EP0 unit tests also exist:
 - Better transfer scheduling/performance for bulk/interrupt endpoints (today execution is
   intentionally bounded to keep guest-induced work finite).
 - More complete event-ring servicing / “main loop” integration in wrappers: regularly call
-  `tick_1ms_and_service_event_ring` (or equivalent) so port timers, transfers, and event delivery make
-  forward progress, with DMA gated on PCI BME.
+  `tick_1ms` (or `tick_1ms_and_service_event_ring`) so port timers, transfers, and event delivery
+  make forward progress, with DMA gated on PCI BME.
 - Wiring xHCI into the canonical machine/topology (native). (PCI identity is already aligned across
   web + native via the QEMU-style `1b36:000d` profile.)
 
