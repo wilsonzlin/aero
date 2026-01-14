@@ -132,8 +132,7 @@ fn packaging_fails_fast_on_symlink_guest_tools_tools_dir() -> anyhow::Result<()>
 
     // Make `guest-tools/tools` itself a symlink. This should be rejected even when the symlink
     // does not point at a directory (to avoid silently skipping potentially-malicious inputs).
-    let target = guest_tools_tmp.path().join("target.txt");
-    fs::write(&target, b"target\n")?;
+    let target = guest_tools_tmp.path().join("does-not-exist");
     let tools_link = guest_tools_tmp.path().join("tools");
     symlink(&target, &tools_link)?;
 
