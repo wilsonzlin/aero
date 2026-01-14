@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.14"
+         version = "2.5.15"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1729,9 +1729,32 @@ try {
                         "storage-preseed.skipped.txt"
                     )
 
+                    # Keep the scan bounded: in pathological cases (running from an unexpectedly large folder),
+                    # scanning the entire tree can be slow/noisy. This cap is high enough for normal Guest Tools
+                    # payloads but prevents accidental full-disk traversal.
+                    $scanLimit = 20000
+                    $scanLimitPlus = $scanLimit + 1
                     $diskFiles = @()
-                    foreach ($it in (Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction Stop)) {
-                        if ($it.PSIsContainer) { continue }
+                    $diskScanTruncated = $false
+
+                    $scanItems = @()
+                    try {
+                        $scanItems = @(
+                            Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction Stop |
+                                Where-Object { -not $_.PSIsContainer } |
+                                Select-Object -First $scanLimitPlus
+                        )
+                    } catch {
+                        $scanItems = @()
+                        throw
+                    }
+
+                    if ($scanItems.Count -gt $scanLimit) {
+                        $diskScanTruncated = $true
+                        $scanItems = @($scanItems | Select-Object -First $scanLimit)
+                    }
+
+                    foreach ($it in $scanItems) {
                         $full = "" + $it.FullName
                         if ($outDirWithinRoot -and (-not $outDirEqualsRoot) -and $outDirPrefixLower) {
                             try {
@@ -1770,13 +1793,20 @@ try {
                     $extra = @($extra | Sort-Object)
 
                     $mediaIntegrity.disk_files_scanned = $diskFiles.Count
+                    $mediaIntegrity.disk_files_scan_limit = $scanLimit
+                    $mediaIntegrity.disk_files_scan_truncated = $diskScanTruncated
                     $mediaIntegrity.extra_files_not_in_manifest = $extra
 
                     $extraStatus = "PASS"
                     if ($extra.Count -gt 0) { $extraStatus = "WARN" }
+                    if ($diskScanTruncated) { $extraStatus = "WARN" }
 
                     $extraSummary = "Extra files not in manifest: " + $extra.Count + " (disk files scanned: " + $diskFiles.Count + ")"
+                    if ($diskScanTruncated) { $extraSummary += " (scan truncated at " + $scanLimit + " files)" }
                     $extraDetails = @()
+                    if ($diskScanTruncated) {
+                        $extraDetails += ("WARN: File scan was truncated after " + $scanLimit + " files; extra-file results may be incomplete.")
+                    }
                     if ($extra.Count -gt 0) {
                         $extraDetails += ($extra.Count.ToString() + " extra file(s) exist on disk but are not listed in manifest.json. This can indicate mixed media (merged Guest Tools versions), which can cause subtle driver binding issues.")
                         $maxList = 25
@@ -1799,6 +1829,8 @@ try {
                         manifest_path = $manifestPath
                         expected_paths_count = $expected.Count
                         disk_files_scanned = $diskFiles.Count
+                        disk_files_scan_limit = $scanLimit
+                        disk_files_scan_truncated = $diskScanTruncated
                         extra_files = $extra
                     }
 
