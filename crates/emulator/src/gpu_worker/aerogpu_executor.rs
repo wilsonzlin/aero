@@ -207,25 +207,19 @@ impl AeroGpuExecutor {
     ///
     /// In that mode, `process_doorbell` will decode ring entries, mark their fences as in-flight,
     /// and queue [`AeroGpuBackendSubmission`] structs here for an external executor to run.
+    ///
+    /// Note: some guest drivers may emit submissions that reuse fence values (including fence
+    /// values that have already completed). These submissions can still carry important side
+    /// effects (e.g. shared-surface release) even if they do not advance the completed fence, so
+    /// this queue is drained unconditionally.
     pub fn drain_pending_submissions(&mut self) -> Vec<AeroGpuBackendSubmission> {
         if self.pending_submissions.is_empty() {
             return Vec::new();
         }
 
-        // Only return submissions that are still awaiting backend completion. This avoids returning
-        // work that has already been completed (e.g. if `complete_fence` was called before JS got a
-        // chance to drain).
-        let mut out = Vec::with_capacity(self.pending_submissions.len());
-        while let Some(sub) = self.pending_submissions.pop_front() {
-            let should_return = match self.in_flight.get(&sub.signal_fence) {
-                Some(entry) => !entry.completed_backend,
-                None => false,
-            };
-            if should_return {
-                out.push(sub);
-            }
-        }
-        out
+        core::mem::take(&mut self.pending_submissions)
+            .into_iter()
+            .collect()
     }
 
     pub fn reset(&mut self) {
@@ -718,11 +712,9 @@ impl AeroGpuExecutor {
                         PendingFenceKind::Immediate
                     };
 
-                    let mut inserted_in_flight = false;
-                    let mut already_completed = false;
                     if desc.signal_fence > regs.completed_fence {
-                        inserted_in_flight = true;
-                        already_completed = self.completed_before_submit.remove(&desc.signal_fence);
+                        let already_completed =
+                            self.completed_before_submit.remove(&desc.signal_fence);
                         let incoming = InFlightSubmission {
                             desc: desc.clone(),
                             kind,
@@ -783,10 +775,16 @@ impl AeroGpuExecutor {
                             }
                             self.complete_fence(regs, mem, desc.signal_fence);
                         }
-                    } else if inserted_in_flight && !already_completed {
+                    } else {
                         // No in-process backend: surface the decoded submission to the caller
                         // (WASM bridge) so it can be executed externally and later completed via
                         // `complete_fence`.
+                        //
+                        // Some guest drivers may emit submissions with duplicate fences (including
+                        // fence values that have already completed) for best-effort internal work.
+                        // Even if such submissions do not advance the completed fence, they can
+                        // carry important side effects (e.g. shared-surface release), so always
+                        // queue them for external execution.
                         self.pending_submissions.push_back(submit);
                     }
                 }
@@ -1559,6 +1557,62 @@ mod tests {
         exec.complete_fence(&mut regs, &mut mem, fence);
         assert_eq!(regs.completed_fence, fence);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+    }
+
+    #[test]
+    fn deferred_mode_drains_submission_even_if_fence_already_completed() {
+        let mut mem = Bus::new(0x8000);
+        let ring_gpa = 0x1000u64;
+        let cmd_gpa = 0x3000u64;
+
+        let entry_count = 8u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, 1);
+
+        // Simulate a driver emitting a submission that reuses an already-completed fence (e.g. a
+        // best-effort internal submission). Even though this does not advance the fence, the host
+        // still needs to execute it for side effects.
+        let fence = 7u64;
+
+        let cmd_size_bytes = write_vsync_present_cmd_stream(&mut mem, cmd_gpa);
+        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        write_submit_desc_with_cmd(
+            &mut mem,
+            desc_gpa,
+            fence,
+            AeroGpuSubmitDesc::FLAG_NO_IRQ,
+            cmd_gpa,
+            cmd_size_bytes,
+        );
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            completed_fence: fence,
+            ..Default::default()
+        };
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+        assert_eq!(regs.completed_fence, fence);
+
+        let drained = exec.drain_pending_submissions();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].signal_fence, fence);
+        assert_eq!(
+            drained[0].cmd_stream.get(0..4),
+            Some(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes()[..])
+        );
     }
 
     #[test]
