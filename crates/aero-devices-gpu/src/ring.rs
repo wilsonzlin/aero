@@ -152,6 +152,10 @@ impl AeroGpuRingHeader {
         let Some(addr) = gpa.checked_add(RING_HEAD_OFFSET) else {
             return;
         };
+        // Ensure a 32-bit access at `addr` does not wrap the u64 address space.
+        if addr.checked_add(4).is_none() {
+            return;
+        }
         mem.write_u32(addr, head);
     }
 
@@ -159,6 +163,10 @@ impl AeroGpuRingHeader {
         let Some(addr) = gpa.checked_add(RING_HEAD_OFFSET) else {
             return 0;
         };
+        // Ensure a 32-bit access at `addr` does not wrap the u64 address space.
+        if addr.checked_add(4).is_none() {
+            return 0;
+        }
         mem.read_u32(addr)
     }
 
@@ -166,6 +174,10 @@ impl AeroGpuRingHeader {
         let Some(addr) = gpa.checked_add(RING_TAIL_OFFSET) else {
             return 0;
         };
+        // Ensure a 32-bit access at `addr` does not wrap the u64 address space.
+        if addr.checked_add(4).is_none() {
+            return 0;
+        }
         mem.read_u32(addr)
     }
 
@@ -173,6 +185,10 @@ impl AeroGpuRingHeader {
         let Some(addr) = gpa.checked_add(RING_TAIL_OFFSET) else {
             return;
         };
+        // Ensure a 32-bit access at `addr` does not wrap the u64 address space.
+        if addr.checked_add(4).is_none() {
+            return;
+        }
         mem.write_u32(addr, tail);
     }
 
@@ -432,6 +448,19 @@ mod tests {
         let mut mem = VecMemory::new(0x1000);
         let ring_gpa = u64::MAX - 1;
         // Should not panic (and should not wrap to a low address).
+        AeroGpuRingHeader::write_head(&mut mem, ring_gpa, 0xDEAD_BEEF);
+        AeroGpuRingHeader::write_tail(&mut mem, ring_gpa, 0xCAFE_BABE);
+        assert_eq!(AeroGpuRingHeader::read_head(&mut mem, ring_gpa), 0);
+        assert_eq!(AeroGpuRingHeader::read_tail(&mut mem, ring_gpa), 0);
+    }
+
+    #[test]
+    fn ring_head_tail_helpers_ignore_overflowing_u32_accesses() {
+        let mut mem = VecMemory::new(0x1000);
+
+        // Choose a GPA such that `gpa + RING_HEAD_OFFSET` does not overflow, but a 32-bit read/write
+        // at that address would wrap past `u64::MAX`.
+        let ring_gpa = u64::MAX - RING_HEAD_OFFSET - 2;
         AeroGpuRingHeader::write_head(&mut mem, ring_gpa, 0xDEAD_BEEF);
         AeroGpuRingHeader::write_tail(&mut mem, ring_gpa, 0xCAFE_BABE);
         assert_eq!(AeroGpuRingHeader::read_head(&mut mem, ring_gpa), 0);
