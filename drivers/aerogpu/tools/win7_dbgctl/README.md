@@ -172,6 +172,8 @@ Minimum supported commands:
   `--cmd-out <path> [--alloc-out <path>] [--index-from-tail K] [--count N] [--force]`
   Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
   into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
+  For backwards compatibility with older usage, `--out <path>` is also accepted as an alias for `--cmd-out <path>`
+  for this command (for example: `--dump-last-cmd --out C:\\cmd.bin`).
   Use `--count N` to dump the last N submissions in one run (starting at `index_from_tail=K`).
   When dumping multiple submissions, `<path>` is treated as a base and output files are written as
   `<base>_<index_from_tail>.bin` (for example `last_cmd_0.bin`, `last_cmd_1.bin`). If `<path>` ends in `.bin`,
