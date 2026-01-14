@@ -7007,7 +7007,7 @@ fn accepts_volume_sampler_declarations() {
 
 #[test]
 fn translate_entrypoint_allows_unused_volume_sampler_declaration() {
-    // Regression test: shaders can declare unsupported sampler texture types (1D/3D/unknown) as
+    // Regression test: shaders can declare sampler texture types (including unknown encodings) as
     // long as the sampler is never actually used by a texture op. The WGSL backends only emit
     // bindings for used samplers.
     //
@@ -7056,9 +7056,8 @@ fn translate_entrypoint_allows_unused_volume_sampler_declaration() {
 }
 
 #[test]
-fn translate_entrypoint_rejects_used_volume_sampler() {
-    // The executor only supports binding 2D + cube textures. Used volume samplers must still be
-    // rejected, even though we tolerate unused declarations.
+fn translate_entrypoint_supports_used_volume_sampler() {
+    // Regression test: used volume (3D) samplers should translate and validate end-to-end.
     let mut words = vec![0xFFFF_0300];
     // dcl_volume s0
     words.extend(enc_inst_with_extra(
@@ -7080,15 +7079,24 @@ fn translate_entrypoint_rejects_used_volume_sampler() {
     words.push(0x0000_FFFF);
 
     let bytes = to_bytes(&words);
-    let err =
+    let translated =
         shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
-            .unwrap_err();
-    let msg = match err {
-        shader_translate::ShaderTranslateError::Translation(msg) => msg,
-        other => panic!("expected translation error, got {other:?}"),
-    };
-    assert!(msg.contains("Texture3D"), "{msg}");
-    assert!(msg.contains("s0"), "{msg}");
+            .unwrap();
+    assert!(translated.used_samplers.contains(&0));
+    assert_eq!(
+        translated.sampler_texture_types.get(&0).copied(),
+        Some(TextureType::Texture3D)
+    );
+    assert!(
+        translated.wgsl.contains("texture_3d<f32>"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(".xyz"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]
