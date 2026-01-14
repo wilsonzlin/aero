@@ -96,10 +96,7 @@ fn endpoint_commands_update_context_and_transfer_ring() {
         trb.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
     }
     {
-        let mut trb = Trb {
-            parameter: new_trdp, // DCS=0
-            ..Default::default()
-        };
+        let mut trb = Trb::new(new_trdp, 0, 0); // DCS=0
         trb.set_cycle(true);
         trb.set_trb_type(TrbType::SetTrDequeuePointerCommand);
         trb.set_slot_id(slot_id);

@@ -2623,9 +2623,9 @@ impl XhciController {
         //
         // The roothub port range is 1-based, so we expose all ports as a single USB 2.0 range.
         let psic = 3u8; // low/full/high-speed entries.
-                        // Next pointer: 0 => end of list.
-        let header0 =
-            (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32) | ((regs::USB_REVISION_2_0 as u32) << 16);
+        let header0 = (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32)
+            // Next pointer: 0 => end of list.
+            | ((regs::USB_REVISION_2_0 as u32) << 16);
         caps.push(header0);
         caps.push(regs::PROTOCOL_NAME_USB2);
         caps.push((1u32) | ((self.port_count as u32) << 8));

@@ -49,10 +49,7 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
-    let mut evt = Trb {
-        parameter: 0x1234_5678,
-        ..Default::default()
-    };
+    let mut evt = Trb::new(0x1234_5678, 0, 0);
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
@@ -106,10 +103,7 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
-    let mut evt = Trb {
-        parameter: 0x1234_5678,
-        ..Default::default()
-    };
+    let mut evt = Trb::new(0x1234_5678, 0, 0);
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
@@ -142,10 +136,7 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
-    let mut evt = Trb {
-        parameter: 0x1234_5678,
-        ..Default::default()
-    };
+    let mut evt = Trb::new(0x1234_5678, 0, 0);
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
@@ -335,10 +326,7 @@ fn event_ring_wrap_and_budget_are_bounded() {
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     for i in 0..(EVENT_ENQUEUE_BUDGET_PER_TICK + 1) {
-        let mut evt = Trb {
-            parameter: i as u64,
-            ..Default::default()
-        };
+        let mut evt = Trb::new(i as u64, 0, 0);
         evt.set_trb_type(TrbType::PortStatusChangeEvent);
         xhci.post_event(evt);
     }
@@ -373,20 +361,11 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
-    let mut ev0 = Trb {
-        parameter: 0xaaaa,
-        ..Default::default()
-    };
+    let mut ev0 = Trb::new(0xaaaa, 0, 0);
     ev0.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev1 = Trb {
-        parameter: 0xbbbb,
-        ..Default::default()
-    };
+    let mut ev1 = Trb::new(0xbbbb, 0, 0);
     ev1.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev2 = Trb {
-        parameter: 0xcccc,
-        ..Default::default()
-    };
+    let mut ev2 = Trb::new(0xcccc, 0, 0);
     ev2.set_trb_type(TrbType::PortStatusChangeEvent);
 
     // Post 3 events into a ring that can only hold 2; the 3rd should remain pending.
@@ -447,20 +426,11 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
-    let mut ev0 = Trb {
-        parameter: 0xaaaa,
-        ..Default::default()
-    };
+    let mut ev0 = Trb::new(0xaaaa, 0, 0);
     ev0.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev1 = Trb {
-        parameter: 0xbbbb,
-        ..Default::default()
-    };
+    let mut ev1 = Trb::new(0xbbbb, 0, 0);
     ev1.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev2 = Trb {
-        parameter: 0xcccc,
-        ..Default::default()
-    };
+    let mut ev2 = Trb::new(0xcccc, 0, 0);
     ev2.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(ev0);
@@ -511,10 +481,7 @@ fn event_ring_multi_segment_wraps_to_first_segment_and_toggles_cycle() {
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     for i in 0..5u64 {
-        let mut evt = Trb {
-            parameter: 0x1000 + i,
-            ..Default::default()
-        };
+        let mut evt = Trb::new(0x1000 + i, 0, 0);
         evt.set_trb_type(TrbType::PortStatusChangeEvent);
         xhci.post_event(evt);
     }
@@ -601,17 +568,11 @@ fn event_ring_cycle_toggles_on_wrap() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
-    let mut evt1 = Trb {
-        parameter: 0x1111_1111,
-        ..Default::default()
-    };
+    let mut evt1 = Trb::new(0x1111_1111, 0, 0);
     evt1.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt1);
 
-    let mut evt2 = Trb {
-        parameter: 0x2222_2222,
-        ..Default::default()
-    };
+    let mut evt2 = Trb::new(0x2222_2222, 0, 0);
     evt2.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt2);
 
@@ -627,10 +588,7 @@ fn event_ring_cycle_toggles_on_wrap() {
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, erdp);
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, erdp >> 32);
 
-    let mut evt3 = Trb {
-        parameter: 0x3333_3333,
-        ..Default::default()
-    };
+    let mut evt3 = Trb::new(0x3333_3333, 0, 0);
     evt3.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt3);
     xhci.service_event_ring(&mut mem);
@@ -646,10 +604,7 @@ fn event_ring_flushes_pending_events_after_erst_programmed() {
     let mut mem = TestMemory::new(0x20_000);
 
     let mut xhci = XhciController::new();
-    let mut evt = Trb {
-        parameter: 0xdead_beef,
-        ..Default::default()
-    };
+    let mut evt = Trb::new(0xdead_beef, 0, 0);
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt);
 

@@ -238,10 +238,7 @@ fn xhci_command_ring_link_loop_is_bounded_by_step_budget() {
     let mut mem = TestMemory::new(0x10_000);
     let ring_base: u64 = 0x1000;
 
-    let mut link = Trb {
-        parameter: ring_base,
-        ..Default::default()
-    };
+    let mut link = Trb::new(ring_base, 0, 0);
     link.set_cycle(true);
     link.set_trb_type(TrbType::Link);
     link.set_link_toggle_cycle(false);

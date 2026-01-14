@@ -252,9 +252,9 @@ impl QtdCursor {
         // back into the token field to keep guest-visible state spec-aligned.
         let cpage = self.page.min(4);
         *token = (*token & !QTD_CPAGE_MASK) | ((cpage as u32) << QTD_CPAGE_SHIFT);
-        for (i, slot) in out_bufs.iter_mut().enumerate() {
+        for (i, out_buf) in out_bufs.iter_mut().enumerate() {
             let base = self.bufs[i] & 0xffff_f000;
-            *slot = if i == cpage {
+            *out_buf = if i == cpage {
                 base | ((self.offset as u32) & 0x0fff)
             } else {
                 base
@@ -353,10 +353,8 @@ fn process_qh<M: MemoryBus + ?Sized>(
         }
 
         let mut overlay_bufs = [0u32; 5];
-        for (i, slot) in overlay_bufs.iter_mut().enumerate() {
-            *slot = ctx
-                .mem
-                .read_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64);
+        for (i, buf) in overlay_bufs.iter_mut().enumerate() {
+            *buf = ctx.mem.read_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64);
         }
         let mut cursor = QtdCursor::from_token_and_bufs(token, overlay_bufs);
 

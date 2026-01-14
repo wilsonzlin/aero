@@ -64,9 +64,8 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     let mut data_trb = Trb {
         parameter: data_buf,
         status: 64, // TRB Transfer Length
-        ..Default::default()
+        control: Trb::CONTROL_DIR, // IN
     };
-    data_trb.control |= Trb::CONTROL_DIR; // IN
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
     data_trb.write_to(&mut mem, transfer_ring_base + TRB_LEN as u64);

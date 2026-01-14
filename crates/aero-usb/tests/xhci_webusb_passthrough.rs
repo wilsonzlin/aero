@@ -389,19 +389,12 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
     let ep0_ring = alloc.alloc((TRB_LEN * 3) as u32, 0x10) as u64;
     let dma_buf = alloc.alloc(64, 0x10) as u64;
 
-    let mut setup_trb = Trb {
-        parameter: u64::from_le_bytes(setup_packet_bytes(setup)),
-        ..Default::default()
-    };
+    let mut setup_trb = Trb::new(u64::from_le_bytes(setup_packet_bytes(setup)), 0, 0);
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
     setup_trb.write_to(&mut mem, ep0_ring);
 
-    let mut data_trb = Trb {
-        parameter: dma_buf,
-        status: setup.w_length as u32,
-        control: Trb::CONTROL_DIR,
-    };
+    let mut data_trb = Trb::new(dma_buf, setup.w_length as u32, Trb::CONTROL_DIR);
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
     data_trb.write_to(&mut mem, ep0_ring + TRB_LEN as u64);
@@ -533,11 +526,7 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     mem.write(out_buf as u32, &out_payload);
 
     let bulk_out_ring = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
-    let mut bulk_out_trb = Trb {
-        parameter: out_buf,
-        status: out_payload.len() as u32,
-        ..Default::default()
-    };
+    let mut bulk_out_trb = Trb::new(out_buf, out_payload.len() as u32, 0);
     bulk_out_trb.set_cycle(true);
     bulk_out_trb.set_trb_type(TrbType::Normal);
     bulk_out_trb.write_to(&mut mem, bulk_out_ring);
@@ -594,11 +583,7 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     let in_buf = alloc.alloc(in_payload.len() as u32, 0x10) as u64;
 
     let bulk_in_ring = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
-    let mut bulk_in_trb = Trb {
-        parameter: in_buf,
-        status: in_payload.len() as u32,
-        ..Default::default()
-    };
+    let mut bulk_in_trb = Trb::new(in_buf, in_payload.len() as u32, 0);
     bulk_in_trb.set_cycle(true);
     bulk_in_trb.set_trb_type(TrbType::Normal);
     bulk_in_trb.write_to(&mut mem, bulk_in_ring);

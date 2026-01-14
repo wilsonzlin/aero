@@ -293,10 +293,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let input_addr = alloc.alloc((33 * CONTEXT_SIZE) as u32, 0x40) as u64;
     build_input_context_addr_device(&mut mem, input_addr, 1, 8);
 
-    let mut addr_dev = Trb {
-        parameter: input_addr,
-        ..Default::default()
-    };
+    let mut addr_dev = Trb::new(input_addr, 0, 0);
     addr_dev.set_cycle(true);
     addr_dev.set_trb_type(TrbType::AddressDeviceCommand);
     addr_dev.set_slot_id(slot_id);
@@ -339,10 +336,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let input_eval = alloc.alloc((33 * CONTEXT_SIZE) as u32, 0x40) as u64;
     build_input_context_eval_ep0_mps(&mut mem, input_eval, u16::from(mps0));
 
-    let mut eval_ctx = Trb {
-        parameter: input_eval,
-        ..Default::default()
-    };
+    let mut eval_ctx = Trb::new(input_eval, 0, 0);
     eval_ctx.set_cycle(true);
     eval_ctx.set_trb_type(TrbType::EvaluateContextCommand);
     eval_ctx.set_slot_id(slot_id);
@@ -371,10 +365,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let input_cfg = alloc.alloc((33 * CONTEXT_SIZE) as u32, 0x40) as u64;
     build_input_context_config_interrupt_in(&mut mem, input_cfg, 1, 8, ep1_ring);
 
-    let mut cfg_ep = Trb {
-        parameter: input_cfg,
-        ..Default::default()
-    };
+    let mut cfg_ep = Trb::new(input_cfg, 0, 0);
     cfg_ep.set_cycle(true);
     cfg_ep.set_trb_type(TrbType::ConfigureEndpointCommand);
     cfg_ep.set_slot_id(slot_id);
@@ -413,19 +404,12 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     keyboard.key_event(0x04, true); // 'A'
 
     // Transfer ring: Normal TRB + Link TRB back to start (toggle cycle).
-    let mut normal = Trb {
-        parameter: dma_buf,
-        status: 8, // TRB Transfer Length.
-        control: Trb::CONTROL_IOC,
-    };
+    let mut normal = Trb::new(dma_buf, 8, Trb::CONTROL_IOC); // TRB Transfer Length.
     normal.set_cycle(true);
     normal.set_trb_type(TrbType::Normal);
     normal.write_to(&mut mem, ep1_ring);
 
-    let mut link = Trb {
-        parameter: ep1_ring,
-        ..Default::default()
-    };
+    let mut link = Trb::new(ep1_ring, 0, 0);
     link.set_cycle(true);
     link.set_trb_type(TrbType::Link);
     link.set_link_toggle_cycle(true);

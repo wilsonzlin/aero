@@ -411,8 +411,8 @@ fn complete_qtd<M: MemoryBus + ?Sized>(
 
 fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut [u8]) {
     let mut ptrs = [0u32; 5];
-    for (i, slot) in ptrs.iter_mut().enumerate() {
-        *slot = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
+    for (i, ptr) in ptrs.iter_mut().enumerate() {
+        *ptr = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
     }
 
     let start_off = (ptrs[0] & 0xfff) as usize;
@@ -433,8 +433,8 @@ fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut 
 
 fn write_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, data: &[u8]) {
     let mut ptrs = [0u32; 5];
-    for (i, slot) in ptrs.iter_mut().enumerate() {
-        *slot = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
+    for (i, ptr) in ptrs.iter_mut().enumerate() {
+        *ptr = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
     }
 
     let start_off = (ptrs[0] & 0xfff) as usize;
