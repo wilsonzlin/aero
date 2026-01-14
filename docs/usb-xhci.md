@@ -58,6 +58,9 @@ Regression tests:
 - `crates/devices/tests/xhci_msix_integration.rs` asserts MSI/MSI-X interrupt delivery semantics in
   the native PCI wrapper (suppresses INTx when MSI-X is active, tracks PBA bits for masked vectors,
   and gates MSI-X table/PBA MMIO on `COMMAND.MEM`).
+- `crates/aero-machine/tests/xhci_snapshot.rs` asserts machine-level snapshot/restore semantics for
+  xHCI (restores controller state, re-drives PCI INTx into the platform interrupt sink, preserves
+  host-attached device handles, and clears passthrough host async state).
 
 ---
 
@@ -470,9 +473,13 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
   - MSI-X table + PBA state (when present), and
   - the underlying `aero_usb::xhci::XhciController` snapshot bytes.
 - **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
-  - For WebUSB passthrough specifically, the device snapshot preserves guest-visible queued state, but
-    host-side async state is reset across restore (the device clears/resets its host-facing state and
-    expects the host integration to resume request execution after restore).
+  - After loading an xHCI snapshot, integrations should clear any host-side async bookkeeping that
+    cannot be resumed (e.g. WebUSB host actions backed by JS Promises) by calling
+    `XhciController::reset_host_state_for_restore`. The native `XhciPciDevice` wrapper and WASM
+    `XhciControllerBridge` call this during restore.
+  - For WebUSB passthrough specifically, `UsbWebUsbPassthroughDevice::reset_host_state_for_restore`
+    drops queued actions/completions and clears in-flight tracking so guest TD retries can re-emit
+    host actions (monotonic action IDs are preserved by the snapshot).
 
 Practical implication: restores are deterministic for pure-emulated devices, but passthrough devices may need re-authorization/re-attachment and may observe a transient disconnect.
 
