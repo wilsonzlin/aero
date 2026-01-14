@@ -36,6 +36,16 @@ struct HostState {
     slow_mem_reads: u64,
     slow_mem_writes: u64,
     ram_size: u64,
+    last_mmio: Option<MmioExit>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MmioExit {
+    vaddr: u64,
+    size: u32,
+    is_write: bool,
+    value: u64,
+    rip: u64,
 }
 
 fn validate_wasm(bytes: &[u8]) {
@@ -361,15 +371,22 @@ fn define_mmio_exit(store: &mut Store<HostState>, linker: &mut Linker<HostState>
                 &mut *store,
                 |mut caller: Caller<'_, HostState>,
                  _cpu_ptr: i32,
-                 _vaddr: i64,
-                 _size: i32,
-                 _is_write: i32,
-                 _value: i64,
+                 vaddr: i64,
+                 size: i32,
+                 is_write: i32,
+                 value: i64,
                  rip: i64|
                  -> i64 {
                     caller.data_mut().mmio_exit_calls += 1;
+                    caller.data_mut().last_mmio = Some(MmioExit {
+                        vaddr: vaddr as u64,
+                        size: size as u32,
+                        is_write: is_write != 0,
+                        value: value as u64,
+                        rip: rip as u64,
+                    });
                     rip
-                },
+                 },
             ),
         )
         .unwrap();
@@ -1431,6 +1448,13 @@ fn tier1_inline_tlb_cross_page_load_mmio_exits_to_runtime() {
     assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 8);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, 0x1000);
 }
 
 #[test]
@@ -1473,6 +1497,193 @@ fn tier1_inline_tlb_cross_page_store_mmio_exits_to_runtime() {
     assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 8);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value, 0x1122_3344_5566_7788);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_mmio_exits_to_runtime_w16() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let _ = b.load(Width::W16, a0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 2);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_exits_to_runtime_w16() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W16, 0xBEEFu64);
+    b.store(Width::W16, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, vec![0u8; 0x1000]);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 2);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value & 0xffff, 0xBEEF);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_mmio_exits_to_runtime_w32() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let _ = b.load(Width::W32, a0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 4);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_exits_to_runtime_w32() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W32, 0xDEAD_BEEFu64);
+    b.store(Width::W32, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, vec![0u8; 0x1000]);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 4);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value & 0xffff_ffff, 0xDEAD_BEEF);
+    assert_eq!(mmio.rip, 0x1000);
 }
 
 #[test]
@@ -1572,6 +1783,192 @@ fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured_w16() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W16, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W16,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 2].copy_from_slice(&0xBEEFu16.to_le_bytes());
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xffff, 0xBEEF);
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured_w16() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W16, 0xBEEFu64);
+    b.store(Width::W16, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 2],
+        &0xBEEFu16.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured_w32() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W32, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 4].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0xDEAD_BEEF);
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured_w32() {
+    let addr = 0xFFFu64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W32, 0xDEAD_BEEFu64);
+    b.store(Width::W32, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 4],
+        &0xDEAD_BEEFu32.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
 fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0xF000);
@@ -1593,6 +1990,13 @@ fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, 0xF000);
+    assert_eq!(mmio.size, 4);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, 0x1000);
 }
 
 #[test]
@@ -1641,6 +2045,81 @@ fn tier1_inline_tlb_mmio_exit_reports_faulting_rip() {
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, 0xF000);
+    assert_eq!(mmio.size, 4);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, second_rip);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_exit_reports_faulting_rip() {
+    // x86_64:
+    //   mov eax, 0xFFF
+    //   mov eax, [rax]   ; crosses a page boundary into MMIO (ram_size is only 0x1000)
+    let entry_rip = 0x1000u64;
+    let code: [u8; 7] = [
+        0xB8, 0xFF, 0x0F, 0x00, 0x00, // mov eax, 0xFFF
+        0x8B, 0x00, // mov eax, [rax]
+    ];
+
+    let mut bus = SimpleBus::new(0x2000);
+    bus.load(entry_rip, &code);
+
+    let x86_block = discover_block_mode(
+        &bus,
+        entry_rip,
+        BlockLimits {
+            max_insts: 2,
+            max_bytes: 64,
+        },
+        64,
+    );
+    assert_eq!(x86_block.insts.len(), 2);
+
+    let second_rip = x86_block.insts[1].rip;
+    assert_eq!(second_rip, x86_block.insts[0].next_rip());
+
+    let block = translate_block(&x86_block);
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: entry_rip,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, second_rip);
+    assert_eq!(got_cpu.rip, second_rip);
+    // The first instruction should still have taken effect.
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0xFFF);
+
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, 0xFFF);
+    assert_eq!(mmio.size, 4);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, second_rip);
 }
 
 #[test]
@@ -1730,6 +2209,13 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state.last_mmio.expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, 0xF000);
+    assert_eq!(mmio.size, 4);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value & 0xffff_ffff, 0xDEAD_BEEF);
+    assert_eq!(mmio.rip, 0x1000);
 }
 
 #[test]
