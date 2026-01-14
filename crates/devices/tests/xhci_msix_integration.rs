@@ -1,9 +1,13 @@
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::{MsixCapability, PciDevice};
-use aero_devices::usb::xhci::XhciPciDevice;
+use aero_devices::usb::xhci::{regs, XhciPciDevice};
+use aero_platform::address_filter::AddressFilter;
+use aero_platform::chipset::ChipsetState;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_platform::memory::MemoryBus as PlatformMemoryBus;
+use memory::MemoryBus as _;
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -147,6 +151,58 @@ fn xhci_msix_masked_vector_sets_pba_and_delivers_on_unmask() {
 
     let pba_after = MmioHandler::read(&mut dev, pba_base, 8);
     assert_eq!(pba_after & 1, 0, "PBA pending bit should clear after delivery");
+}
+
+#[test]
+fn xhci_port_status_change_event_delivers_controller_interrupt_via_msix() {
+    const ERST_PADDR: u64 = 0x1000;
+    const SEG_PADDR: u64 = 0x2000;
+    const SEG_TRBS: u32 = 16;
+
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+    let mut mem = PlatformMemoryBus::new(filter, 0x10000);
+
+    // Program the Event Ring Segment Table (ERST) in guest memory.
+    mem.write_u64(ERST_PADDR, SEG_PADDR);
+    mem.write_u32(ERST_PADDR + 8, SEG_TRBS);
+    mem.write_u32(ERST_PADDR + 12, 0);
+
+    let mut dev = XhciPciDevice::default();
+    // Enable MMIO + bus mastering so the controller can DMA the event ring segment.
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
+
+    // Platform interrupt controller used as an MSI sink.
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Program MSI-X vector 0 and enable MSI-X.
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, false);
+    enable_msix(&mut dev);
+
+    // Configure interrupter 0 to point at our ERST and enable interrupts at the xHCI level.
+    MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTSZ, 4, 1);
+    MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTBA_LO, 4, ERST_PADDR);
+    MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTBA_HI, 4, ERST_PADDR >> 32);
+    MmioHandler::write(&mut dev, regs::REG_INTR0_ERDP_LO, 4, SEG_PADDR);
+    MmioHandler::write(&mut dev, regs::REG_INTR0_ERDP_HI, 4, SEG_PADDR >> 32);
+    MmioHandler::write(&mut dev, regs::REG_INTR0_IMAN, 4, u64::from(regs::IMAN_IE));
+
+    // Inject a Port Status Change event into interrupter 0. This services the event ring and
+    // drives the controller interrupt condition without needing a guest OS.
+    dev.trigger_port_status_change_event(&mut mem);
+
+    // With MSI-X enabled, INTx must be suppressed.
+    assert!(!dev.irq_level());
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(ints.get_pending(), Some(0x45));
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
 }
 
 #[test]
