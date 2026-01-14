@@ -28,6 +28,12 @@ All values are `REG_DWORD` (0 or missing means “unset”):
   - **Both must be set** (otherwise ignored).
 - `MaxWidth` and/or `MaxHeight`
   - Caps the maximum mode exposed to Windows (useful to avoid large primary allocations during early bring-up).
+- `MaxDmaBufferBytes`
+  - Caps the maximum **effective** DMA buffer size copied into contiguous memory per submission (after any
+    command-stream header size shrink).
+  - This protects the guest from pathological user-mode submissions attempting extremely large contiguous
+    allocations (DMA copy, legacy descriptors, allocation table).
+  - Default: 32 MiB (x64), 16 MiB (x86). Clamped to [256 KiB, 256 MiB].
 
 ## Layout
 

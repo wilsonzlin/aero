@@ -29,6 +29,25 @@
 #define AEROGPU_CREATEALLOCATION_TRACE_SIZE 64u
 
 /*
+ * Maximum allowed DMA buffer size for a single submission (bytes).
+ *
+ * The KMD copies each incoming command buffer into physically-contiguous
+ * non-cached memory. Extremely large contiguous allocations can fragment or
+ * exhaust contiguous memory and destabilize the guest, so we cap the effective
+ * DMA size (after any header-based shrink).
+ *
+ * Optional registry override (REG_DWORD, bytes):
+ *   HKR\\Parameters\\MaxDmaBufferBytes
+ */
+#if defined(_WIN64)
+#define AEROGPU_KMD_MAX_DMA_BUFFER_BYTES (32u * 1024u * 1024u) /* 32 MiB */
+#else
+#define AEROGPU_KMD_MAX_DMA_BUFFER_BYTES (16u * 1024u * 1024u) /* 16 MiB */
+#endif
+#define AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MIN (256u * 1024u)        /* 256 KiB */
+#define AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MAX (256u * 1024u * 1024u) /* 256 MiB */
+
+/*
  * Driver-private submission types.
  *
  * Legacy ABI: encoded into `aerogpu_legacy_submission_desc_header::type`.

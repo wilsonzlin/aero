@@ -275,6 +275,14 @@ static LONG g_AeroGpuBlockedReadGpaEscapeCount = 0;
 static LONG g_AeroGpuBlockedMapSharedHandleEscapeCount = 0;
 #endif
 
+/*
+ * Submission / contiguous allocation limits.
+ *
+ * These are loaded once in DriverEntry from the miniport service key
+ * (HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters).
+ */
+static ULONG g_AeroGpuMaxDmaBufferBytes = AEROGPU_KMD_MAX_DMA_BUFFER_BYTES;
+
 static __forceinline BOOLEAN AeroGpuModeWithinMax(_In_ ULONG Width, _In_ ULONG Height)
 {
     if (Width == 0 || Height == 0) {
@@ -607,6 +615,63 @@ static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING Re
         AEROGPU_LOG("dbgctl escape config: EnableReadGpaEscape=%lu EnableMapSharedHandleEscape=%lu",
                     g_AeroGpuEnableReadGpaEscape,
                     g_AeroGpuEnableMapSharedHandleEscape);
+    }
+#endif
+}
+
+static VOID AeroGpuLoadSubmitLimitsFromRegistry(_In_opt_ PUNICODE_STRING RegistryPath)
+{
+    g_AeroGpuMaxDmaBufferBytes = AEROGPU_KMD_MAX_DMA_BUFFER_BYTES;
+
+    if (!RegistryPath || !RegistryPath->Buffer || RegistryPath->Length == 0) {
+        return;
+    }
+
+    /*
+     * We read from the service key's `Parameters` subkey:
+     *   HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters
+     */
+    static const WCHAR kSuffix[] = L"\\Parameters";
+    const USHORT suffixBytes = (USHORT)sizeof(kSuffix); /* includes NUL */
+
+    const USHORT baseBytes = RegistryPath->Length;
+    const USHORT allocBytes = (USHORT)(baseBytes + suffixBytes);
+
+    PWCHAR path = (PWCHAR)ExAllocatePoolWithTag(PagedPool, allocBytes, AEROGPU_POOL_TAG);
+    if (!path) {
+        return;
+    }
+
+    RtlCopyMemory(path, RegistryPath->Buffer, baseBytes);
+    RtlCopyMemory((PUCHAR)path + baseBytes, kSuffix, suffixBytes);
+
+    ULONG maxDmaBytes = 0;
+
+    RTL_QUERY_REGISTRY_TABLE table[2];
+    RtlZeroMemory(table, sizeof(table));
+
+    table[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[0].Name = L"MaxDmaBufferBytes";
+    table[0].EntryContext = &maxDmaBytes;
+
+    (void)RtlQueryRegistryValues(RTL_QUERY_REGISTRY_ABSOLUTE, path, table, NULL, NULL);
+
+    ExFreePoolWithTag(path, AEROGPU_POOL_TAG);
+
+    if (maxDmaBytes != 0) {
+        if (maxDmaBytes < AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MIN) {
+            maxDmaBytes = AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MIN;
+        } else if (maxDmaBytes > AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MAX) {
+            maxDmaBytes = AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MAX;
+        }
+        g_AeroGpuMaxDmaBufferBytes = maxDmaBytes;
+    }
+
+#if DBG
+    if (g_AeroGpuMaxDmaBufferBytes != AEROGPU_KMD_MAX_DMA_BUFFER_BYTES) {
+        AEROGPU_LOG("submit limits: MaxDmaBufferBytes=%lu (default=%lu)",
+                    g_AeroGpuMaxDmaBufferBytes,
+                    (ULONG)AEROGPU_KMD_MAX_DMA_BUFFER_BYTES);
     }
 #endif
 }
@@ -1055,6 +1120,33 @@ static VOID AeroGpuTraceCreateAllocation(_Inout_ AEROGPU_ADAPTER* Adapter,
  */
 static PVOID AeroGpuAllocContiguousNoInit(_In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa)
 {
+    if (Size == 0) {
+        return NULL;
+    }
+
+    /*
+     * Guard against pathological callers requesting extremely large contiguous
+     * allocations. Even failed attempts can be expensive and may fragment
+     * contiguous memory on some guests.
+     *
+     * Note: this cap is also enforced explicitly for DMA buffer submissions in
+     * AeroGpuDdiSubmitCommand (with a more specific error code), but applying a
+     * global limit here also protects other contiguous allocation sites (legacy
+     * descriptors, alloc tables).
+     */
+    const SIZE_T maxBytes = (SIZE_T)g_AeroGpuMaxDmaBufferBytes;
+    if (maxBytes != 0 && Size > maxBytes) {
+#if DBG
+        static volatile LONG g_AllocContigTooLargeLogCount = 0;
+        AEROGPU_LOG_RATELIMITED(g_AllocContigTooLargeLogCount,
+                                8,
+                                "AllocContiguous: request too large: size=%I64u max=%I64u",
+                                (ULONGLONG)Size,
+                                (ULONGLONG)maxBytes);
+#endif
+        return NULL;
+    }
+
     PHYSICAL_ADDRESS low;
     PHYSICAL_ADDRESS high;
     PHYSICAL_ADDRESS boundary;
@@ -7806,7 +7898,34 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         }
     }
 
+    /*
+     * Cap the effective DMA copy size (after header shrink) to avoid extremely
+     * large contiguous allocations from pathological user-mode submissions.
+     */
+    const ULONG maxDmaBytes = g_AeroGpuMaxDmaBufferBytes;
+#if DBG
+    static volatile LONG g_SubmitDmaTooLargeLogCount = 0;
+#endif
+
     if (dmaSizeBytes != 0) {
+        if (dmaSizeBytes > maxDmaBytes) {
+#if DBG
+            AEROGPU_LOG_RATELIMITED(g_SubmitDmaTooLargeLogCount,
+                                    8,
+                                    "SubmitCommand: DMA buffer too large: fence=%I64u size=%lu max=%lu",
+                                    fence,
+                                    dmaSizeBytes,
+                                    maxDmaBytes);
+#endif
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (!pSubmitCommand->pDmaBuffer) {
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INVALID_PARAMETER;
+        }
+
         /*
          * This is a temporary DMA copy buffer that is immediately and fully
          * overwritten below via RtlCopyMemory, so avoid zeroing it.
@@ -7825,6 +7944,20 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
          * and future host-side validators can accept it.
          */
         dmaSizeBytes = sizeof(struct aerogpu_cmd_stream_header) + sizeof(struct aerogpu_cmd_hdr);
+
+        if (dmaSizeBytes > maxDmaBytes) {
+#if DBG
+            AEROGPU_LOG_RATELIMITED(g_SubmitDmaTooLargeLogCount,
+                                    8,
+                                    "SubmitCommand: DMA buffer too large: fence=%I64u size=%lu max=%lu",
+                                    fence,
+                                    dmaSizeBytes,
+                                    maxDmaBytes);
+#endif
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INVALID_PARAMETER;
+        }
+
         /* Fully initialized below (header + NOP packet). */
         dmaVa = AeroGpuAllocContiguousNoInit(dmaSizeBytes, &dmaPa);
         if (!dmaVa) {
@@ -7911,6 +8044,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
             AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
             AeroGpuFreeSubmissionMeta(meta);
             return STATUS_INTEGER_OVERFLOW;
+        }
+
+        if (descSize > (SIZE_T)maxDmaBytes) {
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INVALID_PARAMETER;
         }
 
         aerogpu_legacy_submission_desc_header* desc =
@@ -12225,6 +12364,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath)
 {
     AeroGpuLoadDisplayModeConfigFromRegistry(RegistryPath);
+    AeroGpuLoadSubmitLimitsFromRegistry(RegistryPath);
 
     DXGK_INITIALIZATION_DATA init;
     RtlZeroMemory(&init, sizeof(init));
