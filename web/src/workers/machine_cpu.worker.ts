@@ -191,7 +191,11 @@ const pendingMachineOps: PendingMachineOp[] = [];
 let wasmApi: WasmApi | null = null;
 let machine: InstanceType<WasmApi["Machine"]> | null = null;
 
-function verifyWasmSharedStateLayout(m: InstanceType<WasmApi["Machine"]>, init: WorkerInitMessage): void {
+function verifyWasmSharedStateLayout(
+  m: InstanceType<WasmApi["Machine"]>,
+  init: WorkerInitMessage,
+  guestMemory: WebAssembly.Memory,
+): void {
   // These shared-state headers are embedded at fixed offsets inside wasm linear memory so both:
   // - Rust device models (running inside the Machine wasm module), and
   // - JS workers (GPU presenter, etc)
@@ -205,14 +209,34 @@ function verifyWasmSharedStateLayout(m: InstanceType<WasmApi["Machine"]>, init: 
   // the Machine will publish scanout/cursor updates into a different region than the JS workers
   // are reading. Detect that mismatch early and surface a warning with actionable context.
   try {
+    const guestSab = guestMemory.buffer as unknown as SharedArrayBuffer;
+    const scanoutSab = init.scanoutState;
+    const cursorSab = init.cursorState;
+    const scanoutEmbedded = scanoutSab instanceof SharedArrayBuffer && scanoutSab === guestSab;
+    const cursorEmbedded = cursorSab instanceof SharedArrayBuffer && cursorSab === guestSab;
+
     const expectedScanoutPtr =
       typeof init.scanoutStateOffsetBytes === "number" ? (init.scanoutStateOffsetBytes >>> 0) : null;
     const expectedCursorPtr =
       typeof init.cursorStateOffsetBytes === "number" ? (init.cursorStateOffsetBytes >>> 0) : null;
 
-    if (typeof m.scanout_state_ptr === "function" && expectedScanoutPtr !== null) {
+    if (typeof m.scanout_state_ptr === "function") {
       const got = m.scanout_state_ptr() >>> 0;
-      if (got !== expectedScanoutPtr) {
+      if (!scanoutSab) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared scanout state is missing from WorkerInitMessage. ` +
+            `Machine publishes scanout state at linear offset ${got}, but this worker was initialized without scanoutState. ` +
+            "WDDM scanout selection may be broken; ensure the coordinator passes scanoutState (typically guestMemory.buffer).",
+        );
+      } else if (!scanoutEmbedded) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared scanout state is not embedded in guestMemory.buffer. ` +
+            `Machine publishes scanout state at linear offset ${got}, but WorkerInitMessage.scanoutState does not alias guest memory. ` +
+            "Scanout updates will be invisible to other workers; ensure the runtime embeds scanoutState in guestMemory.buffer (shared_layout.ts).",
+        );
+      } else if (expectedScanoutPtr !== null && got !== expectedScanoutPtr) {
         // eslint-disable-next-line no-console
         console.warn(
           `[machine_cpu.worker] Shared scanout state offset mismatch: js=${expectedScanoutPtr} wasm=${got}. ` +
@@ -220,6 +244,7 @@ function verifyWasmSharedStateLayout(m: InstanceType<WasmApi["Machine"]>, init: 
         );
       }
     }
+
     if (typeof m.scanout_state_len_bytes === "function") {
       const len = m.scanout_state_len_bytes() >>> 0;
       if (len !== 0 && len !== (SCANOUT_STATE_BYTE_LEN >>> 0)) {
@@ -231,9 +256,23 @@ function verifyWasmSharedStateLayout(m: InstanceType<WasmApi["Machine"]>, init: 
       }
     }
 
-    if (typeof m.cursor_state_ptr === "function" && expectedCursorPtr !== null) {
+    if (typeof m.cursor_state_ptr === "function") {
       const got = m.cursor_state_ptr() >>> 0;
-      if (got !== expectedCursorPtr) {
+      if (!cursorSab) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared cursor state is missing from WorkerInitMessage. ` +
+            `Machine publishes cursor state at linear offset ${got}, but this worker was initialized without cursorState. ` +
+            "Hardware cursor updates may be broken; ensure the coordinator passes cursorState (typically guestMemory.buffer).",
+        );
+      } else if (!cursorEmbedded) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared cursor state is not embedded in guestMemory.buffer. ` +
+            `Machine publishes cursor state at linear offset ${got}, but WorkerInitMessage.cursorState does not alias guest memory. ` +
+            "Cursor updates will be invisible to other workers; ensure the runtime embeds cursorState in guestMemory.buffer (shared_layout.ts).",
+        );
+      } else if (expectedCursorPtr !== null && got !== expectedCursorPtr) {
         // eslint-disable-next-line no-console
         console.warn(
           `[machine_cpu.worker] Shared cursor state offset mismatch: js=${expectedCursorPtr} wasm=${got}. ` +
@@ -241,6 +280,7 @@ function verifyWasmSharedStateLayout(m: InstanceType<WasmApi["Machine"]>, init: 
         );
       }
     }
+
     if (typeof m.cursor_state_len_bytes === "function") {
       const len = m.cursor_state_len_bytes() >>> 0;
       if (len !== 0 && len !== (CURSOR_STATE_BYTE_LEN >>> 0)) {
@@ -1628,7 +1668,7 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
 
     machine = await createWin7MachineWithSharedGuestMemory(api as WasmApi, layout);
     if (machine) {
-      verifyWasmSharedStateLayout(machine, init);
+      verifyWasmSharedStateLayout(machine, init, guestMemory);
     }
 
     // Attach optional network backend if enabled.
