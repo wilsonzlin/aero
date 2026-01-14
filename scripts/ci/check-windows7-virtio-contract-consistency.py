@@ -3440,10 +3440,7 @@ def main() -> None:
         hwids_upper = {h.upper() for h in hwids}
         # Most Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so
         # binding remains revision-gated even if subsystem IDs are absent/ignored.
-        #
-        # virtio-input is validated separately because its canonical INF intentionally includes
-        # both SUBSYS-qualified keyboard/mouse IDs and a strict fallback HWID.
-        if device_name != "virtio-input" and strict_hwid.upper() not in hwids_upper:
+        if strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
@@ -3492,7 +3489,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
 
@@ -3515,7 +3512,8 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
-        # The legacy alias INF is allowed/expected to include the generic fallback HWID.
+        # The legacy alias INF must stay in sync with the canonical INF (different
+        # filename only), and must include the same strict fallback HWID.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -3524,12 +3522,13 @@ def main() -> None:
             errors=errors,
         )
 
-        drift = check_inf_alias_drift_excluding_sections(
+        # Keep the alias INF byte-identical to the canonical INF from [Version] onward
+        # (leading header comments may differ).
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)

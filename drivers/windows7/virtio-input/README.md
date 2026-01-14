@@ -106,7 +106,7 @@ The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (rev
 - `inf/aero_virtio_input.inf` (keyboard/mouse + generic fallback):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-  - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback for contract v1; shown as **Aero VirtIO Input Device**)
+  - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no SUBSYS; shown as **Aero VirtIO Input Device**)
 - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
 
@@ -114,9 +114,15 @@ The subsystem-gated IDs use distinct `DeviceDesc` strings, so the PCI functions 
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**). Devices that match
 only the generic fallback entry appear as **Aero VirtIO Input Device**.
 
-`inf/virtio-input.inf.disabled` is a legacy filename alias for workflows that still reference `virtio-input.inf`.
-Rename it to `virtio-input.inf` to enable it, but do **not** ship/install it alongside `aero_virtio_input.inf` — both
-filenames match the same HWIDs, and overlapping INFs can lead to confusing binding/upgrade behavior.
+Optional legacy filename alias:
+
+- `inf/virtio-input.inf.disabled` is a legacy filename alias for workflows/tools that still reference `virtio-input.inf`.
+  Rename it to `virtio-input.inf` to enable the alias.
+- From the `[Version]` section onward, the alias INF is kept byte-for-byte identical to `aero_virtio_input.inf`.
+
+`inf/virtio-input.inf.disabled` is checked in disabled-by-default to avoid accidentally shipping/installing **two** INFs
+that match the same device. Do not ship/install it alongside the canonical INF — overlapping INFs can lead to confusing
+binding/upgrade behavior.
 
 The INFs do **not** match:
 
@@ -651,7 +657,8 @@ otherwise it will bind via the generic fallback entry and show **Aero VirtIO Inp
 by the driver; device-kind classification still follows the `ID_NAME`/`EV_BITS` rules described above.
 
 If your tooling expects the legacy INF filename, `inf/virtio-input.inf.disabled` is a legacy filename alias (rename to
-`virtio-input.inf` to enable it), but do not ship/install it alongside `aero_virtio_input.inf` since they match the same HWIDs.
+`virtio-input.inf` to enable it). From the `[Version]` section onward, it is kept byte-for-byte identical to
+`aero_virtio_input.inf`. Do not ship/install it alongside `aero_virtio_input.inf` since they match the same HWIDs.
 
 For authoritative PCI-ID and contract rules, see:
 

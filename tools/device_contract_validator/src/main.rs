@@ -1337,9 +1337,10 @@ fn validate_virtio_input_device_desc_split(
 
         if fb_desc.eq_ignore_ascii_case(&kb_desc) || fb_desc.eq_ignore_ascii_case(&ms_desc) {
             bail!(
-                "virtio-input INF {}: fallback model entry in [{}] must have a generic DeviceDesc string (must not equal keyboard/mouse).\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                "virtio-input INF {}: fallback model entry in [{}] must have a generic DeviceDesc string (must not equal keyboard/mouse; got {:?}).\nkeyboard: {}\nmouse:    {}\nfallback: {}",
                 inf_path.display(),
                 models_section,
+                fb_desc,
                 kb.raw_line,
                 ms.raw_line,
                 fb.raw_line,
@@ -1388,7 +1389,7 @@ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
     }
 
     #[test]
-    fn virtio_input_device_desc_split_requires_generic_fallback_with_rev() {
+    fn virtio_input_device_desc_split_rejects_missing_fallback_with_rev() {
         let inf = r#"
 [Aero.NTx86]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
@@ -1680,6 +1681,17 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 
                 let expected_rev = parse_contract_pci_revision_for_device(dev, &base)
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
+                let strict = format!("{base}&REV_{expected_rev:02X}");
+
+                // Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model
+                // entry to provide a stable fallback binding even if subsystem IDs vary.
+                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
+                    bail!(
+                        "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
+                        inf_path.display(),
+                        format_bullets(&active_hwids)
+                    );
+                }
 
                 let mut missing_rev = BTreeSet::new();
                 let mut wrong_rev = BTreeSet::new();

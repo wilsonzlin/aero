@@ -300,8 +300,12 @@ foreach ($sect in $modelSections) {
   $sectLines = $sections[$sect]
   foreach ($id in $requiredHwids) {
     $regex = '(?i)' + [regex]::Escape($id)
-    if ((Get-MatchingLines -Lines $sectLines -Regex $regex).Count -eq 0) {
+    $matches = Get-MatchingLines -Lines $sectLines -Regex $regex
+    if ($matches.Count -eq 0) {
       Add-Failure -Failures $failures -Message ("Missing required Aero contract v1 HWID in [{0}]: {1}" -f $sect, $id)
+    }
+    elseif ($matches.Count -ne 1) {
+      Add-Failure -Failures $failures -Message ("Expected exactly one model entry for HWID in [{0}] ({1}), but found {2}: {3}" -f $sect, $id, $matches.Count, ($matches -join '; '))
     }
   }
 }
@@ -348,18 +352,6 @@ $requiredModelMappings = @(
 foreach ($m in $requiredModelMappings) {
   if ((Get-MatchingLines -Lines $lines -Regex $m.Regex).Count -eq 0) {
     Add-Failure -Failures $failures -Message $m.Message
-  }
-}
-
-# Require exactly one generic fallback binding per models section (avoid accidental duplicates).
-$genericFallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
-$genericFallbackHwidRegex = '(?i)' + [regex]::Escape($genericFallbackHwid)
-foreach ($sect in $modelSections) {
-  if (-not $sections.ContainsKey($sect)) { continue }
-  $count = (Get-MatchingLines -Lines $sections[$sect] -Regex $genericFallbackHwidRegex).Count
-  if ($count -gt 1) {
-    Add-Failure -Failures $failures -Message (("Generic fallback HWID must appear exactly once in [{0}]: {1} " +
-      "(found {2} occurrences).") -f $sect, $genericFallbackHwid, $count)
   }
 }
 
