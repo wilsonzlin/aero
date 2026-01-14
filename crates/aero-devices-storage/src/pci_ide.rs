@@ -12,9 +12,9 @@ use aero_devices::pci::profile::IDE_PIIX3;
 use aero_devices::pci::{PciConfigSpace, PciDevice};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotResult, SnapshotVersion};
 use aero_io_snapshot::io::storage::state::{
-    IdeChannelState, IdeControllerState, IdeDataMode, IdeDmaCommitState, IdeDmaDirection,
-    IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState, IdeTaskFileState,
-    IdeTransferKind, PciConfigSpaceState, MAX_IDE_DATA_BUFFER_BYTES,
+    IdeAtaDeviceState, IdeChannelState, IdeControllerState, IdeDataMode, IdeDmaCommitState,
+    IdeDmaDirection, IdeDmaRequestState, IdeDriveState, IdePioWriteState, IdePortMapState,
+    IdeTaskFileState, IdeTransferKind, PciConfigSpaceState, MAX_IDE_DATA_BUFFER_BYTES,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_storage::SECTOR_SIZE;
@@ -296,6 +296,12 @@ struct Channel {
     /// host-side backends (e.g. `AtaDrive`) but still need the controller to behave as though the
     /// drive exists from the guest's perspective (taskfile/status reads, IRQ acking, etc).
     drive_present: [bool; 2],
+    /// Guest-visible ATA device state that must survive snapshot restore even when the host-side
+    /// disk backend is detached.
+    ///
+    /// This is particularly important for negotiated DMA/UDMA transfer modes set via
+    /// `SET FEATURES (0xEF) / subcommand 0x03`.
+    ata_state: [Option<IdeAtaDeviceState>; 2],
 
     tf: TaskFile,
     status: u8,
@@ -323,6 +329,7 @@ impl Channel {
             ports,
             devices: [None, None],
             drive_present: [false, false],
+            ata_state: [None, None],
             tf: TaskFile::default(),
             status: IDE_STATUS_DRDY,
             error: 0,
@@ -634,13 +641,21 @@ impl IdeController {
         self.bus_master_base = base;
     }
 
-    pub fn attach_primary_master_ata(&mut self, drive: AtaDrive) {
+    pub fn attach_primary_master_ata(&mut self, mut drive: AtaDrive) {
+        if let Some(state) = self.primary.ata_state[0].as_ref() {
+            drive.restore_state(state);
+        }
+        self.primary.ata_state[0] = Some(drive.snapshot_state());
         self.primary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
         self.primary.drive_present[0] = true;
         self.bus_master[0].set_drive_dma_capable(0, true);
     }
 
-    pub fn attach_secondary_master_ata(&mut self, drive: AtaDrive) {
+    pub fn attach_secondary_master_ata(&mut self, mut drive: AtaDrive) {
+        if let Some(state) = self.secondary.ata_state[0].as_ref() {
+            drive.restore_state(state);
+        }
+        self.secondary.ata_state[0] = Some(drive.snapshot_state());
         self.secondary.devices[0] = Some(IdeDevice::Ata(Box::new(drive)));
         self.secondary.drive_present[0] = true;
         self.bus_master[1].set_drive_dma_capable(0, true);
@@ -1344,9 +1359,9 @@ impl Piix3IdePciDevice {
                 None => {
                     if chan.drive_present[idx] {
                         IdeDriveState::Ata(
-                            aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
-                                udma_mode: 2,
-                            },
+                            chan.ata_state[idx]
+                                .clone()
+                                .unwrap_or(IdeAtaDeviceState { udma_mode: 2 }),
                         )
                     } else {
                         IdeDriveState::None
@@ -1492,6 +1507,7 @@ impl Piix3IdePciDevice {
             for slot in 0..2 {
                 chan.devices[slot] = None;
                 chan.drive_present[slot] = false;
+                chan.ata_state[slot] = None;
                 bm.set_drive_dma_capable(slot, false);
             }
 
@@ -1503,6 +1519,7 @@ impl Piix3IdePciDevice {
                         // observe DMA capability bits, so restore them conservatively.
                         bm.set_drive_dma_capable(slot, true);
                         chan.drive_present[slot] = true;
+                        chan.ata_state[slot] = Some(_s.clone());
                     }
                     IdeDriveState::Atapi(s) => {
                         let mut dev = AtapiCdrom::new(None);

@@ -75,6 +75,49 @@ fn ata_drive_snapshot_roundtrip_preserves_transfer_mode() {
 }
 
 #[test]
+fn ide_snapshot_roundtrip_preserves_transfer_mode_after_reattach() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select master.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    // Set UDMA0.
+    io.write(PRIMARY_PORTS.cmd_base + 1, 1, 0x03);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 0x40);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEF);
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1); // ack IRQ
+
+    let snap = ide.borrow().save_state();
+
+    // Restore into a new controller instance (backends are dropped on restore).
+    let mut restored = Piix3IdePciDevice::new();
+    restored.load_state(&snap).unwrap();
+
+    // Reattach an identical disk backend; the controller should restore the negotiated mode onto
+    // the newly-created `AtaDrive`.
+    let disk2 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    restored
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk2)).unwrap());
+
+    let state = restored.snapshot_state();
+    match &state.primary.drives[0] {
+        IdeDriveState::Ata(s) => assert_eq!(s.udma_mode, 0),
+        other => panic!("expected ATA drive state, got {other:?}"),
+    }
+}
+
+#[test]
 fn ata_identify_word88_reflects_negotiated_udma_mode() {
     let capacity = 16 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
