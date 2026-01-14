@@ -7492,7 +7492,12 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
-            if (adapter->RingVa && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header) && adapter->RingEntryCount != 0) {
+            const BOOLEAN haveRing = (adapter->RingVa && adapter->RingSizeBytes != 0 && adapter->RingEntryCount != 0) ? TRUE : FALSE;
+            if (!adapter->RingVa) {
+                adapter->RingHeader = NULL;
+            }
+
+            if (haveRing && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) {
                 if (!adapter->RingHeader) {
                     adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
                 }
@@ -7515,24 +7520,38 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
                 KeMemoryBarrier();
             }
 
-            if (haveRingRegs && adapter->RingVa && adapter->RingSizeBytes != 0 && adapter->RingEntryCount != 0) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, adapter->RingPa.LowPart);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, adapter->RingSizeBytes);
+            if (haveRingRegs) {
+                if (haveRing) {
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, adapter->RingPa.LowPart);
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, adapter->RingSizeBytes);
 
-                if (haveFenceRegs) {
-                    if (adapter->FencePageVa && ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0)) {
-                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
-                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, (ULONG)(adapter->FencePagePa.QuadPart >> 32));
-                    } else {
-                        /* Ensure the device will not DMA to an uninitialised fence page. */
+                    if (haveFenceRegs) {
+                        if (adapter->FencePageVa && ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0)) {
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
+                            AeroGpuWriteRegU32(adapter,
+                                               AEROGPU_MMIO_REG_FENCE_GPA_HI,
+                                               (ULONG)(adapter->FencePagePa.QuadPart >> 32));
+                        } else {
+                            /* Ensure the device will not DMA to an uninitialised fence page. */
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
+                        }
+                    }
+
+                    /* Ensure the ring is enabled post-reset. */
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
+                } else {
+                    /* Defensive: disable ring execution to prevent DMA from stale/uninitialised pointers. */
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, 0);
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, 0);
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, 0);
+                    if (haveFenceRegs) {
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
                     }
                 }
-
-                /* Ensure the ring is enabled post-reset. */
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
             }
 
             KeReleaseSpinLock(&adapter->RingLock, ringIrql);
@@ -7547,16 +7566,25 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
         }
 
-        if (adapter->RingVa && adapter->RingEntryCount != 0 &&
-            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
+        if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_DOORBELL + sizeof(ULONG))) {
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, adapter->RingTail);
+            if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, adapter->RingTail);
+            } else {
+                /* Defensive: disable ring execution to prevent DMA from stale/uninitialised pointers. */
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
+                adapter->RingTail = 0;
+            }
 
             KeReleaseSpinLock(&adapter->RingLock, ringIrql);
         }
