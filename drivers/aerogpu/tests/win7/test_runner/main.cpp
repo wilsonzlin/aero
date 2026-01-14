@@ -99,7 +99,48 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
     return false;
   }
   const size_t array_start = pos + strlen(kNeedle);
-  const size_t array_end = obj->find(']', array_start);
+  size_t array_end = std::string::npos;
+  // Find the end of the artifacts array without being confused by ']' inside quoted strings.
+  // We intentionally do not implement full JSON parsing here; this is just enough robustness for
+  // Windows paths that may contain arbitrary characters.
+  bool in_string = false;
+  bool escape = false;
+  int nested_arrays = 0;
+  for (size_t i = array_start; i < obj->size(); ++i) {
+    const char c = (*obj)[i];
+    if (in_string) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c == '\\') {
+        escape = true;
+        continue;
+      }
+      if (c == '"') {
+        in_string = false;
+        continue;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      in_string = true;
+      continue;
+    }
+    if (c == '[') {
+      nested_arrays++;
+      continue;
+    }
+    if (c == ']') {
+      if (nested_arrays == 0) {
+        array_end = i;
+        break;
+      }
+      nested_arrays--;
+      continue;
+    }
+  }
   if (array_end == std::string::npos) {
     if (err) {
       *err = "AppendArtifactsToTestReportJsonObject: unterminated artifacts array";
@@ -107,7 +148,14 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
     return false;
   }
 
-  const bool is_empty = (array_end == array_start);
+  bool is_empty = true;
+  for (size_t i = array_start; i < array_end; ++i) {
+    const char c = (*obj)[i];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      is_empty = false;
+      break;
+    }
+  }
 
   std::string insert;
   insert.reserve(256);
