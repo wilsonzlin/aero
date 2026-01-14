@@ -110,9 +110,10 @@ Where:
 - `<version>` is a content-addressed or otherwise immutable identifier (see §1.4).
 - Chunk filenames are `chunkIndex` formatted as **zero-padded decimal**, followed by `.bin`.
   - `chunkIndexWidth` is recommended to be **8** (up to 99,999,999 chunks).
-  - `chunkIndexWidth` is a **minimum** width. Clients left-pad with `0` up to this width (but do not truncate if the index has more digits).
-    - If you don't want any padding, set `chunkIndexWidth = 1` and use unpadded decimal filenames (`0.bin`, `1.bin`, ..., `10.bin`, ...).
-  - Zero-padding is recommended for predictable URL formatting and for lexicographic ordering in tooling.
+  - `chunkIndexWidth` **MUST** be large enough to represent `chunkCount - 1` without truncation:
+    - `chunkIndexWidth >= len(str(chunkCount - 1))`
+    - To minimize padding, set `chunkIndexWidth` to this minimum value (e.g. `chunkCount=100` ⇒ `chunkIndexWidth=2` ⇒ `00.bin`…`99.bin`).
+  - Larger fixed widths (e.g. 8) are recommended for predictable URL formatting and for lexicographic ordering in tooling.
 
 Example URLs:
 
