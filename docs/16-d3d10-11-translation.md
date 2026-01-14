@@ -817,7 +817,7 @@ Patchlist draws require HS+DS for correct tessellation semantics. If HS/DS are u
 MUST NOT silently reinterpret the topology as a non-patch topology; it should either route through
 the emulation path (if scaffolding is present) or reject the draw with a clear error.
 
-#### 2.1.1b) IA primitive assembly (non-adjacency; mapping from `primitive_id` → vertex invocations)
+#### 2.1.1b) IA primitive assembly (mapping from `primitive_id` → vertex invocations)
 
 For GS emulation (and for any fixed-function logic that depends on IA primitive structure), the
 expansion pipeline needs a deterministic way to map an input `primitive_id` into the **vertex shader
@@ -864,8 +864,76 @@ The patch input mapping is:
 - control point `cp` in `0..control_points` corresponds to `vinv = patch_vertex_base + cp`
 - `vs_out_index = instance_id * input_vertex_invocations + vinv`
 
-Adjacency topologies use D3D-defined vertex ordering (`lineadj`/`triadj`) and are out of scope for
-initial bring-up (see limitations above).
+**Adjacency topologies (`lineadj` / `triadj`)**
+
+Adjacency topologies provide extra “neighbor” vertices to the GS. The runtime MUST validate that the
+bound GS declares a matching input primitive:
+
+- `*_ADJ` line topologies (`LINELIST_ADJ`, `LINESTRIP_ADJ`) require a GS input primitive of
+  `lineadj`.
+- `*_ADJ` triangle topologies (`TRIANGLELIST_ADJ`, `TRIANGLESTRIP_ADJ`) require a GS input primitive
+  of `triadj`.
+
+If the topology and GS input primitive disagree, the draw is invalid and should fail with a clear
+error (do not silently reinterpret).
+
+**Line adjacency (`lineadj`) vertex order (normative)**
+
+For `lineadj` GS inputs, each input primitive has 4 vertices in this order:
+
+```
+input[0] = adjacent vertex before the line start
+input[1] = line start vertex
+input[2] = line end vertex
+input[3] = adjacent vertex after the line end
+```
+
+Mapping from `primitive_id = p` to `vinv` IDs:
+
+| Topology | Primitive `p` consumes `vinv` IDs |
+|---|---|
+| `LINELIST_ADJ` | `(4p + 0, 4p + 1, 4p + 2, 4p + 3)` |
+| `LINESTRIP_ADJ` | `(p + 0, p + 1, p + 2, p + 3)` |
+
+**Triangle adjacency (`triadj`) vertex order (normative)**
+
+For `triadj` GS inputs, each input primitive has 6 vertices in this order:
+
+```
+input[0] = tri vertex 0
+input[1] = adjacent vertex for edge (0, 2)
+input[2] = tri vertex 1
+input[3] = adjacent vertex for edge (2, 4)
+input[4] = tri vertex 2
+input[5] = adjacent vertex for edge (4, 0)
+```
+
+Equivalently: even indices (0,2,4) are the triangle vertices in order around the triangle, and odd
+indices (1,3,5) are the opposite/adjacent vertices for the three edges.
+
+Mapping from `primitive_id = p` to `vinv` IDs:
+
+| Topology | Primitive `p` consumes `vinv` IDs |
+|---|---|
+| `TRIANGLELIST_ADJ` | `(6p + 0, 6p + 1, 6p + 2, 6p + 3, 6p + 4, 6p + 5)` |
+| `TRIANGLESTRIP_ADJ` | parity-dependent (see below) |
+
+**Triangle strip adjacency winding (important)**
+
+`TRIANGLESTRIP_ADJ` follows triangle-strip winding rules: odd primitives swap their first two
+triangle vertices to maintain consistent winding.
+
+Let `base = 2p`.
+
+- if `p` is even: `(base + 0, base + 1, base + 2, base + 3, base + 4, base + 5)`
+- if `p` is odd:  `(base + 2, base + 1, base + 0, base + 5, base + 4, base + 3)`
+
+This yields triangle vertices at indices 0/2/4 in the correct strip-winding order for both even and
+odd primitives, while preserving the `triadj` adjacency-edge mapping described above.
+
+Bring-up note: adjacency primitive assembly is specified here for implementability, but initial
+bring-up may still reject `*_ADJ` topologies (see limitations above) until the GS emulation path can
+consume `lineadj`/`triadj` inputs correctly (including restart handling for indexed strips).
 
 #### 2.1.1c) GS input register payload layout (optional; matches in-tree `gs_translate`)
 
@@ -1809,6 +1877,13 @@ Notes:
   bind group(s) (typically `@group(1)`). Implementations may include an empty `@group(0)` or the
   original VS layout for cache compatibility, but no VS resources are required by the passthrough VS
   itself.
+- Implementation note (in-tree executor): render pipelines are often created with a fixed set of
+  bind group layouts `0..=3` to match the stage-scoped binding model. As a result, even if the
+  passthrough VS does not declare any `@group(3)` bindings, the executor may still bind an
+  internal/emulation group at `@group(3)` to satisfy pipeline-layout requirements. Today it binds
+  the expanded vertex buffer at `@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)` (see
+  `crates/aero-d3d11/src/binding_model.rs`), even though the passthrough VS consumes that buffer via
+  normal vertex inputs.
 - Implementation note: the in-tree expansion prepass currently writes `vec4<f32>`
   attributes (`pos` + `o1`). When switching to the bit-preserving `ExpandedVertex` layout described
   above, update the passthrough VS template and vertex buffer formats (e.g. use `Uint32x4` +
@@ -1909,6 +1984,19 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(276)`: `gs_inputs` (read-only storage; optional packed GS input register payload)
 - `@binding(277)`: `hs_out_cp_regs` (read_write storage; optional HS output control-point registers)
 - `@binding(278)`: `hs_out_pc_regs` (read_write storage; optional HS patch-constant output registers)
+
+Additional reserved internal bindings (in-tree; render-stage support)
+
+The in-tree binding model (`crates/aero-d3d11/src/binding_model.rs`) also reserves a small block of
+internal bindings for the *render-stage* “expanded draw” path:
+
+- `@binding(384)`: expanded vertices (`BINDING_INTERNAL_EXPANDED_VERTICES`)
+- `@binding(385)`: expanded indices (`BINDING_INTERNAL_EXPANDED_INDICES`)
+- `@binding(386)`: draw params (`BINDING_INTERNAL_DRAW_PARAMS`)
+
+These are disjoint from the `256..=278` range above and may be bound by the executor even when a
+given passthrough VS consumes the expanded vertex buffer via normal vertex inputs (see “Passthrough
+VS strategy” notes above).
 
 **`ExpandParams` layout (concrete; `@binding(256)`)**
 
