@@ -84,6 +84,7 @@ using aerogpu::d3d10_11::InitLockArgsForMap;
 using aerogpu::d3d10_11::InitUnlockArgsForMap;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
+using aerogpu::d3d10_11::resource_total_bytes;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -3644,34 +3645,6 @@ using aerogpu::d3d10_11::kD3DMapWrite;
 using aerogpu::d3d10_11::kD3DMapReadWrite;
 using aerogpu::d3d10_11::kD3DMapWriteDiscard;
 using aerogpu::d3d10_11::kD3DMapWriteNoOverwrite;
-
-static uint64_t resource_total_bytes(const AeroGpuDevice* dev, const AeroGpuResource* res) {
-  if (!res) {
-    return 0;
-  }
-  switch (res->kind) {
-    case ResourceKind::Buffer:
-      return res->size_bytes;
-    case ResourceKind::Texture2D: {
-      if (!res->tex2d_subresources.empty()) {
-        const Texture2DSubresourceLayout& last = res->tex2d_subresources.back();
-        const uint64_t end = last.offset_bytes + last.size_bytes;
-        if (end < last.offset_bytes) {
-          return 0;
-        }
-        return end;
-      }
-
-      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-      if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-        return 0;
-      }
-      return aerogpu_texture_required_size_bytes(aer_fmt, res->row_pitch_bytes, res->height);
-    }
-    default:
-      return 0;
-  }
-}
 
 HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   if (!hDevice.pDrvPrivate || !pMap || !pMap->hResource.pDrvPrivate) {

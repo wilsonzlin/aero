@@ -172,6 +172,7 @@ using aerogpu::d3d10_11::InitUnlockArgsForMap;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
 using aerogpu::d3d10_11::ValidateWddmTexturePitch;
+using aerogpu::d3d10_11::resource_total_bytes;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -1603,7 +1604,6 @@ static void InitAdapterFuncsWithStubs(D3D10_1DDI_ADAPTERFUNCS* funcs) {
 // staging, then Map). Prefer emitting COPY_* commands so the host executor can
 // perform the copy; for staging destinations request WRITEBACK_DST so Map(READ)
 // observes the updated bytes.
-static uint64_t resource_total_bytes(const AeroGpuDevice* dev, const AeroGpuResource* res);
 
 template <typename FnPtr>
 struct CopyResourceImpl;
@@ -3895,34 +3895,6 @@ HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uin
   const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
   const uint32_t timeout_ms = do_not_wait ? 0u : kAeroGpuTimeoutMsInfinite;
   return AeroGpuWaitForFence(dev, fence, timeout_ms);
-}
-
-static uint64_t resource_total_bytes(const AeroGpuDevice* dev, const AeroGpuResource* res) {
-  if (!res) {
-    return 0;
-  }
-  switch (res->kind) {
-    case ResourceKind::Buffer:
-      return res->size_bytes;
-    case ResourceKind::Texture2D: {
-      if (!res->tex2d_subresources.empty()) {
-        const Texture2DSubresourceLayout& last = res->tex2d_subresources.back();
-        const uint64_t end = last.offset_bytes + last.size_bytes;
-        if (end < last.offset_bytes) {
-          return 0;
-        }
-        return end;
-      }
-
-      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-      if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-        return 0;
-      }
-      return aerogpu_texture_required_size_bytes(aer_fmt, res->row_pitch_bytes, res->height);
-    }
-    default:
-      return 0;
-  }
 }
 
 HRESULT ensure_resource_storage(AeroGpuResource* res, uint64_t bytes) {

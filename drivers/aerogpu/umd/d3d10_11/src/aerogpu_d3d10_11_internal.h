@@ -1266,6 +1266,34 @@ inline bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
   return true;
 }
 
+template <typename DeviceT, typename ResourceT>
+inline uint64_t resource_total_bytes(const DeviceT* dev, const ResourceT* res) {
+  if (!res) {
+    return 0;
+  }
+  const uint32_t kind = static_cast<uint32_t>(res->kind);
+  if (kind == static_cast<uint32_t>(ResourceKind::Buffer)) {
+    return res->size_bytes;
+  }
+  if (kind == static_cast<uint32_t>(ResourceKind::Texture2D)) {
+    if (!res->tex2d_subresources.empty()) {
+      const Texture2DSubresourceLayout& last = res->tex2d_subresources.back();
+      const uint64_t end = last.offset_bytes + last.size_bytes;
+      if (end < last.offset_bytes) {
+        return 0;
+      }
+      return end;
+    }
+
+    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      return 0;
+    }
+    return aerogpu_texture_required_size_bytes(aer_fmt, res->row_pitch_bytes, res->height);
+  }
+  return 0;
+}
+
 struct Adapter {
   std::atomic<uint32_t> next_handle{1};
 
