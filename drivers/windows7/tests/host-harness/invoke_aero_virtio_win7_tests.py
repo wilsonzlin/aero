@@ -2631,6 +2631,12 @@ def _virtio_input_tablet_events_skip_failure_message(
                     "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
                     "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
                 )
+            if reason == "no_tablet_device":
+                return (
+                    "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (no_tablet_device) but "
+                    "--with-input-tablet-events/--with-tablet-events was enabled (ensure a virtio-tablet device is attached "
+                    "(--with-virtio-tablet) and the guest tablet driver is installed)"
+                )
             return (
                 f"FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped ({reason}) but "
                 "--with-input-tablet-events/--with-tablet-events was enabled"

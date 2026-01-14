@@ -126,6 +126,24 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED:"))
 
+    def test_virtio_input_tablet_events_skip_tokens(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_tablet_events_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED:"))
+        self.assertIn("flag_not_set", msg)
+
+        msg = h._virtio_input_tablet_events_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|no_tablet_device\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED:"))
+        self.assertIn("no_tablet_device", msg)
+        self.assertNotIn("flag_not_set", msg)
+
         msg = h._virtio_snd_buffer_limits_skip_failure_message(
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|disabled\n"
         )

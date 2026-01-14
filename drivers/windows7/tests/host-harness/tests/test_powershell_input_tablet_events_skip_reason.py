@@ -32,6 +32,8 @@ class PowerShellInputTabletEventsSkipReasonTests(unittest.TestCase):
         # Backcompat: `...|SKIP|flag_not_set` (no `reason=` field).
         self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
         self.assertIn('$reason -eq "flag_not_set"', body)
+        self.assertIn('$reason -eq "no_tablet_device"', body)
+        self.assertIn("-WithVirtioTablet", body)
         self.assertIn("virtio-input-tablet-events test was skipped ($reason)", body)
 
 

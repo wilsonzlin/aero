@@ -8267,6 +8267,8 @@ try {
       }
       if ($reason -eq "flag_not_set") {
         Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but -WithInputTabletEvents/-WithTabletEvents was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
+      } elseif ($reason -eq "no_tablet_device") {
+        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (no_tablet_device) but -WithInputTabletEvents/-WithTabletEvents was enabled (attach a virtio-tablet device with -WithVirtioTablet and ensure the guest tablet driver is installed)"
       } else {
         Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped ($reason) but -WithInputTabletEvents/-WithTabletEvents was enabled"
       }
