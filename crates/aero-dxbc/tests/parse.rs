@@ -240,6 +240,25 @@ fn malformed_second_chunk_offset_is_error_and_mentions_index() {
 }
 
 #[test]
+fn malformed_second_chunk_offset_points_into_offset_table_mentions_index() {
+    let mut bytes = build_dxbc(&[
+        (FourCC(*b"SHDR"), &[1, 2, 3, 4]),
+        (FourCC(*b"JUNK"), &[0xaa]),
+    ]);
+    // For two chunks, the chunk offset table spans 32..40. Point the second
+    // chunk offset into the middle of that table.
+    let bad_off = 36u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    let second_offset_pos = offset_table_pos + 4;
+    bytes[second_offset_pos..second_offset_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk 1"));
+    assert!(err.context().contains("points into chunk offset table"));
+}
+
+#[test]
 fn malformed_second_chunk_offset_out_of_bounds_mentions_index() {
     let mut bytes = build_dxbc(&[
         (FourCC(*b"SHDR"), &[1, 2, 3, 4]),
