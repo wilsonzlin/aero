@@ -52,6 +52,15 @@ impl Dtd {
         }
         self.pixel_clock_hz as f64 / denom
     }
+
+    fn h_freq_khz(self) -> u64 {
+        let h_total = self.h_total as u64;
+        if h_total == 0 {
+            return 0;
+        }
+        // Round to nearest kHz.
+        (self.pixel_clock_hz + (h_total * 1000) / 2) / (h_total * 1000)
+    }
 }
 
 fn parse_dtd(bytes: &[u8]) -> Option<Dtd> {
@@ -115,6 +124,19 @@ fn generate_edid_preferred_mode_is_sane() {
     let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
     let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
     assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    let h_khz = dtd.h_freq_khz();
+    assert!(
+        (range.min_h_rate_khz as u64) <= h_khz && h_khz <= (range.max_h_rate_khz as u64),
+        "h_khz={h_khz} range={}..={}",
+        range.min_h_rate_khz,
+        range.max_h_rate_khz
+    );
+    assert!(
+        range.min_v_rate_hz as f64 <= refresh && refresh <= range.max_v_rate_hz as f64,
+        "refresh={refresh} range={}..={}",
+        range.min_v_rate_hz,
+        range.max_v_rate_hz
+    );
 }
 
 #[test]
@@ -130,6 +152,23 @@ fn generate_edid_synthesized_mode_is_sane() {
     assert_eq!(dtd.v_active, preferred.height);
     let refresh = dtd.refresh_hz();
     assert!((refresh - 60.0).abs() < 1.0, "refresh={refresh}");
+
+    let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
+    let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+    assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    let h_khz = dtd.h_freq_khz();
+    assert!(
+        (range.min_h_rate_khz as u64) <= h_khz && h_khz <= (range.max_h_rate_khz as u64),
+        "h_khz={h_khz} range={}..={}",
+        range.min_h_rate_khz,
+        range.max_h_rate_khz
+    );
+    assert!(
+        range.min_v_rate_hz as f64 <= refresh && refresh <= range.max_v_rate_hz as f64,
+        "refresh={refresh} range={}..={}",
+        range.min_v_rate_hz,
+        range.max_v_rate_hz
+    );
 }
 
 #[test]
@@ -150,6 +189,19 @@ fn generate_edid_high_resolution_mode_is_sane() {
     let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
     let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
     assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    let h_khz = dtd.h_freq_khz();
+    assert!(
+        (range.min_h_rate_khz as u64) <= h_khz && h_khz <= (range.max_h_rate_khz as u64),
+        "h_khz={h_khz} range={}..={}",
+        range.min_h_rate_khz,
+        range.max_h_rate_khz
+    );
+    assert!(
+        range.min_v_rate_hz as f64 <= refresh && refresh <= range.max_v_rate_hz as f64,
+        "refresh={refresh} range={}..={}",
+        range.min_v_rate_hz,
+        range.max_v_rate_hz
+    );
 }
 
 #[test]
