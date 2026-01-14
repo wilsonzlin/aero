@@ -31,7 +31,7 @@ func TestSession_RejectsOversizedUDPDataChannelMessage_Metrics(t *testing.T) {
 	}
 	t.Cleanup(quota.Close)
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.MaxDatagramPayloadBytes = 8 // => max UDP DC msg bytes = 8 + webrtcDataChannelUDPFrameOverheadBytes
 
 	serverSession, err := NewSession(api, nil, relayCfg, policy.NewDevDestinationPolicy(), quota, "", "", nil, 0, 0, "", nil)

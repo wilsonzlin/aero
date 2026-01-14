@@ -48,7 +48,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:            sm,
 		WebRTC:              api,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 2 * time.Second,
@@ -123,7 +123,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 
 func TestServer_RejectsCrossOriginHTTPRequests(t *testing.T) {
 	srv := NewServer(Config{
-		RelayConfig: relay.DefaultConfig(),
+		RelayConfig: relay.Config{}.WithDefaults(),
 		Policy:      policy.NewDevDestinationPolicy(),
 		Authorizer:  allowAllAuthorizer{},
 	})
@@ -166,7 +166,7 @@ func TestServer_RejectsCrossOriginHTTPRequests(t *testing.T) {
 func TestServer_WebSocketUpgradeFailuresReturnJSON(t *testing.T) {
 	srv := NewServer(Config{
 		WebRTC:         webrtc.NewAPI(),
-		RelayConfig:    relay.DefaultConfig(),
+		RelayConfig:    relay.Config{}.WithDefaults(),
 		Policy:         policy.NewDevDestinationPolicy(),
 		Authorizer:     allowAllAuthorizer{},
 		AllowedOrigins: []string{"https://good.example.com"},
@@ -229,7 +229,7 @@ func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:    sm,
 		WebRTC:      webrtc.NewAPI(),
-		RelayConfig: relay.DefaultConfig(),
+		RelayConfig: relay.Config{}.WithDefaults(),
 		Policy:      policy.NewDevDestinationPolicy(),
 		Authorizer:  failingAuthorizer{},
 	})
@@ -277,7 +277,7 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:    sm,
 		WebRTC:      webrtc.NewAPI(),
-		RelayConfig: relay.DefaultConfig(),
+		RelayConfig: relay.Config{}.WithDefaults(),
 		Policy:      policy.NewDevDestinationPolicy(),
 		Authorizer:  failingAuthorizer{},
 	})
@@ -366,7 +366,7 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:            sm,
 		WebRTC:              api,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 1 * time.Millisecond,
@@ -464,7 +464,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:            sm,
 		WebRTC:              api,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 1 * time.Millisecond,
@@ -567,7 +567,7 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:            sm,
 		WebRTC:              api,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 30 * time.Second,
@@ -680,7 +680,7 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:            sm,
 		WebRTC:              api,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		Authorizer:          allowAllAuthorizer{},
 		ICEGatheringTimeout: 30 * time.Second,
@@ -791,7 +791,7 @@ func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
 
 	srv := NewServer(Config{
 		Sessions:            sm,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		Authorizer:          unauthorizedAuthorizer{},
 		ICEGatheringTimeout: 2 * time.Second,
@@ -833,7 +833,7 @@ func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
 	preallocTTL := 250 * time.Millisecond
 	srv := NewServer(Config{
 		Sessions:           sm,
-		RelayConfig:        relay.DefaultConfig(),
+		RelayConfig:        relay.Config{}.WithDefaults(),
 		Policy:             policy.NewDevDestinationPolicy(),
 		Authorizer:         allowAllAuthorizer{},
 		SessionPreallocTTL: preallocTTL,
@@ -903,7 +903,7 @@ func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 
 	srv := NewServer(Config{
 		Sessions:           sm,
-		RelayConfig:        relay.DefaultConfig(),
+		RelayConfig:        relay.Config{}.WithDefaults(),
 		Policy:             policy.NewDevDestinationPolicy(),
 		Authorizer:         allowAllAuthorizer{},
 		SessionPreallocTTL: time.Hour,
@@ -942,7 +942,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 	srv := NewServer(Config{
 		Sessions:                    sm,
 		WebRTC:                      api,
-		RelayConfig:                 relay.DefaultConfig(),
+		RelayConfig:                 relay.Config{}.WithDefaults(),
 		Policy:                      policy.NewDevDestinationPolicy(),
 		Authorizer:                  allowAllAuthorizer{},
 		ICEGatheringTimeout:         10 * time.Millisecond,

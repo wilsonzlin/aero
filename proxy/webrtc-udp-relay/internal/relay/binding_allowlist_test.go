@@ -9,7 +9,7 @@ import (
 )
 
 func TestUdpPortBinding_AllowRemote_Capped(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.MaxAllowedRemotesPerBinding = 1024
@@ -37,7 +37,7 @@ func TestUdpPortBinding_AllowRemote_Capped(t *testing.T) {
 }
 
 func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.MaxAllowedRemotesPerBinding = 3
@@ -94,7 +94,7 @@ func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 }
 
 func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 
@@ -138,7 +138,7 @@ func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
 }
 
 func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 	cfg.MaxAllowedRemotesPerBinding = 2
@@ -189,7 +189,7 @@ func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
 }
 
 func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAny
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 	cfg.MaxAllowedRemotesPerBinding = 1

@@ -40,7 +40,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		}
 	}()
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	destPolicy := policy.NewDevDestinationPolicy()
 
 	cfg := config.Config{
@@ -225,7 +225,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 		}
 	}()
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	destPolicy := policy.NewDevDestinationPolicy()
 
 	cfg := config.Config{

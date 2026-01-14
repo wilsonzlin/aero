@@ -89,7 +89,7 @@ type Config struct {
 	MaxAllowedRemotesPerBinding int
 }
 
-func DefaultConfig() Config {
+func defaultConfig() Config {
 	return Config{
 		MaxUDPBindingsPerSession:  128,
 		UDPBindingIdleTimeout:     60 * time.Second,
@@ -106,7 +106,7 @@ func DefaultConfig() Config {
 }
 
 func (c Config) withDefaults() Config {
-	d := DefaultConfig()
+	d := defaultConfig()
 	if c.MaxUDPBindingsPerSession <= 0 {
 		c.MaxUDPBindingsPerSession = d.MaxUDPBindingsPerSession
 	}

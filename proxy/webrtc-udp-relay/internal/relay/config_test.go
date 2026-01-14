@@ -3,7 +3,7 @@ package relay
 import "testing"
 
 func TestDefaultConfig_UDPReadBufferBytes_IsMaxDatagramPayloadBytesPlusOne(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	if cfg.UDPReadBufferBytes != cfg.MaxDatagramPayloadBytes+1 {
 		t.Fatalf("UDPReadBufferBytes=%d, want %d (max payload + 1)", cfg.UDPReadBufferBytes, cfg.MaxDatagramPayloadBytes+1)
 	}

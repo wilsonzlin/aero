@@ -357,7 +357,7 @@ func exchangeOfferWithHeaders(t *testing.T, offerURL string, headers http.Header
 func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 	backendURL, upgrades := startTestL2Backend(t)
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	destPolicy := policy.NewDevDestinationPolicy()
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
@@ -397,7 +397,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 func TestWebRTCUDPRelay_L2TunnelRejectsUnordered(t *testing.T) {
 	backendURL, upgrades := startTestL2Backend(t)
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	destPolicy := policy.NewDevDestinationPolicy()
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
@@ -435,7 +435,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsUnordered(t *testing.T) {
 func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 	backendURL, _ := startTestL2Backend(t)
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	destPolicy := policy.NewDevDestinationPolicy()
 	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
@@ -503,7 +503,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 	backendURL, upgrades := startTestL2BackendWithToken(t, "sekrit")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendWSToken = "sekrit"
 	destPolicy := policy.NewDevDestinationPolicy()
@@ -576,7 +576,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "relay-secret")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendForwardOrigin = true
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeQuery
@@ -669,7 +669,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendForwardOrigin = true
 
@@ -745,7 +745,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendForwardOrigin = true
 	relayCfg.L2BackendWSOrigin = "https://backend.example.com"
@@ -823,7 +823,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.
 func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
 
@@ -909,7 +909,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendWSToken = "backend-secret"
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
@@ -999,7 +999,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeNone
 
@@ -1085,7 +1085,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 func TestWebRTCUDPRelay_L2TunnelSubprotocolForwardingRejectsInvalidCredential(t *testing.T) {
 	backendURL, upgrades := startTestL2Backend(t)
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
 
@@ -1128,7 +1128,7 @@ func TestWebRTCUDPRelay_L2TunnelSubprotocolForwardingRejectsInvalidCredential(t 
 func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
-	relayCfg := relay.DefaultConfig()
+	relayCfg := relay.Config{}.WithDefaults()
 	relayCfg.L2BackendWSURL = backendURL
 	relayCfg.L2BackendForwardAeroSession = true
 	destPolicy := policy.NewDevDestinationPolicy()

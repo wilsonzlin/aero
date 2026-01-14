@@ -45,7 +45,7 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 	sess, err := NewSession(
 		api,
 		nil,
-		relay.DefaultConfig(),
+		relay.Config{}.WithDefaults(),
 		nil,
 		quota,
 		"",

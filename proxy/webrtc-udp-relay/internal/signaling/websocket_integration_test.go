@@ -26,7 +26,7 @@ func TestWebSocketSignaling_TrickleICE_Connects(t *testing.T) {
 
 	s := NewServer(Config{
 		WebRTC:              api,
-		RelayConfig:         relay.DefaultConfig(),
+		RelayConfig:         relay.Config{}.WithDefaults(),
 		Policy:              policy.NewDevDestinationPolicy(),
 		ICEGatheringTimeout: 2 * time.Second,
 		Authorizer:          allowAllAuthorizer{},

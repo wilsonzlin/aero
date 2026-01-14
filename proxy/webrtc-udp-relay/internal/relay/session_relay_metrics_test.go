@@ -22,7 +22,7 @@ func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 	}
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, DefaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, defaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
 	t.Cleanup(r.Close)
 
 	r.HandleDataChannelMessage([]byte{0x00})
@@ -43,7 +43,7 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	relayCfg := DefaultConfig()
+	relayCfg := defaultConfig()
 	relayCfg.MaxDatagramPayloadBytes = 1
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
@@ -75,7 +75,7 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 
 	// Ensure the outbound send queue can't fit even a single UDP frame so we can
 	// deterministically force backpressure drops.
-	relayCfg := DefaultConfig()
+	relayCfg := defaultConfig()
 	relayCfg.DataChannelSendQueueBytes = 1
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
@@ -146,7 +146,7 @@ func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropp
 	t.Cleanup(sess.Close)
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	relayCfg := DefaultConfig()
+	relayCfg := defaultConfig()
 	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 	relayCfg.UDPBindingIdleTimeout = time.Minute
@@ -240,7 +240,7 @@ func TestSessionRelay_DefaultMetricsSink_UsesSessionMetrics(t *testing.T) {
 	sess := &Session{metrics: m}
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
-	r := NewSessionRelay(dc, DefaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
+	r := NewSessionRelay(dc, defaultConfig(), policy.NewDevDestinationPolicy(), sess, nil)
 	t.Cleanup(r.Close)
 
 	if r.metrics != m {
