@@ -40,6 +40,8 @@ import {
   alignUp,
   decodeCmdBindShadersPayload,
   decodeCmdDispatchPayload,
+  decodeCmdSetConstantBuffersPayload,
+  decodeCmdSetSamplersPayload,
   decodeCmdSetShaderResourceBuffersPayload,
   decodeCmdSetUnorderedAccessBuffersPayload,
   decodeStageEx,
@@ -258,6 +260,77 @@ test("AerogpuCmdWriter emits copy packets", () => {
   assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
   assert.equal(view.getUint32(pkt2 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
   assert.equal(pkt2 + 16, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter emits GEOMETRY-stage binding packets (reserved0=0)", () => {
+  const w = new AerogpuCmdWriter();
+
+  w.setTexture(AerogpuShaderStage.Geometry, 7, 123);
+  w.setSamplers(AerogpuShaderStage.Geometry, 2, [42, 43]);
+  w.setConstantBuffers(AerogpuShaderStage.Geometry, 1, [{ buffer: 11, offsetBytes: 16, sizeBytes: 32 }]);
+  w.setShaderResourceBuffers(AerogpuShaderStage.Geometry, 3, [{ buffer: 55, offsetBytes: 0, sizeBytes: 0 }]);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // SET_TEXTURE
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetTexture);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_SET_TEXTURE_SIZE);
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Geometry);
+  assert.equal(view.getUint32(cursor + 12, true), 7);
+  assert.equal(view.getUint32(cursor + 16, true), 123);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
+
+  // SET_SAMPLERS
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetSamplers);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_SET_SAMPLERS_SIZE + 8);
+  const samplers = decodeCmdSetSamplersPayload(bytes, cursor);
+  assert.equal(samplers.shaderStage, AerogpuShaderStage.Geometry);
+  assert.equal(samplers.startSlot, 2);
+  assert.equal(samplers.samplerCount, 2);
+  assert.equal(samplers.reserved0, 0);
+  assert.deepEqual(Array.from(samplers.samplers), [42, 43]);
+  cursor += AEROGPU_CMD_SET_SAMPLERS_SIZE + 8;
+
+  // SET_CONSTANT_BUFFERS
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetConstantBuffers);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16);
+  const cbs = decodeCmdSetConstantBuffersPayload(bytes, cursor);
+  assert.equal(cbs.shaderStage, AerogpuShaderStage.Geometry);
+  assert.equal(cbs.startSlot, 1);
+  assert.equal(cbs.bufferCount, 1);
+  assert.equal(cbs.reserved0, 0);
+  assert.equal(cbs.bindings.getUint32(0, true), 11);
+  assert.equal(cbs.bindings.getUint32(4, true), 16);
+  assert.equal(cbs.bindings.getUint32(8, true), 32);
+  assert.equal(cbs.bindings.getUint32(12, true), 0);
+  cursor += AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16;
+
+  // SET_SHADER_RESOURCE_BUFFERS
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetShaderResourceBuffers);
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 16,
+  );
+  const srvs = decodeCmdSetShaderResourceBuffersPayload(bytes, cursor);
+  assert.equal(srvs.shaderStage, AerogpuShaderStage.Geometry);
+  assert.equal(srvs.startSlot, 3);
+  assert.equal(srvs.bufferCount, 1);
+  assert.equal(srvs.reserved0, 0);
+  assert.equal(srvs.bindings.getUint32(0, true), 55);
+  assert.equal(srvs.bindings.getUint32(4, true), 0);
+  assert.equal(srvs.bindings.getUint32(8, true), 0);
+  assert.equal(srvs.bindings.getUint32(12, true), 0);
+  cursor += AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 16;
+
+  // FLUSH
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
+  assert.equal(cursor + 16, bytes.byteLength);
 });
 
 test("AerogpuCmdWriter emits sampler binding table packets", () => {
