@@ -9154,22 +9154,45 @@ impl Machine {
                     }
                     Some((mode, lfb_base, bytes_per_scan_line, start_x, start_y)) => {
                         if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                            let pitch =
-                                u64::from(bytes_per_scan_line.max(mode_info.bytes_per_scan_line()));
-                            let bytes_per_pixel = u64::from(mode_info.bytes_per_pixel()).max(1);
-                            let base = u64::from(lfb_base)
-                                .saturating_add(u64::from(start_y).saturating_mul(pitch))
-                                .saturating_add(u64::from(start_x).saturating_mul(bytes_per_pixel));
-
-                            scanout_state.publish(ScanoutStateUpdate {
-                                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
-                                base_paddr_lo: base as u32,
-                                base_paddr_hi: (base >> 32) as u32,
-                                width: u32::from(mode_info.width),
-                                height: u32::from(mode_info.height),
-                                pitch_bytes: pitch as u32,
+                            let legacy_text = ScanoutStateUpdate {
+                                source: SCANOUT_SOURCE_LEGACY_TEXT,
+                                base_paddr_lo: 0,
+                                base_paddr_hi: 0,
+                                width: 0,
+                                height: 0,
+                                pitch_bytes: 0,
                                 format: SCANOUT_FORMAT_B8G8R8X8,
-                            });
+                            };
+
+                            // `ScanoutState` currently only supports a single representable scanout
+                            // pixel format (B8G8R8X8 / 32bpp). If the guest selects a palettized VBE
+                            // mode (e.g. 8bpp), fall back to the implicit legacy path rather than
+                            // publishing a misleading B8G8R8X8 descriptor.
+                            if mode_info.bpp != 32 {
+                                scanout_state.publish(legacy_text);
+                            } else {
+                                let pitch = u64::from(
+                                    bytes_per_scan_line.max(mode_info.bytes_per_scan_line()),
+                                );
+                                // 32bpp direct-color VBE modes use little-endian packed pixels
+                                // B8G8R8X8.
+                                let bytes_per_pixel = 4u64;
+                                let base = u64::from(lfb_base)
+                                    .saturating_add(u64::from(start_y).saturating_mul(pitch))
+                                    .saturating_add(
+                                        u64::from(start_x).saturating_mul(bytes_per_pixel),
+                                    );
+
+                                scanout_state.publish(ScanoutStateUpdate {
+                                    source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                                    base_paddr_lo: base as u32,
+                                    base_paddr_hi: (base >> 32) as u32,
+                                    width: u32::from(mode_info.width),
+                                    height: u32::from(mode_info.height),
+                                    pitch_bytes: pitch as u32,
+                                    format: SCANOUT_FORMAT_B8G8R8X8,
+                                });
+                            }
                         }
                     }
                 }
