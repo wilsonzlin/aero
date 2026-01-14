@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
