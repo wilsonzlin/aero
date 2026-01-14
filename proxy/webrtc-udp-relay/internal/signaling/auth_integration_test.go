@@ -828,6 +828,53 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint_HeaderAli
 	}
 }
 
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint_QueryAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	// First session via the canonical query parameter.
+	{
+		resp, err := http.Post(ts.URL+"/session?token="+tokenA, "application/json", nil)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("first /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+	}
+
+	// Second session attempt with the apiKey query alias. This must still be
+	// rejected based on sid.
+	{
+		resp, err := http.Post(ts.URL+"/session?apiKey="+tokenB, "application/json", nil)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("second /session status=%d, want %d", resp.StatusCode, http.StatusConflict)
+		}
+		var errResp struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if errResp.Code != "session_already_active" {
+			t.Fatalf("error code=%q, want %q", errResp.Code, "session_already_active")
+		}
+	}
+}
+
 func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_SessionEndpoint(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:    config.AuthModeJWT,
@@ -1098,6 +1145,38 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 		}
 	})
 
+	t.Run("POST /webrtc/offer query apiKey alias", func(t *testing.T) {
+		body, err := json.Marshal(map[string]any{
+			"sdp": sdp{Type: "offer", SDP: "v=0"},
+		})
+		if err != nil {
+			t.Fatalf("marshal offer: %v", err)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/webrtc/offer?apiKey="+tokenB, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("/webrtc/offer status=%d, want %d", resp.StatusCode, http.StatusConflict)
+		}
+		var got errResp
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if got.Code != "session_already_active" {
+			t.Fatalf("error code=%q, want %q", got.Code, "session_already_active")
+		}
+	})
+
 	t.Run("POST /offer", func(t *testing.T) {
 		body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: "offer", SDP: "v=0"}})
 		if err != nil {
@@ -1110,6 +1189,36 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+tokenB)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("/offer status=%d, want %d", resp.StatusCode, http.StatusConflict)
+		}
+		var got errResp
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		if got.Code != "session_already_active" {
+			t.Fatalf("error code=%q, want %q", got.Code, "session_already_active")
+		}
+	})
+
+	t.Run("POST /offer query apiKey alias", func(t *testing.T) {
+		body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: "offer", SDP: "v=0"}})
+		if err != nil {
+			t.Fatalf("marshal offer: %v", err)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/offer?apiKey="+tokenB, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
