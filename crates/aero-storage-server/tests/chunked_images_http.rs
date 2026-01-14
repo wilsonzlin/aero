@@ -298,6 +298,25 @@ async fn chunked_manifest_with_matching_if_none_match_returns_304() {
         "public, max-age=31536000, immutable"
     );
     assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -327,7 +346,7 @@ async fn chunked_manifest_with_matching_if_modified_since_returns_304() {
         .oneshot(
             Request::builder()
                 .uri("/v1/images/disk/chunked/manifest.json")
-                .header(header::IF_MODIFIED_SINCE, last_modified)
+                .header(header::IF_MODIFIED_SINCE, &last_modified)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -335,6 +354,33 @@ async fn chunked_manifest_with_matching_if_modified_since_returns_304() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert_eq!(
+        resp.headers()[header::LAST_MODIFIED].to_str().unwrap(),
+        last_modified
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -450,6 +496,25 @@ async fn versioned_chunked_manifest_with_matching_if_none_match_returns_304() {
         "public, max-age=31536000, immutable"
     );
     assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -479,7 +544,7 @@ async fn versioned_chunked_manifest_with_matching_if_modified_since_returns_304(
         .oneshot(
             Request::builder()
                 .uri("/v1/images/disk/chunked/v1/manifest.json")
-                .header(header::IF_MODIFIED_SINCE, last_modified)
+                .header(header::IF_MODIFIED_SINCE, &last_modified)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -487,6 +552,33 @@ async fn versioned_chunked_manifest_with_matching_if_modified_since_returns_304(
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert_eq!(
+        resp.headers()[header::LAST_MODIFIED].to_str().unwrap(),
+        last_modified
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -1099,6 +1191,25 @@ async fn chunked_chunk_with_matching_if_none_match_returns_304() {
         "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -1193,6 +1304,25 @@ async fn versioned_chunked_chunk_with_matching_if_none_match_returns_304() {
         "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
