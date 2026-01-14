@@ -109,6 +109,11 @@ mod e1000_bridge;
 pub use e1000_bridge::E1000Bridge;
 
 #[cfg(target_arch = "wasm32")]
+mod aerogpu_bridge;
+#[cfg(target_arch = "wasm32")]
+pub use aerogpu_bridge::AerogpuBridge;
+
+#[cfg(target_arch = "wasm32")]
 mod i8042_bridge;
 #[cfg(target_arch = "wasm32")]
 pub use i8042_bridge::I8042Bridge;

@@ -236,6 +236,7 @@ dependencies = [
  "aero-protocol",
  "memory",
  "pollster",
+ "pretty_assertions",
 ]
 
 [[package]]
@@ -891,6 +892,7 @@ dependencies = [
  "aero-audio",
  "aero-cpu-core",
  "aero-devices",
+ "aero-devices-gpu",
  "aero-devices-input",
  "aero-gpu-vga",
  "aero-guest-phys",
