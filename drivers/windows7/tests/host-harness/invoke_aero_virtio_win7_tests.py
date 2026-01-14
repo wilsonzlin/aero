@@ -1564,12 +1564,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-virtio-blk-msix",
         action="store_true",
-        help="After drivers load, require that the virtio-blk PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
+        help=(
+            "Require virtio-blk to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "
+            "and also requires the guest marker: "
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|..."
+        ),
     )
     parser.add_argument(
         "--require-virtio-snd-msix",
         action="store_true",
-        help="After drivers load, require that the virtio-snd PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
+        help=(
+            "After drivers load, require that the virtio-snd PCI function has MSI-X enabled (checked via QMP/QEMU "
+            "introspection). This option requires --with-virtio-snd."
+        ),
     )
     parser.add_argument(
         "--with-virtio-snd",
@@ -1612,15 +1619,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=50,
         help="RMS threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 50)",
-    )
-    parser.add_argument(
-        "--require-virtio-snd-msix",
-        dest="require_virtio_snd_msix",
-        action="store_true",
-        help=(
-            "Require virtio-snd to run with MSI-X enabled (host-side check via QMP query-pci). "
-            "This option requires QMP and --with-virtio-snd."
-        ),
     )
     # NOTE: `--with-virtio-input-events`/`--enable-virtio-input-events` used to be separate flags; they remain accepted
     # as aliases for `--with-input-events` for backwards compatibility.
@@ -2737,6 +2735,17 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+
+                        if args.require_virtio_blk_msix:
+                            ok, reason = _require_virtio_blk_msix_marker(tail)
+                            if not ok:
+                                print(
+                                    f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -3253,6 +3262,17 @@ def main() -> int:
                                 msix_checked = True
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if args.require_virtio_blk_msix:
+                                ok, reason = _require_virtio_blk_msix_marker(tail)
+                                if not ok:
+                                    print(
+                                        f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}",
+                                        file=sys.stderr,
+                                    )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
@@ -4124,6 +4144,31 @@ def _emit_virtio_blk_irq_host_marker(
     for k in extra_msi:
         parts.append(f"{k}={_sanitize_marker_value(out_fields[k])}")
     print("|".join(parts))
+
+
+def _require_virtio_blk_msix_marker(tail: bytes) -> tuple[bool, str]:
+    """
+    Return (ok, reason). `ok` is True iff the guest reported virtio-blk running in MSI-X mode
+    via the marker: AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|")
+    if marker_line is None:
+        return False, "missing virtio-blk-msix marker (guest selftest too old?)"
+
+    parts = marker_line.split("|")
+    if "FAIL" in parts:
+        return False, "virtio-blk-msix marker reported FAIL"
+    if "SKIP" in parts:
+        return False, "virtio-blk-msix marker reported SKIP"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    mode = fields.get("mode")
+    if mode is None:
+        return False, "virtio-blk-msix marker missing mode=... field"
+    if mode != "msix":
+        msgs = fields.get("messages", "?")
+        return False, f"mode={mode} (expected msix) messages={msgs}"
+    return True, "ok"
 
 def _emit_virtio_irq_host_marker(tail: bytes, *, device: str, host_marker: str) -> None:
     """

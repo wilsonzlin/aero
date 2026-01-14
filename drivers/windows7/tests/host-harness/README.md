@@ -126,6 +126,23 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### virtio-blk MSI/MSI-X interrupt mode (guest-observed, optional)
+
+Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-blk interrupt mode/vectors:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`.
+
+When `--require-virtio-blk-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
+
+Example (Python):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --require-virtio-blk-msix \
+  --timeout-seconds 600 \
+  --snapshot
+```
 ### virtio-input event delivery (QMP input injection)
 
 The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.

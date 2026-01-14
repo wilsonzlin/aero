@@ -7782,6 +7782,7 @@ int wmain(int argc, wchar_t** argv) {
     constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
     constexpr size_t kMsixCfgEnd = offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) + sizeof(USHORT);
     constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
+    constexpr size_t kMsgCountEnd = offsetof(AEROVBLK_QUERY_INFO, MessageCount) + sizeof(ULONG);
 
     if (blk_miniport_info->returned_len >= kIrqModeEnd) {
       std::string marker = std::string("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|") + (blk_ok ? "PASS" : "FAIL");
@@ -7806,8 +7807,34 @@ int wmain(int argc, wchar_t** argv) {
     } else {
       log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
     }
+
+    /*
+     * Dedicated marker for MSI/MSI-X diagnostics (used by the host harness).
+     *
+     * This marker is independent of the overall virtio-blk PASS/FAIL and is
+     * emitted only when the extended IOCTL payload is available.
+     */
+    if (blk_miniport_info->returned_len >= kMsgCountEnd && blk_miniport_info->returned_len >= kMsixCfgEnd &&
+        blk_miniport_info->returned_len >= kMsixQ0End) {
+      const auto& info = blk_miniport_info->info;
+      const char* mode = AerovblkIrqModeForMarker(info);
+      // For virtio-blk modern, message-signaled interrupts imply MSI-X routing.
+      if (strcmp(mode, "msi") == 0) {
+        mode = "msix";
+      }
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=%s|messages=%lu|config_vector=%u|queue_vector=%u",
+          mode,
+          static_cast<unsigned long>(info.MessageCount),
+          static_cast<unsigned>(info.MsixConfigVector),
+          static_cast<unsigned>(info.MsixQueue0Vector));
+    } else {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=ioctl_payload_v1_or_truncated|returned_len=%zu",
+               blk_miniport_info->returned_len);
+    }
   } else {
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=no_miniport_info");
   }
   all_ok = all_ok && blk_ok;
 

@@ -76,27 +76,27 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   queueVec = (devExt->MsiMessageCount >= 2u) ? 1u : 0u;
 
   st = VirtioPciSetConfigMsixVector(&devExt->Vdev, configVec);
-  if (!NT_SUCCESS(st)) {
-    return FALSE;
-  }
-
-  st = VirtioPciSetQueueMsixVector(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, queueVec);
-  if (!NT_SUCCESS(st)) {
-    /*
-     * If programming vector 1 failed, fall back to vector 0 mapping so the
-     * device can still interrupt via message 0.
-     */
-    if (queueVec != 0) {
-      queueVec = 0;
+  if (NT_SUCCESS(st)) {
+    st = VirtioPciSetQueueMsixVector(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, queueVec);
+    if (!NT_SUCCESS(st) && queueVec != configVec) {
+      /* Fallback: route queue interrupts to vector 0 as well. */
+      queueVec = configVec;
       st = VirtioPciSetQueueMsixVector(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, queueVec);
-      if (!NT_SUCCESS(st)) {
-        return FALSE;
-      }
-    } else {
-      return FALSE;
     }
   }
 
+  if (NT_SUCCESS(st)) {
+    return TRUE;
+  }
+
+  /*
+   * Vector programming failed (readback NO_VECTOR): fall back to INTx.
+   *
+   * Contract v1 requires INTx correctness; MSI/MSI-X is an optional enhancement.
+   */
+  devExt->UseMsi = FALSE;
+  devExt->MsiMessageCount = 0;
+  (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
   return TRUE;
 }
 
