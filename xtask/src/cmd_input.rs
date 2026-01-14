@@ -48,11 +48,10 @@ Steps:
   2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test hid_builtin_snapshot
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
-  4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
-  5. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test xhci_webusb_bridge --locked
-  6. (optional: --with-wasm) cargo test -p aero-wasm --test machine_input_backends --locked
-  7. (unless --rust-only) npm -w web run test:unit -- src/input
-  8. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
+  4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
+  5. (optional: --with-wasm) cargo test -p aero-wasm --test machine_input_backends --locked
+  6. (unless --rust-only) npm -w web run test:unit -- src/input
+  7. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
@@ -170,24 +169,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "crates/aero-wasm",
             "--test",
             "webusb_uhci_bridge",
-            "--locked",
-        ]);
-        runner.run_step(
-            "WASM: wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked",
-            &mut cmd,
-        )?;
-
-        let mut cmd = Command::new("wasm-pack");
-        cmd.current_dir(&repo_root).args([
-            "test",
-            "--node",
-            "crates/aero-wasm",
             "--test",
             "xhci_webusb_bridge",
             "--locked",
         ]);
         runner.run_step(
-            "WASM: wasm-pack test --node crates/aero-wasm --test xhci_webusb_bridge --locked",
+            "WASM: wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked",
             &mut cmd,
         )?;
     }

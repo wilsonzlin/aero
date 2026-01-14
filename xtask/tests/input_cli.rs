@@ -21,6 +21,8 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("aero-devices-input"))
         .stdout(predicate::str::contains("aero-usb"))
         .stdout(predicate::str::contains("aero-machine"))
+        .stdout(predicate::str::contains("webusb_uhci_bridge"))
+        .stdout(predicate::str::contains("xhci_webusb_bridge"))
         .stdout(predicate::str::contains("--e2e"))
         .stdout(predicate::str::contains("--machine"))
         .stdout(predicate::str::contains("--wasm"))
