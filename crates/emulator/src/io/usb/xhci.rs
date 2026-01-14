@@ -216,3 +216,87 @@ impl MmioDevice for XhciPciDevice {
             .mmio_write(&mut adapter, offset, size, value);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected DMA read");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected DMA write");
+        }
+    }
+
+    #[test]
+    fn pci_command_bme_bit_gates_tick_1ms_dma() {
+        let mut dev = XhciPciDevice::new(XhciController::new(), 0);
+
+        // Enable MMIO decoding so we can configure interrupter registers, but leave BME disabled.
+        dev.config_write(0x04, 2, 1 << 1);
+
+        // Configure an event ring so servicing it would require DMA.
+        // (We don't need valid guest memory backing; PanicMem will assert if DMA occurs.)
+        dev.mmio_write(&mut PanicMem, regs::REG_INTR0_ERSTSZ, 4, 1);
+        dev.mmio_write(&mut PanicMem, regs::REG_INTR0_ERSTBA_LO, 4, 0x1000);
+        dev.mmio_write(&mut PanicMem, regs::REG_INTR0_ERDP_LO, 4, 0x2000);
+
+        // With BME clear, ticking must not DMA.
+        let mut mem = PanicMem;
+        dev.tick_1ms(&mut mem);
+
+        // Enable BME and verify ticking now attempts to DMA (event ring refresh).
+        dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dev.tick_1ms(&mut mem);
+        }));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn pci_command_bme_clear_still_advances_port_reset_timers() {
+        #[derive(Clone)]
+        struct DummyDevice;
+
+        impl aero_usb::UsbDeviceModel for DummyDevice {
+            fn handle_control_request(
+                &mut self,
+                _setup: aero_usb::SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> aero_usb::ControlResponse {
+                aero_usb::ControlResponse::Stall
+            }
+        }
+
+        let mut dev = XhciPciDevice::new(XhciController::new(), 0);
+
+        // Enable MMIO decoding so we can poke PORTSC, but keep BME disabled.
+        dev.config_write(0x04, 2, 1 << 1);
+
+        // Attach a dummy device so the port is connected; when reset completes the root hub model
+        // enables the port automatically.
+        dev.controller.attach_device(0, Box::new(DummyDevice));
+
+        let portsc = regs::port::portsc_offset(0);
+        dev.mmio_write(&mut PanicMem, portsc, 4, regs::PORTSC_PR);
+
+        // With BME clear, ticking must not DMA but should still run port reset timers.
+        let mut mem = PanicMem;
+        for _ in 0..50 {
+            dev.tick_1ms(&mut mem);
+        }
+
+        let portsc_val = dev.mmio_read(&mut mem, portsc, 4);
+        assert_eq!(portsc_val & regs::PORTSC_PR, 0, "port reset should self-clear");
+        assert_ne!(
+            portsc_val & regs::PORTSC_PED,
+            0,
+            "port should be enabled after reset"
+        );
+    }
+}
