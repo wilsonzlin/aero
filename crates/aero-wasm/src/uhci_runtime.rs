@@ -75,15 +75,9 @@ fn new_guest_memory_bus(
     ))
 }
 
-fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) -> bool {
-    fn walk(col: &webhid::HidCollectionInfo) -> bool {
-        if !col.output_reports.is_empty() {
-            return true;
-        }
-        col.children.iter().any(walk)
-    }
-
-    collections.iter().any(walk)
+fn compute_has_interrupt_out(collections: &[webhid::HidCollectionInfo]) -> bool {
+    let max_output_on_wire = webhid::max_output_report_bytes_on_wire(collections);
+    max_output_on_wire > 0 && max_output_on_wire <= 64
 }
 
 fn parse_webhid_collections(
@@ -282,7 +276,7 @@ impl UhciRuntime {
                 ))
             })?;
 
-        let has_interrupt_out = collections_have_output_reports(&collections);
+        let has_interrupt_out = compute_has_interrupt_out(&collections);
         let product = Self::sanitize_usb_string_owned(
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
@@ -362,7 +356,7 @@ impl UhciRuntime {
                 ))
             })?;
 
-        let has_interrupt_out = collections_have_output_reports(&collections);
+        let has_interrupt_out = compute_has_interrupt_out(&collections);
         let product = Self::sanitize_usb_string_owned(
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );

@@ -1366,7 +1366,8 @@ impl WebHidPassthroughBridge {
         let report_descriptor = webhid::synthesize_report_descriptor(&collections)
             .map_err(|e| js_error(&format!("failed to synthesize HID report descriptor: {e}")))?;
 
-        let has_interrupt_out = collections_have_output_reports(&collections);
+        let max_output_on_wire = webhid::max_output_report_bytes_on_wire(&collections);
+        let has_interrupt_out = max_output_on_wire > 0 && max_output_on_wire <= 64;
 
         let (interface_subclass, interface_protocol) =
             match webhid::infer_boot_interface_subclass_protocol(&collections) {
@@ -1504,18 +1505,6 @@ impl UsbHidPassthroughBridge {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) -> bool {
-    fn walk(col: &webhid::HidCollectionInfo) -> bool {
-        if !col.output_reports.is_empty() {
-            return true;
-        }
-        col.children.iter().any(walk)
-    }
-
-    collections.iter().any(walk)
-}
-
 #[cfg(all(test, target_arch = "wasm32"))]
 mod webhid_passthrough_bridge_tests {
     use super::*;
@@ -1572,6 +1561,26 @@ mod webhid_passthrough_bridge_tests {
         }]
     }
 
+    fn large_output_collections() -> Vec<webhid::HidCollectionInfo> {
+        let mut item = make_minimal_item(0x01, 0x00); // Generic Desktop / Undefined
+        item.report_count = 65;
+        vec![webhid::HidCollectionInfo {
+            usage_page: 0x01, // Generic Desktop
+            usage: 0x00,      // Undefined
+            collection_type: webhid::HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![webhid::HidReportInfo {
+                report_id: 0,
+                items: vec![make_minimal_item(0x01, 0x00)],
+            }],
+            output_reports: vec![webhid::HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            feature_reports: vec![],
+        }]
+    }
+
     fn parse_interface_descriptor_fields(bytes: &[u8]) -> Option<(u8, u8)> {
         const INTERFACE_DESC_OFFSET: usize = 9;
         if bytes.len() < INTERFACE_DESC_OFFSET + 9 {
@@ -1584,6 +1593,17 @@ mod webhid_passthrough_bridge_tests {
         let subclass = bytes[INTERFACE_DESC_OFFSET + 6];
         let protocol = bytes[INTERFACE_DESC_OFFSET + 7];
         Some((subclass, protocol))
+    }
+
+    fn parse_num_endpoints(bytes: &[u8]) -> Option<u8> {
+        const INTERFACE_DESC_OFFSET: usize = 9;
+        if bytes.len() < INTERFACE_DESC_OFFSET + 9 {
+            return None;
+        }
+        if bytes[INTERFACE_DESC_OFFSET] != 0x09 || bytes[INTERFACE_DESC_OFFSET + 1] != 0x04 {
+            return None;
+        }
+        Some(bytes[INTERFACE_DESC_OFFSET + 4])
     }
 
     #[wasm_bindgen_test]
@@ -1618,6 +1638,42 @@ mod webhid_passthrough_bridge_tests {
         assert_eq!(
             parse_interface_descriptor_fields(&bytes),
             Some((0x01, 0x01))
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn webhid_passthrough_bridge_omits_interrupt_out_for_large_output_reports() {
+        let collections_json =
+            serde_wasm_bindgen::to_value(&large_output_collections()).expect("collections to JsValue");
+        let bridge = WebHidPassthroughBridge::new(
+            0x1234,
+            0x5678,
+            Some("WebHID".to_string()),
+            Some("Large Output Device".to_string()),
+            None,
+            collections_json,
+        )
+        .expect("WebHidPassthroughBridge::new ok");
+
+        let mut dev = bridge.as_usb_device();
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: 0x06,
+                w_value: 0x0200,
+                w_index: 0,
+                w_length: 256,
+            },
+            None,
+        );
+        let ControlResponse::Data(bytes) = resp else {
+            panic!("expected config descriptor bytes, got {resp:?}");
+        };
+
+        assert_eq!(parse_num_endpoints(&bytes), Some(1));
+        assert!(
+            !bytes.windows(3).any(|w| w == [0x07, 0x05, 0x01]),
+            "expected config descriptor to omit interrupt OUT endpoint 0x01: {bytes:02x?}"
         );
     }
 }

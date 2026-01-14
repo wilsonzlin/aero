@@ -263,6 +263,61 @@ pub fn infer_boot_interface_subclass_protocol(
     }
 }
 
+/// Compute the maximum output report size, in bytes, as it would appear on the USB wire.
+///
+/// This mirrors the browser/TypeScript WebHID policy (`computeMaxOutputReportBytesOnWire`):
+/// - Aggregate output report bits across the entire collection tree *by report ID*.
+/// - For each report ID:
+///   - `payloadBytes = ceil(totalBits / 8)`
+///   - `onWireBytes = payloadBytes + (reportId != 0 ? 1 : 0)` (report ID prefix byte)
+/// - Return the maximum `onWireBytes` across all output report IDs (or 0 when none exist).
+///
+/// Note: This uses saturating arithmetic to avoid panics on malformed/hostile inputs.
+pub fn max_output_report_bytes_on_wire(collections: &[HidCollectionInfo]) -> u32 {
+    use alloc::collections::BTreeMap;
+
+    fn report_bits(report: &HidReportInfo) -> u64 {
+        let mut bits: u64 = 0;
+        for item in &report.items {
+            let size = u64::from(item.report_size);
+            let count = u64::from(item.report_count);
+            bits = bits.saturating_add(size.saturating_mul(count));
+        }
+        bits
+    }
+
+    fn walk_collection(col: &HidCollectionInfo, bits_by_id: &mut BTreeMap<u32, u64>) {
+        for report in &col.output_reports {
+            let bits = report_bits(report);
+            bits_by_id
+                .entry(report.report_id)
+                .and_modify(|v| *v = v.saturating_add(bits))
+                .or_insert(bits);
+        }
+        for child in &col.children {
+            walk_collection(child, bits_by_id);
+        }
+    }
+
+    let mut bits_by_id: BTreeMap<u32, u64> = BTreeMap::new();
+    for col in collections {
+        walk_collection(col, &mut bits_by_id);
+    }
+
+    let mut max_on_wire: u64 = 0;
+    for (&report_id, &bits) in &bits_by_id {
+        let payload_bytes = bits.saturating_add(7) / 8;
+        let on_wire_bytes = if report_id == 0 {
+            payload_bytes
+        } else {
+            payload_bytes.saturating_add(1)
+        };
+        max_on_wire = max_on_wire.max(on_wire_bytes);
+    }
+
+    u32::try_from(max_on_wire).unwrap_or(u32::MAX)
+}
+
 #[derive(Debug, Clone, Copy)]
 enum HidReportKindPath {
     Input,
@@ -418,6 +473,51 @@ mod tests {
                 items: vec![item],
             }],
             output_reports: vec![],
+            feature_reports: vec![],
+        }]
+    }
+
+    fn make_output_collections(report_id: u32, report_size: u32, report_count: u32) -> Vec<HidCollectionInfo> {
+        vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id,
+                items: vec![HidReportItem {
+                    usage_page: 0x01,
+                    usages: vec![0x30],
+                    usage_minimum: 0,
+                    usage_maximum: 0,
+                    report_size,
+                    report_count,
+                    unit_exponent: 0,
+                    unit: 0,
+                    logical_minimum: 0,
+                    logical_maximum: 127,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    strings: vec![],
+                    string_minimum: 0,
+                    string_maximum: 0,
+                    designators: vec![],
+                    designator_minimum: 0,
+                    designator_maximum: 0,
+                    is_absolute: true,
+                    is_array: false,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_linear: true,
+                    is_range: false,
+                    is_relative: false,
+                    is_volatile: false,
+                    has_null: false,
+                    has_preferred_state: true,
+                    is_wrapped: false,
+                }],
+            }],
             feature_reports: vec![],
         }]
     }
@@ -639,5 +739,28 @@ mod tests {
             value.get("type").is_none(),
             "normalized JSON should not use the WebHID string enum field name: {value}"
         );
+    }
+
+    #[test]
+    fn max_output_report_bytes_on_wire_is_zero_when_no_output_reports_exist() {
+        let collections = make_collections(make_item(0));
+        assert_eq!(max_output_report_bytes_on_wire(&collections), 0);
+    }
+
+    #[test]
+    fn max_output_report_bytes_on_wire_counts_report_id_prefix_byte() {
+        // 2 bytes payload, no report-id prefix.
+        let collections = make_output_collections(0, 8, 2);
+        assert_eq!(max_output_report_bytes_on_wire(&collections), 2);
+
+        // 2 bytes payload, plus report-id prefix.
+        let collections = make_output_collections(1, 8, 2);
+        assert_eq!(max_output_report_bytes_on_wire(&collections), 3);
+    }
+
+    #[test]
+    fn max_output_report_bytes_on_wire_handles_large_output_reports() {
+        let collections = make_output_collections(0, 8, 65);
+        assert_eq!(max_output_report_bytes_on_wire(&collections), 65);
     }
 }

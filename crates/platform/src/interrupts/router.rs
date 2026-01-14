@@ -773,6 +773,7 @@ impl PlatformInterrupts {
     pub(crate) fn lapic_apic_id(&self) -> u8 {
         self.lapics[0].apic_id()
     }
+
     /// Inject a fixed interrupt into the LAPIC whose `apic_id()` matches `apic_id`.
     ///
     /// If no LAPIC matches, the interrupt is dropped.
