@@ -2146,7 +2146,7 @@ fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_per_register() {
 
     // Payload is scalar u32 values (0/1), one per bool register.
     let payload_base = pkt_base + size_of::<AerogpuCmdSetShaderConstantsB>();
-    for (i, expected) in data.into_iter().enumerate() {
+    for (i, expected) in data.iter().copied().enumerate() {
         let off = payload_base + i * 4;
         assert_eq!(
             u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
