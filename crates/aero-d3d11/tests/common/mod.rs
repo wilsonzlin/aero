@@ -44,18 +44,18 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
         skip_or_panic(test_name, "indirect unsupported");
         return true;
     }
-
-    // Some backends expose compute+indirect but have very low per-stage storage buffer limits
-    // (e.g. `Limits::downlevel_defaults()` sets this to 4). Our GS/HS/DS emulation paths can bind
-    // multiple storage buffers (expanded vertices/indices, indirect args, counters, vertex/index
-    // pulling), which can exceed these limits.
+    // Some downlevel backends expose compute+indirect execution but have very low per-stage storage
+    // buffer limits (e.g. `Limits::downlevel_defaults()` sets
+    // `max_storage_buffers_per_shader_stage = 4`).
+    //
+    // The GS/HS/DS compute-prepass path relies on storage buffers, so treat these failures as
+    // "emulation unsupported" for tests.
     if msg.contains("max_storage_buffers_per_shader_stage")
+        || msg.contains("Too many StorageBuffers")
         || msg.contains("Too many bindings of type StorageBuffers")
+        || msg.contains("too many storage buffers")
     {
-        skip_or_panic(
-            test_name,
-            "storage buffer bindings unsupported/too limited for compute prepass",
-        );
+        skip_or_panic(test_name, "storage buffer limit too low for compute prepass");
         return true;
     }
 

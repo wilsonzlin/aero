@@ -207,6 +207,12 @@ const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 = DrawIndexedIndirectArgs::
 const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 16;
 // `vec4<f32>` color + `vec4<u32>` counts.
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
+// Placeholder prepass storage buffer containing:
+// - `DrawIndexedIndirectArgs` (5x u32 / 20 bytes) so it can be used with either `draw_indirect` or
+//   `draw_indexed_indirect`.
+// - A 16-byte counter block (4x u32) for future GS/HS/DS compute emulation bookkeeping.
+const GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES: u64 =
+    GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES;
 
 #[cfg(test)]
 fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
@@ -236,11 +242,9 @@ const GEOMETRY_PREPASS_GS_CB0_BINDING: u32 = BINDING_BASE_CBUFFER;
 // from vertex/index pulling resources (`@group(3)`). This keeps us within downlevel WebGPU limits
 // such as `max_storage_buffers_per_shader_stage = 4` (wgpu's `Limits::downlevel_defaults()`).
 const GEOMETRY_PREPASS_OUT_VERTICES_BINDING: u32 = 0;
-const GEOMETRY_PREPASS_OUT_INDICES_BINDING: u32 = 1;
-const GEOMETRY_PREPASS_OUT_INDIRECT_BINDING: u32 = 2;
-const GEOMETRY_PREPASS_OUT_COUNTER_BINDING: u32 = 3;
-const GEOMETRY_PREPASS_PARAMS_BINDING: u32 = 4;
-const GEOMETRY_PREPASS_DEPTH_PARAMS_BINDING: u32 = 5;
+const GEOMETRY_PREPASS_OUT_STATE_BINDING: u32 = 1;
+const GEOMETRY_PREPASS_PARAMS_BINDING: u32 = 2;
+const GEOMETRY_PREPASS_DEPTH_PARAMS_BINDING: u32 = 3;
 
 const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
 struct ExpandedVertex {
@@ -263,11 +267,12 @@ struct DepthParams {
 
 @group(3) @binding(0) var<uniform> gs_cb0: GsCb0;
 @group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
-@group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
-@group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
-@group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
-@group(0) @binding(4) var<uniform> params: Params;
-@group(0) @binding(5) var<uniform> depth_params: DepthParams;
+// out_state layout:
+// - [0..5): indirect args (DrawIndexedIndirectArgs-compatible, but also works for draw_indirect)
+// - [5..9): placeholder counter block (4x u32 / 16 bytes)
+@group(0) @binding(1) var<storage, read_write> out_state: array<u32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@group(0) @binding(3) var<uniform> depth_params: DepthParams;
 
 fn write_varyings(vid: u32, v: vec4<f32>) {
     // Keep placeholder prepass behavior location-agnostic by filling every varying slot.
@@ -357,11 +362,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         write_varyings(base + 0u, c);
         write_varyings(base + 1u, c);
         write_varyings(base + 2u, c);
-
-        // Indices for indexed draws.
-        out_indices[base + 0u] = base + 0u;
-        out_indices[base + 1u] = base + 1u;
-        out_indices[base + 2u] = base + 2u;
     } else {
         // Side-by-side triangles (used for primitive-id tests).
         var x0: f32 = -2.0;
@@ -381,10 +381,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         write_varyings(base + 0u, c);
         write_varyings(base + 1u, c);
         write_varyings(base + 2u, c);
-
-        out_indices[base + 0u] = base + 0u;
-        out_indices[base + 1u] = base + 1u;
-        out_indices[base + 2u] = base + 2u;
     }
 
     // Write 5 u32s so the same buffer works for both:
@@ -394,13 +390,14 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Only the first GS instance writes indirect args (so future GS instancing does not race).
     if (primitive_id == 0u && gs_instance_id == 0u) {
         let count: u32 = primitive_count * gs_instance_count * 3u;
+        let counter_base: u32 = 5u;
         // Placeholder counter (for eventual GS-style append/emit emulation).
-        out_counter[0] = count;
-        out_indirect[0] = count;
-        out_indirect[1] = params.counts.y;
-        out_indirect[2] = 0u;
-        out_indirect[3] = 0u;
-        out_indirect[4] = 0u;
+        out_state[counter_base] = count;
+        out_state[0] = count;
+        out_state[1] = params.counts.y;
+        out_state[2] = 0u;
+        out_state[3] = 0u;
+        out_state[4] = 0u;
     }
 }
 "#;
@@ -435,11 +432,12 @@ struct DepthParams {
 
 @group(3) @binding(0) var<uniform> gs_cb0: GsCb0;
 @group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
-@group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
-@group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
-@group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
-@group(0) @binding(4) var<uniform> params: Params;
-@group(0) @binding(5) var<uniform> depth_params: DepthParams;
+// out_state layout:
+// - [0..5): indirect args (DrawIndexedIndirectArgs-compatible, but also works for draw_indirect)
+// - [5..9): placeholder counter block (4x u32 / 16 bytes)
+@group(0) @binding(1) var<storage, read_write> out_state: array<u32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@group(0) @binding(3) var<uniform> depth_params: DepthParams;
 
 fn write_varyings(vid: u32, v: vec4<f32>) {
     // Keep placeholder prepass behavior location-agnostic by filling every varying slot.
@@ -527,11 +525,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         write_varyings(base + 0u, c);
         write_varyings(base + 1u, c);
         write_varyings(base + 2u, c);
-
-        // Indices for indexed draws.
-        out_indices[base + 0u] = base + 0u;
-        out_indices[base + 1u] = base + 1u;
-        out_indices[base + 2u] = base + 2u;
     } else {
         // Side-by-side triangles (used for primitive-id tests).
         var x0: f32 = -2.0;
@@ -551,10 +544,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         write_varyings(base + 0u, c);
         write_varyings(base + 1u, c);
         write_varyings(base + 2u, c);
-
-        out_indices[base + 0u] = base + 0u;
-        out_indices[base + 1u] = base + 1u;
-        out_indices[base + 2u] = base + 2u;
     }
 
     // Write 5 u32s so the same buffer works for both:
@@ -571,13 +560,14 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _word: u32 = aero_vp_load_u32(0u, vb_base);
 
         let count: u32 = primitive_count * gs_instance_count * 3u;
+        let counter_base: u32 = 5u;
         // Placeholder counter (for eventual GS-style append/emit emulation).
-        out_counter[0] = count;
-        out_indirect[0] = count;
-        out_indirect[1] = params.counts.y;
-        out_indirect[2] = 0u;
-        out_indirect[3] = 0u;
-        out_indirect[4] = 0u;
+        out_state[counter_base] = count;
+        out_state[0] = count;
+        out_state[1] = params.counts.y;
+        out_state[2] = 0u;
+        out_state[3] = 0u;
+        out_state[4] = 0u;
     }
 }
 "#;
@@ -1072,16 +1062,11 @@ struct InputLayoutResource {
 #[derive(Debug, Clone)]
 struct CachedVertexPullingLayout {
     pulling: VertexPullingLayout,
-    /// WGSL used by the GS/HS/DS compute prepass when vertex pulling is enabled (non-indexed draw).
-    wgsl_no_index_pulling: Arc<str>,
-    /// WGSL used by the GS/HS/DS compute prepass when vertex pulling + index pulling is enabled
-    /// (indexed draw).
-    wgsl_with_index_pulling: Arc<str>,
+    /// WGSL used by the placeholder GS/HS/DS compute prepass when vertex pulling is enabled.
+    wgsl: Arc<str>,
     /// Bind-group layout entries for the vertex pulling bind group (`@group(VERTEX_PULLING_GROUP)`
-    /// in WGSL) without index pulling.
+    /// in WGSL).
     bgl_entries: Vec<wgpu::BindGroupLayoutEntry>,
-    /// Bind-group layout entries for the vertex pulling bind group including index pulling.
-    bgl_entries_with_index_pulling: Vec<wgpu::BindGroupLayoutEntry>,
 }
 
 #[derive(Debug)]
@@ -4846,19 +4831,18 @@ impl AerogpuD3d11Executor {
                 },
                 count: None,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES
-                            + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES,
-                    ),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES,
+                        ),
+                    },
+                    count: None,
                 },
-                count: None,
-            },
             wgpu::BindGroupLayoutEntry {
                 binding: 4,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -5487,12 +5471,19 @@ impl AerogpuD3d11Executor {
                 self.state.primitive_topology,
                 CmdPrimitiveTopology::PointList
             );
-        let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
+        // The placeholder/scaffolding compute prepass always emits a non-indexed expanded draw for
+        // now (draw_indirect), even when the original command was DRAW_INDEXED. This keeps the
+        // prepass bind group layout within downlevel-default limits (notably
+        // `max_storage_buffers_per_shader_stage = 4`) while still exercising GS/HS/DS emulation
+        // control flow.
+        //
+        // Tessellation (HS/DS) and real GS prepasses can still opt into indexed indirect draws.
+        let mut use_indexed_indirect = false;
         // Primitive topology for the expanded draw render pass (post GS strip->list lowering).
         // For the placeholder prepass path we always emit triangles.
         let mut expanded_draw_topology = CmdPrimitiveTopology::TriangleList;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
-        let expanded_index_alloc: ExpansionScratchAlloc;
+        let mut expanded_index_alloc: Option<ExpansionScratchAlloc> = None;
         let indirect_args_alloc: ExpansionScratchAlloc;
 
         let gs_prepass = if opcode == OPCODE_DRAW || opcode == OPCODE_DRAW_INDEXED {
@@ -5909,7 +5900,7 @@ impl AerogpuD3d11Executor {
             }
 
             expanded_vertex_alloc = draw_scratch.expanded_vertices;
-            expanded_index_alloc = draw_scratch.expanded_indices;
+            expanded_index_alloc = Some(draw_scratch.expanded_indices);
             indirect_args_alloc = draw_scratch.indirect_args;
         } else if let Some((gs_handle, gs_meta)) = gs_prepass {
             expanded_draw_topology = match gs_meta.output_topology_kind {
@@ -5950,48 +5941,38 @@ impl AerogpuD3d11Executor {
                 other => bail!("unsupported GS prepass input verts_per_primitive={other}"),
             };
             expanded_vertex_alloc = v_alloc;
-            expanded_index_alloc = i_alloc;
+            expanded_index_alloc = Some(i_alloc);
             indirect_args_alloc = args_alloc;
         } else {
             // The placeholder compute prepass currently emits a dense vertex buffer where
-            // `vertex_index` == expanded vertex slot (and the generated index buffer is just
-            // `0..N`). Prefer a non-indexed indirect draw even when the original guest draw was
-            // indexed; this avoids relying on backend-specific behavior around consuming a
-            // compute-written index buffer as `INDEX` in the same submission.
+            // `vertex_index` == expanded vertex slot. Prefer a non-indexed indirect draw even when
+            // the original guest draw was indexed. This avoids consuming a compute-written index
+            // buffer as `INDEX` in the same submission, and also keeps the placeholder prepass
+            // within downlevel WebGPU limits (notably `max_storage_buffers_per_shader_stage = 4`).
             let expanded_vertex_count = u64::from(primitive_count)
                 .checked_mul(u64::from(gs_instance_count))
                 .and_then(|v| v.checked_mul(3))
                 .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
-            let expanded_index_count = expanded_vertex_count;
             let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
                 .checked_mul(expanded_vertex_count)
                 .ok_or_else(|| anyhow!("geometry prepass expanded vertex buffer size overflow"))?;
-            let expanded_index_size = expanded_index_count
-                .checked_mul(4)
-                .ok_or_else(|| anyhow!("geometry prepass expanded index buffer size overflow"))?;
 
             expanded_vertex_alloc = self
                 .expansion_scratch
                 .alloc_vertex_output(&self.device, expanded_vertex_size)
                 .map_err(|e| anyhow!("geometry prepass: alloc expanded vertex buffer: {e}"))?;
-            expanded_index_alloc = self
-                .expansion_index_scratch
-                .alloc_index_output(&self.device, expanded_index_size)
-                .map_err(|e| anyhow!("geometry prepass: alloc expanded index buffer: {e}"))?;
+            // Pack indirect args + counters into a single storage buffer binding so the placeholder
+            // prepass can still bind at least one vertex buffer under downlevel-default WebGPU
+            // limits.
             indirect_args_alloc = self
                 .expansion_indirect_scratch
-                .alloc_indirect_draw_indexed(&self.device)
-                .map_err(|e| anyhow!("geometry prepass: alloc indirect args buffer: {e}"))?;
-            let counter_alloc = self
-                .expansion_scratch
-                .alloc_gs_prepass_counters(&self.device)
-                .map_err(|e| anyhow!("geometry prepass: alloc counter buffer: {e}"))?;
-            // Clear counters before dispatch so the placeholder/GS prepasses have deterministic
-            // behavior.
+                .alloc_metadata(&self.device, GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES, 4)
+                .map_err(|e| anyhow!("geometry prepass: alloc indirect/counter buffer: {e}"))?;
+            // Clear state before dispatch so the placeholder prepass has deterministic behavior.
             self.queue.write_buffer(
-                counter_alloc.buffer.as_ref(),
-                counter_alloc.offset,
-                &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
+                indirect_args_alloc.buffer.as_ref(),
+                indirect_args_alloc.offset,
+                &[0u8; GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES as usize],
             );
 
             // Default placeholder color: solid red.
@@ -6087,20 +6068,16 @@ impl AerogpuD3d11Executor {
                 .expect("legacy constants buffer exists for every stage");
             let depth_params_size = wgpu::BufferSize::new(16).expect("non-zero buffer size");
 
-            // Optionally set up vertex/index pulling bindings for the compute prepass. This is needed
-            // for the eventual VS-as-compute implementation.
+            // Optionally set up vertex pulling bindings for the compute prepass. This is needed for
+            // the eventual VS-as-compute implementation.
             //
-            // - Vertex pulling requires an input layout + vertex buffers, so we only enable it when an
-            //   input layout is bound.
-            // - Indexed draws can still bind index pulling even without an input layout (useful for
-            //   future VS-as-compute shaders that use only `SV_VertexID`).
+            // Vertex pulling requires an input layout + vertex buffers, so we only enable it when
+            // an input layout is bound.
             let mut prepass_group3_extra_bgl_entries: Vec<wgpu::BindGroupLayoutEntry> = Vec::new();
             let mut prepass_group3_extra_bg_entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
             let mut prepass_cs_wgsl: Option<Arc<str>> = None;
             // Keep transient uniform buffers alive until the prepass bind group is built.
             let mut vp_uniform_buffer: Option<wgpu::Buffer> = None;
-            let mut vp_index_params_buffer: Option<wgpu::Buffer> = None;
-            let mut index_pulling_params_buffer: Option<wgpu::Buffer> = None;
 
             if !patchlist_only_emulation {
                 if let Some(layout_handle) = self.state.input_layout {
@@ -6151,27 +6128,6 @@ impl AerogpuD3d11Executor {
                         })?;
 
                         let bgl_entries = pulling.bind_group_layout_entries();
-                        let mut bgl_entries_with_index_pulling = bgl_entries.clone();
-                        bgl_entries_with_index_pulling.push(wgpu::BindGroupLayoutEntry {
-                            binding: INDEX_PULLING_PARAMS_BINDING,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(16),
-                            },
-                            count: None,
-                        });
-                        bgl_entries_with_index_pulling.push(wgpu::BindGroupLayoutEntry {
-                            binding: INDEX_PULLING_BUFFER_BINDING,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        });
 
                         let cs_body = if pulling.slot_count() > 0 {
                             GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL
@@ -6179,25 +6135,15 @@ impl AerogpuD3d11Executor {
                             GEOMETRY_PREPASS_CS_WGSL
                         };
 
-                        let mut prelude = pulling.wgsl_prelude();
-                        let wgsl_no_index_pulling: Arc<str> =
-                            Arc::from(format!("{prelude}\n{cs_body}"));
-                        prelude.push_str(&super::index_pulling::wgsl_index_pulling_lib(
-                            VERTEX_PULLING_GROUP,
-                            INDEX_PULLING_PARAMS_BINDING,
-                            INDEX_PULLING_BUFFER_BINDING,
-                        ));
-                        let wgsl_with_index_pulling: Arc<str> =
-                            Arc::from(format!("{prelude}\n{cs_body}"));
+                        let prelude = pulling.wgsl_prelude();
+                        let wgsl: Arc<str> = Arc::from(format!("{prelude}\n{cs_body}"));
 
                         layout.vertex_pulling_cache.insert(
                             vp_cache_key,
                             CachedVertexPullingLayout {
                                 pulling,
-                                wgsl_no_index_pulling,
-                                wgsl_with_index_pulling,
+                                wgsl,
                                 bgl_entries,
-                                bgl_entries_with_index_pulling,
                             },
                         );
                     }
@@ -6207,6 +6153,23 @@ impl AerogpuD3d11Executor {
                         .get(&vp_cache_key)
                         .expect("inserted above");
                     let pulling = &cached.pulling;
+
+                    // Storage buffer budget (downlevel defaults: 4).
+                    //
+                    // The placeholder geometry prepass uses 2 internal storage buffers:
+                    // - expanded vertex output
+                    // - packed indirect args + counters
+                    //
+                    // Vertex pulling adds one read-only storage buffer per used vertex buffer slot.
+                    let max_storage_buffers =
+                        self.device.limits().max_storage_buffers_per_shader_stage;
+                    let required_storage_buffers = 2u32.saturating_add(pulling.slot_count());
+                    if required_storage_buffers > max_storage_buffers {
+                        bail!(
+                            "GS/HS/DS emulation placeholder prepass: vertex pulling requires {required_storage_buffers} storage buffers per compute stage ({} vertex buffers + 2 internal), but this device reports max_storage_buffers_per_shader_stage={max_storage_buffers}",
+                            pulling.slot_count(),
+                        );
+                    }
 
                     // Build per-slot uniform data + bind group entries.
                     let mut slots: Vec<VertexPullingSlot> =
@@ -6279,143 +6242,9 @@ impl AerogpuD3d11Executor {
                         }),
                     });
 
-                    let bgl_entries = if opcode == OPCODE_DRAW_INDEXED {
-                        &cached.bgl_entries_with_index_pulling
-                    } else {
-                        &cached.bgl_entries
-                    };
-                    prepass_group3_extra_bgl_entries = bgl_entries.clone();
-
-                    if opcode == OPCODE_DRAW_INDEXED {
-                        let ib = self.state.index_buffer.expect("checked above");
-                        let ib_buf = self
-                            .resources
-                            .buffers
-                            .get(&ib.buffer)
-                            .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
-
-                        let index_format = match ib.format {
-                            wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
-                            wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
-                        };
-                        let params = IndexPullingParams {
-                            first_index: vertex_pulling_draw.first_index,
-                            base_vertex: vertex_pulling_draw.base_vertex,
-                            index_format,
-                            _pad0: 0,
-                        };
-                        let params_bytes = params.to_le_bytes();
-                        let (params_buffer, params_buffer_size) = create_uniform_buffer(
-                            &self.device,
-                            &self.queue,
-                            "aerogpu_cmd geometry prepass index pulling params",
-                            &params_bytes,
-                        );
-                        let params_buffer = vp_index_params_buffer.insert(params_buffer);
-
-                        vp_bg_entries.push(wgpu::BindGroupEntry {
-                            binding: INDEX_PULLING_PARAMS_BINDING,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: params_buffer,
-                                offset: 0,
-                                size: wgpu::BufferSize::new(params_buffer_size),
-                            }),
-                        });
-                        vp_bg_entries.push(wgpu::BindGroupEntry {
-                            binding: INDEX_PULLING_BUFFER_BINDING,
-                            resource: ib_buf.buffer.as_entire_binding(),
-                        });
-
-                        prepass_cs_wgsl = Some(cached.wgsl_with_index_pulling.clone());
-                    } else {
-                        prepass_cs_wgsl = Some(cached.wgsl_no_index_pulling.clone());
-                    }
-
+                    prepass_group3_extra_bgl_entries = cached.bgl_entries.clone();
                     prepass_group3_extra_bg_entries = vp_bg_entries;
-                } else if opcode == OPCODE_DRAW_INDEXED {
-                    // Even without an input layout, indexed draws still need index pulling when executing
-                    // the IA/VS stages in compute. Bind the real index buffer + params so future VS-as-
-                    // compute implementations can resolve `SV_VertexID` correctly.
-                    let ib = self
-                        .state
-                        .index_buffer
-                        .expect("checked DRAW_INDEXED precondition above");
-                    let ib_buf = self
-                        .resources
-                        .buffers
-                        .get(&ib.buffer)
-                        .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
-
-                    let index_format = match ib.format {
-                        wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
-                        wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
-                    };
-                    let params = IndexPullingParams {
-                        first_index: vertex_pulling_draw.first_index,
-                        base_vertex: vertex_pulling_draw.base_vertex,
-                        index_format,
-                        _pad0: 0,
-                    };
-                    let params_bytes = params.to_le_bytes();
-                    let (params_buffer, params_buffer_size) = create_uniform_buffer(
-                        &self.device,
-                        &self.queue,
-                        "aerogpu_cmd geometry prepass index pulling params",
-                        &params_bytes,
-                    );
-                    let params_buffer = index_pulling_params_buffer.insert(params_buffer);
-
-                    let ip_bgl_entries = vec![
-                        wgpu::BindGroupLayoutEntry {
-                            binding: INDEX_PULLING_PARAMS_BINDING,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(16),
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: INDEX_PULLING_BUFFER_BINDING,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ];
-
-                    // Cache the simple (index pulling only) prepass WGSL so we don't re-format it every draw.
-                    static INDEX_PULLING_PREPASS_WGSL: std::sync::OnceLock<Arc<str>> =
-                        std::sync::OnceLock::new();
-                    let cached_wgsl = INDEX_PULLING_PREPASS_WGSL.get_or_init(|| {
-                        let ip_wgsl = super::index_pulling::wgsl_index_pulling_lib(
-                            VERTEX_PULLING_GROUP,
-                            INDEX_PULLING_PARAMS_BINDING,
-                            INDEX_PULLING_BUFFER_BINDING,
-                        );
-                        Arc::from(format!("{ip_wgsl}\n{GEOMETRY_PREPASS_CS_WGSL}"))
-                    });
-
-                    prepass_cs_wgsl = Some(cached_wgsl.clone());
-                    prepass_group3_extra_bgl_entries = ip_bgl_entries;
-                    prepass_group3_extra_bg_entries = vec![
-                        wgpu::BindGroupEntry {
-                            binding: INDEX_PULLING_PARAMS_BINDING,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: params_buffer,
-                                offset: 0,
-                                size: wgpu::BufferSize::new(params_buffer_size),
-                            }),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: INDEX_PULLING_BUFFER_BINDING,
-                            resource: ib_buf.buffer.as_entire_binding(),
-                        },
-                    ];
+                    prepass_cs_wgsl = Some(cached.wgsl.clone());
                 }
             }
 
@@ -6441,35 +6270,13 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: GEOMETRY_PREPASS_OUT_INDICES_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(4),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: GEOMETRY_PREPASS_OUT_INDIRECT_BINDING,
+                    binding: GEOMETRY_PREPASS_OUT_STATE_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(
-                            GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
-                        ),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: GEOMETRY_PREPASS_OUT_COUNTER_BINDING,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            GEOMETRY_PREPASS_COUNTER_SIZE_BYTES,
+                            GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES,
                         ),
                     },
                     count: None,
@@ -6598,27 +6405,11 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: GEOMETRY_PREPASS_OUT_INDICES_BINDING,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: expanded_index_alloc.buffer.as_ref(),
-                        offset: expanded_index_alloc.offset,
-                        size: wgpu::BufferSize::new(expanded_index_size),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: GEOMETRY_PREPASS_OUT_INDIRECT_BINDING,
+                    binding: GEOMETRY_PREPASS_OUT_STATE_BINDING,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: indirect_args_alloc.buffer.as_ref(),
                         offset: indirect_args_alloc.offset,
-                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: GEOMETRY_PREPASS_OUT_COUNTER_BINDING,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: counter_alloc.buffer.as_ref(),
-                        offset: counter_alloc.offset,
-                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -6718,6 +6509,9 @@ impl AerogpuD3d11Executor {
         }
 
         if use_indexed_indirect {
+            let expanded_index_alloc = expanded_index_alloc
+                .as_ref()
+                .expect("use_indexed_indirect implies expanded_index_alloc.is_some()");
             // The compute prepass writes indices into `expanded_index_alloc` at a non-zero scratch
             // offset. Some backends (notably wgpu's GL backend) cannot apply the index-buffer binding
             // offset when executing `draw_indexed_indirect`, so we bind the full index buffer at
@@ -7021,6 +6815,9 @@ impl AerogpuD3d11Executor {
 
             if !skip_draw {
                 if use_indexed_indirect {
+                    let expanded_index_alloc = expanded_index_alloc
+                        .as_ref()
+                        .expect("use_indexed_indirect implies expanded_index_alloc.is_some()");
                     let ib_end = expanded_index_alloc
                         .offset
                         .checked_add(expanded_index_alloc.size)

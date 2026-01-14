@@ -132,6 +132,16 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
         let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
             Ok(report) => report,
             Err(err) => {
+                // Regression check: this test runs with `Limits::downlevel_defaults()` which includes
+                // `max_storage_buffers_per_shader_stage = 4`. The placeholder compute prepass must be
+                // able to run vertex pulling without exceeding that limit.
+                let msg = err.to_string();
+                if msg.contains("max_storage_buffers_per_shader_stage")
+                    || msg.contains("Too many StorageBuffers")
+                    || msg.contains("too many storage buffers")
+                {
+                    panic!("compute-prepass pipeline exceeded storage buffer limit: {err:#}");
+                }
                 if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
                     return;
                 }
