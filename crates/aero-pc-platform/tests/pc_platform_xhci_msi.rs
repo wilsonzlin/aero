@@ -3,7 +3,7 @@ mod helpers;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::USB_XHCI_QEMU;
-use aero_devices::pci::PciBdf;
+use aero_devices::pci::{MsiCapability, PciBdf, PciDevice};
 use aero_devices::usb::xhci::XhciPciDevice;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{
@@ -80,6 +80,84 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
         false,
         "xHCI INTx should be suppressed while MSI is active"
     );
+}
+
+#[test]
+fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Switch into APIC mode so MSI delivery reaches the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable BAR0 MMIO decode + bus mastering.
+    pci_enable_mmio(&mut pc, bdf);
+    pci_enable_bus_mastering(&mut pc, bdf);
+
+    // Locate and program MSI, but start with the vector masked.
+    let msi_cap = find_capability(&mut pc, bdf, PCI_CAP_ID_MSI)
+        .expect("xHCI should expose an MSI capability in PCI config space");
+    let base = u16::from(msi_cap);
+
+    let vector: u8 = 0x65;
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x04, 0xfee0_0000);
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x0c, u16::from(vector));
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 1); // mask
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x14, 0); // clear pending
+
+    let ctrl = pci_cfg_read_u16(&mut pc, bdf, base + 0x02);
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x02, ctrl | 1); // MSI enable
+
+    // Sync the canonical MSI state into the device model before raising interrupts.
+    pc.tick(0);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    let xhci = pc.xhci.as_ref().expect("xHCI enabled").clone();
+    xhci.borrow_mut().raise_event_interrupt();
+
+    // MSI is masked; delivery should be suppressed.
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // The xHCI model should have latched its pending bit.
+    assert!(
+        xhci.borrow()
+            .config()
+            .capability::<MsiCapability>()
+            .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
+        "masked MSI should set the pending bit in the device model"
+    );
+
+    // Now unmask MSI in the canonical config space. This previously clobbered device-managed MSI
+    // pending bits when the platform mirrored canonical PCI config into the device config image.
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 0); // unmask
+    pc.tick(0);
+
+    // Pending bit should still be set inside the device model even though the canonical PCI config
+    // space cannot observe it.
+    assert!(
+        xhci.borrow()
+            .config()
+            .capability::<MsiCapability>()
+            .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
+        "canonical PCI config sync must not clear device-managed MSI pending bits"
+    );
+
+    // Re-drive the interrupt condition; the device model should re-trigger MSI due to the pending
+    // bit even though there's no new rising edge.
+    xhci.borrow_mut().raise_event_interrupt();
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
 }
 
 #[test]
