@@ -3558,7 +3558,7 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
 
   // Checksum offload (TX only).
   Offload->Checksum.IPv4Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
-  Offload->Checksum.IPv4Transmit.IpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.IpOptionsSupported = (CsumV4 || UdpCsumV4) ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.TcpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.TcpChecksum = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.UdpChecksum = UdpCsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
