@@ -11580,6 +11580,9 @@ bool TestOpenResourceArrayTextureEmitsArrayLayers() {
   if (!Check(res != nullptr, "resource pointer")) {
     return false;
   }
+  if (!Check(res->kind == ResourceKind::Texture2D, "OpenResource array texture kind==Texture2D")) {
+    return false;
+  }
   if (!Check(res->depth == 6u, "OpenResource preserves depth==6 (array layers)")) {
     return false;
   }
@@ -11606,6 +11609,245 @@ bool TestOpenResourceArrayTextureEmitsArrayLayers() {
     return false;
   }
   return Check(import_cmd->share_token == priv.share_token, "IMPORT_SHARED_SURFACE share_token matches");
+}
+
+bool TestOpenResourceCubeTextureTypeNormalizesDepthTo6() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can validate IMPORT_SHARED_SURFACE output.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+  struct CmdStreamRestore {
+    Device* dev = nullptr;
+    ~CmdStreamRestore() {
+      if (dev) {
+        // Cleanup destructors may destroy resources/devices and emit additional
+        // packets; ensure they do not reference the span-backed buffer.
+        dev->cmd.set_vector();
+      }
+    }
+  } cmd_restore{dev};
+
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 1;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 0;
+  priv.reserved0 = 0;
+
+  // D3DRESOURCETYPE::D3DRTYPE_CUBETEXTURE == 5.
+  constexpr uint32_t kD3dRTypeCubeTexture = 5u;
+
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = kD3dRTypeCubeTexture;
+  open_res.format = 22u; // D3DFMT_X8R8G8B8
+  open_res.width = 64;
+  open_res.height = 64;
+  // Some D3D9 runtimes do not populate Depth meaningfully for cube textures. The
+  // UMD normalizes them to Depth==6 (array layers).
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(cube texture type)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource handle")) {
+    return false;
+  }
+  cleanup.hResource = open_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->type == kD3dRTypeCubeTexture, "OpenResource stores type==CUBETEXTURE")) {
+    return false;
+  }
+  if (!Check(res->kind == ResourceKind::Texture2D, "OpenResource cube kind==Texture2D")) {
+    return false;
+  }
+  if (!Check(res->depth == 6u, "OpenResource normalizes cube depth to 6")) {
+    return false;
+  }
+  if (!Check(res->size_bytes == res->slice_pitch * res->depth, "OpenResource cube size_bytes includes array layers")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_IMPORT_SHARED_SURFACE) == 1, "IMPORT_SHARED_SURFACE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0, "OpenResource does not CREATE_TEXTURE2D")) {
+    return false;
+  }
+  return true;
+}
+
+bool TestOpenResourceCubeTextureRequiresSquare() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can validate that no IMPORT_SHARED_SURFACE
+  // is emitted on failure.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 1;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 0;
+  priv.reserved0 = 0;
+
+  // D3DRESOURCETYPE::D3DRTYPE_CUBETEXTURE == 5.
+  constexpr uint32_t kD3dRTypeCubeTexture = 5u;
+
+  // Cube textures must be square. Use non-square dimensions and an unhelpful Depth value (1).
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = kD3dRTypeCubeTexture;
+  open_res.format = 22u; // D3DFMT_X8R8G8B8
+  open_res.width = 8;
+  open_res.height = 4; // non-square
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == D3DERR_INVALIDCALL, "OpenResource(cube, non-square) rejects")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate == nullptr, "OpenResource failure does not return a handle")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates after failed OpenResource")) {
+    return false;
+  }
+  return Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_IMPORT_SHARED_SURFACE) == 0,
+               "failed OpenResource must not emit IMPORT_SHARED_SURFACE");
 }
 
 bool TestInvalidPayloadArgs() {
@@ -30796,6 +31038,8 @@ int main() {
   failures += !aerogpu::TestOpenResourceRejectsUnsupportedNon2dType();
   failures += !aerogpu::TestOpenResourceRejectsNonSquareCubeTexture();
   failures += !aerogpu::TestOpenResourceArrayTextureEmitsArrayLayers();
+  failures += !aerogpu::TestOpenResourceCubeTextureTypeNormalizesDepthTo6();
+  failures += !aerogpu::TestOpenResourceCubeTextureRequiresSquare();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
   failures += !aerogpu::TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2();
   failures += !aerogpu::TestOpenResourceDecodesD3D9SharedSurfaceDescAndComputesTightPitch();

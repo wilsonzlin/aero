@@ -10191,9 +10191,10 @@ static HRESULT device_open_resource_impl(
     }
   }
 
-  // The AeroGPU host executor interprets `array_layers==6` as a cube texture.
-  // Cube textures must be square; reject invalid descriptors early so we don't
-  // import a handle that later command-stream execution will treat as a cube.
+  // The AeroGPU host executor currently interprets `array_layers==6` as a cube
+  // texture (via a cube view). Cube textures must be square; reject invalid
+  // descriptors early so we don't import a shared handle that the host will later
+  // reject during view creation/binding.
   if (open_size_bytes == 0 &&
       res->depth == 6 &&
       res->width != 0 &&
@@ -10210,7 +10211,10 @@ static HRESULT device_open_resource_impl(
     res->row_pitch = 0;
     res->slice_pitch = 0;
   } else if (res->width && res->height) {
-    res->kind = (res->mip_levels > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
+    // Mirror CreateResource semantics: treat Depth>1 as a texture2D array (used
+    // for cube textures with 6 layers), not a single-subresource surface.
+    res->kind =
+        (res->mip_levels > 1 || res->depth > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
 
     Texture2dLayout layout{};
     if (!calc_texture2d_layout(res->format, res->width, res->height, res->mip_levels, res->depth, &layout)) {
