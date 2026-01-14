@@ -1849,15 +1849,24 @@ impl HdaController {
 
     fn write_rirb_response(&mut self, mem: &mut dyn MemoryAccess, cad: u8, resp: u32) {
         let entries = self.rirb_entries();
-        self.rirbwp = (self.rirbwp + 1) % entries;
+        let next_wp = (self.rirbwp + 1) % entries;
 
-        if let Some(addr) = self.rirb_base().checked_add(self.rirbwp as u64 * 8) {
-            mem.write_u32(addr, resp);
-            if let Some(hi_addr) = addr.checked_add(4) {
-                mem.write_u32(hi_addr, cad as u32);
-            }
-        }
+        let Some(addr) = self
+            .rirb_base()
+            .checked_add(next_wp as u64 * 8)
+            // Writing the response touches bytes `[addr, addr + 8)`.
+            .and_then(|addr| addr.checked_add(8).map(|_| addr))
+        else {
+            // If the guest programs a base address close to `u64::MAX`, adding the entry offset (or
+            // the 8-byte write size) can overflow. Treat the response as dropped: do not advance
+            // WP or trigger interrupts for a write that would wrap around.
+            return;
+        };
 
+        mem.write_u32(addr, resp);
+        mem.write_u32(addr + 4, cad as u32);
+
+        self.rirbwp = next_wp;
         self.rirbsts |= 1; // response received
         self.rirb_responses_since_irq = self.rirb_responses_since_irq.saturating_add(1);
         if (self.rirbctl & RIRBCTL_RINTCTL) != 0 {

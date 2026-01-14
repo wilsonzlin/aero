@@ -317,8 +317,16 @@ fn hda_process_completes_on_rirb_addr_overflow() {
 
     // Enable CORB + RIRB DMA engines.
     hda.mmio_write(0x4c, 1, 0x02); // CORBCTL.RUN
-    hda.mmio_write(0x5c, 1, 0x02); // RIRBCTL.RUN
+    // Enable response interrupts so an incorrectly-handled response write would be observable via
+    // INTSTS.
+    hda.mmio_write(0x5a, 2, 1); // RINTCNT=1
+    hda.mmio_write(0x5c, 1, 0x03); // RIRBCTL.RINTCTL | RUN
 
     // Should not panic (checked_add guards the overflow).
     hda.process(&mut mem, 0);
+
+    // Overflow -> response write dropped: no pointer advance, no status, no interrupt.
+    assert_eq!(hda.mmio_read(0x58, 2), 0);
+    assert_eq!(hda.mmio_read(0x5d, 1), 0);
+    assert_eq!(hda.mmio_read(0x24, 4), 0);
 }
