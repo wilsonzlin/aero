@@ -53,7 +53,7 @@ static void test_tx_rejects_misaligned_pcm_bytes(void)
     virtio_test_queue_init(&q, TRUE);
     RtlZeroMemory(&dma, sizeof(dma));
 
-    status = VirtioSndTxInit(&tx, &dma, &q.queue, 64u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.queue, 4u, 64u, 1u, FALSE);
     assert(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0, FALSE);
@@ -128,7 +128,7 @@ static void test_tx_builds_hdr_pcm_status_chain(void)
     virtio_test_queue_init(&q, TRUE);
     RtlZeroMemory(&dma, sizeof(dma));
 
-    status = VirtioSndTxInit(&tx, &dma, &q.queue, 64u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.queue, 4u, 64u, 1u, FALSE);
     assert(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0, FALSE);
@@ -180,7 +180,7 @@ static void test_tx_split_payload_and_silence_fill(void)
         virtio_test_queue_init(&q, TRUE);
         RtlZeroMemory(&dma, sizeof(dma));
 
-        status = VirtioSndTxInit(&tx, &dma, &q.queue, 64u, 1u, FALSE);
+        status = VirtioSndTxInit(&tx, &dma, &q.queue, 4u, 64u, 1u, FALSE);
         assert(status == STATUS_SUCCESS);
 
         status = VirtioSndTxSubmitPeriod(&tx, pcm1, (ULONG)sizeof(pcm1), pcm2, (ULONG)sizeof(pcm2), FALSE);
@@ -213,7 +213,7 @@ static void test_tx_split_payload_and_silence_fill(void)
         virtio_test_queue_init(&q, TRUE);
         RtlZeroMemory(&dma, sizeof(dma));
 
-        status = VirtioSndTxInit(&tx, &dma, &q.queue, 64u, 1u, FALSE);
+        status = VirtioSndTxInit(&tx, &dma, &q.queue, 4u, 64u, 1u, FALSE);
         assert(status == STATUS_SUCCESS);
 
         status = VirtioSndTxSubmitPeriod(&tx, NULL, 4u, pcm2, (ULONG)sizeof(pcm2), TRUE);
@@ -245,7 +245,7 @@ static void test_rx_rejects_misaligned_payload_bytes(void)
     virtio_test_queue_init(&q, TRUE);
     RtlZeroMemory(&dma, sizeof(dma));
 
-    status = VirtIoSndRxInit(&rx, &dma, &q.queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.queue, 2u, 1u);
     assert(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000u;
@@ -271,7 +271,7 @@ static void test_rx_builds_hdr_payload_status_chain(void)
     virtio_test_queue_init(&q, TRUE);
     RtlZeroMemory(&dma, sizeof(dma));
 
-    status = VirtIoSndRxInit(&rx, &dma, &q.queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.queue, 2u, 1u);
     assert(status == STATUS_SUCCESS);
 
     segs[0].addr = 0xA000u;

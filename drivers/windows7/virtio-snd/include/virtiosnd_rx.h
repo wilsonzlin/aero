@@ -98,10 +98,10 @@ typedef struct _VIRTIOSND_RX_ENGINE {
     PVIRTIOSND_DMA_CONTEXT DmaCtx;
 
     /*
-     * PCM frame size in bytes (Channels * BytesPerSample) used for validating
-     * RX payload alignment.
+     * PCM frame size in bytes (block align).
      *
-     * Contract v1 fixed-format capture uses 2 bytes per frame (mono S16_LE).
+     * Used to validate that capture payload byte counts are aligned to the
+     * negotiated PCM format.
      */
     ULONG FrameBytes;
 
@@ -134,6 +134,7 @@ _Must_inspect_result_ NTSTATUS VirtIoSndRxInit(
     _Out_ VIRTIOSND_RX_ENGINE* Rx,
     _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
     _In_ const VIRTIOSND_QUEUE* Queue,
+    _In_ ULONG FrameBytes,
     /*
      * Number of pre-allocated request contexts.
      *

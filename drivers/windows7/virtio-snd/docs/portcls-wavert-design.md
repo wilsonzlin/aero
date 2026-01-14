@@ -17,9 +17,11 @@ This design targets the simplest useful audio path for Aero:
 - One **render** endpoint (speaker/headphones style) backed by `virtio-snd` stream id `0` (TX).
 - One **capture** endpoint (microphone style) backed by `virtio-snd` stream id `1` (RX).
 - Contract-v1 baseline formats are required (see [Assumptions and limits](#assumptions-and-limits)).
+- Optional multi-format negotiation (non-contract): when a virtio-snd device advertises additional capabilities via
+  `PCM_INFO`, the driver may expose/negotiates additional formats/rates to Windows (while still preferring the
+  contract-v1 baseline when present).
 
-Advanced DSP/offload are out of scope for this driver. Multi-format negotiation beyond the contract-v1 baseline is
-optional and may be exposed to Windows when a virtio-snd device advertises additional capabilities via `PCM_INFO`.
+Advanced DSP/offload and anything beyond the driver’s negotiated format/rate set are out of scope for this driver.
 
 ## Why PortCls + WaveRT (Windows 7+)
 
@@ -100,7 +102,7 @@ The `virtio-snd` device provides:
   - Interrupts: INTx baseline (read-to-ack ISR). MSI/MSI-X may be used when Windows grants message interrupts (INF opt-in); in that case the driver programs virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and verifies read-back.
     - On Aero contract devices, MSI-X is **exclusive** when enabled: if a virtio MSI-X selector is `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are **suppressed** (no MSI-X message and no INTx fallback). Therefore vector-programming failures must be treated as fatal unless the driver can switch to INTx or polling-only mode.
   - Queues: `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`
-  - Streams: stream 0 output stereo S16_LE 48 kHz; stream 1 input mono S16_LE 48 kHz
+  - Streams: stream 0 output (stereo) and stream 1 input (mono); contract v1 requires an S16_LE/48 kHz baseline, but devices may advertise additional formats/rates via `PCM_INFO`
 
 - A **control queue** for PCM control commands (`PCM_SET_PARAMS`, `PREPARE`,
   `START`, `STOP`, `RELEASE`, ...).
@@ -219,10 +221,8 @@ Notes:
 - If Windows requests a direct `RUN → STOP`, perform `PCM_STOP` first (if
   running), then `PCM_RELEASE`.
 - The driver may re-issue `PCM_SET_PARAMS` on `STOP → ACQUIRE` when the stream
-  format changes (for example when Windows opens a stream with a different
-  WAVEFORMAT). When `PCM_INFO` capabilities are available, the driver can expose
-  multiple formats/rates/channels and updates the `PCM_SET_PARAMS` tuple
-  accordingly.
+  format/rate changes (for example when Windows opens a stream with a different
+  WAVEFORMAT). For the contract-v1 baseline case, it is always S16_LE/48 kHz.
 
 ## Position reporting
 
@@ -294,14 +294,15 @@ consumption cadence.
 
 ## Assumptions and limits
 
-The initial virtio-snd WaveRT implementation intentionally starts narrow:
+The virtio-snd WaveRT implementation intentionally starts narrow:
 
 - **Contract-v1 baseline formats required**:
   - Stream `0` (render): 48 kHz, **stereo**, 16-bit PCM (S16_LE)
   - Stream `1` (capture): 48 kHz, **mono**, 16-bit PCM (S16_LE)
-- **Optional multi-format** (non-contract): if the device advertises extra formats/rates/channel counts in `PCM_INFO`,
+- **Optional multi-format** (non-contract): if the device advertises extra formats/rates in `PCM_INFO`,
   the driver may expose additional Windows formats via dynamic WaveRT pin data ranges (while keeping the contract-v1
   baseline format preferred/first).
+- Channels are still fixed per direction (stream 0 stereo, stream 1 mono).
 - **Single render + single capture endpoint**:
   - One render pin and one capture pin.
   - No loopback.

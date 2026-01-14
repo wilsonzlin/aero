@@ -36,9 +36,13 @@
 #define VIRTIOSND_TOPO_PIN_MICROPHONE 3
 
 //
-// Fixed audio formats (Aero contract v1):
+// Baseline audio formats (Aero contract v1):
 //  - Render (stream 0): 48kHz, stereo, 16-bit PCM LE
 //  - Capture (stream 1): 48kHz, mono, 16-bit PCM LE
+//
+// Devices may advertise additional formats/rates via PCM_INFO; see the
+// cached capability fields in VIRTIOSND_DEVICE_EXTENSION and the driver-supported
+// subset in virtiosnd_control_proto.h.
 //
 #define VIRTIOSND_SAMPLE_RATE 48000
 #define VIRTIOSND_CHANNELS 2
@@ -241,6 +245,27 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
 
     VIRTIOSND_DMA_CONTEXT DmaCtx;
 
+    /*
+     * Cached PCM capabilities (from VIRTIO_SND_R_PCM_INFO).
+     *
+     * The Aero contract v1 requires S16/48kHz for both streams, but devices may
+     * advertise additional formats/rates. These fields allow higher layers
+     * (WaveRT pin factories + control SET_PARAMS) to remain consistent with what
+     * the device actually supports.
+     *
+     * - PcmInfo[] stores the raw device-reported bitmasks/ranges.
+     * - PcmSupportedFormats/Rates are filtered to the subset supported by this
+     *   Windows 7 driver (see VIRTIOSND_PCM_DRIVER_SUPPORTED_* in
+     *   virtiosnd_control_proto.h).
+     * - PcmSelectedFormat/Rate track the currently-selected format/rate for each
+     *   stream (defaults to S16/48kHz).
+     */
+    VIRTIO_SND_PCM_INFO PcmInfo[2];
+    ULONGLONG PcmSupportedFormats[2];
+    ULONGLONG PcmSupportedRates[2];
+    UCHAR PcmSelectedFormat[2];
+    UCHAR PcmSelectedRate[2];
+
     /* Minimal eventq RX buffer pool (see VIRTIOSND_EVENTQ_*). */
     VIRTIOSND_DMA_BUFFER EventqBufferPool;
     ULONG EventqBufferCount;
@@ -392,6 +417,7 @@ ULONG VirtIoSndHwDrainTxCompletions(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 _IRQL_requires_max_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngine(
     _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_ ULONG FrameBytes,
     _In_ ULONG MaxPeriodBytes,
     _In_ ULONG BufferCount,
     _In_ BOOLEAN SuppressInterrupts);
@@ -423,7 +449,7 @@ VOID VirtIoSndUninitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
  * IRQL: PASSIVE_LEVEL only.
  */
 _IRQL_requires_max_(PASSIVE_LEVEL)
-_Must_inspect_result_ NTSTATUS VirtIoSndInitRxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG RequestCount);
+_Must_inspect_result_ NTSTATUS VirtIoSndInitRxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG FrameBytes, _In_ ULONG RequestCount);
 
 /*
  * Initialize the RX engine with an explicit PCM frame size (Channels * BytesPerSample).

@@ -1683,9 +1683,9 @@ VirtIoSndHwDrainTxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx)
 }
 
 _Use_decl_annotations_
-NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBytes, ULONG BufferCount, BOOLEAN SuppressInterrupts)
+NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG FrameBytes, ULONG MaxPeriodBytes, ULONG BufferCount, BOOLEAN SuppressInterrupts)
 {
-    return VirtIoSndInitTxEngineEx(Dx, VirtioSndTxFrameSizeBytes(), MaxPeriodBytes, BufferCount, SuppressInterrupts);
+    return VirtIoSndInitTxEngineEx(Dx, FrameBytes, MaxPeriodBytes, BufferCount, SuppressInterrupts);
 }
 
 _Use_decl_annotations_
@@ -1782,9 +1782,9 @@ VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
 }
 
 _Use_decl_annotations_
-NTSTATUS VirtIoSndInitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG RequestCount)
+NTSTATUS VirtIoSndInitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG FrameBytes, ULONG RequestCount)
 {
-    return VirtIoSndInitRxEngineEx(Dx, VIRTIOSND_CAPTURE_BLOCK_ALIGN, RequestCount);
+    return VirtIoSndInitRxEngineEx(Dx, FrameBytes, RequestCount);
 }
 
 _Use_decl_annotations_

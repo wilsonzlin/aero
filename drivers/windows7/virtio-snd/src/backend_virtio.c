@@ -5,6 +5,7 @@
 #include "backend.h"
 #include "trace.h"
 #include "virtiosnd.h"
+#include "virtiosnd_control_proto.h"
 #include "virtiosnd_limits.h"
 
 typedef struct _VIRTIOSND_BACKEND_VIRTIO {
@@ -13,10 +14,12 @@ typedef struct _VIRTIOSND_BACKEND_VIRTIO {
     /* Render (stream 0 / TX) */
     ULONG RenderBufferBytes;
     ULONG RenderPeriodBytes;
+    ULONG RenderFrameBytes;
 
     /* Capture (stream 1 / RX) */
     ULONG CaptureBufferBytes;
     ULONG CapturePeriodBytes;
+    ULONG CaptureFrameBytes;
 } VIRTIOSND_BACKEND_VIRTIO, *PVIRTIOSND_BACKEND_VIRTIO;
 
 static __forceinline PVIRTIOSND_BACKEND_VIRTIO
@@ -54,31 +57,6 @@ VirtIoSndBackendVirtioFrameBytesForStream(_In_ const PVIRTIOSND_DEVICE_EXTENSION
     return (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
 }
 
-static __forceinline ULONG
-VirtIoSndBackendVirtioCurrentTxFrameBytes(_In_ const PVIRTIOSND_DEVICE_EXTENSION Dx)
-{
-    ULONG frameBytes;
-
-    if (Dx == NULL) {
-        return VirtioSndTxFrameSizeBytes();
-    }
-
-    frameBytes = 0;
-    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) != 0) {
-        frameBytes = Dx->Tx.FrameBytes;
-    }
-
-    if (frameBytes == 0) {
-        frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(Dx, VIRTIO_SND_PLAYBACK_STREAM_ID);
-    }
-
-    if (frameBytes == 0) {
-        frameBytes = VirtioSndTxFrameSizeBytes();
-    }
-
-    return frameBytes;
-}
-
 static NTSTATUS
 VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
@@ -108,7 +86,8 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
 
     /*
      * virtio-snd uses byte counts, but the device requires PCM payloads to be
-     * frame-aligned. Clamp to the currently selected stream format.
+     * frame-aligned. Clamp to the currently selected stream format (defaults to
+     * the contract-v1 baseline S16/48kHz stereo).
      */
     {
         ULONG frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(dx, VIRTIO_SND_PLAYBACK_STREAM_ID);
@@ -117,6 +96,7 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
         }
         BufferBytes = (BufferBytes / frameBytes) * frameBytes;
         PeriodBytes = (PeriodBytes / frameBytes) * frameBytes;
+        ctx->RenderFrameBytes = frameBytes;
     }
     if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
@@ -156,20 +136,12 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
      * so bring it up on the first SetParams and re-create it if the period size
      * changes.
      */
-    {
-        ULONG frameBytes;
-        frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(dx, VIRTIO_SND_PLAYBACK_STREAM_ID);
-        if (frameBytes == 0) {
-            frameBytes = VIRTIOSND_BLOCK_ALIGN;
-        }
+    if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 &&
+        (dx->Tx.MaxPeriodBytes != PeriodBytes || dx->Tx.FrameBytes != ctx->RenderFrameBytes)) {
+        VirtIoSndUninitTxEngine(dx);
+    }
 
-        if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 &&
-            (dx->Tx.MaxPeriodBytes != PeriodBytes || dx->Tx.FrameBytes != frameBytes)) {
-            VirtIoSndUninitTxEngine(dx);
-        }
-
-        if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) == 0) {
-
+    if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) == 0) {
         qsz = dx->QueueSplit[VIRTIOSND_QUEUE_TX].QueueSize;
         txBuffers = 64;
         if (qsz != 0 && txBuffers > (ULONG)qsz / 2u) {
@@ -179,12 +151,11 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
             txBuffers = 1;
         }
 
-        status = VirtIoSndInitTxEngineEx(dx, frameBytes, PeriodBytes, txBuffers, TRUE);
+        status = VirtIoSndInitTxEngineEx(dx, ctx->RenderFrameBytes, PeriodBytes, txBuffers, TRUE);
         if (!NT_SUCCESS(status)) {
             VIRTIOSND_TRACE_ERROR("backend(virtio): Tx engine init failed: 0x%08X\n", (UINT)status);
             return status;
         }
-    }
     }
 
     ctx->RenderBufferBytes = BufferBytes;
@@ -296,6 +267,7 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
 
         ctx->RenderBufferBytes = 0;
         ctx->RenderPeriodBytes = 0;
+        ctx->RenderFrameBytes = 0;
         return STATUS_SUCCESS;
     }
 
@@ -303,8 +275,8 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
     VirtIoSndUninitTxEngine(ctx->Dx);
     ctx->RenderBufferBytes = 0;
     ctx->RenderPeriodBytes = 0;
+    ctx->RenderFrameBytes = 0;
     if (status == STATUS_INVALID_DEVICE_STATE) {
-        /* Best-effort: RELEASE is idempotent for WaveRT teardown paths. */
         return STATUS_SUCCESS;
     }
     return status;
@@ -353,7 +325,7 @@ VirtIoSndBackendVirtio_WritePeriod(
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    if ((totalBytes % VirtIoSndBackendVirtioCurrentTxFrameBytes(dx)) != 0) {
+    if (ctx->RenderFrameBytes == 0 || (totalBytes % (SIZE_T)ctx->RenderFrameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -474,7 +446,7 @@ VirtIoSndBackendVirtio_WritePeriodSg(
     if (totalBytes != (ULONGLONG)periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if ((totalBytes % (ULONGLONG)VirtIoSndBackendVirtioCurrentTxFrameBytes(dx)) != 0) {
+    if (ctx->RenderFrameBytes == 0 || (totalBytes % (ULONGLONG)ctx->RenderFrameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -551,7 +523,7 @@ VirtIoSndBackendVirtio_WritePeriodCopy(
     if (totalBytes != periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if ((totalBytes % VirtIoSndBackendVirtioCurrentTxFrameBytes(dx)) != 0) {
+    if (ctx->RenderFrameBytes == 0 || (totalBytes % ctx->RenderFrameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -617,6 +589,7 @@ VirtIoSndBackendVirtio_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferByt
     /* Capture payloads must be frame-aligned. */
     BufferBytes = (BufferBytes / frameBytes) * frameBytes;
     PeriodBytes = (PeriodBytes / frameBytes) * frameBytes;
+    ctx->CaptureFrameBytes = frameBytes;
     if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -763,16 +736,18 @@ VirtIoSndBackendVirtio_ReleaseCapture(_In_ PVOID Context)
     }
 
     if (ctx->Dx->Removed || !ctx->Dx->Started) {
-        VirtIoSndUninitRxEngine(ctx->Dx);
-        ctx->CaptureBufferBytes = 0;
-        ctx->CapturePeriodBytes = 0;
-        return STATUS_SUCCESS;
-    }
+         VirtIoSndUninitRxEngine(ctx->Dx);
+         ctx->CaptureBufferBytes = 0;
+         ctx->CapturePeriodBytes = 0;
+         ctx->CaptureFrameBytes = 0;
+         return STATUS_SUCCESS;
+     }
 
     status = VirtioSndCtrlRelease1(&ctx->Dx->Control);
     VirtIoSndUninitRxEngine(ctx->Dx);
     ctx->CaptureBufferBytes = 0;
     ctx->CapturePeriodBytes = 0;
+    ctx->CaptureFrameBytes = 0;
     if (status == STATUS_INVALID_DEVICE_STATE) {
         return STATUS_SUCCESS;
     }
@@ -824,6 +799,9 @@ VirtIoSndBackendVirtio_SubmitCapturePeriodSg(
     }
 
     if (totalBytes != (ULONGLONG)periodBytes) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (ctx->CaptureFrameBytes == 0 || (totalBytes % (ULONGLONG)ctx->CaptureFrameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 

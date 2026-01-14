@@ -18,8 +18,6 @@
 static __forceinline ULONG VirtioSndTxHdrBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_TX_HDR); }
 static __forceinline ULONG VirtioSndTxStatusBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_PCM_STATUS); }
 
-ULONG VirtioSndTxFrameSizeBytes(VOID) { return 4u; }
-
 static VOID VirtioSndTxFreeBuffers(_Inout_ VIRTIOSND_TX_ENGINE* Tx)
 {
     ULONG i;
@@ -43,6 +41,7 @@ VirtioSndTxInit(
     VIRTIOSND_TX_ENGINE* Tx,
     PVIRTIOSND_DMA_CONTEXT DmaCtx,
     const VIRTIOSND_QUEUE* Queue,
+    ULONG FrameBytes,
     ULONG MaxPeriodBytes,
     ULONG BufferCount,
     BOOLEAN SuppressInterrupts)
@@ -50,7 +49,7 @@ VirtioSndTxInit(
     NT_ASSERT(Tx != NULL);
     NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
 
-    return VirtioSndTxInitEx(Tx, DmaCtx, Queue, VirtioSndTxFrameSizeBytes(), MaxPeriodBytes, BufferCount, SuppressInterrupts);
+    return VirtioSndTxInitEx(Tx, DmaCtx, Queue, FrameBytes, MaxPeriodBytes, BufferCount, SuppressInterrupts);
 }
 
 _Use_decl_annotations_
@@ -109,7 +108,6 @@ VirtioSndTxInitEx(
     Tx->Queue = Queue;
     Tx->DmaCtx = DmaCtx;
     Tx->FrameBytes = FrameBytes;
-
     Tx->MaxPeriodBytes = MaxPeriodBytes;
     Tx->NextSequence = 1;
 
@@ -282,7 +280,10 @@ VirtioSndTxSubmitPeriod(
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    frameBytes = (Tx->FrameBytes != 0) ? Tx->FrameBytes : VirtioSndTxFrameSizeBytes();
+    frameBytes = Tx->FrameBytes;
+    if (frameBytes == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
     if (totalPcmBytes > Tx->MaxPeriodBytes || (totalPcmBytes % frameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
@@ -403,7 +404,10 @@ VirtioSndTxSubmitSg(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_TX_SEGMENT* Segment
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    frameBytes = (Tx->FrameBytes != 0) ? Tx->FrameBytes : VirtioSndTxFrameSizeBytes();
+    frameBytes = Tx->FrameBytes;
+    if (frameBytes == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
     if ((totalBytes % (ULONGLONG)frameBytes) != 0) {
         return STATUS_INVALID_PARAMETER;
     }

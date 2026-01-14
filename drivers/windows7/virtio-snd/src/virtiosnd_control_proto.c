@@ -192,6 +192,198 @@ static __forceinline BOOLEAN VirtioSndCtrlIsSupportedPcmFormat(_In_ UCHAR Format
 }
 
 _Use_decl_annotations_
+BOOLEAN
+VirtioSndPcmFormatToBytes(UCHAR Format, USHORT* BytesPerSample, USHORT* BitsPerSample)
+{
+    USHORT bytes;
+    USHORT bits;
+
+    if (BytesPerSample != NULL) {
+        *BytesPerSample = 0;
+    }
+    if (BitsPerSample != NULL) {
+        *BitsPerSample = 0;
+    }
+
+    switch (Format) {
+    case VIRTIO_SND_PCM_FMT_S8:
+    case VIRTIO_SND_PCM_FMT_U8:
+        bytes = 1;
+        bits = 8;
+        break;
+    case VIRTIO_SND_PCM_FMT_S16:
+    case VIRTIO_SND_PCM_FMT_U16:
+        bytes = 2;
+        bits = 16;
+        break;
+    case VIRTIO_SND_PCM_FMT_S32:
+    case VIRTIO_SND_PCM_FMT_U32:
+    case VIRTIO_SND_PCM_FMT_FLOAT:
+        bytes = 4;
+        bits = 32;
+        break;
+    case VIRTIO_SND_PCM_FMT_FLOAT64:
+        bytes = 8;
+        bits = 64;
+        break;
+    default:
+        return FALSE;
+    }
+
+    if (BytesPerSample != NULL) {
+        *BytesPerSample = bytes;
+    }
+    if (BitsPerSample != NULL) {
+        *BitsPerSample = bits;
+    }
+    return TRUE;
+}
+
+_Use_decl_annotations_
+BOOLEAN
+VirtioSndPcmHzToRate(ULONG Hz, UCHAR* Rate)
+{
+    if (Rate != NULL) {
+        *Rate = 0;
+    }
+    if (Rate == NULL) {
+        return FALSE;
+    }
+
+    switch (Hz) {
+    case 5512u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_5512;
+        return TRUE;
+    case 8000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_8000;
+        return TRUE;
+    case 11025u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_11025;
+        return TRUE;
+    case 16000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_16000;
+        return TRUE;
+    case 22050u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_22050;
+        return TRUE;
+    case 32000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_32000;
+        return TRUE;
+    case 44100u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_44100;
+        return TRUE;
+    case 48000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        return TRUE;
+    case 64000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_64000;
+        return TRUE;
+    case 88200u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_88200;
+        return TRUE;
+    case 96000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_96000;
+        return TRUE;
+    case 176400u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_176400;
+        return TRUE;
+    case 192000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_192000;
+        return TRUE;
+    case 384000u:
+        *Rate = (UCHAR)VIRTIO_SND_PCM_RATE_384000;
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+_Use_decl_annotations_
+BOOLEAN
+VirtioSndPcmBitsToFormat(USHORT BitsPerSample, BOOLEAN IsFloat, UCHAR* Format)
+{
+    if (Format != NULL) {
+        *Format = 0;
+    }
+    if (Format == NULL) {
+        return FALSE;
+    }
+
+    if (IsFloat) {
+        if (BitsPerSample == 32u) {
+            *Format = (UCHAR)VIRTIO_SND_PCM_FMT_FLOAT;
+            return TRUE;
+        }
+        if (BitsPerSample == 64u) {
+            *Format = (UCHAR)VIRTIO_SND_PCM_FMT_FLOAT64;
+            return TRUE;
+        }
+        return FALSE;
+    }
+
+    switch (BitsPerSample) {
+    case 8u:
+        *Format = (UCHAR)VIRTIO_SND_PCM_FMT_S8;
+        return TRUE;
+    case 16u:
+        *Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+        return TRUE;
+    case 32u:
+        *Format = (UCHAR)VIRTIO_SND_PCM_FMT_S32;
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+_Use_decl_annotations_
+NTSTATUS
+VirtioSndPcmSelectFormatRate(
+    ULONGLONG SupportedFormats,
+    ULONGLONG SupportedRates,
+    USHORT RequestedBitsPerSample,
+    ULONG RequestedSampleRate,
+    BOOLEAN RequestedFloat,
+    UCHAR* OutFormat,
+    UCHAR* OutRate)
+{
+    UCHAR fmt;
+    UCHAR rate;
+
+    if (OutFormat != NULL) {
+        *OutFormat = 0;
+    }
+    if (OutRate != NULL) {
+        *OutRate = 0;
+    }
+
+    if (OutFormat == NULL || OutRate == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    fmt = 0;
+    rate = 0;
+
+    if (VirtioSndPcmBitsToFormat(RequestedBitsPerSample, RequestedFloat, &fmt) &&
+        VirtioSndPcmHzToRate(RequestedSampleRate, &rate) &&
+        (SupportedFormats & (1ull << fmt)) != 0 &&
+        (SupportedRates & (1ull << rate)) != 0) {
+        *OutFormat = fmt;
+        *OutRate = rate;
+        return STATUS_SUCCESS;
+    }
+
+    /* Fallback to the contract-v1 baseline (S16/48kHz). */
+    if ((SupportedFormats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (SupportedRates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    *OutFormat = (UCHAR)VIRTIOSND_PCM_DEFAULT_FORMAT;
+    *OutRate = (UCHAR)VIRTIOSND_PCM_DEFAULT_RATE;
+    return STATUS_SUCCESS;
+}
+
+_Use_decl_annotations_
 NTSTATUS VirtioSndCtrlBuildPcmInfoReq(VIRTIO_SND_PCM_INFO_REQ* Req)
 {
     if (Req == NULL) {
@@ -292,61 +484,14 @@ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
     ULONG BufferBytes,
     ULONG PeriodBytes)
 {
-    UCHAR channels;
-    ULONG frameBytes;
-
-    if (Req == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    channels = VirtioSndCtrlFixedChannelsForStream(StreamId);
-    frameBytes = (ULONG)channels * 2u; /* S16_LE => 2 bytes per sample */
-    if (frameBytes == 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    /*
-     * Validate period sizing up-front so callers don't accidentally submit
-     * misaligned PCM buffers.
-     */
-    if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes || (BufferBytes % frameBytes) != 0 || (PeriodBytes % frameBytes) != 0) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    /*
-     * Contract v1 requires the device to reject any single PCM transfer whose
-     * PCM payload exceeds 256 KiB (262,144 bytes) with VIRTIO_SND_S_BAD_MSG.
-     * Reject these up-front so callers don't accidentally break streaming by
-     * triggering fatal BAD_MSG handling in the TX/RX engines.
-     */
-    if (PeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
-        return STATUS_INVALID_BUFFER_SIZE;
-    }
-
-    /*
-     * The driver allocates a cyclic DMA buffer of BufferBytes (WaveRT ring
-     * buffer). Cap it to a reasonable maximum to avoid unbounded nonpaged
-     * contiguous allocations via user-mode latency/buffering requests.
-     */
-    if (BufferBytes > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
-        return STATUS_INVALID_BUFFER_SIZE;
-    }
-
-    RtlZeroMemory(Req, sizeof(*Req));
-    Req->code = VIRTIO_SND_R_PCM_SET_PARAMS;
-    Req->stream_id = StreamId;
-    Req->buffer_bytes = BufferBytes;
-    Req->period_bytes = PeriodBytes;
-    Req->features = 0;
-    Req->channels = channels;
-    Req->format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
-    Req->rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
-    Req->padding = 0;
-    return STATUS_SUCCESS;
+    return VirtioSndCtrlBuildPcmSetParamsReqEx(
+        Req,
+        StreamId,
+        BufferBytes,
+        PeriodBytes,
+        VirtioSndCtrlFixedChannelsForStream(StreamId),
+        (UCHAR)VIRTIOSND_PCM_DEFAULT_FORMAT,
+        (UCHAR)VIRTIOSND_PCM_DEFAULT_RATE);
 }
 
 _Use_decl_annotations_

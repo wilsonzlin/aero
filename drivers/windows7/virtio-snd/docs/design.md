@@ -175,11 +175,11 @@ The driver registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology`
 
 Current behavior:
 
-- Exposes contract-v1 fixed-format endpoints by default:
+- Exposes endpoints with a contract-v1 baseline format by default:
   - Render (stream 0): 48kHz, stereo, 16-bit PCM LE.
   - Capture (stream 1): 48kHz, mono, 16-bit PCM LE.
-- When virtio-snd `PCM_INFO` capabilities are available, it can additionally expose extra formats/rates/channels
-  via dynamically generated WaveRT data ranges (while still requiring and preferring the contract-v1 baseline).
+- When virtio-snd `PCM_INFO` capabilities are available, it can additionally expose extra formats/rates
+  via dynamically generated WaveRT data ranges (while still requiring and preferring the contract-v1 baseline when present).
 - Uses a periodic timer/DPC “software DMA” model to:
   - for render: advance play position, signal the WaveRT notification event, and
     submit one period of PCM into a backend callback.

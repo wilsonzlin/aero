@@ -100,4 +100,4 @@ Audio: PCI device 1af4:1059
 - Transport: virtio-pci modern-only (vendor-specific caps + BAR0 MMIO)
 - Required features: `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only
 - Queues: control/event/rx=64, tx=256
-- Streams: stream0 render stereo S16 48k, stream1 capture mono S16 48k
+- Streams: stream0 render (stereo) and stream1 capture (mono); baseline S16 48k (device may advertise additional formats/rates via `PCM_INFO`)

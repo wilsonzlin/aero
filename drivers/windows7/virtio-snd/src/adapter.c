@@ -10,6 +10,7 @@
 #include "virtio_pci_contract.h"
 #include "virtiosnd.h"
 #include "aero_virtio_snd_diag.h"
+#include "virtiosnd_control_proto.h"
 #include "virtiosnd_intx.h"
 #include "wavert.h"
 
@@ -722,6 +723,22 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
     /* Clean up any stale diagnostic device from a previous STOP/START cycle. */
     VirtIoSndDiagDestroy(dx);
 
+    /*
+     * Initialize PCM capability/cache state to the contract-v1 baseline.
+     *
+     * If VirtIoSndStartHardware succeeds, we overwrite these with the device's
+     * PCM_INFO-reported formats/rates (filtered to what this driver supports).
+     */
+    RtlZeroMemory(dx->PcmInfo, sizeof(dx->PcmInfo));
+    dx->PcmSupportedFormats[VIRTIO_SND_PLAYBACK_STREAM_ID] = VIRTIO_SND_PCM_FMT_MASK_S16;
+    dx->PcmSupportedRates[VIRTIO_SND_PLAYBACK_STREAM_ID] = VIRTIO_SND_PCM_RATE_MASK_48000;
+    dx->PcmSupportedFormats[VIRTIO_SND_CAPTURE_STREAM_ID] = VIRTIO_SND_PCM_FMT_MASK_S16;
+    dx->PcmSupportedRates[VIRTIO_SND_CAPTURE_STREAM_ID] = VIRTIO_SND_PCM_RATE_MASK_48000;
+    dx->PcmSelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID] = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+    dx->PcmSelectedRate[VIRTIO_SND_PLAYBACK_STREAM_ID] = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+    dx->PcmSelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID] = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+    dx->PcmSelectedRate[VIRTIO_SND_CAPTURE_STREAM_ID] = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+
     if (dx->LowerDeviceObject == NULL || dx->Pdo == NULL) {
         PDEVICE_OBJECT base = IoGetDeviceAttachmentBaseRef(DeviceObject);
         if (base == NULL) {
@@ -832,21 +849,30 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
                      (ULONG)playbackInfo.stream_id,
                      (UINT)playbackInfo.direction,
                     (UINT)playbackInfo.channels_min,
-                     (UINT)playbackInfo.channels_max,
-                     (ULONGLONG)playbackInfo.formats,
-                     (ULONGLONG)playbackInfo.rates);
+                      (UINT)playbackInfo.channels_max,
+                      (ULONGLONG)playbackInfo.formats,
+                      (ULONGLONG)playbackInfo.rates);
 
-                 VIRTIOSND_TRACE(
-                     "PCM_INFO stream %lu: dir=%u ch=[%u..%u] formats=0x%I64x rates=0x%I64x\n",
-                     (ULONG)captureInfo.stream_id,
-                     (UINT)captureInfo.direction,
-                     (UINT)captureInfo.channels_min,
-                     (UINT)captureInfo.channels_max,
-                     (ULONGLONG)captureInfo.formats,
-                     (ULONGLONG)captureInfo.rates);
-             }
-          }
-      }
+                  VIRTIOSND_TRACE(
+                      "PCM_INFO stream %lu: dir=%u ch=[%u..%u] formats=0x%I64x rates=0x%I64x\n",
+                      (ULONG)captureInfo.stream_id,
+                      (UINT)captureInfo.direction,
+                      (UINT)captureInfo.channels_min,
+                      (UINT)captureInfo.channels_max,
+                      (ULONGLONG)captureInfo.formats,
+                      (ULONGLONG)captureInfo.rates);
+
+                  /* Cache stream capabilities for WaveRT pin reporting + SET_PARAMS selection. */
+                  dx->PcmInfo[VIRTIO_SND_PLAYBACK_STREAM_ID] = playbackInfo;
+                  dx->PcmSupportedFormats[VIRTIO_SND_PLAYBACK_STREAM_ID] = playbackInfo.formats & VIRTIOSND_PCM_DRIVER_SUPPORTED_FORMATS;
+                  dx->PcmSupportedRates[VIRTIO_SND_PLAYBACK_STREAM_ID] = playbackInfo.rates & VIRTIOSND_PCM_DRIVER_SUPPORTED_RATES;
+
+                  dx->PcmInfo[VIRTIO_SND_CAPTURE_STREAM_ID] = captureInfo;
+                  dx->PcmSupportedFormats[VIRTIO_SND_CAPTURE_STREAM_ID] = captureInfo.formats & VIRTIOSND_PCM_DRIVER_SUPPORTED_FORMATS;
+                  dx->PcmSupportedRates[VIRTIO_SND_CAPTURE_STREAM_ID] = captureInfo.rates & VIRTIOSND_PCM_DRIVER_SUPPORTED_RATES;
+              }
+           }
+       }
 
     if (hwStarted && dx->Started) {
         NTSTATUS diagStatus = VirtIoSndDiagCreate(dx);

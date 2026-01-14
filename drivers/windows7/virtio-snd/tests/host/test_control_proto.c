@@ -504,6 +504,67 @@ static void test_pcm_format_selection_matrix(void)
     TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
 }
 
+static void test_pcm_format_rate_selection(void)
+{
+    NTSTATUS status;
+    UCHAR fmt;
+    UCHAR rate;
+    ULONGLONG formats;
+    ULONGLONG rates;
+
+    /* Device advertises multiple formats + rates. */
+    formats = VIRTIO_SND_PCM_FMT_MASK_S16 | VIRTIO_SND_PCM_FMT_MASK_S32;
+    rates = VIRTIO_SND_PCM_RATE_MASK_44100 | VIRTIO_SND_PCM_RATE_MASK_48000;
+
+    status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/32, /*hz=*/44100, /*float=*/FALSE, &fmt, &rate);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(fmt == VIRTIO_SND_PCM_FMT_S32);
+    TEST_ASSERT(rate == VIRTIO_SND_PCM_RATE_44100);
+
+    status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/16, /*hz=*/48000, /*float=*/FALSE, &fmt, &rate);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(fmt == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(rate == VIRTIO_SND_PCM_RATE_48000);
+
+    /*
+     * Unsupported request falls back to the contract-v1 baseline (S16/48kHz),
+     * as long as it is present in the supported masks.
+     */
+    status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/16, /*hz=*/96000, /*float=*/FALSE, &fmt, &rate);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(fmt == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(rate == VIRTIO_SND_PCM_RATE_48000);
+
+    /* Float request is mapped separately; if not supported, it falls back. */
+    status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/32, /*hz=*/48000, /*float=*/TRUE, &fmt, &rate);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(fmt == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(rate == VIRTIO_SND_PCM_RATE_48000);
+
+    /* If the baseline is missing, selection fails. */
+    formats = VIRTIO_SND_PCM_FMT_MASK_S32; /* no S16 */
+    rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/16, /*hz=*/48000, /*float=*/FALSE, &fmt, &rate);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+}
+
+static void test_pcm_set_params_req_multi_format(void)
+{
+    VIRTIO_SND_PCM_SET_PARAMS_REQ req;
+    NTSTATUS status;
+
+    /* S32 stereo => 8 bytes/frame alignment. */
+    status = VirtioSndCtrlBuildPcmSetParamsReqEx(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, 4096u, 1024u, 2u, VIRTIO_SND_PCM_FMT_S32, VIRTIO_SND_PCM_RATE_44100);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(req.channels == 2u);
+    TEST_ASSERT(req.format == VIRTIO_SND_PCM_FMT_S32);
+    TEST_ASSERT(req.rate == VIRTIO_SND_PCM_RATE_44100);
+
+    /* Misaligned for S32 stereo (8 bytes/frame). */
+    status = VirtioSndCtrlBuildPcmSetParamsReqEx(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, 4096u, 4u, 2u, VIRTIO_SND_PCM_FMT_S32, VIRTIO_SND_PCM_RATE_44100);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+}
+
 int main(void)
 {
     test_pcm_info_req_packing();
@@ -512,6 +573,8 @@ int main(void)
     test_pcm_info_resp_parsing();
     test_pcm_info_resp_unaligned_buffer();
     test_pcm_format_selection_matrix();
+    test_pcm_format_rate_selection();
+    test_pcm_set_params_req_multi_format();
 
     printf("virtiosnd_control_proto_tests: PASS\n");
     return 0;

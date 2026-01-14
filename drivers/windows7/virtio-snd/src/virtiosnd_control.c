@@ -932,10 +932,22 @@ VirtioSndCtrlSelectFormat(
 }
 
 static NTSTATUS
-VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamId, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
+VirtioSndCtrlSetParamsLocked(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _In_ ULONG StreamId,
+    _In_ ULONG BufferBytes,
+    _In_ ULONG PeriodBytes,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate);
 
 NTSTATUS
 VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
+{
+    return VirtioSndCtrlSetParamsEx(Ctrl, BufferBytes, PeriodBytes, (UCHAR)VIRTIOSND_PCM_DEFAULT_FORMAT, (UCHAR)VIRTIOSND_PCM_DEFAULT_RATE);
+}
+
+NTSTATUS
+VirtioSndCtrlSetParamsEx(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes, _In_ UCHAR Format, _In_ UCHAR Rate)
 {
     NTSTATUS status;
 
@@ -947,13 +959,19 @@ VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, 
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
-    status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, BufferBytes, PeriodBytes);
+    status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, BufferBytes, PeriodBytes, Format, Rate);
     ExReleaseFastMutex(&Ctrl->Mutex);
     return status;
 }
 
 static NTSTATUS
-VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamId, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
+VirtioSndCtrlSetParamsLocked(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _In_ ULONG StreamId,
+    _In_ ULONG BufferBytes,
+    _In_ ULONG PeriodBytes,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate)
 {
     NTSTATUS status;
     VIRTIO_SND_PCM_SET_PARAMS_REQ req;
@@ -965,6 +983,9 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
+
+    UNREFERENCED_PARAMETER(Format);
+    UNREFERENCED_PARAMETER(Rate);
 
     selected = Ctrl->SelectedFormat[StreamId];
     if (selected.Channels == 0) {
@@ -1020,6 +1041,12 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
 NTSTATUS
 VirtioSndCtrlSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
+    return VirtioSndCtrlSetParams1Ex(Ctrl, BufferBytes, PeriodBytes, (UCHAR)VIRTIOSND_PCM_DEFAULT_FORMAT, (UCHAR)VIRTIOSND_PCM_DEFAULT_RATE);
+}
+
+NTSTATUS
+VirtioSndCtrlSetParams1Ex(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes, _In_ UCHAR Format, _In_ UCHAR Rate)
+{
     NTSTATUS status;
 
     if (Ctrl == NULL) {
@@ -1030,7 +1057,7 @@ VirtioSndCtrlSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes,
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
-    status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, BufferBytes, PeriodBytes);
+    status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, BufferBytes, PeriodBytes, Format, Rate);
     ExReleaseFastMutex(&Ctrl->Mutex);
     return status;
 }

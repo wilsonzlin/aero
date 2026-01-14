@@ -219,6 +219,24 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlSelectFormat(
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
 
+/*
+ * Extended SET_PARAMS that allows the caller to specify the negotiated PCM
+ * format/rate.
+ *
+ * The caller is responsible for ensuring Format/Rate are supported by the
+ * device (per PCM_INFO). If an unsupported combination is requested, the device
+ * may reject the request with VIRTIO_SND_S_NOT_SUPP.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlSetParamsEx(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _In_ ULONG BufferBytes,
+    _In_ ULONG PeriodBytes,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate);
+
 /* IRQL: PASSIVE_LEVEL only. */
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlPrepare(_Inout_ VIRTIOSND_CONTROL* Ctrl);
@@ -242,6 +260,15 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfo1(_Inout_ VIRTIOSND_CONTROL* 
 /* IRQL: PASSIVE_LEVEL only. */
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlSetParams1Ex(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _In_ ULONG BufferBytes,
+    _In_ ULONG PeriodBytes,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate);
 
 /* IRQL: PASSIVE_LEVEL only. */
 _IRQL_requires_(PASSIVE_LEVEL)

@@ -11,10 +11,12 @@ This `docs/README.md` is the **source of truth** for the in-tree Windows 7 `virt
 - What (if any) QEMU configuration is supported
 - What render/capture endpoints exist today
 
-The shipped driver package produces `aero_virtio_snd.sys`.
+The shipped driver package produces `aero_virtio_snd.sys` and exposes two endpoints (render + capture).
 
-For **contract v1** devices (which advertise only the minimal PCM capability in `PCM_INFO`), the driver exposes two
-fixed-format endpoints:
+The **contract-v1 baseline** format is always supported and is used as a safe default.
+
+For **contract v1** devices (which advertise only the minimal PCM capability in `PCM_INFO`), the endpoints are
+fixed-format:
 
 Render (output, stream 0):
 
@@ -28,9 +30,9 @@ Capture (input, stream 1):
 * Mono (1 channel)
 * 16-bit PCM little-endian (S16_LE)
 
-When a virtio-snd implementation advertises a **superset** of capabilities in `PCM_INFO`, the driver can optionally
-expose additional formats/rates/channel counts to PortCls/WaveRT via dynamically generated pin data ranges (while still
-requiring and preferring the contract-v1 baseline).
+When a virtio-snd implementation advertises a **superset** of capabilities in `PCM_INFO`, the driver can expose
+additional formats/rates to PortCls/WaveRT via dynamically generated pin data ranges (while still requiring and
+preferring the contract-v1 baseline when present).
 
 ## What ships / compatibility contract
 
@@ -184,7 +186,8 @@ See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../../
 
 ### Render vs capture status
 
-The contract defines **two** fixed-format PCM streams:
+The contract defines **two** PCM streams. Contract v1 requires the following **baseline** format for each stream, but
+devices may advertise additional formats/rates via `VIRTIO_SND_R_PCM_INFO`:
 
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
@@ -242,7 +245,7 @@ PortCls miniports:
 
 - Registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology` (PortTopology + IMiniportTopology) subdevices.
 - Physically bridges them via `PcRegisterPhysicalConnection`.
-- Exposes contract-v1 endpoints by default:
+- Exposes endpoints with a contract-v1 baseline format (and optional additional formats/rates when advertised by the device):
   - Render (stream 0): 48,000 Hz, stereo (2ch), 16-bit PCM LE (S16_LE)
   - Capture (stream 1): 48,000 Hz, mono (1ch), 16-bit PCM LE (S16_LE)
 - When virtio-snd `PCM_INFO` advertises additional formats/rates/channel counts, the WaveRT miniport can dynamically
@@ -255,7 +258,7 @@ PortCls miniports:
 
 * `src/adapter.c` — PortCls adapter driver (`PcInitializeAdapterDriver` / `PcAddAdapterDevice`)
 * `src/topology.c` — topology miniport (speaker + microphone jacks + channel config properties)
-* `src/wavert.c` — WaveRT miniport + stream (dynamic format table from `PCM_INFO` when available; fixed fallback)
+* `src/wavert.c` — WaveRT miniport + stream (render + capture; dynamic format table from `PCM_INFO` when available; fixed fallback)
 
 Backend layer (WaveRT ↔ virtio-snd):
 
@@ -349,8 +352,10 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 ## Protocol implemented (Aero subset)
 
 This driver targets the **Aero Windows 7 virtio device contract v1** (virtio-snd §3.4).
-The contract (and emulator) define two fixed-format PCM streams. The shipped driver
-package exposes both streams via PortCls/WaveRT:
+The contract defines two PCM streams with a required **baseline** format. Devices may advertise
+additional formats/rates via `PCM_INFO`; the driver will negotiate a supported subset when present.
+
+The baseline streams exposed via PortCls/WaveRT are:
 
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
 - Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`)
@@ -427,11 +432,11 @@ u8  channels_max
 u8  reserved[5]
 ```
 
-Fixed fields used by Aero:
+Baseline fields required by the Aero contract v1 device model:
 
 - `features = 0`
-- `formats = (1 << VIRTIO_SND_PCM_FMT_S16)`
-- `rates = (1 << VIRTIO_SND_PCM_RATE_48000)`
+- `formats` includes `(1 << VIRTIO_SND_PCM_FMT_S16)` (device may advertise additional format bits)
+- `rates` includes `(1 << VIRTIO_SND_PCM_RATE_48000)` (device may advertise additional rate bits)
 - Stream 0: `direction = VIRTIO_SND_D_OUTPUT (0)`, `channels_min = channels_max = 2`
 - Stream 1: `direction = VIRTIO_SND_D_INPUT (1)`, `channels_min = channels_max = 1`
 
@@ -444,8 +449,8 @@ u32 buffer_bytes
 u32 period_bytes
 u32 features     = 0
 u8  channels
-u8  format       = VIRTIO_SND_PCM_FMT_S16 (5)
-u8  rate         = VIRTIO_SND_PCM_RATE_48000 (7)
+u8  format       = selected format (baseline: `VIRTIO_SND_PCM_FMT_S16 (5)`)
+u8  rate         = selected rate (baseline: `VIRTIO_SND_PCM_RATE_48000 (7)`)
 u8  padding      = 0
 ```
 
@@ -540,8 +545,9 @@ Because TX completions can happen "as fast as the guest can submit" (they are de
 
 Practical sizing notes:
 
-- `period_bytes` should be a multiple of the **frame size** (`4` bytes at S16_LE stereo).
-- At 48kHz, a 10ms period is `480 frames * 4 bytes/frame = 1920 bytes` (example only).
+- `period_bytes` should be a multiple of the **frame size** (`channels * bytes_per_sample`).
+  - Baseline example: S16_LE stereo is `2ch * 2 bytes = 4 bytes/frame`.
+- At 48kHz, a 10ms period is `480 frames * frame_bytes` (e.g. baseline: `480 * 4 = 1920 bytes`).
 - `buffer_bytes` should match the WaveRT cyclic buffer size (often `N * period_bytes`). The emulator does not enforce these values today, but future implementations may.
 
 If the miniport submits PCM faster than the period schedule (e.g. "fill the queue until it’s full"), the host ring buffer will eventually overfill and audio will glitch due to dropped samples.

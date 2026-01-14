@@ -23,6 +23,31 @@ extern "C" {
 #endif
 
 /*
+ * Default contract-v1 stream parameters (safe baseline).
+ */
+#define VIRTIOSND_PCM_DEFAULT_FORMAT VIRTIO_SND_PCM_FMT_S16
+#define VIRTIOSND_PCM_DEFAULT_RATE   VIRTIO_SND_PCM_RATE_48000
+
+/*
+ * Driver-supported PCM capabilities (subset of the virtio-snd spec).
+ *
+ * Devices may advertise additional formats/rates, but the Windows 7 WaveRT
+ * miniport only enumerates/negotiates formats/rates that it can represent via
+ * KS/WAVEFORMATEXTENSIBLE.
+ */
+#define VIRTIOSND_PCM_DRIVER_SUPPORTED_FORMATS (                                                               \
+    VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_U8) | VIRTIO_SND_PCM_FMT_MASK_S16 | VIRTIO_SND_PCM_FMT_MASK_S24 | \
+    VIRTIO_SND_PCM_FMT_MASK_S32 | VIRTIO_SND_PCM_FMT_MASK_FLOAT | VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_FLOAT64))
+
+#define VIRTIOSND_PCM_DRIVER_SUPPORTED_RATES (                                                                                              \
+    VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_5512) | VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_8000) |                               \
+    VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_11025) | VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_16000) |                             \
+    VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_22050) | VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_32000) |                             \
+    VIRTIO_SND_PCM_RATE_MASK_44100 | VIRTIO_SND_PCM_RATE_MASK_48000 | VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_64000) |                 \
+    VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_88200) | VIRTIO_SND_PCM_RATE_MASK_96000 | VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_176400) | \
+    VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_192000) | VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_384000))
+
+/*
  * A single negotiated PCM configuration for a virtio-snd stream.
  *
  * The driver tracks a "selected" configuration per stream:
@@ -90,7 +115,7 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlParsePcmInfoResp(
 
 /*
  * Build a VIRTIO_SND_R_PCM_SET_PARAMS request for a fixed-format contract-v1
- * PCM stream.
+ * PCM stream (S16/48kHz).
  */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
     _Out_ VIRTIO_SND_PCM_SET_PARAMS_REQ* Req,
@@ -102,9 +127,9 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
  * Build a VIRTIO_SND_R_PCM_SET_PARAMS request for an explicitly selected
  * (channels, format, rate) tuple.
  *
- * This is used by the WaveRT miniport format negotiation path. The legacy
- * VirtioSndCtrlBuildPcmSetParamsReq() helper remains fixed-format for the Aero
- * v1 contract and is used by unit tests.
+ * Callers should validate that the chosen Channels/Format/Rate are present in
+ * the device's PCM_INFO capabilities (formats/rates bitmasks and channel
+ * ranges).
  */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReqEx(
     _Out_ VIRTIO_SND_PCM_SET_PARAMS_REQ* Req,
@@ -114,6 +139,31 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReqEx(
     _In_ UCHAR Channels,
     _In_ UCHAR Format,
     _In_ UCHAR Rate);
+
+/*
+ * Map virtio-snd PCM enums to concrete PCM properties.
+ *
+ * Returns FALSE for formats/rates not handled by this driver.
+ */
+_Must_inspect_result_ BOOLEAN VirtioSndPcmFormatToBytes(_In_ UCHAR Format, _Out_ USHORT* BytesPerSample, _Out_opt_ USHORT* BitsPerSample);
+_Must_inspect_result_ BOOLEAN VirtioSndPcmHzToRate(_In_ ULONG Hz, _Out_ UCHAR* Rate);
+_Must_inspect_result_ BOOLEAN VirtioSndPcmBitsToFormat(_In_ USHORT BitsPerSample, _In_ BOOLEAN IsFloat, _Out_ UCHAR* Format);
+
+/*
+ * Select a virtio-snd PCM format/rate to use for a given Windows audio request.
+ *
+ * If the requested combination is not supported, this falls back to the
+ * contract-v1 baseline (S16/48kHz), assuming it is present in the supplied
+ * SupportedFormats/SupportedRates masks.
+ */
+_Must_inspect_result_ NTSTATUS VirtioSndPcmSelectFormatRate(
+    _In_ ULONGLONG SupportedFormats,
+    _In_ ULONGLONG SupportedRates,
+    _In_ USHORT RequestedBitsPerSample,
+    _In_ ULONG RequestedSampleRate,
+    _In_ BOOLEAN RequestedFloat,
+    _Out_ UCHAR* OutFormat,
+    _Out_ UCHAR* OutRate);
 
 /*
  * Build a simple PCM control request (PREPARE/START/STOP/RELEASE).

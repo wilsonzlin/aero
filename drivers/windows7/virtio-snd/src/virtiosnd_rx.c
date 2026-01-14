@@ -17,7 +17,6 @@
 
 static __forceinline ULONG VirtioSndRxHdrBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_TX_HDR); }
 static __forceinline ULONG VirtioSndRxStatusBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_PCM_STATUS); }
-static __forceinline ULONG VirtioSndRxFrameSizeBytes(VOID) { return 2u; }
 
 typedef struct _VIRTIOSND_RX_COMPLETION_ENTRY {
     void* UserCookie;
@@ -47,9 +46,9 @@ static VOID VirtIoSndRxFreeRequests(_Inout_ VIRTIOSND_RX_ENGINE* Rx)
 
 _Use_decl_annotations_
 NTSTATUS
-VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VIRTIOSND_QUEUE* Queue, ULONG RequestCount)
+VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VIRTIOSND_QUEUE* Queue, ULONG FrameBytes, ULONG RequestCount)
 {
-    return VirtIoSndRxInitEx(Rx, DmaCtx, Queue, VirtioSndRxFrameSizeBytes(), RequestCount);
+    return VirtIoSndRxInitEx(Rx, DmaCtx, Queue, FrameBytes, RequestCount);
 }
 
 _Use_decl_annotations_
@@ -237,11 +236,11 @@ VirtIoSndRxSubmitSg(VIRTIOSND_RX_ENGINE* Rx, const VIRTIOSND_RX_SEGMENT* Segment
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    {
-        ULONG frameBytes = (Rx->FrameBytes != 0) ? Rx->FrameBytes : VirtioSndRxFrameSizeBytes();
-        if ((payloadBytes % frameBytes) != 0) {
-        return STATUS_INVALID_BUFFER_SIZE;
+    if (Rx->FrameBytes == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
+    if ((payloadBytes % Rx->FrameBytes) != 0) {
+        return STATUS_INVALID_BUFFER_SIZE;
     }
 
     KeAcquireSpinLock(&Rx->Lock, &oldIrql);

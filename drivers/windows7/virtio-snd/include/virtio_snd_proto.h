@@ -47,10 +47,15 @@
 #define VIRTIO_SND_S_IO_ERR   3u
 
 /*
- * PCM format/rate enumerations (virtio-snd spec).
+ * virtio-snd PCM format/rate enums.
  *
- * The Aero v1 device model only exposes S16/48kHz today, but the guest driver
- * can negotiate additional formats when a device advertises them via PCM_INFO.
+ * The Aero Windows 7 virtio-snd contract v1 requires S16/48kHz, but devices may
+ * advertise additional formats/rates via PCM_INFO. The guest driver keeps the
+ * full bitmasks and may negotiate other combinations when both the Windows
+ * audio stack and the device support them.
+ *
+ * Values match the virtio-snd specification (`enum virtio_snd_pcm_fmt` /
+ * `enum virtio_snd_pcm_rate`).
  */
 #define VIRTIO_SND_PCM_FMT_IMA_ADPCM 0x00u
 #define VIRTIO_SND_PCM_FMT_MU_LAW    0x01u
@@ -59,15 +64,23 @@
 #define VIRTIO_SND_PCM_FMT_U8        0x04u
 #define VIRTIO_SND_PCM_FMT_S16       0x05u
 #define VIRTIO_SND_PCM_FMT_U16       0x06u
-#define VIRTIO_SND_PCM_FMT_S24       0x07u
-#define VIRTIO_SND_PCM_FMT_U24       0x08u
-#define VIRTIO_SND_PCM_FMT_S32       0x09u
-#define VIRTIO_SND_PCM_FMT_U32       0x0Au
-#define VIRTIO_SND_PCM_FMT_FLOAT     0x0Bu
-#define VIRTIO_SND_PCM_FMT_FLOAT64   0x0Cu
-#define VIRTIO_SND_PCM_FMT_DSD_U8    0x0Du
-#define VIRTIO_SND_PCM_FMT_DSD_U16   0x0Eu
-#define VIRTIO_SND_PCM_FMT_DSD_U32   0x0Fu
+#define VIRTIO_SND_PCM_FMT_S18_3     0x07u
+#define VIRTIO_SND_PCM_FMT_U18_3     0x08u
+#define VIRTIO_SND_PCM_FMT_S20_3     0x09u
+#define VIRTIO_SND_PCM_FMT_U20_3     0x0Au
+#define VIRTIO_SND_PCM_FMT_S24_3     0x0Bu
+#define VIRTIO_SND_PCM_FMT_U24_3     0x0Cu
+#define VIRTIO_SND_PCM_FMT_S20       0x0Du
+#define VIRTIO_SND_PCM_FMT_U20       0x0Eu
+#define VIRTIO_SND_PCM_FMT_S24       0x0Fu
+#define VIRTIO_SND_PCM_FMT_U24       0x10u
+#define VIRTIO_SND_PCM_FMT_S32       0x11u
+#define VIRTIO_SND_PCM_FMT_U32       0x12u
+#define VIRTIO_SND_PCM_FMT_FLOAT     0x13u
+#define VIRTIO_SND_PCM_FMT_FLOAT64   0x14u
+#define VIRTIO_SND_PCM_FMT_DSD_U8    0x15u
+#define VIRTIO_SND_PCM_FMT_DSD_U16   0x16u
+#define VIRTIO_SND_PCM_FMT_DSD_U32   0x17u
 
 #define VIRTIO_SND_PCM_RATE_5512    0x00u
 #define VIRTIO_SND_PCM_RATE_8000    0x01u
@@ -95,9 +108,10 @@
 #define VIRTIO_SND_PCM_FMT_MASK_S16     VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_S16)
 #define VIRTIO_SND_PCM_FMT_MASK_S24     VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_S24)
 #define VIRTIO_SND_PCM_FMT_MASK_S32     VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_S32)
-
+#define VIRTIO_SND_PCM_FMT_MASK_FLOAT   VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_FLOAT)
 #define VIRTIO_SND_PCM_RATE_MASK_44100  VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_44100)
 #define VIRTIO_SND_PCM_RATE_MASK_48000  VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_48000)
+#define VIRTIO_SND_PCM_RATE_MASK_96000  VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_96000)
 
 #pragma pack(push, 1)
 

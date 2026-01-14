@@ -18,7 +18,7 @@ static void test_tx_init_sets_fixed_stream_id_and_can_suppress_interrupts(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 32u, 4u, TRUE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 32u, 4u, TRUE);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(q.DisableInterruptCalls == 1);
 
@@ -46,13 +46,13 @@ static void test_tx_init_default_and_clamped_buffer_count(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 32u, 0u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 32u, 0u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(tx.BufferCount == 16u);
     TEST_ASSERT(tx.FreeCount == 16u);
     VirtioSndTxUninit(&tx);
 
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 32u, 100u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 32u, 100u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(tx.BufferCount == 64u);
     TEST_ASSERT(tx.FreeCount == 64u);
@@ -69,7 +69,7 @@ static void test_tx_init_rejects_unaligned_max_period_bytes(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 6u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 6u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 }
 
@@ -83,7 +83,7 @@ static void test_tx_init_rejects_max_period_bytes_over_contract_limit(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, VIRTIOSND_MAX_PCM_PAYLOAD_BYTES + 4u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, VIRTIOSND_MAX_PCM_PAYLOAD_BYTES + 4u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
 }
 
@@ -99,7 +99,7 @@ static void test_tx_submit_sg_allows_payload_at_contract_limit(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, VIRTIOSND_MAX_PCM_PAYLOAD_BYTES, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, VIRTIOSND_MAX_PCM_PAYLOAD_BYTES, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.Address.QuadPart = 0x1000;
@@ -137,7 +137,7 @@ static void test_tx_submit_period_wrap_copies_both_segments_and_builds_sg(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 16u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 16u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm1, (ULONG)sizeof(pcm1), pcm2, (ULONG)sizeof(pcm2), FALSE);
@@ -180,7 +180,7 @@ static void test_tx_no_free_buffers_drops_period(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
@@ -205,7 +205,7 @@ static void test_tx_queue_full_returns_buffer_to_pool(void)
 
     /* Queue capacity 1, buffer pool size 2 => second submit fails due to queue full, not pool exhaustion. */
     VirtioSndHostQueueInit(&q, 1);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 2u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 2u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
@@ -235,7 +235,7 @@ static void test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits(void)
     /* Happy path: max segment count builds [hdr][segments...][status]. */
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 64u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 64u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     RtlZeroMemory(segs, sizeof(segs));
@@ -276,7 +276,7 @@ static void test_tx_submit_sg_builds_descriptor_chain_and_enforces_limits(void)
     /* SegmentCount > max => invalid parameter. */
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 64u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 64u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitSg(&tx, segs, 0u);
@@ -319,7 +319,7 @@ static void test_tx_max_period_enforcement(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     /* Too many bytes for MaxPeriodBytes. */
@@ -349,7 +349,7 @@ static void test_tx_status_parsing_sets_fatal_on_bad_msg(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
@@ -390,7 +390,7 @@ static void test_tx_used_len_too_small_sets_bad_msg_and_fatal(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
@@ -421,7 +421,7 @@ static void test_tx_not_supp_sets_fatal_but_io_err_does_not(void)
     /* NOT_SUPP => fatal */
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);
@@ -439,7 +439,7 @@ static void test_tx_not_supp_sets_fatal_but_io_err_does_not(void)
     /* IO_ERR => not fatal */
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 8u, 1u, FALSE);
+    status = VirtioSndTxInit(&tx, &dma, &q.Queue, 4u, 8u, 1u, FALSE);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtioSndTxSubmitPeriod(&tx, pcm, (ULONG)sizeof(pcm), NULL, 0u, FALSE);

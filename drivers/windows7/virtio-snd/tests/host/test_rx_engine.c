@@ -49,7 +49,7 @@ static void test_rx_init_sets_fixed_stream_id(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 2u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     TEST_ASSERT(rx.RequestCount == 2u);
@@ -76,13 +76,13 @@ static void test_rx_init_default_and_clamped_request_count(void)
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
 
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 0u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 0u);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(rx.RequestCount == 16u);
     TEST_ASSERT(rx.FreeCount == 16u);
     VirtIoSndRxUninit(&rx);
 
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1000u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1000u);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(rx.RequestCount == (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ);
     TEST_ASSERT(rx.FreeCount == (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ);
@@ -99,7 +99,7 @@ static void test_rx_submit_sg_validates_segments(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     status = VirtIoSndRxSubmitSg(&rx, NULL, 0, NULL);
@@ -135,7 +135,7 @@ static void test_rx_submit_sg_rejects_payload_overflow(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     /* payloadBytes + len overflow should be caught before alignment checks. */
@@ -160,7 +160,7 @@ static void test_rx_submit_sg_rejects_payload_over_contract_limit(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000;
@@ -182,7 +182,7 @@ static void test_rx_submit_sg_allows_payload_at_contract_limit(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000;
@@ -211,7 +211,7 @@ static void test_rx_submit_sg_builds_descriptor_chain(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     segs[0].addr = 0x1000;
@@ -267,7 +267,7 @@ static void test_rx_on_used_uses_registered_callback(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     RtlZeroMemory(&cap, sizeof(cap));
@@ -311,7 +311,7 @@ static void test_rx_ok_with_no_payload_is_success_and_payload_zero(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000;
@@ -351,7 +351,7 @@ static void test_rx_no_free_requests_drops_submission(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000;
@@ -388,7 +388,7 @@ static void test_rx_not_supp_sets_fatal(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000;
@@ -432,7 +432,7 @@ static void test_rx_used_len_clamps_payload_and_io_err_is_not_fatal(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     /* Submit a 12-byte capture buffer. */
@@ -537,7 +537,7 @@ static void test_rx_used_len_too_small_sets_bad_msg_and_fatal(void)
 
     RtlZeroMemory(&dma, sizeof(dma));
     VirtioSndHostQueueInit(&q, 8);
-    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 1u);
+    status = VirtIoSndRxInit(&rx, &dma, &q.Queue, 2u, 1u);
     TEST_ASSERT(status == STATUS_SUCCESS);
 
     seg.addr = 0x1000;

@@ -2082,10 +2082,11 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
 
     ULONG fmtIdx;
     ULONG rate;
-    ULONG channels;
     ULONG channelsMin;
     ULONG channelsMax;
     ULONG count;
+    ULONGLONG formatsMask;
+    ULONGLONG ratesMask;
     PVIRTIOSND_WAVERT_FORMAT_ENTRY formats;
     PKSDATARANGE* ranges;
     ULONG out;
@@ -2128,6 +2129,13 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
         PreferredChannels = channelsMin;
     }
 
+    /*
+     * Enumerate only formats/rates that are advertised by the device (PCM_INFO)
+     * and understood by this driver (via the mapping helpers below).
+     */
+    formatsMask = Caps->Formats;
+    ratesMask = Caps->Rates;
+
     count = 0;
     for (fmtIdx = 0; fmtIdx < RTL_NUMBER_OF(kVirtioFormats); ++fmtIdx) {
         const UCHAR vf = kVirtioFormats[fmtIdx];
@@ -2135,7 +2143,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
         USHORT validBits;
         GUID sub;
 
-        if ((Caps->Formats & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
+        if ((formatsMask & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
             continue;
         }
 
@@ -2149,7 +2157,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
         for (rate = 0; rate < 64u; ++rate) {
             ULONG rateHz;
 
-            if ((Caps->Rates & VIRTIO_SND_PCM_RATE_MASK(rate)) == 0) {
+            if ((ratesMask & VIRTIO_SND_PCM_RATE_MASK(rate)) == 0) {
                 continue;
             }
 
@@ -2158,9 +2166,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
                 continue;
             }
 
-            for (channels = channelsMin; channels <= channelsMax; ++channels) {
-                count++;
-            }
+            count++;
         }
     }
 
@@ -2190,7 +2196,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
         GUID sub;
         USHORT bytesPerSample;
 
-        if ((Caps->Formats & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
+        if ((formatsMask & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
             continue;
         }
 
@@ -2229,7 +2235,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
                     continue;
                 }
 
-                if ((Caps->Rates & VIRTIO_SND_PCM_RATE_MASK(rateCode)) == 0) {
+                if ((ratesMask & VIRTIO_SND_PCM_RATE_MASK(rateCode)) == 0) {
                     continue;
                 }
 
@@ -2238,71 +2244,54 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
                     continue;
                 }
 
-                /*
-                 * Emit the preferred channel count first (if in range), followed
-                 * by the remaining supported counts in ascending order.
-                 */
-                for (channels = 0; channels < 2u; ++channels) {
+                {
                     ULONG channelCount;
                     ULONG channelMask;
                     ULONG blockAlign;
                     ULONG avgBytesPerSec;
 
-                    if (channels == 0) {
-                        channelCount = PreferredChannels;
-                    } else {
-                        channelCount = channelsMin;
+                    channelCount = PreferredChannels;
+
+                    if (out >= count) {
+                        /* Defensive: should never happen. */
+                        break;
                     }
 
-                    for (; channelCount <= channelsMax; ++channelCount) {
-                        if (channels == 0 && channelCount != PreferredChannels) {
-                            continue;
-                        }
-                        if (channels != 0 && channelCount == PreferredChannels) {
-                            continue;
-                        }
-
-                        if (out >= count) {
-                            /* Defensive: should never happen. */
-                            break;
-                        }
-
-                        channelMask = 0;
-                        if (!VirtIoSndWaveRtChannelMaskForChannels((USHORT)channelCount, &channelMask)) {
-                            continue;
-                        }
-
-                        blockAlign = channelCount * (ULONG)bytesPerSample;
-                        avgBytesPerSec = rateHz * blockAlign;
-
-                        formats[out].Format.Channels = (USHORT)channelCount;
-                        formats[out].Format.BitsPerSample = bits;
-                        formats[out].Format.ValidBitsPerSample = validBits;
-                        formats[out].Format.SampleRate = rateHz;
-                        formats[out].Format.BlockAlign = blockAlign;
-                        formats[out].Format.AvgBytesPerSec = avgBytesPerSec;
-                        formats[out].Format.ChannelMask = channelMask;
-                        formats[out].Format.SubFormat = sub;
-                        formats[out].Format.VirtioFormat = vf;
-                        formats[out].Format.VirtioRate = (UCHAR)rateCode;
-                        VirtIoSndWaveRtFormatInitQuantum(&formats[out].Format);
-
-                        formats[out].DataRange.DataRange.FormatSize = sizeof(KSDATARANGE_AUDIO);
-                        formats[out].DataRange.DataRange.Flags = 0;
-                        formats[out].DataRange.DataRange.SampleSize = 0;
-                        formats[out].DataRange.DataRange.Reserved = 0;
-                        formats[out].DataRange.DataRange.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
-                        formats[out].DataRange.DataRange.SubFormat = sub;
-                        formats[out].DataRange.DataRange.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
-                        formats[out].DataRange.MaximumChannels = channelCount;
-                        formats[out].DataRange.MinimumBitsPerSample = validBits;
-                        formats[out].DataRange.MaximumBitsPerSample = validBits;
-                        formats[out].DataRange.MinimumSampleFrequency = rateHz;
-                        formats[out].DataRange.MaximumSampleFrequency = rateHz;
-
-                        ranges[out] = (PKSDATARANGE)&formats[out].DataRange;
-                        out++;
+                    channelMask = 0;
+                    if (!VirtIoSndWaveRtChannelMaskForChannels((USHORT)channelCount, &channelMask)) {
+                        continue;
                     }
+
+                    blockAlign = channelCount * (ULONG)bytesPerSample;
+                    avgBytesPerSec = rateHz * blockAlign;
+
+                    formats[out].Format.Channels = (USHORT)channelCount;
+                    formats[out].Format.BitsPerSample = bits;
+                    formats[out].Format.ValidBitsPerSample = validBits;
+                    formats[out].Format.SampleRate = rateHz;
+                    formats[out].Format.BlockAlign = blockAlign;
+                    formats[out].Format.AvgBytesPerSec = avgBytesPerSec;
+                    formats[out].Format.ChannelMask = channelMask;
+                    formats[out].Format.SubFormat = sub;
+                    formats[out].Format.VirtioFormat = vf;
+                    formats[out].Format.VirtioRate = (UCHAR)rateCode;
+                    VirtIoSndWaveRtFormatInitQuantum(&formats[out].Format);
+
+                    formats[out].DataRange.DataRange.FormatSize = sizeof(KSDATARANGE_AUDIO);
+                    formats[out].DataRange.DataRange.Flags = 0;
+                    formats[out].DataRange.DataRange.SampleSize = 0;
+                    formats[out].DataRange.DataRange.Reserved = 0;
+                    formats[out].DataRange.DataRange.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
+                    formats[out].DataRange.DataRange.SubFormat = sub;
+                    formats[out].DataRange.DataRange.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
+                    formats[out].DataRange.MaximumChannels = channelCount;
+                    formats[out].DataRange.MinimumBitsPerSample = validBits;
+                    formats[out].DataRange.MaximumBitsPerSample = validBits;
+                    formats[out].DataRange.MinimumSampleFrequency = rateHz;
+                    formats[out].DataRange.MaximumSampleFrequency = rateHz;
+
+                    ranges[out] = (PKSDATARANGE)&formats[out].DataRange;
+                    out++;
                 }
 
                 if (rate == 0) {
@@ -2360,11 +2349,12 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
     }
 
     /*
-     * Expose exactly one format per pin: the deterministically negotiated format
-     * selected during START_DEVICE (VIO-020).
+     * Build a dynamic format table from the PCM_INFO capabilities discovered
+     * during START_DEVICE (VIO-020).
      *
-     * This avoids Windows picking a different format than the driver negotiated
-     * with the device.
+     * The contract-v1 baseline (S16/48kHz) is still preferred/first when present,
+     * but when the device advertises additional formats/rates the driver can
+     * expose them to Windows via additional KSDATARANGE entries.
      */
     renderSel = dx->Control.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID];
     captureSel = dx->Control.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID];
@@ -2372,15 +2362,15 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    RtlZeroMemory(&renderCaps, sizeof(renderCaps));
-    renderCaps.Formats = VIRTIO_SND_PCM_FMT_MASK(renderSel.Format);
-    renderCaps.Rates = VIRTIO_SND_PCM_RATE_MASK(renderSel.Rate);
+    renderCaps = dx->Control.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID];
+    captureCaps = dx->Control.Caps[VIRTIO_SND_CAPTURE_STREAM_ID];
+
+    /*
+     * Keep channel counts fixed per direction to avoid exposing surround channel
+     * configurations without additional topology/property plumbing.
+     */
     renderCaps.ChannelsMin = renderSel.Channels;
     renderCaps.ChannelsMax = renderSel.Channels;
-
-    RtlZeroMemory(&captureCaps, sizeof(captureCaps));
-    captureCaps.Formats = VIRTIO_SND_PCM_FMT_MASK(captureSel.Format);
-    captureCaps.Rates = VIRTIO_SND_PCM_RATE_MASK(captureSel.Rate);
     captureCaps.ChannelsMin = captureSel.Channels;
     captureCaps.ChannelsMax = captureSel.Channels;
 
@@ -2719,9 +2709,23 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
         stream->PeriodBytes = quanta * streamFormat.BytesPerQuantum;
         stream->PeriodMs = quanta * streamFormat.MsQuantum;
     } else {
-        /* Defensive fallback. */
+        /*
+         * Defensive fallback (should not happen): default to ~10ms worth of
+         * frames using the negotiated BlockAlign/SampleRate.
+         */
+        ULONGLONG frames;
+
         stream->PeriodMs = 10u;
-        stream->PeriodBytes = (streamFormat.BlockAlign != 0) ? (streamFormat.BlockAlign * 10u) : 0;
+
+        frames = streamFormat.SampleRate / 100u;
+        if (frames == 0) {
+            frames = 1;
+        }
+        if (streamFormat.BlockAlign != 0 && frames <= (ULONGLONG)MAXULONG / (ULONGLONG)streamFormat.BlockAlign) {
+            stream->PeriodBytes = (ULONG)(frames * (ULONGLONG)streamFormat.BlockAlign);
+        } else {
+            stream->PeriodBytes = 0;
+        }
     }
     stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
     {
@@ -4074,8 +4078,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     size = RequestedBufferSize;
 
     /*
-     * Ensure the buffer is large enough for at least one timer quantum per
+     * Ensure the buffer is large enough for at least one timing quantum per
      * notification.
+     *
+     * This avoids truncation drift at sample rates like 44.1 kHz where
+     * AvgBytesPerSec/1000 is not an integer.
      */
     if (bytesPerQuantum > MAXULONG / notifications) {
         return STATUS_INVALID_BUFFER_SIZE;
@@ -4093,10 +4100,10 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     }
 
     /*
-     * Compute a period size aligned to the integer-millisecond timer quantum.
-     * Ensure the
-     * period payload never exceeds the contract maximum (256 KiB) by increasing
-     * the notification count (up to the existing 256 cap).
+     * Compute a period size aligned to the format-specific timing quantum.
+     *
+     * Ensure the period payload never exceeds the contract maximum (256 KiB) by
+     * increasing the notification count (up to the existing 256 cap).
      */
     for (;;) {
         periodBytes = (size + notifications - 1) / notifications;
@@ -4189,8 +4196,23 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     stream->BufferSize = size;
 
     stream->PeriodBytes = periodBytes;
-    stream->PeriodMs = (periodBytes / bytesPerQuantum) * msQuantum;
-    stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
+    {
+        ULONG quanta;
+        ULONG periodMs;
+
+        quanta = (bytesPerQuantum != 0) ? (periodBytes / bytesPerQuantum) : 0;
+        if (quanta == 0) {
+            quanta = 1;
+        }
+
+        periodMs = quanta * msQuantum;
+        if (periodMs == 0) {
+            periodMs = msQuantum;
+        }
+
+        stream->PeriodMs = periodMs;
+        stream->Period100ns = (ULONGLONG)periodMs * 10u * 1000u;
+    }
 
     stream->FrozenLinearFrames = 0;
     stream->FrozenQpc = 0;
