@@ -150,6 +150,10 @@ impl Default for UsbHidGamepadHandle {
 }
 
 impl UsbDeviceModel for UsbHidGamepadHandle {
+    fn reset_host_state_for_restore(&mut self) {
+        self.0.borrow_mut().reset_host_state_for_restore();
+    }
+
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }

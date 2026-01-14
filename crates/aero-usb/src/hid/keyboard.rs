@@ -144,6 +144,10 @@ impl Default for UsbHidKeyboardHandle {
 }
 
 impl UsbDeviceModel for UsbHidKeyboardHandle {
+    fn reset_host_state_for_restore(&mut self) {
+        self.0.borrow_mut().reset_host_state_for_restore();
+    }
+
     fn reset(&mut self) {
         self.0.borrow_mut().reset();
     }
