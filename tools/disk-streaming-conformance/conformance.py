@@ -2170,27 +2170,32 @@ def _test_cache_control_immutable(
         return TestResult(name=name, status="SKIP", details="skipped (no response)")
     cache_control = _header(resp, "Cache-Control")
     if cache_control is None:
+        if require_no_transform:
+            return TestResult(name=name, status="FAIL", details="missing Cache-Control (expected include no-transform)")
         if authorization is None:
             msg = "missing Cache-Control (recommended: include immutable)"
         else:
             msg = "missing Cache-Control (private responses should avoid public caching; no-store recommended)"
         return TestResult(name=name, status="FAIL" if strict else "WARN", details=msg)
     tokens = _csv_tokens(cache_control)
-    issues: list[str] = []
+    hard_issues: list[str] = []
+    soft_issues: list[str] = []
     if authorization is None:
         if "immutable" not in tokens:
-            issues.append(f"Cache-Control missing immutable: {cache_control!r}")
+            soft_issues.append(f"Cache-Control missing immutable: {cache_control!r}")
     else:
         # Authorization-triggered fetches are not safe to cache publicly unless you very carefully
         # vary caches by Authorization. Treat Cache-Control: public as a conformance failure.
         if "public" in tokens:
             return TestResult(name=name, status="FAIL", details=f"private response must not be Cache-Control: public; got {cache_control!r}")
         if "no-store" not in tokens:
-            issues.append(f"private response Cache-Control missing no-store: {cache_control!r}")
+            soft_issues.append(f"private response Cache-Control missing no-store: {cache_control!r}")
     if require_no_transform and "no-transform" not in tokens:
-        issues.append(f"Cache-Control missing no-transform: {cache_control!r}")
-    if issues:
-        return TestResult(name=name, status="FAIL" if strict else "WARN", details="; ".join(issues))
+        hard_issues.append(f"Cache-Control missing no-transform: {cache_control!r}")
+    if hard_issues:
+        return TestResult(name=name, status="FAIL", details="; ".join(hard_issues))
+    if soft_issues:
+        return TestResult(name=name, status="FAIL" if strict else "WARN", details="; ".join(soft_issues))
     return TestResult(name=name, status="PASS", details=f"Cache-Control={cache_control!r}")
 
 

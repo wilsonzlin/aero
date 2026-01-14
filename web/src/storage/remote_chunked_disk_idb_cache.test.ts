@@ -24,6 +24,7 @@ async function withServer(handler: (req: IncomingMessage, res: ServerResponse) =
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     hits.set(url.pathname, (hits.get(url.pathname) ?? 0) + 1);
+    res.setHeader("cache-control", "no-transform");
     handler(req, res);
   });
 

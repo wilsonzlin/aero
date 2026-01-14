@@ -20,7 +20,10 @@ async function withServer(handler: (req: IncomingMessage, res: ServerResponse) =
   baseUrl: string;
   close: () => Promise<void>;
 }> {
-  const server = createServer(handler);
+  const server = createServer((req, res) => {
+    res.setHeader("cache-control", "no-transform");
+    handler(req, res);
+  });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const addr = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${addr.port}`;

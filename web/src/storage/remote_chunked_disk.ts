@@ -537,6 +537,25 @@ function assertIdentityContentEncoding(headers: Headers, label: string): void {
   throw new ProtocolError(`${label} unexpected Content-Encoding: ${raw}`);
 }
 
+function assertNoTransformCacheControl(headers: Headers, label: string): void {
+  // Disk streaming reads bytes by offset. Any intermediary transform can break byte-addressed
+  // semantics. Require `Cache-Control: no-transform` as defence-in-depth.
+  //
+  // Note: Cache-Control is CORS-safelisted, so it is readable to JS cross-origin without
+  // `Access-Control-Expose-Headers`.
+  const raw = headers.get("cache-control");
+  if (!raw) {
+    throw new ProtocolError(`${label} missing Cache-Control header (expected include 'no-transform')`);
+  }
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (!tokens.includes("no-transform")) {
+    throw new ProtocolError(`${label} Cache-Control missing no-transform: ${raw}`);
+  }
+}
+
 function hasOpfsRoot(): boolean {
   return typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function";
 }
@@ -1267,6 +1286,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const resp = await fetchWithDiskAccessLease(params.lease, { method: "GET" }, { retryAuthOnce: true });
     if (!resp.ok) throw new Error(`failed to fetch manifest: ${resp.status}`);
     assertIdentityContentEncoding(resp.headers, "manifest.json");
+    assertNoTransformCacheControl(resp.headers, "manifest.json");
     const json = await readJsonResponseWithLimit(resp, { maxBytes: MAX_REMOTE_MANIFEST_JSON_BYTES, label: "manifest.json" });
     const manifest = parseManifest(json);
 
@@ -1610,6 +1630,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       throw new ChunkFetchError(`chunk fetch failed: ${resp.status}`, resp.status);
     }
     assertIdentityContentEncoding(resp.headers, `chunk ${chunkIndex}`);
+    assertNoTransformCacheControl(resp.headers, `chunk ${chunkIndex}`);
     const bytes = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: `chunk ${chunkIndex}` });
     if (bytes.length !== expectedLen) {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.length}`);

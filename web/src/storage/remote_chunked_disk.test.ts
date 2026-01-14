@@ -250,6 +250,7 @@ async function withServer(handler: (req: IncomingMessage, res: ServerResponse) =
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     hits.set(url.pathname, (hits.get(url.pathname) ?? 0) + 1);
+    res.setHeader("cache-control", "no-transform");
     handler(req, res);
   });
 
@@ -442,6 +443,92 @@ describe("RemoteChunkedDisk", () => {
     }
   });
 
+  it("rejects manifests without Cache-Control: no-transform", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("cache-control", "public, max-age=60");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+      }),
+    ).rejects.toThrow(/no-transform/i);
+  });
+
+  it("rejects chunk responses without Cache-Control: no-transform", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const chunk0 = new Uint8Array(chunkSize).fill(0x11);
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      if (url.pathname === "/chunks/0.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.setHeader("cache-control", "public, max-age=60");
+        res.end(Buffer.from(chunk0));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store: new TestMemoryStore(),
+    });
+    try {
+      const buf = new Uint8Array(chunkSize);
+      await expect(disk.readSectors(0, buf)).rejects.toThrow(/no-transform/i);
+    } finally {
+      await disk.close();
+    }
+  });
+
   it("rejects manifests with chunk sizes larger than 64MiB", async () => {
     const chunkSize = 128 * 1024 * 1024;
     const chunkCount = 1;
@@ -587,6 +674,7 @@ describe("RemoteChunkedDisk", () => {
           headers: {
             "content-type": "application/json",
             "content-length": String(MAX_REMOTE_MANIFEST_JSON_BYTES + 1),
+            "cache-control": "no-transform",
           },
         }),
       );
@@ -622,13 +710,13 @@ describe("RemoteChunkedDisk", () => {
       if (url.includes("manifest.json")) {
         return new Response(JSON.stringify(manifest), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "cache-control": "no-transform" },
         });
       }
       if (url.includes("/chunks/0.bin")) {
         return new Response(new Uint8Array(chunkSize), {
           status: 200,
-          headers: { "content-length": String(chunkSize + 1) },
+          headers: { "content-length": String(chunkSize + 1), "cache-control": "no-transform" },
         });
       }
       return new Response("not found", { status: 404 });
@@ -668,7 +756,10 @@ describe("RemoteChunkedDisk", () => {
 
     const fetchFn = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>().mockImplementation(async (_input, init) => {
       expect(init?.credentials).toBe("same-origin");
-      return new Response(JSON.stringify(manifest), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(manifest), {
+        status: 200,
+        headers: { "content-type": "application/json", "cache-control": "no-transform" },
+      });
     });
 
     const prevFetch = globalThis.fetch;
