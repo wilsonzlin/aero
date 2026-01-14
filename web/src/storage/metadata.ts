@@ -228,7 +228,12 @@ export function upgradeDiskMetadata(record: unknown): DiskImageMetadata | undefi
 
   // v1 records had no `source` field. Treat them as local disks.
   const maybeV1 = record as Partial<DiskImageMetadataV1>;
-  if (typeof maybeV1.id === "string" && typeof maybeV1.backend === "string" && typeof maybeV1.fileName === "string") {
+  // Require own properties: persisted metadata is untrusted and must not be satisfiable via
+  // `Object.prototype` pollution.
+  const id = hasOwnProp(maybeV1, "id") ? maybeV1.id : undefined;
+  const backend = hasOwnProp(maybeV1, "backend") ? maybeV1.backend : undefined;
+  const fileName = hasOwnProp(maybeV1, "fileName") ? maybeV1.fileName : undefined;
+  if (typeof id === "string" && typeof backend === "string" && typeof fileName === "string") {
     return { ...(maybeV1 as DiskImageMetadataV1), source: "local" };
   }
 

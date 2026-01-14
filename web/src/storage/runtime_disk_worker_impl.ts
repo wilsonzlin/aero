@@ -469,14 +469,25 @@ async function openDiskFromMetadata(
       throw new Error(`unsupported remote delivery ${meta.remote.delivery}`);
     }
 
-    const expectedValidator = meta.remote.validator?.etag
-      ? { kind: "etag" as const, value: meta.remote.validator.etag }
-      : meta.remote.validator?.lastModified
-        ? { kind: "lastModified" as const, value: meta.remote.validator.lastModified }
-        : undefined;
+    // Treat persisted + postMessage-provided metadata as untrusted: never observe inherited fields
+    // (prototype pollution) when selecting remote URLs or validators.
+    const validatorRaw = meta.remote.validator as unknown;
+    const validatorRec = isRecord(validatorRaw) ? (validatorRaw as Record<string, unknown>) : null;
+    const etag = validatorRec && hasOwn(validatorRec, "etag") ? validatorRec.etag : undefined;
+    const lastModified = validatorRec && hasOwn(validatorRec, "lastModified") ? validatorRec.lastModified : undefined;
+    const expectedValidator =
+      typeof etag === "string"
+        ? { kind: "etag" as const, value: etag }
+        : typeof lastModified === "string"
+          ? { kind: "lastModified" as const, value: lastModified }
+          : undefined;
 
-    const stableUrl = typeof meta.remote.urls.url === "string" ? meta.remote.urls.url.trim() : "";
-    const leaseEndpoint = typeof meta.remote.urls.leaseEndpoint === "string" ? meta.remote.urls.leaseEndpoint.trim() : "";
+    const urlsRaw = (meta.remote as unknown as { urls?: unknown }).urls;
+    const urlsRec = isRecord(urlsRaw) ? (urlsRaw as Record<string, unknown>) : (Object.create(null) as Record<string, unknown>);
+    const stableUrlRaw = hasOwn(urlsRec, "url") ? urlsRec.url : undefined;
+    const leaseEndpointRaw = hasOwn(urlsRec, "leaseEndpoint") ? urlsRec.leaseEndpoint : undefined;
+    const stableUrl = typeof stableUrlRaw === "string" ? stableUrlRaw.trim() : "";
+    const leaseEndpoint = typeof leaseEndpointRaw === "string" ? leaseEndpointRaw.trim() : "";
 
     const deliveryType =
       meta.remote.delivery === "range"
@@ -687,14 +698,23 @@ async function openDiskFromMetadata(
 
     async function openBase(): Promise<AsyncSectorDisk> {
       if (localMeta.remote) {
-        const url = String(localMeta.remote.url ?? "").trim();
+        // Legacy remote-streaming metadata is persisted; treat it as untrusted and ignore inherited
+        // URL fields (prototype pollution).
+        const remoteRaw = localMeta.remote as unknown;
+        const remoteRec = isRecord(remoteRaw) ? (remoteRaw as Record<string, unknown>) : null;
+        const urlRaw = remoteRec && hasOwn(remoteRec, "url") ? remoteRec.url : undefined;
+        const url = typeof urlRaw === "string" ? urlRaw.trim() : "";
         if (!url) throw new Error("remote disk metadata missing remote.url");
         // Legacy remote-streaming local disks always use RemoteStreamingDisk + OPFS chunk cache.
         // The base image is treated as read-only; HDD writes go to a runtime COW overlay.
+        const blockSizeBytes = remoteRec && hasOwn(remoteRec, "blockSizeBytes") ? remoteRec.blockSizeBytes : undefined;
+        const cacheLimitBytes = remoteRec && hasOwn(remoteRec, "cacheLimitBytes") ? remoteRec.cacheLimitBytes : undefined;
+        const prefetchSequentialBlocks =
+          remoteRec && hasOwn(remoteRec, "prefetchSequentialBlocks") ? remoteRec.prefetchSequentialBlocks : undefined;
         return await RemoteStreamingDisk.open(url, {
-          blockSize: localMeta.remote.blockSizeBytes,
-          cacheLimitBytes: localMeta.remote.cacheLimitBytes,
-          prefetchSequentialBlocks: localMeta.remote.prefetchSequentialBlocks,
+          blockSize: typeof blockSizeBytes === "number" ? blockSizeBytes : undefined,
+          cacheLimitBytes: typeof cacheLimitBytes === "number" || cacheLimitBytes === null ? (cacheLimitBytes as any) : undefined,
+          prefetchSequentialBlocks: typeof prefetchSequentialBlocks === "number" ? prefetchSequentialBlocks : undefined,
           cacheBackend: "opfs",
           expectedSizeBytes: sizeBytes,
         });

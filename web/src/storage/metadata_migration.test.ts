@@ -144,6 +144,35 @@ describe("disk metadata schema migration", () => {
     expect(upgraded!.source).toBe("local");
   });
 
+  it("does not accept v1 disk fields inherited from Object.prototype", () => {
+    const idExisting = Object.getOwnPropertyDescriptor(Object.prototype, "id");
+    const backendExisting = Object.getOwnPropertyDescriptor(Object.prototype, "backend");
+    const fileNameExisting = Object.getOwnPropertyDescriptor(Object.prototype, "fileName");
+    if (
+      (idExisting && idExisting.configurable === false) ||
+      (backendExisting && backendExisting.configurable === false) ||
+      (fileNameExisting && fileNameExisting.configurable === false)
+    ) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "id", { value: "polluted", configurable: true, writable: true });
+      Object.defineProperty(Object.prototype, "backend", { value: "idb", configurable: true, writable: true });
+      Object.defineProperty(Object.prototype, "fileName", { value: "polluted.img", configurable: true, writable: true });
+
+      expect(upgradeDiskMetadata({})).toBeUndefined();
+    } finally {
+      if (idExisting) Object.defineProperty(Object.prototype, "id", idExisting);
+      else delete (Object.prototype as any).id;
+      if (backendExisting) Object.defineProperty(Object.prototype, "backend", backendExisting);
+      else delete (Object.prototype as any).backend;
+      if (fileNameExisting) Object.defineProperty(Object.prototype, "fileName", fileNameExisting);
+      else delete (Object.prototype as any).fileName;
+    }
+  });
+
   it("backfills remote disk cacheLimitBytes default when missing", () => {
     const legacyRemote = {
       source: "remote",

@@ -27,13 +27,13 @@ function alignUpBigInt(value: bigint, alignment: bigint): bigint {
   return ((value + alignment - 1n) / alignment) * alignment;
 }
 
-function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: number }): Uint8Array {
+function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: number }): Uint8Array<ArrayBuffer> {
   const { diskSizeBytes, blockSizeBytes } = options;
   const blockSizeBig = BigInt(blockSizeBytes);
   const tableEntries = (BigInt(diskSizeBytes) + blockSizeBig - 1n) / blockSizeBig;
   const dataOffset = alignUpBigInt(64n + tableEntries * 8n, blockSizeBig);
   const fileSize = Number(dataOffset); // allocatedBlocks=0 so file only needs to cover the data offset
-  const out = new Uint8Array(fileSize);
+  const out = new Uint8Array(fileSize) as Uint8Array<ArrayBuffer>;
   out.set(new TextEncoder().encode("AEROSPAR"), 0);
 
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
@@ -103,4 +103,3 @@ describe("disk_worker import_convert aerospar passthrough", () => {
     expect(String(resp.result.fileName)).toMatch(/\.aerospar$/);
   });
 });
-
