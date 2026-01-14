@@ -5730,9 +5730,32 @@ impl Machine {
     /// `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, flags: number, allocTable: Uint8Array | null }`.
     #[cfg(target_arch = "wasm32")]
     pub fn aerogpu_drain_submissions(&mut self) -> JsValue {
-        // TODO(AEROGPU-WASM-BRIDGE-01): Wire up to the in-process AeroGPU PCI device model once it
-        // is integrated into `aero_machine::Machine`.
-        js_sys::Array::new().into()
+        let subs = self.inner.aerogpu_drain_submissions();
+        let out = js_sys::Array::new();
+
+        for sub in subs {
+            let obj = Object::new();
+
+            let cmd_stream = Uint8Array::from(sub.cmd_stream.as_slice());
+            let _ = Reflect::set(&obj, &"cmdStream".into(), &cmd_stream.into());
+            let _ = Reflect::set(
+                &obj,
+                &"signalFence".into(),
+                &BigInt::from(sub.signal_fence).into(),
+            );
+            let _ = Reflect::set(&obj, &"contextId".into(), &JsValue::from(sub.context_id));
+            let _ = Reflect::set(&obj, &"flags".into(), &JsValue::from(sub.flags));
+
+            let alloc_table: JsValue = match sub.alloc_table {
+                Some(bytes) => Uint8Array::from(bytes.as_slice()).into(),
+                None => JsValue::NULL,
+            };
+            let _ = Reflect::set(&obj, &"allocTable".into(), &alloc_table);
+
+            out.push(&obj);
+        }
+
+        out.into()
     }
 
     /// Mark a previously-drained submission's fence as complete.
@@ -5740,9 +5763,19 @@ impl Machine {
     /// The underlying AeroGPU device model is responsible for raising IRQ status bits and updating
     /// the guest fence page so the Windows driver observes forward progress.
     #[cfg(target_arch = "wasm32")]
-    pub fn aerogpu_complete_fence(&mut self, _fence: BigInt) {
-        // TODO(AEROGPU-WASM-BRIDGE-01): Wire up to the in-process AeroGPU PCI device model once it
-        // is integrated into `aero_machine::Machine`.
+    pub fn aerogpu_complete_fence(&mut self, fence: BigInt) {
+        // `js_sys::BigInt` does not expose a lossless `to_u64`, so round-trip through a decimal
+        // string.
+        let Ok(s) = fence.to_string(10) else {
+            return;
+        };
+        let Some(s) = s.as_string() else {
+            return;
+        };
+        let Ok(value) = s.parse::<u64>() else {
+            return;
+        };
+        self.inner.aerogpu_complete_fence(value);
     }
 
     /// Inject a browser-style keyboard event into the guest PS/2 i8042 controller.

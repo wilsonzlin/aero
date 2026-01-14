@@ -361,6 +361,22 @@ pub enum BootDevice {
     Cdrom,
 }
 
+/// AeroGPU submission payload drained from the guest-visible AeroGPU ring.
+///
+/// This is an integration hook for browser/WASM builds where the guest-visible AeroGPU PCI device
+/// model runs in-process (inside `aero_machine::Machine`), but command execution happens
+/// out-of-process (e.g. in a dedicated GPU worker).
+///
+/// The `cmd_stream` bytes contain the raw `aerogpu_cmd_stream_header` + packets ("ACMD" stream).
+#[derive(Clone, Debug)]
+pub struct AerogpuSubmission {
+    pub flags: u32,
+    pub context_id: u32,
+    pub engine_id: u32,
+    pub signal_fence: u64,
+    pub cmd_stream: Vec<u8>,
+    pub alloc_table: Option<Vec<u8>>,
+}
 /// Configuration for [`Machine`].
 ///
 /// # Platform wiring vs firmware tables
@@ -9260,6 +9276,51 @@ impl Machine {
                 cursor_state.publish(update);
             }
         }
+    }
+
+    /// Drain newly-decoded AeroGPU submissions.
+    ///
+    /// This is primarily used by browser/WASM integrations that execute AeroGPU command streams
+    /// out-of-process (e.g. a GPU worker). Native builds generally rely on in-process rendering
+    /// paths instead.
+    pub fn aerogpu_drain_submissions(&mut self) -> Vec<AerogpuSubmission> {
+        let Some(aerogpu) = &self.aerogpu_mmio else {
+            return Vec::new();
+        };
+        aerogpu.borrow_mut().drain_pending_submissions()
+    }
+
+    /// Mark an AeroGPU submission fence as completed by an out-of-process executor.
+    pub fn aerogpu_complete_fence(&mut self, fence: u64) {
+        let (Some(aerogpu), Some(pci_cfg)) = (&self.aerogpu_mmio, &self.pci_cfg) else {
+            return;
+        };
+
+        // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI
+        // config space owned by the machine so the device can apply COMMAND.BME gating.
+        let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+        let (command, bar0_base, bar1_base) = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            let bar1_base = cfg
+                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base, bar1_base)
+        };
+
+        let mut dev = aerogpu.borrow_mut();
+        dev.config_mut().set_command(command);
+        dev.config_mut()
+            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
+        dev.config_mut()
+            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX, bar1_base);
+        dev.complete_fence_from_backend(&mut self.mem, fence);
     }
 
     /// Allow the virtio-blk controller (if present) to make forward progress (DMA).

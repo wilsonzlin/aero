@@ -146,6 +146,19 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
+    // Newly-decoded submissions should be exposed via the machine drain API for browser/WASM
+    // integrations (out-of-process GPU workers).
+    let subs = m.aerogpu_drain_submissions();
+    assert_eq!(subs.len(), 1);
+    let sub = &subs[0];
+    assert_eq!(sub.signal_fence, signal_fence);
+    assert_eq!(sub.context_id, 0);
+    assert_eq!(sub.engine_id, ring::AEROGPU_ENGINE_0);
+    assert_eq!(sub.flags, 0);
+    assert_eq!(sub.cmd_stream, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(sub.alloc_table, None);
+    assert_eq!(m.aerogpu_drain_submissions().len(), 0);
+
     // Ring head advanced.
     assert_eq!(m.read_physical_u32(ring_gpa + 24), 1);
 

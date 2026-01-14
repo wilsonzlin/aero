@@ -1,14 +1,19 @@
 #![forbid(unsafe_code)]
 
 use core::mem::offset_of;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
-use aero_protocol::aerogpu::aerogpu_cmd::cmd_stream_has_vsync_present_reader;
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
+
+use crate::AerogpuSubmission;
 
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 use aero_shared::cursor_state::CursorStateUpdate;
@@ -60,6 +65,16 @@ fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, complet
 // allocation limits.
 const MAX_HOST_SCANOUT_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels (~4K@32bpp)
 const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixels (~1024x1024)
+
+// -----------------------------------------------------------------------------
+// Defensive caps (AeroGPU submission capture)
+// -----------------------------------------------------------------------------
+//
+// In browser/WASM builds, the machine may copy guest-provided command streams and allocation
+// tables out of guest memory so they can be executed out-of-process (GPU worker). These sizes are
+// guest-controlled and must be bounded.
+const MAX_AEROGPU_ALLOC_TABLE_BYTES: u32 = 16 * 1024 * 1024;
+const MAX_PENDING_AEROGPU_SUBMISSIONS: usize = 256;
 
 fn supported_features() -> u64 {
     pci::AEROGPU_FEATURE_FENCE_PAGE
@@ -492,7 +507,13 @@ pub struct AeroGpuMmioDevice {
     // Fence completion pacing
     // ---------------------------------------------------------------------
     pending_fence_completions: VecDeque<PendingFenceCompletion>,
+    backend_completed_fences: HashSet<u64>,
     fence_page_dirty: bool,
+
+    // ---------------------------------------------------------------------
+    // Submission drain queue (WASM external GPU worker integration)
+    // ---------------------------------------------------------------------
+    pending_submissions: VecDeque<AerogpuSubmission>,
 
     doorbell_pending: bool,
     ring_reset_pending: bool,
@@ -610,7 +631,10 @@ impl Default for AeroGpuMmioDevice {
             cursor_dirty: false,
 
             pending_fence_completions: VecDeque::new(),
+            backend_completed_fences: HashSet::new(),
             fence_page_dirty: false,
+
+            pending_submissions: VecDeque::new(),
 
             doorbell_pending: false,
             ring_reset_pending: false,
@@ -621,6 +645,37 @@ impl Default for AeroGpuMmioDevice {
 impl AeroGpuMmioDevice {
     pub fn set_clock(&mut self, clock: ManualClock) {
         self.clock = Some(clock);
+    }
+
+    pub(crate) fn drain_pending_submissions(&mut self) -> Vec<AerogpuSubmission> {
+        if self.pending_submissions.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(self.pending_submissions.len());
+        while let Some(sub) = self.pending_submissions.pop_front() {
+            out.push(sub);
+        }
+        out
+    }
+
+    pub(crate) fn complete_fence_from_backend(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
+        if fence == 0 {
+            return;
+        }
+        if !self.bus_master_enabled() {
+            // Mirror device DMA gating: fence page/IRQ forward progress is undefined without BME.
+            return;
+        }
+
+        self.backend_completed_fences.insert(fence);
+
+        // Completing a fence may unblock one or more immediate fence entries that are waiting at the
+        // front of the queue. Vblank-paced fences still require a vblank edge.
+        self.process_pending_fences_on_doorbell();
+
+        // Publish the updated fence page immediately so the guest observes forward progress without
+        // requiring an additional `process()` tick.
+        self.write_fence_page_if_dirty(mem, true);
     }
 
     pub fn reset(&mut self) {
@@ -1045,7 +1100,9 @@ impl AeroGpuMmioDevice {
         self.doorbell_pending = false;
         self.ring_reset_pending = false;
         self.pending_fence_completions.clear();
+        self.backend_completed_fences.clear();
         self.fence_page_dirty = false;
+        self.pending_submissions.clear();
     }
 
     pub fn tick_vblank(&mut self, now_ns: u64) {
@@ -1132,6 +1189,8 @@ impl AeroGpuMmioDevice {
             self.error_fence = 0;
             self.error_count = 0;
             self.pending_fence_completions.clear();
+            self.backend_completed_fences.clear();
+            self.pending_submissions.clear();
             self.fence_page_dirty = true;
 
             if dma_enabled && self.ring_gpa != 0 {
@@ -1247,6 +1306,32 @@ impl AeroGpuMmioDevice {
             self.record_error(pci::AerogpuErrorCode::CmdDecode, desc.signal_fence);
         }
 
+        // Capture the submission payload for out-of-process execution (browser GPU worker).
+        //
+        // This is intentionally independent of the fence scheduling logic below: some guest
+        // drivers may reuse fence values for internal submissions (e.g. NO_IRQ "best effort"
+        // work). Those submissions can still contain ACMD that should be executed for correct
+        // rendering, even though they do not advance the guest's completed fence.
+        if desc.signal_fence != 0 && desc.cmd_gpa != 0 && desc.cmd_size_bytes != 0 {
+            let cmd_stream = capture_cmd_stream(mem, desc);
+            if !cmd_stream.is_empty() {
+                let alloc_table = capture_alloc_table(mem, self.abi_version, desc);
+                let sub = AerogpuSubmission {
+                    flags: desc.flags,
+                    context_id: desc.context_id,
+                    engine_id: desc.engine_id,
+                    signal_fence: desc.signal_fence,
+                    cmd_stream,
+                    alloc_table,
+                };
+
+                if self.pending_submissions.len() == MAX_PENDING_AEROGPU_SUBMISSIONS {
+                    self.pending_submissions.pop_front();
+                }
+                self.pending_submissions.push_back(sub);
+            }
+        }
+
         if desc.signal_fence == 0 {
             return;
         }
@@ -1282,6 +1367,11 @@ impl AeroGpuMmioDevice {
                 wants_irq,
                 kind,
             });
+
+        // Legacy bring-up behavior: treat all fences as immediately completed by the (missing)
+        // backend, preserving the existing in-process forward-progress model while still allowing
+        // the browser runtime to drain submissions for external execution.
+        self.backend_completed_fences.insert(desc.signal_fence);
     }
 
     fn vblank_pacing_active(&self) -> bool {
@@ -1294,50 +1384,82 @@ impl AeroGpuMmioDevice {
         // On doorbell, immediately complete all non-vblank fences until the first pending vblank
         // fence. This mirrors the emulator device model: vsynced presents block subsequent
         // immediate submissions from completing early.
-        while matches!(
-            self.pending_fence_completions.front().map(|f| f.kind),
-            Some(PendingFenceKind::Immediate)
-        ) {
-            if let Some(fence) = self.pending_fence_completions.pop_front() {
-                self.complete_fence(fence.fence_value, fence.wants_irq);
+        loop {
+            let Some(front) = self.pending_fence_completions.front() else {
+                break;
+            };
+            if front.kind != PendingFenceKind::Immediate {
+                break;
             }
+            if !self.backend_completed_fences.contains(&front.fence_value) {
+                break;
+            }
+            let fence = self
+                .pending_fence_completions
+                .pop_front()
+                .expect("front was Some");
+            self.backend_completed_fences.remove(&fence.fence_value);
+            self.complete_fence(fence.fence_value, fence.wants_irq);
         }
     }
 
     fn process_pending_fences_on_vblank(&mut self) {
         // Defensive: complete any immediates that were queued without a doorbell drain.
-        while matches!(
-            self.pending_fence_completions.front().map(|f| f.kind),
-            Some(PendingFenceKind::Immediate)
-        ) {
-            if let Some(fence) = self.pending_fence_completions.pop_front() {
-                self.complete_fence(fence.fence_value, fence.wants_irq);
+        loop {
+            let Some(front) = self.pending_fence_completions.front() else {
+                break;
+            };
+            if front.kind != PendingFenceKind::Immediate {
+                break;
             }
+            if !self.backend_completed_fences.contains(&front.fence_value) {
+                break;
+            }
+            let fence = self
+                .pending_fence_completions
+                .pop_front()
+                .expect("front was Some");
+            self.backend_completed_fences.remove(&fence.fence_value);
+            self.complete_fence(fence.fence_value, fence.wants_irq);
         }
 
         // Complete at most one vblank-paced fence per vblank tick.
-        if matches!(
-            self.pending_fence_completions.front().map(|f| f.kind),
-            Some(PendingFenceKind::Vblank)
-        ) {
-            if let Some(fence) = self.pending_fence_completions.pop_front() {
+        if let Some(front) = self.pending_fence_completions.front() {
+            if front.kind == PendingFenceKind::Vblank
+                && self.backend_completed_fences.contains(&front.fence_value)
+            {
+                let fence = self
+                    .pending_fence_completions
+                    .pop_front()
+                    .expect("front was Some");
+                self.backend_completed_fences.remove(&fence.fence_value);
                 self.complete_fence(fence.fence_value, fence.wants_irq);
             }
         }
 
         // After completing the vblank fence, flush any immediates queued behind it.
-        while matches!(
-            self.pending_fence_completions.front().map(|f| f.kind),
-            Some(PendingFenceKind::Immediate)
-        ) {
-            if let Some(fence) = self.pending_fence_completions.pop_front() {
-                self.complete_fence(fence.fence_value, fence.wants_irq);
+        loop {
+            let Some(front) = self.pending_fence_completions.front() else {
+                break;
+            };
+            if front.kind != PendingFenceKind::Immediate {
+                break;
             }
+            if !self.backend_completed_fences.contains(&front.fence_value) {
+                break;
+            }
+            let fence = self
+                .pending_fence_completions
+                .pop_front()
+                .expect("front was Some");
+            self.backend_completed_fences.remove(&fence.fence_value);
+            self.complete_fence(fence.fence_value, fence.wants_irq);
         }
     }
 
     fn flush_pending_fences(&mut self) {
         while let Some(fence) = self.pending_fence_completions.pop_front() {
+            self.backend_completed_fences.remove(&fence.fence_value);
             self.complete_fence(fence.fence_value, fence.wants_irq);
         }
     }
@@ -1750,6 +1872,123 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
     }
 }
 
+fn capture_alloc_table(
+    mem: &mut dyn MemoryBus,
+    device_abi_version: u32,
+    desc: &ring::AerogpuSubmitDesc,
+) -> Option<Vec<u8>> {
+    if desc.alloc_table_gpa == 0 && desc.alloc_table_size_bytes == 0 {
+        return None;
+    }
+    if desc.alloc_table_gpa == 0 || desc.alloc_table_size_bytes == 0 {
+        return None;
+    }
+    if desc
+        .alloc_table_gpa
+        .checked_add(u64::from(desc.alloc_table_size_bytes))
+        .is_none()
+    {
+        return None;
+    }
+
+    let header_size = ring::AerogpuAllocTableHeader::SIZE_BYTES as u32;
+    if desc.alloc_table_size_bytes < header_size {
+        return None;
+    }
+
+    let mut hdr_buf = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
+    mem.read_physical(desc.alloc_table_gpa, &mut hdr_buf);
+    let Ok(header) = ring::AerogpuAllocTableHeader::decode_from_le_bytes(&hdr_buf) else {
+        return None;
+    };
+
+    if header.magic != ring::AEROGPU_ALLOC_TABLE_MAGIC {
+        return None;
+    }
+    // Only require ABI major compatibility (minor is forward-compatible).
+    if (header.abi_version >> 16) != (device_abi_version >> 16) {
+        return None;
+    }
+    if header.size_bytes < header_size {
+        return None;
+    }
+    if header.size_bytes > desc.alloc_table_size_bytes {
+        return None;
+    }
+    if header.size_bytes > MAX_AEROGPU_ALLOC_TABLE_BYTES {
+        return None;
+    }
+    // Forward-compat: newer guests may extend `aerogpu_alloc_entry` by increasing the declared
+    // stride. We only require the entry prefix we understand.
+    if header.entry_stride_bytes < ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
+        return None;
+    }
+    if header.validate_prefix().is_err() {
+        return None;
+    }
+
+    let size = header.size_bytes as usize;
+    let mut out = Vec::new();
+    if out.try_reserve_exact(size).is_err() {
+        return None;
+    }
+    out.resize(size, 0u8);
+    mem.read_physical(desc.alloc_table_gpa, &mut out);
+    Some(out)
+}
+
+fn capture_cmd_stream(mem: &mut dyn MemoryBus, desc: &ring::AerogpuSubmitDesc) -> Vec<u8> {
+    if desc.cmd_gpa == 0 && desc.cmd_size_bytes == 0 {
+        return Vec::new();
+    }
+    if desc.cmd_gpa == 0 || desc.cmd_size_bytes == 0 {
+        return Vec::new();
+    }
+    if desc
+        .cmd_gpa
+        .checked_add(u64::from(desc.cmd_size_bytes))
+        .is_none()
+    {
+        return Vec::new();
+    }
+
+    // Forward-compat: `cmd_size_bytes` is the buffer capacity, while the command stream header's
+    // `size_bytes` is the number of bytes used by the stream. Guests may provide a backing buffer
+    // that is larger than `cmd_stream_header.size_bytes` (page rounding / reuse); only copy the
+    // used prefix.
+    if desc.cmd_size_bytes < ProtocolCmdStreamHeader::SIZE_BYTES as u32 {
+        let size = desc.cmd_size_bytes as usize;
+        if size == 0 {
+            return Vec::new();
+        }
+        let mut out = vec![0u8; size];
+        mem.read_physical(desc.cmd_gpa, &mut out);
+        return out;
+    }
+
+    let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+    mem.read_physical(desc.cmd_gpa, &mut prefix);
+    let header = match decode_cmd_stream_header_le(&prefix) {
+        Ok(header) => header,
+        Err(_) => return prefix.to_vec(),
+    };
+
+    if header.size_bytes > desc.cmd_size_bytes {
+        return prefix.to_vec();
+    }
+    if header.size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+        return prefix.to_vec();
+    }
+
+    let size = header.size_bytes as usize;
+    let mut out = Vec::new();
+    if out.try_reserve_exact(size).is_err() {
+        return prefix.to_vec();
+    }
+    out.resize(size, 0u8);
+    mem.read_physical(desc.cmd_gpa, &mut out);
+    out
+}
 impl PciDevice for AeroGpuMmioDevice {
     fn config(&self) -> &PciConfigSpace {
         &self.config
