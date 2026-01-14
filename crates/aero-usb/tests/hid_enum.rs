@@ -1,5 +1,5 @@
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
-use aero_usb::hid::{KEYBOARD_LED_CAPS_LOCK, KEYBOARD_LED_NUM_LOCK};
+use aero_usb::hid::KEYBOARD_LED_MASK;
 use aero_usb::uhci::regs::{
     REG_FLBASEADD, REG_PORTSC1, REG_USBCMD, REG_USBINTR, USBCMD_MAXP, USBCMD_RS, USBINTR_IOC,
 };
@@ -460,9 +460,9 @@ fn enumerate_hid_keyboard_and_receive_keypress_report() {
             w_index: 0,
             w_length: 1,
         },
-        &[0xE3],
+        &[0xFF],
     );
-    assert_eq!(keyboard.leds(), KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK);
+    assert_eq!(keyboard.leds(), KEYBOARD_LED_MASK);
 
     // GET_DESCRIPTOR(Report) for interface 0.
     let report_desc = control_in(
