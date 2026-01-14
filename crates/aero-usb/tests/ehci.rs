@@ -459,3 +459,128 @@ fn ehci_async_bulk_in_out_nak_then_completes() {
     assert_ne!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
 }
 
+#[test]
+fn ehci_async_in_dma_crosses_page_boundary() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
+    );
+
+    reset_port(&mut c, &mut mem, 0);
+
+    // Start 16 bytes before a 4KiB boundary so the transfer spans two pages.
+    let buf0 = BUF_DATA + 0xff0;
+    let buf1 = BUF_INT;
+
+    let payload: Vec<u8> = (0..32u8).collect();
+    in_queue.borrow_mut().push_back(payload.clone());
+
+    let sentinel = [0xa5u8; 32];
+    mem.write(buf0, &sentinel[..16]);
+    mem.write(buf1, &sentinel[16..]);
+
+    write_qtd(
+        &mut mem,
+        QTD_BULK_IN,
+        LINK_TERMINATE,
+        qtd_token(QTD_TOKEN_PID_IN, payload.len(), true, true),
+        buf0,
+    );
+    // Second page pointer.
+    mem.write_u32(QTD_BULK_IN + 0x10, buf1);
+
+    let ep_char = qh_epchar(0, 1, 512);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        QTD_BULK_IN,
+    );
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    assert_eq!(
+        &mem.data[buf0 as usize..buf0 as usize + 16],
+        &payload[..16]
+    );
+    assert_eq!(
+        &mem.data[buf1 as usize..buf1 as usize + 16],
+        &payload[16..]
+    );
+
+    let token = mem.read_u32(QTD_BULK_IN + 0x08);
+    assert_eq!(token & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!((token >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff, 0);
+
+    assert_ne!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
+}
+
+#[test]
+fn ehci_async_out_reads_guest_memory_across_page_boundary() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
+    );
+
+    reset_port(&mut c, &mut mem, 0);
+
+    let buf0 = BUF_DATA + 0xff0;
+    let buf1 = BUF_INT;
+
+    let payload: Vec<u8> = (0..32u8).map(|v| v ^ 0x5a).collect();
+    mem.write(buf0, &payload[..16]);
+    mem.write(buf1, &payload[16..]);
+
+    write_qtd(
+        &mut mem,
+        QTD_BULK_OUT,
+        LINK_TERMINATE,
+        qtd_token(QTD_TOKEN_PID_OUT, payload.len(), true, true),
+        buf0,
+    );
+    mem.write_u32(QTD_BULK_OUT + 0x10, buf1);
+
+    let ep_char = qh_epchar(0, 1, 512);
+    write_qh(
+        &mut mem,
+        ASYNC_QH,
+        qh_link_ptr_qh(ASYNC_QH),
+        ep_char,
+        QTD_BULK_OUT,
+    );
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    assert_eq!(out_received.borrow().as_slice(), &[payload.clone()]);
+
+    let token = mem.read_u32(QTD_BULK_OUT + 0x08);
+    assert_eq!(token & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!((token >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff, 0);
+
+    assert_ne!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
+}
