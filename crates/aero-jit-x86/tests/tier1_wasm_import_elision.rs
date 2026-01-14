@@ -303,6 +303,45 @@ fn tier1_block_with_call_helper_imports_jit_exit() {
 }
 
 #[test]
+fn tier1_call_helper_short_circuits_unreachable_mem_imports() {
+    let mut b = IrBuilder::new(0x1000);
+    b.call_helper("dummy", Vec::new(), None);
+    // These memory operations are unreachable because Tier-1 treats CallHelper as a runtime
+    // bailout. Ensure they do not affect the generated module's import surface.
+    let addr = b.const_int(Width::W64, 0);
+    let src = b.const_int(Width::W8, 0x12);
+    b.store(Width::W8, addr, src);
+    let _ = b.load(Width::W8, addr);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+    let imports = import_entries(&wasm);
+
+    assert_eq!(
+        imports.len(),
+        2,
+        "expected CallHelper bailout block to only import env.memory + env.jit_exit, got {imports:?}"
+    );
+
+    let mut found_jit_exit = false;
+    for (module, name, _ty) in imports {
+        if module == IMPORT_MODULE && name == IMPORT_JIT_EXIT {
+            found_jit_exit = true;
+        }
+        assert_ne!(name, IMPORT_MEM_READ_U8);
+        assert_ne!(name, IMPORT_MEM_WRITE_U8);
+    }
+
+    assert!(found_jit_exit, "expected env.jit_exit import");
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected CallHelper bailout block to define only the jit_exit and block function types"
+    );
+}
+
+#[test]
 fn tier1_block_with_u64_load_and_call_helper_reuses_i64_return_type() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0);

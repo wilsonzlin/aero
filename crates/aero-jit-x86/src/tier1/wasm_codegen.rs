@@ -348,7 +348,13 @@ impl Tier1WasmCodegen {
                         Width::W64 => uses_store_u64 = true,
                     }
                 }
-                IrInst::CallHelper { .. } => needs_jit_exit = true,
+                IrInst::CallHelper { .. } => {
+                    needs_jit_exit = true;
+                    // Tier-1 treats helper calls as an unconditional runtime exit; the remainder
+                    // of the IR block is unreachable (both in the IR interpreter and in Tier-1
+                    // WASM codegen).
+                    break;
+                }
                 _ => {}
             }
         }
@@ -417,6 +423,7 @@ impl Tier1WasmCodegen {
                     };
                     const_values[dst.0 as usize] = Some(trunc(res));
                 }
+                IrInst::CallHelper { .. } => break,
                 _ => {}
             }
         }
@@ -455,6 +462,7 @@ impl Tier1WasmCodegen {
                     Width::W32 => may_cross_page_store_u32 |= may_cross_page(addr, 4),
                     Width::W64 => may_cross_page_store_u64 |= may_cross_page(addr, 8),
                 },
+                IrInst::CallHelper { .. } => break,
                 _ => {}
             }
         }
@@ -737,6 +745,7 @@ impl Tier1WasmCodegen {
                 && block
                     .insts
                     .iter()
+                    .take_while(|inst| !matches!(inst, IrInst::CallHelper { .. }))
                     .any(|inst| matches!(inst, IrInst::Store { .. }));
             if has_store_mem {
                 // Cache the code-version table pointer and length in locals so the RAM write
@@ -791,6 +800,9 @@ impl Tier1WasmCodegen {
 
         for inst in &block.insts {
             emitter.emit_inst(inst);
+            if matches!(inst, IrInst::CallHelper { .. }) {
+                break;
+            }
         }
         emitter.emit_terminator(&block.terminator);
 
