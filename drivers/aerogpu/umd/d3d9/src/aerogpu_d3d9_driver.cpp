@@ -5564,6 +5564,15 @@ static HRESULT restore_draw_shaders_locked(Device* dev, DrawShaderOverride* over
   }
 
   if (dev->vs != override->saved_vs || dev->ps != override->saved_ps) {
+    // The host-side executor rejects null shader handles at draw time. In normal
+    // D3D9 usage we keep `dev->vs`/`dev->ps` non-null even when the app binds
+    // only one stage (VS-only / PS-only). However, be defensive: if the saved
+    // pipeline is null, skip restoring it to avoid emitting an invalid
+    // BIND_SHADERS packet.
+    if (!override->saved_vs || !override->saved_ps) {
+      override->active = false;
+      return S_OK;
+    }
     Shader* prev_vs = dev->vs;
     Shader* prev_ps = dev->ps;
     dev->vs = override->saved_vs;

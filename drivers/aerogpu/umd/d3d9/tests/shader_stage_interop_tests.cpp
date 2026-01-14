@@ -1115,6 +1115,81 @@ bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
   return true;
 }
 
+bool TestDrawShaderRestoreSkipsNullSavedShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  auto* user_vs = reinterpret_cast<Shader*>(hVs.pDrvPrivate);
+  if (!Check(user_vs != nullptr, "user VS pointer")) {
+    return false;
+  }
+
+  // Repro: simulate a caller-visible VS-only state where the internal bound
+  // pipeline hasn't been materialized yet (dev->vs/dev->ps are null). The draw
+  // path injects an internal fixed-function PS for the draw; restoring the
+  // pre-draw state must not emit a BIND_SHADERS packet with null handles.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->user_vs = user_vs;
+    dev->user_ps = nullptr;
+    dev->vs = nullptr;
+    dev->ps = nullptr;
+  }
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFF0000FFu},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only, null saved pipeline)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(draw restore)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  return CheckNoNullShaderBinds(buf, len);
+}
+
 } // namespace aerogpu
 
 int main() {
@@ -1137,6 +1212,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestUnsupportedFvfPsOnlyFailsWithoutDraw()) {
+    return 1;
+  }
+  if (!aerogpu::TestDrawShaderRestoreSkipsNullSavedShaders()) {
     return 1;
   }
   if (!aerogpu::TestColorFillDoesNotBindNullShaders()) {
