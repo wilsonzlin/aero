@@ -2810,6 +2810,159 @@ bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   return true;
 }
 
+bool TestApplyStateBlockScissorRectEmitsSetScissor() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetScissorRect != nullptr, "pfnSetScissorRect is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u; // D3DRS_SCISSORTESTENABLE
+
+  RECT rect_a{};
+  rect_a.left = 0;
+  rect_a.top = 0;
+  rect_a.right = 50;
+  rect_a.bottom = 60;
+
+  RECT rect_b{};
+  rect_b.left = 10;
+  rect_b.top = 20;
+  rect_b.right = 110;
+  rect_b.bottom = 220;
+
+  // Start from scissor disabled at A so applying the state block is observable.
+  HRESULT hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect_a, FALSE);
+  if (!Check(hr == S_OK, "SetScissorRect(A, disabled)")) {
+    return false;
+  }
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(scissor rect)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect_b, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(B, enabled) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(scissor rect)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore scissor A/disabled before applying the state block.
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect_a, FALSE);
+  if (!Check(hr == S_OK, "SetScissorRect(A, disabled) restore before apply")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(scissor rect)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->scissor_enabled == TRUE, "ApplyStateBlock enables scissor")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsScissorTestEnable] == 1u, "render state 174 updated")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect_user_set, "scissor_rect_user_set is preserved")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect.left == rect_b.left &&
+                   dev->scissor_rect.top == rect_b.top &&
+                   dev->scissor_rect.right == rect_b.right &&
+                   dev->scissor_rect.bottom == rect_b.bottom,
+               "ApplyStateBlock restores scissor rect")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock scissor rect)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_scissor = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SCISSOR)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_scissor)) {
+      continue;
+    }
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+    if (sc->x == rect_b.left && sc->y == rect_b.top &&
+        sc->width == (rect_b.right - rect_b.left) &&
+        sc->height == (rect_b.bottom - rect_b.top)) {
+      saw_scissor = true;
+      break;
+    }
+  }
+  if (!Check(saw_scissor, "ApplyStateBlock emits SET_SCISSOR with expected rect")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_rs = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_STATE)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_state)) {
+      continue;
+    }
+    const auto* rs = reinterpret_cast<const aerogpu_cmd_set_render_state*>(hdr);
+    if (rs->state == kD3dRsScissorTestEnable && rs->value == 1u) {
+      saw_rs = true;
+      break;
+    }
+  }
+  if (!Check(saw_rs, "ApplyStateBlock emits SET_RENDER_STATE(SCISSORTESTENABLE=TRUE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockViewportEmitsSetViewport() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -19961,6 +20114,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockScissorRectEmitsSetScissor()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockViewportEmitsSetViewport()) {
