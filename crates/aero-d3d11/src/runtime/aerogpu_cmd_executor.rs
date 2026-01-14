@@ -4039,7 +4039,7 @@ impl AerogpuD3d11Executor {
                 let (gs, hs, ds) = match ex {
                     Some(ex) => (ex.gs, ex.hs, ex.ds),
                     // Legacy format: treat the old `reserved0` field as `gs`.
-                    None => (cmd.reserved0, 0, 0),
+                    None => (cmd.gs(), 0, 0),
                 };
                 let next_gs = if gs == 0 { None } else { Some(gs) };
                 let next_hs = if hs == 0 { None } else { Some(hs) };
@@ -7869,7 +7869,7 @@ impl AerogpuD3d11Executor {
             Some(ex) => (ex.gs, ex.hs, ex.ds),
             // Legacy format: treat the old `reserved0` field as `gs` so existing streams/tests
             // can force the compute-prepass path without appending new fields.
-            None => (cmd.reserved0, 0, 0),
+            None => (cmd.gs(), 0, 0),
         };
 
         self.state.vs = if vs == 0 { None } else { Some(vs) };
