@@ -365,105 +365,109 @@ impl Tier1WasmCodegen {
             options.inline_tlb = false;
         }
 
-        let mut const_values: Vec<Option<u64>> = vec![None; block.value_types.len()];
-        for inst in &block.insts {
-            match inst {
-                IrInst::Const { dst, value, width } => {
-                    const_values[dst.0 as usize] = Some(width.truncate(*value));
-                }
-                IrInst::Trunc { dst, src, width } => {
-                    if let Some(v) = const_values[src.0 as usize] {
-                        const_values[dst.0 as usize] = Some(width.truncate(v));
-                    }
-                }
-                IrInst::BinOp {
-                    dst,
-                    op,
-                    lhs,
-                    rhs,
-                    width,
-                    ..
-                } => {
-                    let (Some(lhs), Some(rhs)) = (
-                        const_values[lhs.0 as usize],
-                        const_values[rhs.0 as usize],
-                    ) else {
-                        continue;
-                    };
-
-                    let mask = width.mask();
-                    let trunc = |v: u64| v & mask;
-                    let shift_mask: u64 = if *width == Width::W64 { 63 } else { 31 };
-
-                    let res = match *op {
-                        BinOp::Add => lhs.wrapping_add(rhs),
-                        BinOp::Sub => lhs.wrapping_sub(rhs),
-                        BinOp::And => lhs & rhs,
-                        BinOp::Or => lhs | rhs,
-                        BinOp::Xor => lhs ^ rhs,
-                        BinOp::Shl => {
-                            let amt = (rhs & shift_mask) as u32;
-                            lhs.wrapping_shl(amt)
-                        }
-                        BinOp::Shr => {
-                            let amt = (rhs & shift_mask) as u32;
-                            lhs.wrapping_shr(amt)
-                        }
-                        BinOp::Sar => {
-                            let lhs_trunc = lhs & mask;
-                            let sign_bit = 1u64 << (width.bits() - 1);
-                            let lhs_sext = if (lhs_trunc & sign_bit) != 0 {
-                                lhs_trunc | !mask
-                            } else {
-                                lhs_trunc
-                            };
-                            let amt = (rhs & shift_mask) as u32;
-                            (lhs_sext as i64).wrapping_shr(amt) as u64
-                        }
-                    };
-                    const_values[dst.0 as usize] = Some(trunc(res));
-                }
-                IrInst::CallHelper { .. } => break,
-                _ => {}
-            }
-        }
-
-        let may_cross_page = |addr: ValueId, size_bytes: u32| -> bool {
-            if size_bytes <= 1 {
-                return false;
-            }
-            let cross_limit = crate::PAGE_OFFSET_MASK
-                .saturating_sub(size_bytes.saturating_sub(1) as u64);
-            let addr = const_values
-                .get(addr.0 as usize)
-                .copied()
-                .flatten()
-                .unwrap_or(u64::MAX);
-            (addr & crate::PAGE_OFFSET_MASK) > cross_limit
-        };
-
         let mut may_cross_page_load_u16 = false;
         let mut may_cross_page_load_u32 = false;
         let mut may_cross_page_load_u64 = false;
         let mut may_cross_page_store_u16 = false;
         let mut may_cross_page_store_u32 = false;
         let mut may_cross_page_store_u64 = false;
-        for inst in &block.insts {
-            match *inst {
-                IrInst::Load { addr, width, .. } => match width {
-                    Width::W8 => {}
-                    Width::W16 => may_cross_page_load_u16 |= may_cross_page(addr, 2),
-                    Width::W32 => may_cross_page_load_u32 |= may_cross_page(addr, 4),
-                    Width::W64 => may_cross_page_load_u64 |= may_cross_page(addr, 8),
-                },
-                IrInst::Store { addr, width, .. } => match width {
-                    Width::W8 => {}
-                    Width::W16 => may_cross_page_store_u16 |= may_cross_page(addr, 2),
-                    Width::W32 => may_cross_page_store_u32 |= may_cross_page(addr, 4),
-                    Width::W64 => may_cross_page_store_u64 |= may_cross_page(addr, 8),
-                },
-                IrInst::CallHelper { .. } => break,
-                _ => {}
+        if options.inline_tlb
+            && options.inline_tlb_mmio_exit
+            && !options.inline_tlb_cross_page_fastpath
+        {
+            let mut const_values: Vec<Option<u64>> = vec![None; block.value_types.len()];
+            for inst in &block.insts {
+                match inst {
+                    IrInst::Const { dst, value, width } => {
+                        const_values[dst.0 as usize] = Some(width.truncate(*value));
+                    }
+                    IrInst::Trunc { dst, src, width } => {
+                        if let Some(v) = const_values[src.0 as usize] {
+                            const_values[dst.0 as usize] = Some(width.truncate(v));
+                        }
+                    }
+                    IrInst::BinOp {
+                        dst,
+                        op,
+                        lhs,
+                        rhs,
+                        width,
+                        ..
+                    } => {
+                        let (Some(lhs), Some(rhs)) =
+                            (const_values[lhs.0 as usize], const_values[rhs.0 as usize])
+                        else {
+                            continue;
+                        };
+
+                        let mask = width.mask();
+                        let trunc = |v: u64| v & mask;
+                        let shift_mask: u64 = if *width == Width::W64 { 63 } else { 31 };
+
+                        let res = match *op {
+                            BinOp::Add => lhs.wrapping_add(rhs),
+                            BinOp::Sub => lhs.wrapping_sub(rhs),
+                            BinOp::And => lhs & rhs,
+                            BinOp::Or => lhs | rhs,
+                            BinOp::Xor => lhs ^ rhs,
+                            BinOp::Shl => {
+                                let amt = (rhs & shift_mask) as u32;
+                                lhs.wrapping_shl(amt)
+                            }
+                            BinOp::Shr => {
+                                let amt = (rhs & shift_mask) as u32;
+                                lhs.wrapping_shr(amt)
+                            }
+                            BinOp::Sar => {
+                                let lhs_trunc = lhs & mask;
+                                let sign_bit = 1u64 << (width.bits() - 1);
+                                let lhs_sext = if (lhs_trunc & sign_bit) != 0 {
+                                    lhs_trunc | !mask
+                                } else {
+                                    lhs_trunc
+                                };
+                                let amt = (rhs & shift_mask) as u32;
+                                (lhs_sext as i64).wrapping_shr(amt) as u64
+                            }
+                        };
+                        const_values[dst.0 as usize] = Some(trunc(res));
+                    }
+                    IrInst::CallHelper { .. } => break,
+                    _ => {}
+                }
+            }
+
+            let may_cross_page = |addr: ValueId, size_bytes: u32| -> bool {
+                if size_bytes <= 1 {
+                    return false;
+                }
+                let cross_limit =
+                    crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
+                let addr = const_values
+                    .get(addr.0 as usize)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(u64::MAX);
+                (addr & crate::PAGE_OFFSET_MASK) > cross_limit
+            };
+
+            for inst in &block.insts {
+                match *inst {
+                    IrInst::Load { addr, width, .. } => match width {
+                        Width::W8 => {}
+                        Width::W16 => may_cross_page_load_u16 |= may_cross_page(addr, 2),
+                        Width::W32 => may_cross_page_load_u32 |= may_cross_page(addr, 4),
+                        Width::W64 => may_cross_page_load_u64 |= may_cross_page(addr, 8),
+                    },
+                    IrInst::Store { addr, width, .. } => match width {
+                        Width::W8 => {}
+                        Width::W16 => may_cross_page_store_u16 |= may_cross_page(addr, 2),
+                        Width::W32 => may_cross_page_store_u32 |= may_cross_page(addr, 4),
+                        Width::W64 => may_cross_page_store_u64 |= may_cross_page(addr, 8),
+                    },
+                    IrInst::CallHelper { .. } => break,
+                    _ => {}
+                }
             }
         }
 
@@ -491,9 +495,7 @@ impl Tier1WasmCodegen {
                 || (!options.inline_tlb_cross_page_fastpath && may_cross_page_load_u64));
 
         let needs_mem_write_u8 = uses_store_u8
-            && (!options.inline_tlb
-                || !options.inline_tlb_stores
-                || !options.inline_tlb_mmio_exit);
+            && (!options.inline_tlb || !options.inline_tlb_stores || !options.inline_tlb_mmio_exit);
         let needs_mem_write_u16 = uses_store_u16
             && (!options.inline_tlb
                 || !options.inline_tlb_stores
@@ -1324,9 +1326,8 @@ impl Emitter<'_> {
                             // exit payload (even though we probe the second page).
                             //
                             // vaddr1 = vaddr + size_bytes - shift_bytes
-                            self.func.instruction(&Instruction::LocalGet(
-                                self.layout.value_local(addr),
-                            ));
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.value_local(addr)));
                             self.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
                             self.func.instruction(&Instruction::I64Add);
@@ -1339,9 +1340,8 @@ impl Emitter<'_> {
 
                             self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
 
-                            self.func.instruction(&Instruction::LocalGet(
-                                self.layout.value_local(addr),
-                            ));
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.value_local(addr)));
                             self.func.instruction(&Instruction::LocalSet(
                                 self.layout.scratch_vaddr_local(),
                             ));
@@ -1363,7 +1363,8 @@ impl Emitter<'_> {
                             self.depth += 1;
                             {
                                 // Slow path.
-                                let slow_read = slow_read.expect("memory read helper import missing");
+                                let slow_read =
+                                    slow_read.expect("memory read helper import missing");
                                 self.emit_slow_mem_read(dst, width, slow_read);
                             }
                             self.func.instruction(&Instruction::Else);
@@ -1506,14 +1507,18 @@ impl Emitter<'_> {
                         this.func
                             .instruction(&Instruction::LocalGet(this.layout.value_local(*src)));
                         match *width {
-                            Width::W8 => this.func.instruction(&Instruction::I64Store8(memarg(0, 0))),
+                            Width::W8 => {
+                                this.func.instruction(&Instruction::I64Store8(memarg(0, 0)))
+                            }
                             Width::W16 => this
                                 .func
                                 .instruction(&Instruction::I64Store16(memarg(0, 1))),
                             Width::W32 => this
                                 .func
                                 .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                            Width::W64 => this.func.instruction(&Instruction::I64Store(memarg(0, 3))),
+                            Width::W64 => {
+                                this.func.instruction(&Instruction::I64Store(memarg(0, 3)))
+                            }
                         };
 
                         // Self-modifying code invalidation: bump the version entry for the written
@@ -1542,22 +1547,21 @@ impl Emitter<'_> {
                         {
                             // RAM fast-path.
                             this.emit_compute_ram_addr();
-                            this.func.instruction(&Instruction::LocalGet(
-                                this.layout.value_local(*src),
-                            ));
+                            this.func
+                                .instruction(&Instruction::LocalGet(this.layout.value_local(*src)));
                             match *width {
-                                Width::W8 => this
-                                    .func
-                                    .instruction(&Instruction::I64Store8(memarg(0, 0))),
+                                Width::W8 => {
+                                    this.func.instruction(&Instruction::I64Store8(memarg(0, 0)))
+                                }
                                 Width::W16 => this
                                     .func
                                     .instruction(&Instruction::I64Store16(memarg(0, 1))),
                                 Width::W32 => this
                                     .func
                                     .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                                Width::W64 => this
-                                    .func
-                                    .instruction(&Instruction::I64Store(memarg(0, 3))),
+                                Width::W64 => {
+                                    this.func.instruction(&Instruction::I64Store(memarg(0, 3)))
+                                }
                             };
 
                             // Self-modifying code invalidation: bump the version entry for the
