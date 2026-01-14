@@ -149,6 +149,14 @@ pub enum IrOp {
         src1: Src,
         modifiers: InstModifiers,
     },
+    /// `dp2add dst, src0, src1, src2` → `dst = dot(src0.xy, src1.xy) + src2.x` (replicated).
+    Dp2Add {
+        dst: Dst,
+        src0: Src,
+        src1: Src,
+        src2: Src,
+        modifiers: InstModifiers,
+    },
     Dp3 {
         dst: Dst,
         src0: Src,
@@ -655,6 +663,17 @@ fn format_op(op: &IrOp) -> String {
             "{} {}",
             format_inst("dp2", modifiers),
             format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Dp2Add {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("dp2add", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone(), src2.clone()])
         ),
         IrOp::Dp3 {
             dst,

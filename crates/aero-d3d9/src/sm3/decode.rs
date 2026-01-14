@@ -59,6 +59,9 @@ pub enum Opcode {
     Mad,
     Lrp,
     Mul,
+    /// D3D9 `dp2add`: 2-component dot product plus add (`dot(src0.xy, src1.xy) + src2.x`),
+    /// replicated to all components.
+    Dp2Add,
     /// D3D9 `dp2`: 2-component dot product (`dot(src0.xy, src1.xy)`), replicated to all components.
     Dp2,
     Dp3,
@@ -163,6 +166,7 @@ impl Opcode {
             86 => Self::Dsx, // 0x56
             87 => Self::Dsy, // 0x57
             88 => Self::Cmp, // 0x58
+            89 => Self::Dp2Add, // 0x59
             90 => Self::Dp2, // 0x5A
             0xFFFE => Self::Comment,
             0xFFFF => Self::End,
@@ -180,6 +184,7 @@ impl Opcode {
             Self::Mad => "mad",
             Self::Lrp => "lrp",
             Self::Mul => "mul",
+            Self::Dp2Add => "dp2add",
             Self::Dp2 => "dp2",
             Self::Dp3 => "dp3",
             Self::Dp4 => "dp4",
@@ -929,6 +934,22 @@ fn decode_operands_and_extras(
         }
         Opcode::Lrp => {
             // lrp dst, src0, src1, src2
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[
+                    OperandKind::Dst,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                    OperandKind::Src,
+                ],
+                &mut operands,
+            )?;
+        }
+        Opcode::Dp2Add => {
+            // dp2add dst, src0, src1, src2
             parse_fixed_operands(
                 opcode,
                 stage,

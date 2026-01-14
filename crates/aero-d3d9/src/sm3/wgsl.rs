@@ -418,6 +418,19 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             collect_src_usage(src1, usage);
             collect_mods_usage(modifiers, usage);
         }
+        IrOp::Dp2Add {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            collect_dst_usage(dst, usage);
+            collect_src_usage(src0, usage);
+            collect_src_usage(src1, usage);
+            collect_src_usage(src2, usage);
+            collect_mods_usage(modifiers, usage);
+        }
         IrOp::Select {
             dst,
             cond,
@@ -1073,6 +1086,28 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("vec4<f32>({dot})"), modifiers)?;
             emit_assign(dst, e)
         }
+        IrOp::Dp2Add {
+            dst,
+            src0,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
+            let (c, cty) = src_expr(src2, f32_defs)?;
+            if aty != ScalarTy::F32 || bty != ScalarTy::F32 || cty != ScalarTy::F32 {
+                return Err(err("dp2add only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("dp2add destination must be float"));
+            }
+            let dot = format!("dot(({a}).xy, ({b}).xy)");
+            let add = format!("({c}).x");
+            let e = apply_float_result_modifiers(format!("vec4<f32>({dot} + {add})"), modifiers)?;
+            emit_assign(dst, e)
+        }
         IrOp::Dp3 {
             dst,
             src0,
@@ -1507,6 +1542,7 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Mad { modifiers, .. }
         | IrOp::Lrp { modifiers, .. }
         | IrOp::Dp2 { modifiers, .. }
+        | IrOp::Dp2Add { modifiers, .. }
         | IrOp::Dp3 { modifiers, .. }
         | IrOp::Dp4 { modifiers, .. }
         | IrOp::Rcp { modifiers, .. }

@@ -661,6 +661,83 @@ fn wgsl_dp2_compiles_and_uses_xy() {
 }
 
 #[test]
+fn wgsl_lrp_dp2add_compiles() {
+    // ps_3_0:
+    //   def c0, 0.5, 0.25, -0.5, 2.0
+    //   def c1, 1.0, 2.0, 3.0, 4.0
+    //   def c2, 0.0, 0.0, 0.0, 0.0
+    //   lrp r0, c0, c1, c2
+    //   dp2add_sat_x2 r1, c0, c1, c2
+    //   mov oC0, r1
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // def c0, 0.5, 0.25, -0.5, 2.0
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3F00_0000,
+        0x3E80_0000,
+        0xBF00_0000,
+        0x4000_0000,
+        // def c1, 1, 2, 3, 4
+        opcode_token(81, 5),
+        dst_token(2, 1, 0xF),
+        0x3F80_0000,
+        0x4000_0000,
+        0x4040_0000,
+        0x4080_0000,
+        // def c2, 0, 0, 0, 0
+        opcode_token(81, 5),
+        dst_token(2, 2, 0xF),
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        // lrp r0, c0, c1, c2
+        opcode_token(18, 4),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        src_token(2, 2, 0xE4, 0),
+        // dp2add_sat_x2 r1, c0, c1, c2  (saturate + mul2)
+        opcode_token(89, 4) | (3u32 << 20),
+        dst_token(0, 1, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        src_token(2, 2, 0xE4, 0),
+        // mov oC0, r1
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 1, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Lrp));
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::Dp2Add));
+
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("mix("), "{wgsl}");
+    assert!(wgsl.contains("dot("), "{wgsl}");
+    assert!(wgsl.contains(".xy"), "{wgsl}");
+    assert!(wgsl.contains(").x"), "{wgsl}");
+    assert!(wgsl.contains("clamp("), "{wgsl}");
+    assert!(wgsl.contains("* 2.0"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_dsx_dsy_derivatives_compile() {
     // ps_3_0:
     //   def c0, 0.25, 0.5, 0.75, 1.0

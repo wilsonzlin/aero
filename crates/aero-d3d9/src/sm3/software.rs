@@ -534,6 +534,7 @@ fn exec_op(
         | IrOp::Mad { dst, modifiers, .. }
         | IrOp::Lrp { dst, modifiers, .. }
         | IrOp::Dp2 { dst, modifiers, .. }
+        | IrOp::Dp2Add { dst, modifiers, .. }
         | IrOp::Dp3 { dst, modifiers, .. }
         | IrOp::Dp4 { dst, modifiers, .. }
         | IrOp::Rcp { dst, modifiers, .. }
@@ -601,6 +602,12 @@ fn exec_op(
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             Vec4::splat(a.x * b.x + a.y * b.y)
+        }
+        IrOp::Dp2Add { src0, src1, src2, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let c = exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            Vec4::splat(a.x * b.x + a.y * b.y + c.x)
         }
         IrOp::Dp3 { src0, src1, .. } => {
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
