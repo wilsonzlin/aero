@@ -9,11 +9,11 @@ use aero_cpu_core::exec::{
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_cpu_core::jit::runtime::JitBackend;
-use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
-};
+use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
+#[cfg(feature = "tier1-inline-tlb")]
+use aero_jit_x86::jit_ctx;
 use aero_jit_x86::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
 #[cfg(feature = "tier1-inline-tlb")]
@@ -233,6 +233,16 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
 #[test]
 #[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_executes_inline_tlb_load_store() {
+    fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
+        let bytes = [
+            backend.read_u8(addr),
+            backend.read_u8(addr + 1),
+            backend.read_u8(addr + 2),
+            backend.read_u8(addr + 3),
+        ];
+        u32::from_le_bytes(bytes)
+    }
+
     let entry = 0x1000u64;
 
     let mut builder = IrBuilder::new(entry);
@@ -261,6 +271,48 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
     let idx = backend.add_compiled_block(&wasm);
 
+    // The backend should configure the code-version table in linear memory.
+    let cpu_ptr = WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64;
+    let table_ptr = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64,
+    ) as u64;
+    let table_len = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
+    ) as u64;
+    assert_ne!(
+        table_len, 0,
+        "WasmtimeBackend should configure a non-empty code version table when it fits"
+    );
+    assert!(
+        table_len <= DEFAULT_CODE_VERSION_MAX_PAGES as u64,
+        "table_len should be clamped to DEFAULT_CODE_VERSION_MAX_PAGES"
+    );
+    let min_pages =
+        (cpu_ptr + aero_jit_x86::PAGE_SIZE.saturating_sub(1)) / aero_jit_x86::PAGE_SIZE;
+    assert!(
+        table_len >= min_pages,
+        "table_len should cover the guest RAM window (0..cpu_ptr): len={} min={}",
+        table_len,
+        min_pages
+    );
+    assert_ne!(
+        table_ptr, 0,
+        "table_ptr should be non-zero when table_len is non-zero"
+    );
+    assert_eq!(table_ptr % 4, 0, "table_ptr must be 4-byte aligned");
+
+    // Sanity-check that the last entry is readable (ptr/len are in-bounds).
+    let last_entry_off = table_ptr + (table_len - 1) * 4;
+    let _ = read_u32_le(&backend, last_entry_off);
+
+    // The inline-TLB store should bump the version for page 0.
+    let page = 0x10u64 >> aero_jit_x86::PAGE_SHIFT;
+    assert_eq!(page, 0);
+    let entry_off = table_ptr + page * 4;
+    assert_eq!(read_u32_le(&backend, entry_off), 0);
+
     let mut cpu = CpuState {
         rip: entry,
         ..Default::default()
@@ -271,6 +323,11 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     assert!(!exit.exit_to_interpreter);
     assert!(exit.committed);
     assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344);
+    assert_eq!(
+        read_u32_le(&backend, entry_off),
+        1,
+        "inline-TLB store should bump the code version for the touched page"
+    );
 
     let bytes = [
         backend.read_u8(0x10),
@@ -279,6 +336,47 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
         backend.read_u8(0x13),
     ];
     assert_eq!(u32::from_le_bytes(bytes), 0x1122_3344);
+
+    // Slow-path stores (env.mem_write_u*) should also bump versions via the backend helper.
+    let entry2 = 0x3000u64;
+    let mut b2 = IrBuilder::new(entry2);
+    let addr2 = b2.const_int(Width::W64, 0x1000);
+    let value2 = b2.const_int(Width::W8, 0x7f);
+    b2.store(Width::W8, addr2, value2);
+    let block2 = b2.finish(IrTerminator::Jump { target: 0x4000 });
+    let wasm2 = Tier1WasmCodegen::new().compile_block_with_options(
+        &block2,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_stores: false,
+            ..Default::default()
+        },
+    );
+    let idx2 = backend.add_compiled_block(&wasm2);
+
+    let page2 = 0x1000u64 >> aero_jit_x86::PAGE_SHIFT;
+    assert_eq!(page2, 1);
+    let entry2_off = table_ptr + page2 * 4;
+    assert_eq!(read_u32_le(&backend, entry2_off), 0);
+
+    let mut cpu2 = CpuState {
+        rip: entry2,
+        ..Default::default()
+    };
+    let exit2 = backend.execute(idx2, &mut cpu2);
+    assert_eq!(exit2.next_rip, 0x4000);
+    assert!(!exit2.exit_to_interpreter);
+    assert!(exit2.committed);
+    assert_eq!(
+        backend.read_u8(0x1000),
+        0x7f,
+        "slow-path store should write through the imported helper"
+    );
+    assert_eq!(
+        read_u32_le(&backend, entry2_off),
+        1,
+        "slow-path mem_write should bump the code version for the touched page"
+    );
 }
 
 #[test]

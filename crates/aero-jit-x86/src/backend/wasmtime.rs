@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit};
+use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, DEFAULT_CODE_VERSION_MAX_PAGES};
 use aero_cpu_core::state::CpuState as CoreCpuState;
 use wasmtime::{Caller, Config, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
@@ -140,73 +140,64 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             byte_len
         );
 
-        // Allocate a simple code-version table for self-modifying code invalidation.
+        // Allocate a dense `u32` code-version table in linear memory so Tier-1 inline-TLB stores
+        // (and Tier-2 inline code-version guards) can bump/read page versions without importing a
+        // host callback.
         //
-        // Layout contract (mirrors `tests/tier2_wasm_codegen.rs`):
-        // - The Tier-2 context is stored at `cpu_ptr + jit_ctx::TIER2_CTX_OFFSET`.
-        // - The code-version table immediately follows that context.
+        // The table is indexed by 4KiB physical page number: `paddr >> PAGE_SHIFT`.
         //
-        // The table covers the guest RAM window used by this backend: `[0..cpu_ptr)`.
-        let table_ptr = cpu_ptr
-            .checked_add((jit_ctx::TIER2_CTX_OFFSET + jit_ctx::JIT_CTX_SIZE) as i32)
-            .expect("code version table ptr overflow");
-        let table_len = {
-            let cpu_ptr_u64 = u64::try_from(cpu_ptr).expect("cpu_ptr must be non-negative");
-            let pages = cpu_ptr_u64
-                .saturating_add(crate::PAGE_SIZE - 1)
-                .checked_div(crate::PAGE_SIZE)
-                .expect("PAGE_SIZE must be non-zero");
-            u32::try_from(pages).expect("code version table too large")
+        // Layout:
+        // - Tier-2 context: `cpu_ptr + jit_ctx::TIER2_CTX_OFFSET` (size `jit_ctx::TIER2_CTX_SIZE`)
+        // - Version table: immediately after the Tier-2 context, aligned to 4 bytes.
+        //
+        // If the configured linear memory isn't large enough to hold the table, we disable it by
+        // writing `LEN = 0`. Generated WASM checks for this and skips version bumps/reads.
+        let (code_version_table_ptr, code_version_table_len) = {
+            let guest_ram_bytes = u64::try_from(cpu_ptr).expect("cpu_ptr must be non-negative");
+            let guest_ram_pages = guest_ram_bytes
+                .checked_add(crate::PAGE_SIZE - 1)
+                .expect("cpu_ptr overflow")
+                / crate::PAGE_SIZE;
+
+            // Keep the table within the runtime's default maximum tracked pages. (The reference
+            // backend's `cpu_ptr` is an `i32`, so this is mostly defensive.)
+            let requested_pages = guest_ram_pages.min(DEFAULT_CODE_VERSION_MAX_PAGES as u64);
+            let requested_len: u32 = u32::try_from(requested_pages).unwrap_or(u32::MAX);
+
+            let reserved_end = (cpu_ptr as usize)
+                .checked_add((jit_ctx::TIER2_CTX_OFFSET + jit_ctx::TIER2_CTX_SIZE) as usize)
+                .expect("cpu_ptr overflow");
+            let table_base = (reserved_end + 3) & !3usize; // 4-byte alignment
+
+            let table_bytes = (requested_len as usize).checked_mul(4);
+            let fits =
+                table_bytes.is_some_and(|bytes| table_base.saturating_add(bytes) <= byte_len);
+
+            if requested_len == 0 || !fits {
+                (0u32, 0u32)
+            } else {
+                let ptr: u32 = table_base.try_into().expect("table base fits in wasm32");
+                (ptr, requested_len)
+            }
         };
-        let table_bytes = u64::from(table_len)
-            .checked_mul(4)
-            .expect("code version table byte size overflow");
-        let table_end = u64::try_from(table_ptr)
-            .expect("code version table ptr must be non-negative")
-            .checked_add(table_bytes)
-            .expect("code version table end overflow");
-        let table_fits = table_end <= byte_len as u64;
 
-        // If the configured memory isn't large enough to hold the full table, disable the table
-        // by setting `len = 0`. This disables Tier-1 inline store bumps and Tier-2 inline guard
-        // loads while keeping the backend usable for basic execution.
-        let (table_ptr_u32, table_len_u32) = if table_fits {
-            (
-                u32::try_from(table_ptr).expect("code version table ptr must fit in u32"),
-                table_len,
-            )
-        } else {
-            (0, 0)
-        };
+        // Write `ptr`/`len` into the Tier-2 context ABI slots and zero-initialize the table.
+        {
+            let cpu_base = cpu_ptr as usize;
+            let ptr_off = cpu_base + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize;
+            let len_off = cpu_base + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize;
 
-        // Write the pointer/len into the Tier-2 context region.
-        let code_version_ptr_off =
-            cpu_ptr as usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize;
-        let code_version_len_off =
-            cpu_ptr as usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize;
-        memory
-            .write(&mut store, code_version_ptr_off, &table_ptr_u32.to_le_bytes())
-            .expect("write code version table ptr");
-        memory
-            .write(&mut store, code_version_len_off, &table_len_u32.to_le_bytes())
-            .expect("write code version table len");
-
-        // Ensure the allocated table region is fully within linear memory (and start it zeroed).
-        let table_end = (table_ptr_u32 as usize)
-            .checked_add(
-                (table_len_u32 as usize)
-                    .checked_mul(4)
-                    .expect("code version table byte size overflow"),
-            )
-            .expect("code version table end overflow");
-        assert!(
-            table_end <= byte_len,
-            "code version table (end=0x{table_end:x}) must fit in linear memory ({} bytes)",
-            byte_len
-        );
-        if table_len_u32 != 0 {
             let mem = memory.data_mut(&mut store);
-            mem[table_ptr_u32 as usize..table_end].fill(0);
+            mem[ptr_off..ptr_off + 4].copy_from_slice(&code_version_table_ptr.to_le_bytes());
+            mem[len_off..len_off + 4].copy_from_slice(&code_version_table_len.to_le_bytes());
+
+            if code_version_table_len != 0 {
+                let table_base = code_version_table_ptr as usize;
+                let table_bytes = (code_version_table_len as usize)
+                    .checked_mul(4)
+                    .expect("code version table byte size overflow");
+                mem[table_base..table_base + table_bytes].fill(0);
+            }
         }
 
         Self {
