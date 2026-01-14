@@ -2153,6 +2153,12 @@ def _main_chunked(args: argparse.Namespace) -> int:
         )
     )
     results.append(
+        _test_chunked_chunk_encoding(
+            name="manifest: Content-Encoding is identity/absent",
+            resp=manifest_resp,
+        )
+    )
+    results.append(
         _test_x_content_type_options_nosniff(
             name="manifest: X-Content-Type-Options is nosniff",
             resp=manifest_resp,
