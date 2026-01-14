@@ -5764,7 +5764,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const vgaInfoLine = el("div", { class: "mono", text: "" });
 
   let vgaPresenter: SharedLayoutPresenter | null = null;
-  let vgaFramebufferInfo: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
+  let legacyFramebufferInfo: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
   let schedulerWorker: Worker | null = null;
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
@@ -5805,14 +5805,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         vgaPresenter.destroy();
         vgaPresenter = null;
       }
-      vgaFramebufferInfo = null;
+      legacyFramebufferInfo = null;
       return;
     }
 
     const changed =
-      !vgaFramebufferInfo || vgaFramebufferInfo.sab !== fb.sab || vgaFramebufferInfo.offsetBytes !== fb.offsetBytes;
+      !legacyFramebufferInfo ||
+      legacyFramebufferInfo.sab !== fb.sab ||
+      legacyFramebufferInfo.offsetBytes !== fb.offsetBytes;
     if (changed) {
-      vgaFramebufferInfo = fb;
+      legacyFramebufferInfo = fb;
       vgaPresenter?.setSharedFramebuffer(fb);
     }
 
@@ -5828,7 +5830,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       vgaPresenter.destroy();
       vgaPresenter = null;
     }
-    vgaFramebufferInfo = null;
+    legacyFramebufferInfo = null;
     vgaInfoLine.textContent = "";
   }
 
@@ -6045,7 +6047,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
     if (anyActive) {
       ensureVgaPresenter();
-      const fb = vgaFramebufferInfo;
+      const fb = legacyFramebufferInfo;
       if (fb) {
         try {
           const header = new Int32Array(fb.sab, fb.offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
