@@ -106,21 +106,33 @@ param(
   # - the dedicated guest virtio-blk-counters marker.
   [Parameter(Mandatory = $false)]
   [switch]$RequireNoBlkRecovery,
-  
+
   # If set, fail if the guest virtio-blk-counters marker reports non-zero abort/reset_device/reset_bus.
   # This is a looser check than -RequireNoBlkRecovery (ignores pnp/ioctl_reset).
+  #
+  # Backward compatibility: if the guest does not emit the dedicated virtio-blk-counters marker at all,
+  # fall back to legacy fields on the guest virtio-blk marker (abort_srb/reset_device_srb/reset_bus_srb).
+  # If virtio-blk-counters is present but reports SKIP, counters are treated as unavailable and this does
+  # not fall back.
   [Parameter(Mandatory = $false)]
   [switch]$FailOnBlkRecovery,
-  
+
   # If set, fail if the guest virtio-blk-reset-recovery marker reports non-zero reset_detected/hw_reset_bus.
   #
-  # Note: This marker is best-effort; if the guest selftest does not emit it (older binary / truncated IOCTL payload),
-  # this requirement does not fail.
+  # Backward compatibility: if the dedicated marker is missing, fall back to the legacy miniport diagnostic line
+  # `virtio-blk-miniport-reset-recovery|INFO|...` (WARN treated as unavailable).
+  #
+  # Note: This is best-effort; if neither source is present, this requirement does not fail.
   [Parameter(Mandatory = $false)]
   [switch]$RequireNoBlkResetRecovery,
-  
+
   # If set, fail if the guest virtio-blk-reset-recovery marker reports non-zero hw_reset_bus.
   # This is a looser check than -RequireNoBlkResetRecovery (ignores reset_detected).
+  #
+  # Backward compatibility: if the dedicated marker is missing, fall back to the legacy miniport diagnostic line
+  # `virtio-blk-miniport-reset-recovery|INFO|...` (WARN treated as unavailable).
+  #
+  # Note: This is best-effort; if neither source is present, this requirement does not fail.
   [Parameter(Mandatory = $false)]
   [switch]$FailOnBlkResetRecovery,
   

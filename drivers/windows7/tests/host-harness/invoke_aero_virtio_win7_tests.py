@@ -118,18 +118,33 @@ emitting a deterministic failure token:
 - `FAIL: VIRTIO_BLK_RECOVERY_NONZERO: ...`
 
 When `--fail-on-blk-recovery` is enabled, the harness fails if the guest reports non-zero virtio-blk abort/reset activity
-via the dedicated `virtio-blk-counters` marker, emitting:
+via either:
+
+- the dedicated `virtio-blk-counters` marker (preferred), or
+- legacy `abort_srb`/`reset_*_srb` fields appended to the guest `virtio-blk` marker (older guest binaries).
+
+If the dedicated marker is present but reports `SKIP`, the harness does **not** fall back (treats counters as
+unavailable). On failure, emits:
 
 - `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
 
 When `--require-no-blk-reset-recovery` is enabled, the harness fails if the guest reports non-zero virtio-blk timeout/error
-recovery activity counters (`reset_detected` / `hw_reset_bus`) via the dedicated `virtio-blk-reset-recovery` marker,
-emitting:
+recovery activity counters (`reset_detected` / `hw_reset_bus`) via either:
+
+- the dedicated `virtio-blk-reset-recovery` marker (preferred), or
+- the legacy miniport diagnostic line `virtio-blk-miniport-reset-recovery|INFO|...` (older guest binaries).
+
+Missing/SKIP/WARN diagnostics are treated as unavailable and do not fail the run. On failure, emits:
 
 - `FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO: ...`
 
 When `--fail-on-blk-reset-recovery` is enabled, the harness fails if the guest reports non-zero virtio-blk hardware reset
-invocations (`hw_reset_bus`) via the dedicated `virtio-blk-reset-recovery` marker, emitting:
+invocations (`hw_reset_bus`) via either:
+
+- the dedicated `virtio-blk-reset-recovery` marker (preferred), or
+- the legacy miniport diagnostic line `virtio-blk-miniport-reset-recovery|INFO|...` (older guest binaries).
+
+Missing/SKIP/WARN diagnostics are treated as unavailable and do not fail the run. On failure, emits:
 
 - `FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED: ...`
 
@@ -3877,16 +3892,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--fail-on-blk-recovery",
         action="store_true",
         help=(
-            "Fail the harness if the guest reports non-zero virtio-blk recovery/reset activity via the "
-            "machine-readable virtio-blk-counters marker (checks abort/reset_device/reset_bus only)."
+            "Fail the harness if the guest reports non-zero virtio-blk recovery/reset activity "
+            "(checks abort/reset_device/reset_bus only). "
+            "This prefers the dedicated virtio-blk-counters marker; if it is missing entirely, "
+            "falls back to legacy abort_srb/reset_*_srb fields on the virtio-blk marker. "
+            "If virtio-blk-counters is present but SKIP, counters are treated as unavailable."
         ),
     )
     parser.add_argument(
         "--require-no-blk-reset-recovery",
         action="store_true",
         help=(
-            "Fail the harness if the guest reports non-zero virtio-blk timeout/error recovery activity via the "
-            "machine-readable virtio-blk-reset-recovery marker (checks reset_detected/hw_reset_bus). "
+            "Fail the harness if the guest reports non-zero virtio-blk timeout/error recovery activity "
+            "(checks reset_detected/hw_reset_bus). "
+            "This prefers the dedicated virtio-blk-reset-recovery marker; if it is missing entirely, "
+            "falls back to the legacy miniport diagnostic line virtio-blk-miniport-reset-recovery|INFO|... "
+            "(WARN/SKIP treated as unavailable). "
             "On failure, emits: FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO:"
         ),
     )
@@ -3894,8 +3915,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--fail-on-blk-reset-recovery",
         action="store_true",
         help=(
-            "Fail the harness if the guest reports non-zero virtio-blk reset activity via the "
-            "machine-readable virtio-blk-reset-recovery marker (checks hw_reset_bus only)."
+            "Fail the harness if the guest reports non-zero virtio-blk reset activity "
+            "(checks hw_reset_bus only). "
+            "This prefers the dedicated virtio-blk-reset-recovery marker; if it is missing entirely, "
+            "falls back to the legacy miniport diagnostic line virtio-blk-miniport-reset-recovery|INFO|... "
+            "(WARN/SKIP treated as unavailable)."
         ),
     )
     parser.add_argument(
