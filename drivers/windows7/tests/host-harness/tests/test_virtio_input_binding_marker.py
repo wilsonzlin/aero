@@ -87,6 +87,23 @@ class VirtioInputBindingMarkerTests(unittest.TestCase):
             "cm_problem=10|cm_status=0x0000000A",
         )
 
+    def test_emits_marker_from_marker_line_even_when_tail_missing(self) -> None:
+        # The host harness may pass an incrementally captured marker line even when the rolling tail
+        # buffer no longer contains it (tail truncation). Ensure this still emits the correct host
+        # marker.
+        marker_line = (
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|"
+            "pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01"
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_input_binding_host_marker(b"", marker_line=marker_line)
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|PASS|service=aero_virtio_input|"
+            "pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01",
+        )
+
 
 class VirtioInputBindingGatingTests(unittest.TestCase):
     @classmethod
@@ -111,6 +128,46 @@ class VirtioInputBindingGatingTests(unittest.TestCase):
         msg = h._virtio_input_binding_required_failure_message(tail)
         self.assertIsNotNone(msg)
         self.assertTrue(str(msg).startswith("FAIL: MISSING_VIRTIO_INPUT_BINDING:"))
+
+    def test_required_marker_pass_from_marker_line(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_binding_required_failure_message(
+            b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n",
+            marker_line=(
+                "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|"
+                "pnp_id=PCI\\VEN_1AF4&DEV_1052"
+            ),
+        )
+        self.assertIsNone(msg)
+
+    def test_required_marker_fail_from_marker_line(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_binding_required_failure_message(
+            b"",
+            marker_line=(
+                "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL|reason=wrong_service|"
+                "expected=aero_virtio_input|actual=vioinput|pnp_id=PCI\\VEN_1AF4&DEV_1052"
+            ),
+        )
+        self.assertIsNotNone(msg)
+        self.assertIn("FAIL: VIRTIO_INPUT_BINDING_FAILED:", str(msg))
+        self.assertIn("reason=wrong_service", str(msg))
+        self.assertIn("expected=aero_virtio_input", str(msg))
+        self.assertIn("actual=vioinput", str(msg))
+
+    def test_required_marker_skip_from_marker_line(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_binding_required_failure_message(
+            b"",
+            marker_line="AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP|reason=flag_not_set",
+        )
+        self.assertIsNotNone(msg)
+        self.assertIn("FAIL: VIRTIO_INPUT_BINDING_SKIPPED:", str(msg))
+
+    def test_required_marker_pass_from_saw_flag(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_binding_required_failure_message(b"", saw_pass=True)
+        self.assertIsNone(msg)
 
 
 if __name__ == "__main__":
