@@ -41,14 +41,38 @@ const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
 // has explicitly enabled bus mastering via PCI config space.
 const PCI_COMMAND_BME: u32 = 1 << 2;
 
-fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
-    let addr = addr as usize;
-    mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
+fn guest_abs(guest_base: u32, guest_size: u32, paddr: u32, len: u32) -> u32 {
+    let end = paddr
+        .checked_add(len)
+        .expect("guest address overflow (paddr+len)");
+    assert!(
+        end <= guest_size,
+        "guest access out of bounds: paddr=0x{paddr:x} len=0x{len:x} guest_size=0x{guest_size:x}"
+    );
+    guest_base
+        .checked_add(paddr)
+        .expect("guest linear address overflow (guest_base+paddr)")
 }
 
-fn read_u32(mem: &[u8], addr: u32) -> u32 {
-    let addr = addr as usize;
-    u32::from_le_bytes(mem[addr..addr + 4].try_into().unwrap())
+fn write_u32_guest(guest_base: u32, guest_size: u32, paddr: u32, value: u32) {
+    let addr = guest_abs(guest_base, guest_size, paddr, 4);
+    // Safety: `guest_abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+    // exists in linear memory.
+    unsafe { common::write_u32(addr, value) };
+}
+
+fn read_u32_guest(guest_base: u32, guest_size: u32, paddr: u32) -> u32 {
+    let addr = guest_abs(guest_base, guest_size, paddr, 4);
+    // Safety: `guest_abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+    // exists in linear memory.
+    unsafe { common::read_u32(addr) }
+}
+
+fn write_bytes_guest(guest_base: u32, guest_size: u32, paddr: u32, bytes: &[u8]) {
+    let addr = guest_abs(guest_base, guest_size, paddr, bytes.len() as u32);
+    // Safety: `guest_abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+    // exists in linear memory.
+    unsafe { common::write_bytes(addr, bytes) };
 }
 
 struct SimpleInDevice {
@@ -122,10 +146,6 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
     // Synthetic guest memory region: allocate outside the wasm heap to keep wasm-pack tests from
     // exhausting the bounded `runtime_alloc` heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x9000);
-    // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting at
-    // `guest_base` and the region is private to this test.
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
@@ -143,21 +163,26 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     // Frame list: terminate everything, then set frame 0 to point at our QH.
     for i in 0..1024u32 {
-        write_u32(guest, 0x1000 + i * 4, LINK_PTR_T);
+        write_u32_guest(guest_base, guest_size, 0x1000 + i * 4, LINK_PTR_T);
     }
-    write_u32(guest, 0x1000, 0x2000 | LINK_PTR_Q);
+    write_u32_guest(guest_base, guest_size, 0x1000, 0x2000 | LINK_PTR_Q);
 
     // Queue head -> TD.
-    write_u32(guest, 0x2000, LINK_PTR_T);
-    write_u32(guest, 0x2004, 0x3000);
+    write_u32_guest(guest_base, guest_size, 0x2000, LINK_PTR_T);
+    write_u32_guest(guest_base, guest_size, 0x2004, 0x3000);
 
     // TD: IN to addr0/ep1, 4 bytes.
     let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
     let token = 0x69u32 | maxlen_field | (1 << TD_TOKEN_ENDPT_SHIFT); // IN, addr0/ep1
-    write_u32(guest, 0x3000, LINK_PTR_T);
-    write_u32(guest, 0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
-    write_u32(guest, 0x3008, token);
-    write_u32(guest, 0x300C, 0x4000);
+    write_u32_guest(guest_base, guest_size, 0x3000, LINK_PTR_T);
+    write_u32_guest(
+        guest_base,
+        guest_size,
+        0x3004,
+        TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF,
+    );
+    write_u32_guest(guest_base, guest_size, 0x3008, token);
+    write_u32_guest(guest_base, guest_size, 0x300C, 0x4000);
 
     // Verify register read/write wiring.
     let usbcmd_before = ctrl.io_read(REG_USBCMD, 2) as u16;
@@ -174,11 +199,20 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     ctrl.step_frames(1);
 
-    assert_eq!(&guest[0x4000..0x4004], b"ABCD");
+    let out = unsafe {
+        core::slice::from_raw_parts(
+            guest_abs(guest_base, guest_size, 0x4000, 4) as *const u8,
+            4,
+        )
+    };
+    assert_eq!(out, b"ABCD");
     // Hardware should advance the QH element pointer as TDs complete.
-    assert_eq!(read_u32(guest, 0x2004), LINK_PTR_T);
+    assert_eq!(
+        read_u32_guest(guest_base, guest_size, 0x2004),
+        LINK_PTR_T
+    );
 
-    let ctrl_sts = read_u32(guest, 0x3004);
+    let ctrl_sts = read_u32_guest(guest_base, guest_size, 0x3004);
     assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
     assert_eq!(ctrl_sts & TD_CTRL_ACTLEN_MASK, 3);
 
@@ -200,10 +234,6 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
     // Synthetic guest memory region: allocate outside the wasm heap to keep wasm-pack tests from
     // exhausting the bounded `runtime_alloc` heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x9000);
-    // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting at
-    // `guest_base` and the region is private to this test.
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
@@ -218,22 +248,32 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
 
     // Frame list: point every entry at our QH so the test is independent of the current FRNUM.
     for i in 0..1024u32 {
-        write_u32(guest, 0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
+        write_u32_guest(
+            guest_base,
+            guest_size,
+            0x1000 + i * 4,
+            0x2000 | LINK_PTR_Q,
+        );
     }
 
     // Queue head -> TD.
-    write_u32(guest, 0x2000, LINK_PTR_T);
-    write_u32(guest, 0x2004, 0x3000);
+    write_u32_guest(guest_base, guest_size, 0x2000, LINK_PTR_T);
+    write_u32_guest(guest_base, guest_size, 0x2004, 0x3000);
 
     // TD: IN to addr0/ep1, 4 bytes.
     let maxlen_field = (4u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
     let token = 0x69u32 | maxlen_field | (1 << TD_TOKEN_ENDPT_SHIFT); // IN, addr0/ep1
-    write_u32(guest, 0x3000, LINK_PTR_T);
-    write_u32(guest, 0x3004, TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF);
-    write_u32(guest, 0x3008, token);
-    write_u32(guest, 0x300C, 0x4000);
+    write_u32_guest(guest_base, guest_size, 0x3000, LINK_PTR_T);
+    write_u32_guest(
+        guest_base,
+        guest_size,
+        0x3004,
+        TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7FF,
+    );
+    write_u32_guest(guest_base, guest_size, 0x3008, token);
+    write_u32_guest(guest_base, guest_size, 0x300C, 0x4000);
 
-    guest[0x4000..0x4004].fill(0xEE);
+    write_bytes_guest(guest_base, guest_size, 0x4000, &[0xEE, 0xEE, 0xEE, 0xEE]);
 
     ctrl.io_write(REG_USBCMD, 2, USBCMD_RUN as u32);
 
@@ -247,17 +287,22 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
         "expected FRNUM to advance even when PCI BME is clear"
     );
     assert_eq!(
-        &guest[0x4000..0x4004],
+        unsafe {
+            core::slice::from_raw_parts(
+                guest_abs(guest_base, guest_size, 0x4000, 4) as *const u8,
+                4,
+            )
+        },
         &[0xEE, 0xEE, 0xEE, 0xEE],
         "expected schedule DMA to be blocked without PCI BME"
     );
     assert_eq!(
-        read_u32(guest, 0x2004),
+        read_u32_guest(guest_base, guest_size, 0x2004),
         0x3000,
         "QH element pointer must not advance without DMA"
     );
     assert_ne!(
-        read_u32(guest, 0x3004) & TD_CTRL_ACTIVE,
+        read_u32_guest(guest_base, guest_size, 0x3004) & TD_CTRL_ACTIVE,
         0,
         "TD must remain active without DMA"
     );
@@ -269,7 +314,15 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
     // Once bus mastering is enabled, the schedule should execute and populate the buffer.
     ctrl.set_pci_command(PCI_COMMAND_BME);
     ctrl.step_frames(1);
-    assert_eq!(&guest[0x4000..0x4004], b"ABCD");
+    assert_eq!(
+        unsafe {
+            core::slice::from_raw_parts(
+                guest_abs(guest_base, guest_size, 0x4000, 4) as *const u8,
+                4,
+            )
+        },
+        b"ABCD"
+    );
 }
 
 #[wasm_bindgen_test]
