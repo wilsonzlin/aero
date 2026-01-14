@@ -295,49 +295,6 @@ fn check_aero_devices_gpu_no_host_only_apis(repo_root: &Path) -> Result<()> {
     Err(XtaskError::Message(msg))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::mask_rust_for_scan;
-
-    #[test]
-    fn mask_rust_for_scan_removes_comment_and_string_contents() {
-        let src = r#"
-// std::time::Instant
-let a = "Instant::now";
-/* nested /* std::fs */ comment */
-let ok = 123;
-"#;
-        let masked = mask_rust_for_scan(src);
-        assert!(!masked.contains("std::time::Instant"));
-        assert!(!masked.contains("Instant::now"));
-        assert!(!masked.contains("std::fs"));
-        assert!(masked.contains("let ok = 123;"));
-    }
-
-    #[test]
-    fn mask_rust_for_scan_does_not_treat_double_slash_in_strings_as_comments() {
-        let src = r#"let url = "http://example.com"; std::thread::spawn(|| {});"#;
-        let masked = mask_rust_for_scan(src);
-        // Ensure the forbidden pattern after the string is still visible (so the scan can find it).
-        assert!(masked.contains("std::thread::spawn"));
-        // Ensure the string literal contents were masked out.
-        assert!(!masked.contains("http://example.com"));
-    }
-
-    #[test]
-    fn mask_rust_for_scan_handles_raw_strings_and_block_comments() {
-        let src = r##"
-let s = r#"std::fs"#;
-/* std::thread */
-let x = 0;
-"##;
-        let masked = mask_rust_for_scan(src);
-        assert!(!masked.contains("std::fs"));
-        assert!(!masked.contains("std::thread"));
-        assert!(masked.contains("let x = 0;"));
-    }
-}
-
 pub fn print_help() {
     println!(
         "\
@@ -425,4 +382,47 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mask_rust_for_scan;
+
+    #[test]
+    fn mask_rust_for_scan_removes_comment_and_string_contents() {
+        let src = r#"
+// std::time::Instant
+let a = "Instant::now";
+/* nested /* std::fs */ comment */
+let ok = 123;
+"#;
+        let masked = mask_rust_for_scan(src);
+        assert!(!masked.contains("std::time::Instant"));
+        assert!(!masked.contains("Instant::now"));
+        assert!(!masked.contains("std::fs"));
+        assert!(masked.contains("let ok = 123;"));
+    }
+
+    #[test]
+    fn mask_rust_for_scan_does_not_treat_double_slash_in_strings_as_comments() {
+        let src = r#"let url = "http://example.com"; std::thread::spawn(|| {});"#;
+        let masked = mask_rust_for_scan(src);
+        // Ensure the forbidden pattern after the string is still visible (so the scan can find it).
+        assert!(masked.contains("std::thread::spawn"));
+        // Ensure the string literal contents were masked out.
+        assert!(!masked.contains("http://example.com"));
+    }
+
+    #[test]
+    fn mask_rust_for_scan_handles_raw_strings_and_block_comments() {
+        let src = r##"
+let s = r#"std::fs"#;
+/* std::thread */
+let x = 0;
+"##;
+        let masked = mask_rust_for_scan(src);
+        assert!(!masked.contains("std::fs"));
+        assert!(!masked.contains("std::thread"));
+        assert!(masked.contains("let x = 0;"));
+    }
 }
