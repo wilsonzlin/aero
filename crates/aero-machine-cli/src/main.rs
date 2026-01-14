@@ -99,10 +99,22 @@ mod native {
         let mut machine = Machine::new(MachineConfig::win7_storage_defaults(ram_bytes))
             .map_err(|e| anyhow!("{e}"))?;
 
+        // Record the host's chosen disk paths in the machine's snapshot overlay refs so snapshots
+        // produced by this CLI remain self-describing (even when no explicit COW overlay is used).
+        //
+        // Note: these refs are metadata only; disk bytes always remain external to the snapshot
+        // blob.
+        let base_image = args.disk.display().to_string();
+        if let Some(overlay) = &args.disk_overlay {
+            machine.set_ahci_port0_disk_overlay_ref(
+                base_image.clone(),
+                overlay.display().to_string(),
+            );
+        } else {
+            machine.set_ahci_port0_disk_overlay_ref(base_image.clone(), "");
+        }
+
         let disk_backend = if let Some(overlay) = &args.disk_overlay {
-            let base = args.disk.display().to_string();
-            let overlay_str = overlay.display().to_string();
-            machine.set_ahci_port0_disk_overlay_ref(base, overlay_str);
             open_disk_backend_with_overlay(&args.disk, overlay, args.disk_overlay_block_size)?
         } else {
             open_disk_backend(&args.disk, args.disk_ro)?
@@ -120,6 +132,42 @@ mod native {
             machine
                 .restore_snapshot_from_checked(&mut f)
                 .map_err(|e| anyhow!("{e}"))?;
+
+            // Snapshot disk refs are host-managed metadata. Warn if the snapshot was produced for a
+            // different base/overlay path than the current CLI flags.
+            if let Some(restored) = machine.restored_disk_overlays() {
+                if let Some(primary) = restored
+                    .disks
+                    .iter()
+                    .find(|d| d.disk_id == Machine::DISK_ID_PRIMARY_HDD)
+                {
+                    if !primary.base_image.is_empty() && primary.base_image != base_image {
+                        eprintln!(
+                            "warning: snapshot base_image differs from --disk: snapshot={} cli={}",
+                            primary.base_image, base_image
+                        );
+                    }
+                    if !primary.overlay_image.is_empty() {
+                        match &args.disk_overlay {
+                            Some(cli_overlay) => {
+                                let cli_overlay = cli_overlay.display().to_string();
+                                if primary.overlay_image != cli_overlay {
+                                    eprintln!(
+                                        "warning: snapshot overlay_image differs from --disk-overlay: snapshot={} cli={}",
+                                        primary.overlay_image, cli_overlay
+                                    );
+                                }
+                            }
+                            None => {
+                                eprintln!(
+                                    "warning: snapshot specifies overlay_image {} but CLI did not provide --disk-overlay",
+                                    primary.overlay_image
+                                );
+                            }
+                        }
+                    }
+                }
+            }
 
             // Storage controller snapshots intentionally drop host backends. Reattach the shared
             // disk so the guest can continue booting after restore.
