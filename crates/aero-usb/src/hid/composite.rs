@@ -208,12 +208,16 @@ impl MouseInterface {
     }
 
     fn wheel(&mut self, delta: i32, configured: bool) {
-        self.wheel = self.wheel.saturating_add(delta);
-        self.flush_motion(configured);
+        self.wheel2(delta, 0, configured);
     }
 
     fn hwheel(&mut self, delta: i32, configured: bool) {
-        self.hwheel = self.hwheel.saturating_add(delta);
+        self.wheel2(0, delta, configured);
+    }
+
+    fn wheel2(&mut self, wheel: i32, hwheel: i32, configured: bool) {
+        self.wheel = self.wheel.saturating_add(wheel);
+        self.hwheel = self.hwheel.saturating_add(hwheel);
         self.flush_motion(configured);
     }
 
@@ -510,6 +514,19 @@ impl UsbCompositeHidInputHandle {
         let mut dev = self.0.borrow_mut();
         let configured = dev.configuration != 0;
         dev.mouse.hwheel(delta, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
+            dev.remote_wakeup_pending = true;
+        }
+    }
+
+    /// Inject vertical + horizontal wheel deltas (AC Pan) in a single mouse report.
+    ///
+    /// This allows callers to represent diagonal scrolling as one HID frame instead of emitting
+    /// separate wheel/hwheel updates.
+    pub fn mouse_wheel2(&self, wheel: i32, hwheel: i32) {
+        let mut dev = self.0.borrow_mut();
+        let configured = dev.configuration != 0;
+        dev.mouse.wheel2(wheel, hwheel, configured);
         if dev.suspended && dev.remote_wakeup_enabled && configured {
             dev.remote_wakeup_pending = true;
         }
@@ -1915,6 +1932,45 @@ mod tests {
         assert_eq!(count, MAX_PENDING_MOUSE_REPORTS);
         assert_eq!(first.unwrap(), vec![0x00, 127u8, 0, 0, 0]);
         assert_eq!(last.unwrap(), vec![0x00, 127u8, 0, 0, 0]);
+    }
+
+    #[test]
+    fn configured_mouse_wheel2_emits_single_report_with_both_axes() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        dev.mouse_wheel2(5, 7);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x00, 0x00, 0x00, 5, 7])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
+    fn configured_mouse_wheel_and_hwheel_emit_two_separate_reports() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        dev.mouse_wheel(1);
+        dev.mouse_hwheel(2);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x00, 0x00, 0x00, 1, 0])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x00, 0x00, 0x00, 0, 2])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
     }
 
     #[test]
