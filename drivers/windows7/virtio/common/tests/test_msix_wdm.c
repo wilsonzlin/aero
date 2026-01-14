@@ -132,6 +132,11 @@ static void test_connect_validation(void)
     status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_DEVICE_CONFIGURATION_ERROR);
 
+    /* QueueCount > 64 is not supported (helper uses a 64-bit queue mask). */
+    desc = make_msg_desc(1);
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 65, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_NOT_SUPPORTED);
+
     /* Parameter validation failures must not call through to WDK interrupt routines. */
     assert(WdkTestGetIoConnectInterruptExCount() == 0);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
