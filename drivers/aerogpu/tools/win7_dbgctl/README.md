@@ -479,9 +479,10 @@ This tool currently supports JSON output for snapshot-style commands and other b
 
 Notes:
 - `--query-perf --json` includes a best-effort `last_error` object (via `AEROGPU_ESCAPE_OP_QUERY_ERROR`) when supported by the installed KMD.
-- `--query-perf --json` includes a `contig_pool` object when the installed KMD exposes the appended contig-pool fields.
-- `--query-perf --json` includes an `alloc_table` object when the installed KMD exposes the appended alloc-table fields.
-- `--query-perf --json` includes a `get_scanline` object when the installed KMD exposes the appended GetScanLine counters (DBG-only on newer KMDs).
+- For schema stability, `--query-perf --json` always includes `get_scanline`, `contig_pool`, and `alloc_table` objects. Each has an
+  `available` flag that is `false` on older KMD builds or when the corresponding counters are unsupported.
+- For `--status --json`, when `perf.supported=true`, it likewise includes `perf.get_scanline`, `perf.contig_pool`, and `perf.alloc_table`
+  with the same `available` semantics.
 
 ## Build (Windows 7)
 
