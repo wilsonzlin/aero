@@ -2121,12 +2121,73 @@ mod tests {
     }
 
     #[test]
+    fn ata_dma_prd_too_short_aborts_command_and_partially_transfers_data() {
+        let mut ctl = setup_primary_ata_controller();
+        let mut mem = Bus::new(0x8000);
+
+        let prd_addr: u64 = 0x1000;
+        let dma_buf: u64 = 0x2000;
+
+        // Single PRD entry with EOT set, but only 256 bytes. This is too short for a 512-byte
+        // sector transfer.
+        mem.write_u32(prd_addr, dma_buf as u32);
+        mem.write_u16(prd_addr + 4, 256);
+        mem.write_u16(prd_addr + 6, 0x8000);
+
+        // Seed the DMA destination with a non-zero pattern so we can verify that only the covered
+        // portion of the buffer was updated before we detected the malformed PRD list.
+        mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+        let bm_base = ctl.bus_master_base();
+        ctl.io_write(bm_base + 4, 4, prd_addr as u32);
+
+        // READ DMA for LBA 0, 1 sector.
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+        ctl.io_write(cmd_base + ATA_REG_DEVICE, 1, 0xE0);
+        ctl.io_write(cmd_base + ATA_REG_SECTOR_COUNT, 1, 1);
+        ctl.io_write(cmd_base + ATA_REG_LBA0, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA1, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_LBA2, 1, 0);
+        ctl.io_write(cmd_base + ATA_REG_STATUS_COMMAND, 1, 0xC8);
+
+        // Start bus master (direction = device -> memory).
+        ctl.io_write(bm_base, 1, 0x09);
+        ctl.tick(&mut mem);
+
+        // IDE channel should abort the command and raise an interrupt.
+        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+
+        let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
+        assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        // Bus Master status should indicate interrupt + error, and clear ACTIVE.
+        let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
+        assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
+
+        // The transfer should have updated only the first 256 bytes.
+        let mut got = vec![0u8; SECTOR_SIZE];
+        mem.read_physical(dma_buf, &mut got);
+        assert!(
+            got[..256].iter().all(|&b| b == 0),
+            "expected first 256 bytes to be transferred from disk"
+        );
+        assert!(
+            got[256..].iter().all(|&b| b == 0xFF),
+            "expected remaining bytes to remain untouched"
+        );
+    }
+
+    #[test]
     fn ata_dma_direction_mismatch_aborts_command_and_sets_bm_error() {
         let mut ctl = setup_primary_ata_controller();
         let mut mem = Bus::new(0x8000);
 
         let prd_addr: u64 = 0x1000;
         let dma_buf: u64 = 0x2000;
+
+        // Seed the destination buffer with a non-zero pattern; a direction mismatch should prevent
+        // any DMA from occurring, leaving this data untouched.
+        mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
 
         // Valid PRD entry: one 512-byte segment, EOT set.
         mem.write_u32(prd_addr, dma_buf as u32);
@@ -2150,8 +2211,25 @@ mod tests {
         ctl.tick(&mut mem);
 
         assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+
+        let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
+        assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        let st = ctl.io_read(PRIMARY_PORTS.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL, 1) as u8;
+        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
+        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
+        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
+        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
+
+        let mut got = vec![0u8; SECTOR_SIZE];
+        mem.read_physical(dma_buf, &mut got);
+        assert!(
+            got.iter().all(|&b| b == 0xFF),
+            "direction mismatch should prevent any DMA writes"
+        );
     }
 
     #[test]
