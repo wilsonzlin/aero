@@ -1360,9 +1360,9 @@ fn emit_op_line(
             if dst_ty != ScalarTy::F32 {
                 return Err(err("dst destination must be float"));
             }
-            // D3D9 `dst`: x is always 1.0; y/z/w are pairwise products of src0 and src1.
+            // D3D9 `dst`: x is 1.0; y is src0.y * src1.y; z is src0.z; w is src1.w.
             let e = apply_float_result_modifiers(
-                format!("vec4<f32>(1.0, ({a}).y * ({b}).y, ({a}).z * ({b}).z, ({a}).w * ({b}).w)"),
+                format!("vec4<f32>(1.0, ({a}).y * ({b}).y, ({a}).z, ({b}).w)"),
                 modifiers,
             )?;
             emit_assign(dst, e)

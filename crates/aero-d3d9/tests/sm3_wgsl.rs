@@ -2432,10 +2432,11 @@ fn wgsl_dst_compiles() {
     verify_ir(&ir).unwrap();
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
-    // Ensure we exercised the custom lowering (pairwise products with a constant 1.0 in X).
+    // Ensure we exercised the custom lowering (`dst` has fixed/packed component semantics).
     assert!(wgsl.contains("vec4<f32>(1.0,"), "{wgsl}");
     assert!(wgsl.contains(".y *"), "{wgsl}");
-    assert!(wgsl.contains(".z *"), "{wgsl}");
+    assert!(wgsl.contains(").z,"), "{wgsl}");
+    assert!(wgsl.contains(").w)"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(

@@ -754,8 +754,8 @@ fn exec_op(
             let b = exec_src(
                 src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
             );
-            // D3D9 `dst`: x is always 1.0; y/z/w are pairwise products of src0 and src1.
-            Vec4::new(1.0, a.y * b.y, a.z * b.z, a.w * b.w)
+            // D3D9 `dst`: x is 1.0; y is src0.y * src1.y; z is src0.z; w is src1.w.
+            Vec4::new(1.0, a.y * b.y, a.z, b.w)
         }
         IrOp::Crs { src0, src1, .. } => {
             let a = exec_src(

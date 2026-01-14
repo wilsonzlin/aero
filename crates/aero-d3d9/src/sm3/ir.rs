@@ -207,9 +207,9 @@ pub enum IrOp {
     },
     /// Distance vector helper (`dst`).
     ///
-    /// `dst.x` is always 1.0, and the remaining components are pairwise products of `src0` and
-    /// `src1` (with swizzles/modifiers applied):
-    /// `dst = vec4(1, src0.y*src1.y, src0.z*src1.z, src0.w*src1.w)`.
+    /// `dst.x` is always 1.0; `dst.y` is the product of the Y components; `dst.z` is copied from
+    /// `src0.z`; and `dst.w` is copied from `src1.w` (with swizzles/modifiers applied).
+    /// This matches D3D9's definition of the `dst` helper instruction.
     Dst {
         dst: Dst,
         src0: Src,
