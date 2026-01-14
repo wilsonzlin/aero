@@ -4498,6 +4498,8 @@ def main() -> int:
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             virtio_input_binding_marker_line: Optional[str] = None
             virtio_input_binding_marker_carry = b""
+            selftest_config_marker_line: Optional[str] = None
+            selftest_config_marker_carry = b""
             expect_blk_msi_config: Optional[str] = None
             udp_port_config: Optional[str] = None
             saw_virtio_blk_pass = False
@@ -4681,9 +4683,20 @@ def main() -> int:
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|",
                         carry=virtio_input_binding_marker_carry,
                     )
+                    selftest_config_marker_line, selftest_config_marker_carry = _update_last_marker_line_from_chunk(
+                        selftest_config_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|CONFIG|",
+                        carry=selftest_config_marker_carry,
+                    )
                     tail = _append_serial_tail(tail, chunk)
-                    if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
-                        expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+                    if expect_blk_msi_config is None:
+                        if selftest_config_marker_line is not None:
+                            expect_blk_msi_config = _parse_marker_kv_fields(selftest_config_marker_line).get(
+                                "expect_blk_msi"
+                            )
+                        elif b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                            expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
                         if args.require_expect_blk_msi and expect_blk_msi_config == "0":
                             print(
                                 "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest CONFIG expect_blk_msi=0 "
@@ -4693,8 +4706,13 @@ def main() -> int:
                             _print_tail(serial_log)
                             result_code = 1
                             break
-                    if udp_port_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
-                        udp_port_config = _try_get_selftest_config_udp_port(tail)
+                    if udp_port_config is None:
+                        if selftest_config_marker_line is not None:
+                            udp_port_config = _parse_marker_kv_fields(selftest_config_marker_line).get(
+                                "udp_port"
+                            )
+                        elif b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                            udp_port_config = _try_get_selftest_config_udp_port(tail)
                         if udp_port_config is not None and udp_server is not None:
                             try:
                                 guest_port = int(udp_port_config, 10)
@@ -6778,11 +6796,27 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|",
                             carry=virtio_input_binding_marker_carry,
                         )
+                        selftest_config_marker_line, selftest_config_marker_carry = _update_last_marker_line_from_chunk(
+                            selftest_config_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|CONFIG|",
+                            carry=selftest_config_marker_carry,
+                        )
                         tail = _append_serial_tail(tail, chunk2)
-                        if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
-                            expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
-                        if udp_port_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
-                            udp_port_config = _try_get_selftest_config_udp_port(tail)
+                        if expect_blk_msi_config is None:
+                            if selftest_config_marker_line is not None:
+                                expect_blk_msi_config = _parse_marker_kv_fields(
+                                    selftest_config_marker_line
+                                ).get("expect_blk_msi")
+                            elif b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                                expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+                        if udp_port_config is None:
+                            if selftest_config_marker_line is not None:
+                                udp_port_config = _parse_marker_kv_fields(selftest_config_marker_line).get(
+                                    "udp_port"
+                                )
+                            elif b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                                udp_port_config = _try_get_selftest_config_udp_port(tail)
                             if udp_port_config is not None and udp_server is not None:
                                 try:
                                     guest_port = int(udp_port_config, 10)
@@ -8139,6 +8173,14 @@ def main() -> int:
             if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"):
                 try:
                     virtio_input_binding_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if selftest_config_marker_carry:
+            raw = selftest_config_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|CONFIG|"):
+                try:
+                    selftest_config_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
 
