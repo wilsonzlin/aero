@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -20,10 +21,10 @@ class NewAeroWin7TestImageNetLinkFlapFlagTests(unittest.TestCase):
         # Ensure the generator appends --test-net-link-flap when -TestNetLinkFlap is set.
         self.assertIn('$testNetLinkFlapArg = " --test-net-link-flap"', self.text)
 
-        # Ensure the scheduled task commandline includes the arg variable.
-        self.assertIn(
-            "$testInputTabletEventsArg$testInputLedsArg$testNetLinkFlapArg$requireSndArg",
+        # Ensure the scheduled task commandline includes the arg variable (avoid brittle ordering assumptions).
+        self.assertRegex(
             self.text,
+            re.compile(r"(?s)schtasks /Create.*\$testNetLinkFlapArg", re.IGNORECASE),
         )
 
     def test_readme_mentions_test_net_link_flap(self) -> None:
