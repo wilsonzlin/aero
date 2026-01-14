@@ -589,6 +589,8 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             wgpu_vertex_format: wgpu::VertexFormat::Uint32,
             size_bytes: 4,
             align_bytes: 4,
+            // Treated as an opaque packed payload. Higher-level shader translation is responsible
+            // for unpacking and normalization.
             component_type: DxgiFormatComponentType::U32,
             component_count: 1,
         },

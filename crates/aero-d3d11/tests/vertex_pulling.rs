@@ -172,7 +172,7 @@ async fn read_buffer(
 
 #[test]
 fn compute_vertex_pulling_reads_pos3_color4() {
-    assert_eq!(VERTEX_PULLING_GROUP, 4);
+    assert_eq!(VERTEX_PULLING_GROUP, 3);
     pollster::block_on(async {
         let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
@@ -395,7 +395,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
 #[test]
 fn compute_vertex_pulling_reads_unorm8x4() {
-    assert_eq!(VERTEX_PULLING_GROUP, 4);
+    assert_eq!(VERTEX_PULLING_GROUP, 3);
     fn push_u32(buf: &mut Vec<u8>, v: u32) {
         buf.extend_from_slice(&v.to_le_bytes());
     }
