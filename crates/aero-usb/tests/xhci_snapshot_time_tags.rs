@@ -32,3 +32,32 @@ fn xhci_snapshot_load_accepts_v0_7_last_tick_encoded_under_tag_time_ms() {
     );
 }
 
+#[test]
+fn xhci_snapshot_load_accepts_swapped_time_and_tick_tags() {
+    // Some early xHCI snapshot builds swapped the tag mapping for time/tick:
+    // - tag 27: last_tick_dma_dword (u32)
+    // - tag 28: time_ms (u64)
+    //
+    // Ensure we can still restore such snapshots and re-emit the canonical mapping.
+    let mut w = SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 7));
+    w.field_u32(TAG_TIME_MS, 0x0a0b_0c0d);
+    w.field_u64(TAG_LAST_TICK_DMA_DWORD, 7);
+    let bytes = w.finish();
+
+    let mut ctrl = XhciController::new();
+    ctrl.load_state(&bytes)
+        .expect("expected swapped-tag snapshot to load");
+
+    let bytes2 = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(
+        r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
+        7
+    );
+    assert_eq!(
+        r.u32(TAG_LAST_TICK_DMA_DWORD)
+            .expect("read last_tick_dma_dword")
+            .unwrap_or(0),
+        0x0a0b_0c0d
+    );
+}
