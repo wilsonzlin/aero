@@ -5305,7 +5305,7 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
   const bool canUseCachedFbGpa =
       flagsValid ? cachedFbGpaValid : (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
-  if (canUseCachedFbGpa && q.cached_fb_gpa != 0) {
+  if (mmioFbGpa == 0 && canUseCachedFbGpa && q.cached_fb_gpa != 0) {
     fbGpa = (uint64_t)q.cached_fb_gpa;
     usingCachedFbGpa = true;
   }
@@ -5323,7 +5323,7 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   }
 
   if (fbGpa == 0) {
-    fwprintf(stderr, L"Scanout%lu: MMIO framebuffer GPA is 0; cannot dump framebuffer.\n",
+    fwprintf(stderr, L"Scanout%lu: framebuffer GPA is 0 (both mmio_fb_gpa and cached_fb_gpa are 0); cannot dump.\n",
              (unsigned long)q.base.vidpn_source_id);
     fwprintf(stderr, L"Hint: ensure the installed KMD supports scanout registers (and AEROGPU_ESCAPE_OP_QUERY_SCANOUT).\n");
     return 2;
@@ -5382,7 +5382,7 @@ static int DoDumpScanoutPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
   const bool canUseCachedFbGpa =
       flagsValid ? cachedFbGpaValid : (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
-  if (canUseCachedFbGpa && q.cached_fb_gpa != 0) {
+  if (mmioFbGpa == 0 && canUseCachedFbGpa && q.cached_fb_gpa != 0) {
     fbGpa = (uint64_t)q.cached_fb_gpa;
     usingCachedFbGpa = true;
   }
@@ -5400,7 +5400,7 @@ static int DoDumpScanoutPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   }
 
   if (fbGpa == 0) {
-    fwprintf(stderr, L"Scanout%lu: MMIO framebuffer GPA is 0; cannot dump framebuffer.\n",
+    fwprintf(stderr, L"Scanout%lu: framebuffer GPA is 0 (both mmio_fb_gpa and cached_fb_gpa are 0); cannot dump.\n",
              (unsigned long)q.base.vidpn_source_id);
     fwprintf(stderr, L"Hint: ensure the installed KMD supports scanout registers (and AEROGPU_ESCAPE_OP_QUERY_SCANOUT).\n");
     return 2;
@@ -8565,13 +8565,18 @@ static int DoDumpScanoutBmpJson(const D3DKMT_FUNCS *f,
   const uint32_t pitchBytes = (q.base.mmio_pitch_bytes != 0) ? q.base.mmio_pitch_bytes : q.base.cached_pitch_bytes;
   const uint64_t mmioFbGpa = (uint64_t)q.base.mmio_fb_gpa;
   uint64_t fbGpa = mmioFbGpa;
+  bool usingCachedFbGpa = false;
   const uint32_t flags = q.base.reserved0;
+  const bool haveV2 = (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
   const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
   const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+  const bool postDisplayReleased =
+      (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
   const bool canUseCachedFbGpa =
       flagsValid ? cachedFbGpaValid : (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
-  if (canUseCachedFbGpa && q.cached_fb_gpa != 0) {
+  if (mmioFbGpa == 0 && canUseCachedFbGpa && q.cached_fb_gpa != 0) {
     fbGpa = (uint64_t)q.cached_fb_gpa;
+    usingCachedFbGpa = true;
   }
 
   if (width == 0 || height == 0 || pitchBytes == 0) {
@@ -8580,7 +8585,10 @@ static int DoDumpScanoutBmpJson(const D3DKMT_FUNCS *f,
     return 2;
   }
   if (fbGpa == 0) {
-    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "Scanout MMIO framebuffer GPA is 0; cannot dump framebuffer",
+    JsonWriteTopLevelError(out,
+                           "dump-scanout-bmp",
+                           f,
+                           "Scanout framebuffer GPA is 0 (both mmio_fb_gpa and cached_fb_gpa are 0); cannot dump framebuffer",
                            STATUS_INVALID_PARAMETER);
     return 2;
   }
@@ -8609,6 +8617,20 @@ static int DoDumpScanoutBmpJson(const D3DKMT_FUNCS *f,
   w.Bool(fallbackToSource0);
   w.Key("scanout");
   w.BeginObject();
+  JsonWriteU32Hex(w, "flags_u32_hex", flags);
+  w.Key("flags_valid");
+  w.Bool(flagsValid);
+  w.Key("cached_fb_gpa_valid");
+  w.Bool(flagsValid && cachedFbGpaValid);
+  w.Key("post_display_ownership_released");
+  w.Bool(flagsValid && postDisplayReleased);
+  if (haveV2) {
+    w.Key("cached_fb_gpa_hex");
+    w.String(HexU64(q.cached_fb_gpa));
+  } else {
+    w.Key("cached_fb_gpa_hex");
+    w.Null();
+  }
   w.Key("cached");
   w.BeginObject();
   w.Key("enable");
@@ -8651,6 +8673,8 @@ static int DoDumpScanoutBmpJson(const D3DKMT_FUNCS *f,
   w.Uint32(pitchBytes);
   w.Key("fb_gpa_hex");
   w.String(HexU64(fbGpa));
+  w.Key("fb_gpa_source");
+  w.String(usingCachedFbGpa ? "cached_fb_gpa" : "mmio_fb_gpa");
   w.EndObject();
   w.EndObject();
   w.Key("output");
@@ -8714,13 +8738,18 @@ static int DoDumpScanoutPngJson(const D3DKMT_FUNCS *f,
   const uint32_t pitchBytes = (q.base.mmio_pitch_bytes != 0) ? q.base.mmio_pitch_bytes : q.base.cached_pitch_bytes;
   const uint64_t mmioFbGpa = (uint64_t)q.base.mmio_fb_gpa;
   uint64_t fbGpa = mmioFbGpa;
+  bool usingCachedFbGpa = false;
   const uint32_t flags = q.base.reserved0;
+  const bool haveV2 = (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
   const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
   const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+  const bool postDisplayReleased =
+      (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
   const bool canUseCachedFbGpa =
       flagsValid ? cachedFbGpaValid : (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
-  if (canUseCachedFbGpa && q.cached_fb_gpa != 0) {
+  if (mmioFbGpa == 0 && canUseCachedFbGpa && q.cached_fb_gpa != 0) {
     fbGpa = (uint64_t)q.cached_fb_gpa;
+    usingCachedFbGpa = true;
   }
 
   if (width == 0 || height == 0 || pitchBytes == 0) {
@@ -8729,7 +8758,10 @@ static int DoDumpScanoutPngJson(const D3DKMT_FUNCS *f,
     return 2;
   }
   if (fbGpa == 0) {
-    JsonWriteTopLevelError(out, "dump-scanout-png", f, "Scanout MMIO framebuffer GPA is 0; cannot dump framebuffer",
+    JsonWriteTopLevelError(out,
+                           "dump-scanout-png",
+                           f,
+                           "Scanout framebuffer GPA is 0 (both mmio_fb_gpa and cached_fb_gpa are 0); cannot dump framebuffer",
                            STATUS_INVALID_PARAMETER);
     return 2;
   }
@@ -8758,6 +8790,20 @@ static int DoDumpScanoutPngJson(const D3DKMT_FUNCS *f,
   w.Bool(fallbackToSource0);
   w.Key("scanout");
   w.BeginObject();
+  JsonWriteU32Hex(w, "flags_u32_hex", flags);
+  w.Key("flags_valid");
+  w.Bool(flagsValid);
+  w.Key("cached_fb_gpa_valid");
+  w.Bool(flagsValid && cachedFbGpaValid);
+  w.Key("post_display_ownership_released");
+  w.Bool(flagsValid && postDisplayReleased);
+  if (haveV2) {
+    w.Key("cached_fb_gpa_hex");
+    w.String(HexU64(q.cached_fb_gpa));
+  } else {
+    w.Key("cached_fb_gpa_hex");
+    w.Null();
+  }
   w.Key("cached");
   w.BeginObject();
   w.Key("enable");
@@ -8800,6 +8846,8 @@ static int DoDumpScanoutPngJson(const D3DKMT_FUNCS *f,
   w.Uint32(pitchBytes);
   w.Key("fb_gpa_hex");
   w.String(HexU64(fbGpa));
+  w.Key("fb_gpa_source");
+  w.String(usingCachedFbGpa ? "cached_fb_gpa" : "mmio_fb_gpa");
   w.EndObject();
   w.EndObject();
   w.Key("output");
