@@ -1277,7 +1277,13 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
    */
   vramU8?: Uint8Array | null;
   /**
-   * Test-only override for VRAM chunking (must match the chunk size used during save).
+   * Test-only override for legacy reserved-id VRAM chunking.
+   *
+   * This is only used when restoring older web snapshots that stored BAR1 VRAM as a series of
+   * reserved `device.<id>` blobs (`IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE + chunkIndex`).
+   *
+   * Canonical `gpu.vram` snapshots include explicit offset/length metadata in each chunk and do
+   * not require a chunk size hint during restore.
    */
   vramChunkBytes?: number;
   runtimes: IoWorkerSnapshotRuntimes;
