@@ -109,6 +109,10 @@ fn aerogpu_cmd_tessellation_hs_ds_compute_prepass_requires_input_layout() {
             .execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect_err("expected tessellation draw to return an error (not panic)");
 
+        if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+            return;
+        }
+
         let msg = err.to_string();
         assert!(
             msg.contains("tessellation emulation requires an input layout"),

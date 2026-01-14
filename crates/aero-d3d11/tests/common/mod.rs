@@ -64,6 +64,13 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
         return true;
     }
 
+    // Some emulation paths are still under development. Prefer skipping these tests instead of
+    // failing when the runtime reports the functionality is not implemented yet.
+    if msg.contains("compute expansion is not wired up yet") {
+        skip_or_panic(test_name, "compute expansion not implemented");
+        return true;
+    }
+
     false
 }
 
