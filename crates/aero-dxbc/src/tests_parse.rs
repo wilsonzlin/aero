@@ -233,35 +233,31 @@ fn malformed_chunk_count_makes_offset_table_oob_is_error() {
     assert!(err.context().contains("chunk offset table") || err.context().contains("chunk_count"));
 }
 
+fn build_max_chunk_count_container(last_fourcc: FourCC) -> Vec<u8> {
+    // `aero-dxbc` caps DXBC chunk_count at 4096; many tests below intentionally exercise the
+    // boundary case.
+    let chunk_count = 4096usize;
+    let mut chunks = Vec::with_capacity(chunk_count);
+    for i in 0..chunk_count {
+        let fourcc = if i == chunk_count - 1 {
+            last_fourcc
+        } else {
+            FourCC(*b"JUNK")
+        };
+        chunks.push((fourcc, &[][..]));
+    }
+    build_dxbc(&chunks)
+}
+
 #[test]
 fn malformed_last_chunk_offset_is_reported_with_large_chunk_count() {
     // Use the maximum allowed chunk_count to ensure offset-table indexing stays safe
     // up to the last entry. All chunk offsets are valid except the last one.
     let chunk_count = 4096u32;
-    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
-    let total_size = offset_table_end + 8; // one minimal chunk header after the table
-
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-
-    for i in 0..chunk_count {
-        let off = if i == chunk_count - 1 {
-            0u32
-        } else {
-            offset_table_end as u32
-        };
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    assert_eq!(bytes.len(), offset_table_end);
-
-    // Minimal chunk header at the end of the offset table.
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    assert_eq!(bytes.len(), total_size);
+    let mut bytes = build_max_chunk_count_container(FourCC(*b"JUNK"));
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let last_entry_pos = offset_table_pos + ((chunk_count as usize - 1) * 4);
+    bytes[last_entry_pos..last_entry_pos + 4].copy_from_slice(&0u32.to_le_bytes());
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
@@ -275,30 +271,11 @@ fn malformed_last_chunk_offset_points_into_offset_table_with_large_chunk_count()
     // point the last offset into the chunk offset table (not the fixed header) to
     // exercise that branch for the final index.
     let chunk_count = 4096u32;
-    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
-    let total_size = offset_table_end + 8; // one minimal chunk header after the table
-
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-
-    for i in 0..chunk_count {
-        let off = if i == chunk_count - 1 {
-            32u32 // DXBC_HEADER_LEN (points into offset table for chunk_count>0)
-        } else {
-            offset_table_end as u32
-        };
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    assert_eq!(bytes.len(), offset_table_end);
-
-    // Minimal chunk header at the end of the offset table.
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    assert_eq!(bytes.len(), total_size);
+    let mut bytes = build_max_chunk_count_container(FourCC(*b"JUNK"));
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let last_entry_pos = offset_table_pos + ((chunk_count as usize - 1) * 4);
+    // DXBC_HEADER_LEN (points into offset table for chunk_count>0).
+    bytes[last_entry_pos..last_entry_pos + 4].copy_from_slice(&32u32.to_le_bytes());
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
@@ -312,30 +289,11 @@ fn malformed_last_chunk_offset_out_of_bounds_with_large_chunk_count() {
     // make the final chunk offset point *past* the end of the container to ensure the
     // OutOfBounds path reports the correct chunk index.
     let chunk_count = 4096u32;
-    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
-    let total_size = offset_table_end + 8; // one minimal chunk header after the table
-
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-
-    for i in 0..chunk_count {
-        let off = if i == chunk_count - 1 {
-            total_size as u32
-        } else {
-            offset_table_end as u32
-        };
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    assert_eq!(bytes.len(), offset_table_end);
-
-    // Minimal chunk header at the end of the offset table.
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    assert_eq!(bytes.len(), total_size);
+    let mut bytes = build_max_chunk_count_container(FourCC(*b"JUNK"));
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let last_entry_pos = offset_table_pos + ((chunk_count as usize - 1) * 4);
+    let oob_off = bytes.len() as u32;
+    bytes[last_entry_pos..last_entry_pos + 4].copy_from_slice(&oob_off.to_le_bytes());
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
@@ -350,25 +308,14 @@ fn parse_accepts_max_chunk_count_with_repeated_offsets() {
     // points at the same valid empty chunk header. This ensures the validation
     // loop and the chunk iterator handle the max count without panicking.
     let chunk_count = 4096u32;
-    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
-    let total_size = offset_table_end + 8; // one chunk header, no payload
-
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-
-    for _ in 0..chunk_count {
-        bytes.extend_from_slice(&(offset_table_end as u32).to_le_bytes());
+    let mut bytes = build_max_chunk_count_container(FourCC(*b"JUNK"));
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let first_off =
+        u32::from_le_bytes(bytes[offset_table_pos..offset_table_pos + 4].try_into().unwrap());
+    for i in 0..chunk_count as usize {
+        let pos = offset_table_pos + i * 4;
+        bytes[pos..pos + 4].copy_from_slice(&first_off.to_le_bytes());
     }
-    assert_eq!(bytes.len(), offset_table_end);
-
-    // One valid empty chunk header.
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    assert_eq!(bytes.len(), total_size);
 
     let file = DxbcFile::parse(&bytes).expect("DXBC parse should succeed");
     assert_eq!(file.header().chunk_count, chunk_count);
@@ -384,41 +331,16 @@ fn malformed_last_chunk_size_out_of_bounds_with_large_chunk_count() {
     // Ensure size/bounds validation remains safe even when only the *last* chunk
     // index hits the failing case under the maximum chunk count.
     let chunk_count = 4096u32;
-    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
-    let first_chunk_off = offset_table_end;
-    let second_chunk_off = first_chunk_off + 8;
-    let total_size = second_chunk_off + 8; // two chunk headers, no payload bytes
+    let mut bytes = build_max_chunk_count_container(FourCC(*b"SHDR"));
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let last_entry_pos = offset_table_pos + ((chunk_count as usize - 1) * 4);
+    let last_chunk_off = u32::from_le_bytes(
+        bytes[last_entry_pos..last_entry_pos + 4].try_into().unwrap(),
+    ) as usize;
 
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-
-    for i in 0..chunk_count {
-        // For chunk indices 0..4094, point at a valid empty chunk header. For the
-        // last chunk (4095), point at a different header that declares a payload
-        // of 1 byte even though no bytes remain.
-        let off = if i == chunk_count - 1 {
-            second_chunk_off as u32
-        } else {
-            first_chunk_off as u32
-        };
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    assert_eq!(bytes.len(), offset_table_end);
-
-    // First chunk header: valid empty chunk.
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-    assert_eq!(bytes.len(), second_chunk_off);
-
-    // Second chunk header: declares a payload of 1 byte, but there are 0 bytes
-    // remaining after the header.
-    bytes.extend_from_slice(b"SHDR");
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    assert_eq!(bytes.len(), total_size);
+    // Patch the final chunk header to declare a payload of 1 byte even though no bytes remain
+    // after the header.
+    bytes[last_chunk_off + 4..last_chunk_off + 8].copy_from_slice(&1u32.to_le_bytes());
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
