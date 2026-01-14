@@ -2332,15 +2332,13 @@ function isWasmModuleCloneable(module: WebAssembly.Module): boolean {
 
 function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
   return (
-    a.vmRuntime === b.vmRuntime &&
+    (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&
     a.guestMemoryMiB === b.guestMemoryMiB &&
     a.enableWorkers === b.enableWorkers &&
     a.enableWebGPU === b.enableWebGPU &&
     a.proxyUrl === b.proxyUrl &&
     a.activeDiskImage === b.activeDiskImage &&
-    (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&
     a.logLevel === b.logLevel &&
-    a.vmRuntime === b.vmRuntime &&
     a.uiScale === b.uiScale &&
     a.virtioNetMode === b.virtioNetMode &&
     a.virtioInputMode === b.virtioInputMode &&
