@@ -2289,9 +2289,11 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_UTOF, 0x1b);
     // Structured control flow opcodes.
     assert_eq!(OPCODE_BREAK, 0x2d);
+    assert_eq!(OPCODE_BREAKC, 0x2e);
     assert_eq!(OPCODE_LOOP, 0x2f);
     assert_eq!(OPCODE_ENDLOOP, 0x30);
     assert_eq!(OPCODE_CONTINUE, 0x31);
+    assert_eq!(OPCODE_CONTINUEC, 0x32);
     // Integer arithmetic opcodes.
     assert_eq!(OPCODE_IABS, 0x61);
     assert_eq!(OPCODE_INEG, 0x62);
