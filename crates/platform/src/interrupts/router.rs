@@ -1624,6 +1624,11 @@ mod tests {
         assert_eq!(ints.lapics[1].get_pending_vector(), Some(vector as u8));
     }
 
+        // Acknowledge the interrupt on the destination LAPIC to clear its pending state.
+        ints.acknowledge_for_apic(1, vector as u8);
+        assert_eq!(ints.lapics[1].get_pending_vector(), None);
+    }
+
     #[test]
     fn init_ipi_deassert_is_ignored_for_pending_init_and_reset_semantics() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
