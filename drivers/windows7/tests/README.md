@@ -41,6 +41,8 @@ drivers/windows7/tests/
     issues a QMP resize (`blockdev-resize` with fallback to legacy `block_resize`), and requires `virtio-blk-resize|PASS`.
 - Runs a virtio-net test (wait for DHCP, UDP echo roundtrip to the host harness, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
+  - Also validates the underlying virtio-input PCI function(s) are bound to the expected driver service (`aero_virtio_input`)
+    and have no PnP/ConfigManager errors (emits `virtio-input-bind`).
 - Emits a `virtio-input-events` marker that can be used to validate **end-to-end input report delivery** when the host
   harness injects deterministic keyboard/mouse events via QMP (`input-send-event`).
   - This path reads HID input reports directly from the virtio-input HID interface so it does not depend on UI focus.
@@ -88,10 +90,11 @@ drivers/windows7/tests/
    # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
    # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
 
-     AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-     AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
-     AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
-     AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
 
   # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
@@ -125,7 +128,7 @@ The guest may also emit optional interrupt-mode diagnostics markers (information
 - `virtio-<dev>-irq|WARN|...`
 
  The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
-(virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net + virtio-net-udp) were emitted so older selftest binaries
+(virtio-blk + virtio-input + virtio-input-bind + virtio-snd + virtio-snd-capture + virtio-net + virtio-net-udp) were emitted so older selftest binaries
 can’t accidentally pass.
 
 When the harness is run with:
