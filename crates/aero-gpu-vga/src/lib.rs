@@ -444,7 +444,6 @@ impl VgaDevice {
             if base_paddr < lfb_base || scanout_end > lfb_end {
                 return disabled;
             }
-
             return ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                 base_paddr_lo: base_paddr as u32,
@@ -2484,6 +2483,26 @@ mod tests {
         let base = (update.base_paddr_hi as u64) << 32 | update.base_paddr_lo as u64;
         let expected_base = 0xE100_0000u64 + 2u64 * u64::from(expected_pitch) + 8u64 * 4;
         assert_eq!(base, expected_base);
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[test]
+    fn scanout_update_uses_scanline_override_and_pan_offsets() {
+        let mut dev = VgaDevice::new();
+        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_mode(64, 32, 32, true);
+
+        // Override pitch to something other than width*4 so we can observe it being used.
+        dev.set_vbe_bytes_per_scan_line_override(512);
+        dev.vbe.x_offset = 2;
+        dev.vbe.y_offset = 3;
+
+        let update = dev.active_scanout_update();
+        assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(update.pitch_bytes, 512);
+
+        let base = (u64::from(update.base_paddr_hi) << 32) | u64::from(update.base_paddr_lo);
+        assert_eq!(base, 0xE100_0000 + 3 * 512 + 2 * 4);
     }
 
     #[test]
