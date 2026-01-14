@@ -13900,6 +13900,140 @@ bool TestSetShaderConstIBEmitsCommands() {
   return TestSetShaderConstIBEmitsCommandsImpl<D3D9DDI_DEVICEFUNCS>();
 }
 
+template <typename DeviceFuncsT>
+bool TestSetShaderConstIBNormalizesStageImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value) {
+    // Some D3D9 DDI header variants do not expose the I/B constant entrypoints in the device
+    // function table. In those builds we cannot exercise the DDI surface area; treat the test as a
+    // no-op.
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      bool has_adapter = false;
+      bool has_device = false;
+
+      ~Cleanup() {
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(4096, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    // Use a non-{0,1} stage encoding; the driver should normalize it to PS.
+    constexpr uint32_t kWeirdStage = 42u;
+
+    const uint32_t int_start = 5;
+    const uint32_t int_count = 1;
+    const int32_t ints[int_count * 4] = {1, 2, 3, 4};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kWeirdStage, int_start, ints, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI(weird stage)")) {
+      return false;
+    }
+
+    const uint32_t bool_start = 7;
+    const uint32_t bool_count = 1;
+    const BOOL bools[bool_count] = {static_cast<BOOL>(1)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, kWeirdStage, bool_start, bools, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB(weird stage)")) {
+      return false;
+    }
+
+    dev->cmd.finalize();
+    const uint8_t* buf = dma.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+      return false;
+    }
+
+    const CmdLoc i_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+    if (!Check(i_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_I emitted")) {
+      return false;
+    }
+    const auto* i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(i_loc.hdr);
+    if (!Check(i_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "I stage normalized to PS")) {
+      return false;
+    }
+    if (!Check(i_cmd->start_register == int_start, "I start_register")) {
+      return false;
+    }
+    if (!Check(i_cmd->vec4_count == int_count, "I vec4_count")) {
+      return false;
+    }
+    const auto* i_payload = reinterpret_cast<const int32_t*>(
+        reinterpret_cast<const uint8_t*>(i_cmd) + sizeof(*i_cmd));
+    if (!Check(std::memcmp(i_payload, ints, sizeof(ints)) == 0, "I payload matches")) {
+      return false;
+    }
+
+    const CmdLoc b_loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
+    if (!Check(b_loc.hdr != nullptr, "SET_SHADER_CONSTANTS_B emitted")) {
+      return false;
+    }
+    const auto* b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(b_loc.hdr);
+    if (!Check(b_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "B stage normalized to PS")) {
+      return false;
+    }
+    if (!Check(b_cmd->start_register == bool_start, "B start_register")) {
+      return false;
+    }
+    if (!Check(b_cmd->bool_count == bool_count, "B bool_count")) {
+      return false;
+    }
+    const auto* b_payload = reinterpret_cast<const uint32_t*>(
+        reinterpret_cast<const uint8_t*>(b_cmd) + sizeof(*b_cmd));
+    const uint32_t expected_b[bool_count * 4] = {1u, 1u, 1u, 1u};
+    return Check(std::memcmp(b_payload, expected_b, sizeof(expected_b)) == 0, "B payload matches");
+  }
+}
+
+bool TestSetShaderConstIBNormalizesStage() {
+  return TestSetShaderConstIBNormalizesStageImpl<D3D9DDI_DEVICEFUNCS>();
+}
+
 template <typename DeviceFuncsT, uint32_t D3dStage, uint32_t ExpectedStage>
 bool TestApplyStateBlockEmitsShaderConstIBImpl() {
   if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
@@ -40098,6 +40232,7 @@ int main() {
   RUN_TEST(TestOpenResourceUsesReserved0PitchHintForUncompressedSingleMipSurface);
   RUN_TEST(TestInvalidPayloadArgs);
   RUN_TEST(TestSetShaderConstIBEmitsCommands);
+  RUN_TEST(TestSetShaderConstIBNormalizesStage);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIB);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIB);
