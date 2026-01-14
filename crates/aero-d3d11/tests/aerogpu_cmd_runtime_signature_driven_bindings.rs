@@ -2750,7 +2750,7 @@ fn aerogpu_cmd_runtime_signature_driven_fills_missing_ps_output_alpha() {
 #[test]
 fn aerogpu_cmd_runtime_signature_driven_max_slot_resource_bindings() {
     // Regression test for the binding model at the maximum supported D3D slots:
-    // - VS: cb31 (binds at @binding(31) within @group(0))
+    // - VS: cb13 (binds at @binding(13) within @group(0))
     // - PS: t127 + s15 (bind at @binding(159) + @binding(175) within @group(1))
     pollster::block_on(async {
         let mut rt = match AerogpuCmdRuntime::new_for_tests().await {
@@ -2770,7 +2770,7 @@ fn aerogpu_cmd_runtime_signature_driven_max_slot_resource_bindings() {
         const SAMPLER: u32 = 7;
         const RTEX: u32 = 8;
 
-        const VS_CB_SLOT: u32 = 31;
+        const VS_CB_SLOT: u32 = 13;
         const PS_TEX_SLOT: u32 = 127;
         const PS_SAMPLER_SLOT: u32 = 15;
 
