@@ -189,7 +189,8 @@ impl IoSnapshot for UsbHidConsumerControl {
 
         *self = Self::new();
 
-        self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        let address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
+        self.address = if address <= 127 { address } else { 0 };
         let configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
         self.configuration = if configuration == 0 { 0 } else { 1 };
         self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
