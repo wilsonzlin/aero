@@ -697,6 +697,10 @@ These are the fast, repeatable commands used to validate the current graphics st
 bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --locked
 
+# wasm32 guardrail (compile-only; does not require a JS runtime)
+# (Increase timeout if needed; first-time wasm32 builds can be slow without a warm Cargo cache.)
+AERO_TIMEOUT=1800 bash ./scripts/safe-run.sh cargo xtask wasm-check
+
 # AeroGPU bridge/backends (canonical in-browser integration boundary)
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_immediate_backend_completes_fence --locked
