@@ -168,6 +168,9 @@ mod tests {
     use super::*;
     use crate::pci::{PciBarDefinition, PciBdf, PciConfigSpace, PciDevice};
 
+    const BAR0_SIZE: u32 = 0x1000;
+    const BAR1_SIZE: u32 = 0x20;
+
     #[test]
     fn cfg_ports_read_write_and_bar_probe() {
         let mut cfg_ports = PciConfigPorts::new();
@@ -190,11 +193,11 @@ mod tests {
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
-        cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        cfg.set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
 
         cfg_ports
             .bus_mut()
@@ -210,7 +213,8 @@ mod tests {
         cfg_ports.io_write(0xCF8, 4, 0x8000_0000 | (1 << 11) | 0x10);
         cfg_ports.io_write(0xCFC, 4, 0xFFFF_FFFF);
         let bar0_mask = cfg_ports.io_read(0xCFC, 4);
-        assert_eq!(bar0_mask, 0xFFFF_F000);
+        let expected_bar0_mask = !(BAR0_SIZE - 1) & 0xFFFF_FFF0;
+        assert_eq!(bar0_mask, expected_bar0_mask);
 
         // Program BAR0 address.
         cfg_ports.io_write(0xCFC, 4, 0x8000_0000);
@@ -220,6 +224,7 @@ mod tests {
         cfg_ports.io_write(0xCF8, 4, 0x8000_0000 | (1 << 11) | 0x14);
         cfg_ports.io_write(0xCFC, 4, 0xFFFF_FFFF);
         let bar1_mask = cfg_ports.io_read(0xCFC, 4);
-        assert_eq!(bar1_mask, 0xFFFF_FFE1);
+        let expected_bar1_mask = (!(BAR1_SIZE - 1) & 0xFFFF_FFFC) | 0x1;
+        assert_eq!(bar1_mask, expected_bar1_mask);
     }
 }

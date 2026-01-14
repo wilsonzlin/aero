@@ -641,6 +641,22 @@ mod tests {
     use crate::pci::config::{PciBarDefinition, PciConfigSpace, PciDevice};
     use crate::pci::PciBdf;
 
+    const BAR0_SIZE: u32 = 0x1000;
+    const BAR1_SIZE: u32 = 0x20;
+
+    fn mmio32_probe_mask(size: u32, prefetchable: bool) -> u32 {
+        let mut mask = !(size.saturating_sub(1)) & 0xFFFF_FFF0;
+        if prefetchable {
+            mask |= 1 << 3;
+        }
+        mask
+    }
+
+    fn io_probe_mask(size: u32) -> u32 {
+        let mask = !(size.saturating_sub(1)) & 0xFFFF_FFFC;
+        mask | 0x1
+    }
+
     fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
         0x8000_0000
             | ((bus as u32) << 16)
@@ -733,18 +749,21 @@ mod tests {
         dev.cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
         dev.cfg
-            .set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+            .set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
         bus.add_device(PciBdf::new(0, 1, 0), Box::new(dev));
 
         // Probe BAR0 (MMIO).
         cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x10));
         cfg.io_write(&mut bus, 0xCFC, 4, 0xFFFF_FFFF);
-        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_F000);
+        assert_eq!(
+            cfg.io_read(&mut bus, 0xCFC, 4),
+            mmio32_probe_mask(BAR0_SIZE, false)
+        );
 
         // Program BAR0 and read back.
         cfg.io_write(&mut bus, 0xCFC, 4, 0x1234_5000);
@@ -753,7 +772,7 @@ mod tests {
         // Probe BAR1 (I/O).
         cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x14));
         cfg.io_write(&mut bus, 0xCFC, 4, 0xFFFF_FFFF);
-        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_FFE1);
+        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), io_probe_mask(BAR1_SIZE));
 
         cfg.io_write(&mut bus, 0xCFC, 4, 0x0000_0C20);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0x0000_0C21);
@@ -768,12 +787,12 @@ mod tests {
         dev.cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
         dev.cfg
-            .set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+            .set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
         bus.add_device(PciBdf::new(0, 1, 0), Box::new(dev));
 
         // Program BAR0 (MMIO) using two 16-bit writes: high half then low half.
@@ -800,7 +819,7 @@ mod tests {
         dev.cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
@@ -808,10 +827,13 @@ mod tests {
 
         cfg.io_write(&mut bus, 0xCF8, 4, cfg_addr(0, 1, 0, 0x10));
         cfg.io_write(&mut bus, 0xCFC, 4, 0xFFFF_FFFF);
-        assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xFFFF_F000);
+        assert_eq!(
+            cfg.io_read(&mut bus, 0xCFC, 4),
+            mmio32_probe_mask(BAR0_SIZE, false)
+        );
 
         // Program only the high 16 bits of BAR0 via a 16-bit write. The low bits should be based
-        // on the pre-probe base (0), not on the probe response (0xFFFF_F000).
+        // on the pre-probe base (0), not on the probe response (size mask).
         cfg.io_write(&mut bus, 0xCFC + 2, 2, 0xE000);
         assert_eq!(cfg.io_read(&mut bus, 0xCFC, 4), 0xE000_0000);
     }
