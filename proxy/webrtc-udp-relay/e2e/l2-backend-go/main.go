@@ -143,7 +143,7 @@ func main() {
 				continue
 			}
 			// Echo the PING payload (and flags) back as a PONG.
-			out, err := l2tunnel.EncodeWithLimits(l2TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			out, err := l2tunnel.EncodeMessage(l2TypePong, msg.Flags, msg.Payload)
 			if err != nil {
 				continue
 			}

@@ -314,8 +314,3 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc.SetEscapeHTML(true)
 	_ = enc.Encode(v)
 }
-
-func (s *server) Close() error {
-	s.ready.Store(false)
-	return s.srv.Close()
-}

@@ -74,8 +74,8 @@ func (l limits) maxPayloadForType(msgType byte) int {
 	return l.MaxControlPayload
 }
 
-// DefaultLimits matches the recommended default limits in the spec.
-var DefaultLimits = limits{
+// defaultLimits matches the recommended default limits in the spec.
+var defaultLimits = limits{
 	MaxFramePayload:   defaultMaxFramePayload,
 	MaxControlPayload: defaultMaxControlPayload,
 }
@@ -107,9 +107,13 @@ func (e *decodeError) Error() string {
 	return e.Message
 }
 
-// EncodeWithLimits encodes an L2 tunnel message (header + payload) while
-// enforcing the provided payload limits.
-func EncodeWithLimits(msgType byte, flags byte, payload []byte, limits limits) ([]byte, error) {
+// EncodeMessage encodes an L2 tunnel message (header + payload) using the
+// protocol's default payload limits (see docs/l2-tunnel-protocol.md).
+func EncodeMessage(msgType byte, flags byte, payload []byte) ([]byte, error) {
+	return encodeWithLimits(msgType, flags, payload, defaultLimits)
+}
+
+func encodeWithLimits(msgType byte, flags byte, payload []byte, limits limits) ([]byte, error) {
 	max := limits.maxPayloadForType(msgType)
 	if len(payload) > max {
 		return nil, fmt.Errorf("payload too large: %d > %d", len(payload), max)
@@ -165,9 +169,10 @@ func decodeWithLimits(buf []byte, limits limits) (message, error) {
 	}, nil
 }
 
-// DecodeMessage decodes an L2 tunnel message using DefaultLimits.
+// DecodeMessage decodes an L2 tunnel message using the protocol's default
+// payload limits (see docs/l2-tunnel-protocol.md).
 func DecodeMessage(buf []byte) (message, error) {
-	return decodeWithLimits(buf, DefaultLimits)
+	return decodeWithLimits(buf, defaultLimits)
 }
 
 // encodeStructuredErrorPayload encodes a structured ERROR payload:

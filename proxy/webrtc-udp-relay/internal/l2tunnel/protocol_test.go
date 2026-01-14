@@ -111,7 +111,7 @@ func TestL2TunnelVectors(t *testing.T) {
 				}
 			}
 
-			encoded, err := EncodeWithLimits(msg.Type, msg.Flags, payload, DefaultLimits)
+			encoded, err := EncodeMessage(msg.Type, msg.Flags, payload)
 			if err != nil {
 				t.Fatalf("encode: %v", err)
 			}
