@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -171,6 +171,36 @@ impl UsbDeviceModel for BulkEndpointDevice {
             return UsbOutResult::Stall;
         }
         self.out_received.borrow_mut().push(data.to_vec());
+        UsbOutResult::Ack
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CountingOutDevice {
+    bytes_written: Rc<Cell<usize>>,
+}
+
+impl CountingOutDevice {
+    fn new(bytes_written: Rc<Cell<usize>>) -> Self {
+        Self { bytes_written }
+    }
+}
+
+impl UsbDeviceModel for CountingOutDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_out_transfer(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
+        if ep_addr != 0x01 {
+            return UsbOutResult::Stall;
+        }
+        self.bytes_written
+            .set(self.bytes_written.get().saturating_add(data.len()));
         UsbOutResult::Ack
     }
 }
@@ -1205,4 +1235,73 @@ fn ehci_periodic_link_budget_exceeded_sets_hse_and_halts() {
     assert_ne!(sts & regs::USBSTS_HSE, 0);
     assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
     assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_async_qtd_packet_budget_yields_without_faulting() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let bytes_written = Rc::new(Cell::new(0usize));
+    c.hub_mut()
+        .attach(0, Box::new(CountingOutDevice::new(bytes_written.clone())));
+    reset_port(&mut c, &mut mem, 0);
+
+    // Construct a single active OUT qTD with enough bytes to exceed the per-tick packet budget
+    // (4096 packets). Using max_packet=1 keeps the buffer size minimal while still forcing the
+    // budget path.
+    let total_bytes = 4097usize;
+    let qtd = QTD_BULK_OUT;
+    mem.write_u32(qtd + 0x00, LINK_TERMINATE); // next terminate
+    mem.write_u32(qtd + 0x04, LINK_TERMINATE); // alt-next terminate
+    mem.write_u32(
+        qtd + 0x08,
+        qtd_token(QTD_TOKEN_PID_OUT, total_bytes, true, false),
+    );
+    mem.write_u32(qtd + 0x0c, BUF_DATA);
+    mem.write_u32(qtd + 0x10, BUF_INT); // second page
+    mem.write_u32(qtd + 0x14, 0);
+    mem.write_u32(qtd + 0x18, 0);
+    mem.write_u32(qtd + 0x1c, 0);
+
+    let ep_char = qh_epchar(0, 1, 1);
+    write_qh(&mut mem, ASYNC_QH, qh_link_ptr_qh(ASYNC_QH), ep_char, qtd);
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    // One tick should process at most 4096 packets and then yield (without faulting/halting).
+    assert_eq!(bytes_written.get(), 4096);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_eq!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+
+    // The qTD token in guest memory should not be rewritten on the NAK/budget-yield path; only the
+    // QH overlay token is updated.
+    let qtd_token_after = mem.read_u32(qtd + 0x08);
+    assert_ne!(qtd_token_after & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!(
+        ((qtd_token_after >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff) as usize,
+        total_bytes
+    );
+    let overlay_token = mem.read_u32(ASYNC_QH + 0x18);
+    assert_ne!(overlay_token & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!(
+        ((overlay_token >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff) as usize,
+        1
+    );
+
+    // Next tick should complete the final byte and clear Active in the qTD token.
+    c.tick_1ms(&mut mem);
+    assert_eq!(bytes_written.get(), total_bytes);
+    let qtd_token_done = mem.read_u32(qtd + 0x08);
+    assert_eq!(qtd_token_done & QTD_TOKEN_ACTIVE, 0);
+    assert_eq!(
+        ((qtd_token_done >> QTD_TOKEN_TOTAL_BYTES_SHIFT) & 0x7fff) as usize,
+        0
+    );
 }
