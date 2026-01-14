@@ -4576,6 +4576,122 @@ mod tests {
         });
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct CopyLayoutExpectation {
+        block_w: u32,
+        block_h: u32,
+        block_bytes: u32,
+    }
+
+    fn expected_copy_layout(format: pci::AerogpuFormat) -> Option<CopyLayoutExpectation> {
+        // Intentionally exhaustive (no `_ => ...`) so adding a new protocol format forces a test
+        // update.
+        match format {
+            pci::AerogpuFormat::Invalid => None,
+
+            pci::AerogpuFormat::B8G8R8A8Unorm
+            | pci::AerogpuFormat::B8G8R8X8Unorm
+            | pci::AerogpuFormat::R8G8B8A8Unorm
+            | pci::AerogpuFormat::R8G8B8X8Unorm
+            | pci::AerogpuFormat::B8G8R8A8UnormSrgb
+            | pci::AerogpuFormat::B8G8R8X8UnormSrgb
+            | pci::AerogpuFormat::R8G8B8A8UnormSrgb
+            | pci::AerogpuFormat::R8G8B8X8UnormSrgb => Some(CopyLayoutExpectation {
+                block_w: 1,
+                block_h: 1,
+                block_bytes: 4,
+            }),
+
+            pci::AerogpuFormat::B5G6R5Unorm | pci::AerogpuFormat::B5G5R5A1Unorm => {
+                Some(CopyLayoutExpectation {
+                    block_w: 1,
+                    block_h: 1,
+                    block_bytes: 2,
+                })
+            }
+
+            pci::AerogpuFormat::BC1RgbaUnorm | pci::AerogpuFormat::BC1RgbaUnormSrgb => {
+                Some(CopyLayoutExpectation {
+                    block_w: 4,
+                    block_h: 4,
+                    block_bytes: 8,
+                })
+            }
+
+            pci::AerogpuFormat::BC2RgbaUnorm
+            | pci::AerogpuFormat::BC2RgbaUnormSrgb
+            | pci::AerogpuFormat::BC3RgbaUnorm
+            | pci::AerogpuFormat::BC3RgbaUnormSrgb
+            | pci::AerogpuFormat::BC7RgbaUnorm
+            | pci::AerogpuFormat::BC7RgbaUnormSrgb => Some(CopyLayoutExpectation {
+                block_w: 4,
+                block_h: 4,
+                block_bytes: 16,
+            }),
+
+            // The stable executor does not support depth formats yet.
+            pci::AerogpuFormat::D24UnormS8Uint | pci::AerogpuFormat::D32Float => None,
+        }
+    }
+
+    #[test]
+    fn texture_copy_layout_covers_all_protocol_formats() {
+        // Use non-multiple-of-4 dimensions to exercise BC div_ceil block rounding.
+        let width = 5;
+        let height = 7;
+
+        for &format in ALL_PROTOCOL_FORMATS {
+            let got = texture_copy_layout(width, height, format as u32);
+            match expected_copy_layout(format) {
+                Some(exp) => {
+                    let layout = got.unwrap_or_else(|err| {
+                        panic!(
+                            "texture_copy_layout should accept format {format:?} ({}), got error: {err:?}",
+                            format as u32
+                        )
+                    });
+
+                    assert_eq!(layout.block_w, exp.block_w, "format={format:?}");
+                    assert_eq!(layout.block_h, exp.block_h, "format={format:?}");
+                    assert_eq!(layout.block_bytes, exp.block_bytes, "format={format:?}");
+
+                    let blocks_w = width.div_ceil(exp.block_w);
+                    let blocks_h = height.div_ceil(exp.block_h);
+                    let expected_unpadded = blocks_w * exp.block_bytes;
+                    let expected_padded = {
+                        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                        ((expected_unpadded + align - 1) / align) * align
+                    };
+
+                    assert_eq!(layout.rows_in_layout, blocks_h, "format={format:?}");
+                    assert_eq!(
+                        layout.unpadded_bytes_per_row, expected_unpadded,
+                        "format={format:?}"
+                    );
+                    assert_eq!(
+                        layout.padded_bytes_per_row, expected_padded,
+                        "format={format:?}"
+                    );
+                }
+                None => match got {
+                    Ok(v) => panic!(
+                        "texture_copy_layout should reject format {format:?} ({}), got Ok({v:?})",
+                        format as u32
+                    ),
+                    Err(ExecutorError::Validation(message)) => {
+                        assert!(
+                            message.contains("unsupported aerogpu_format"),
+                            "unexpected error for {format:?}: {message}"
+                        );
+                    }
+                    Err(other) => {
+                        panic!("expected validation error for {format:?}, got {other:?}")
+                    }
+                },
+            }
+        }
+    }
+
     fn build_alloc_table_with_stride(entries: &[(u32, u64, u64)], entry_stride: u32) -> Vec<u8> {
         let size_bytes =
             ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 + entries.len() as u32 * entry_stride;

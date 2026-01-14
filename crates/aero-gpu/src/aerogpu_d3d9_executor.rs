@@ -9815,6 +9815,97 @@ mod tests {
     };
     use std::sync::Arc;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct BlockExpectation {
+        block_width: u32,
+        block_height: u32,
+        bytes_per_block: u32,
+        is_bc: bool,
+    }
+
+    macro_rules! format_block_expectations {
+        ($($variant:ident => $expectation:expr,)+) => {
+            // Keep the list of protocol formats and the expectation table in sync by generating
+            // both from the same source of truth.
+            //
+            // The match is intentionally exhaustive (no `_ => ...`), so adding a new protocol enum
+            // variant forces this test to be updated.
+            const ALL_PROTOCOL_FORMATS: &[AerogpuFormat] = &[
+                $(AerogpuFormat::$variant,)+
+            ];
+
+            fn expected_block(format: AerogpuFormat) -> Option<BlockExpectation> {
+                match format {
+                    $(AerogpuFormat::$variant => $expectation,)+
+                }
+            }
+        };
+    }
+
+    format_block_expectations! {
+        Invalid => None,
+
+        B8G8R8A8Unorm => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        B8G8R8X8Unorm => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        R8G8B8A8Unorm => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        R8G8B8X8Unorm => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+
+        B5G6R5Unorm => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 2, is_bc: false }),
+        B5G5R5A1Unorm => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 2, is_bc: false }),
+
+        B8G8R8A8UnormSrgb => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        B8G8R8X8UnormSrgb => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        R8G8B8A8UnormSrgb => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        R8G8B8X8UnormSrgb => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+
+        D24UnormS8Uint => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+        D32Float => Some(BlockExpectation { block_width: 1, block_height: 1, bytes_per_block: 4, is_bc: false }),
+
+        BC1RgbaUnorm => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 8, is_bc: true }),
+        BC1RgbaUnormSrgb => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 8, is_bc: true }),
+        BC2RgbaUnorm => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 16, is_bc: true }),
+        BC2RgbaUnormSrgb => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 16, is_bc: true }),
+        BC3RgbaUnorm => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 16, is_bc: true }),
+        BC3RgbaUnormSrgb => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 16, is_bc: true }),
+        BC7RgbaUnorm => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 16, is_bc: true }),
+        BC7RgbaUnormSrgb => Some(BlockExpectation { block_width: 4, block_height: 4, bytes_per_block: 16, is_bc: true }),
+    }
+
+    #[test]
+    fn aerogpu_format_texel_block_info_covers_all_protocol_formats() {
+        for &format in ALL_PROTOCOL_FORMATS {
+            let got = super::aerogpu_format_texel_block_info(format as u32);
+            match expected_block(format) {
+                Some(exp) => {
+                    let info = got.unwrap_or_else(|err| {
+                        panic!(
+                            "aerogpu_format_texel_block_info should accept {format:?} ({}), got error: {err:?}",
+                            format as u32
+                        )
+                    });
+                    assert_eq!(info.block_width, exp.block_width, "format={format:?}");
+                    assert_eq!(info.block_height, exp.block_height, "format={format:?}");
+                    assert_eq!(info.bytes_per_block, exp.bytes_per_block, "format={format:?}");
+                }
+                None => {
+                    assert!(
+                        matches!(got, Err(AerogpuD3d9Error::UnsupportedFormat(_))),
+                        "expected UnsupportedFormat for {format:?}, got {got:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn aerogpu_format_bc_detection_matches_formats() {
+        for &format in ALL_PROTOCOL_FORMATS {
+            let got = super::aerogpu_format_bc(format as u32);
+            let expected = expected_block(format).map(|e| e.is_bc).unwrap_or(false);
+            assert_eq!(got.is_some(), expected, "format={format:?}");
+        }
+    }
+
     #[test]
     fn is_x8_format_includes_srgb_variants() {
         assert!(super::is_x8_format(AerogpuFormat::B8G8R8X8Unorm as u32));
