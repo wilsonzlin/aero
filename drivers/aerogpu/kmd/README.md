@@ -15,6 +15,19 @@ The Win7 AeroGPU KMD exposes a small, deterministic set of common **60 Hz progre
 - 1600×900
 - 1920×1080 *(EDID preferred mode)*
 
+### Timing model
+
+The KMD does **not** attempt to model full CEA/CVT timings. For Win7 bring-up stability it uses a simple, internally-consistent
+synthetic timing model:
+
+- `VideoSignalInfo.ActiveSize` is set to the requested mode resolution.
+- `VideoSignalInfo.TotalSize` uses conservative synthetic blanking:
+  - vertical blanking is based on the same heuristic used by `DxgkDdiGetScanLine` (so scanline/vblank reporting matches the
+    advertised total line count)
+  - horizontal blanking is a small fixed fraction of the active width (to avoid “0 blanking” edge cases)
+- `VSyncFreq` is advertised as 60 Hz; `IsSupportedVidPn` is permissive and accepts typical desktop refresh rates so dxgkrnl can
+  keep stable mode selections (e.g. 59.94 Hz encoded as 59940/1000).
+
 ### Optional registry overrides (bring-up safety)
 
 Registry path (service key parameters):
