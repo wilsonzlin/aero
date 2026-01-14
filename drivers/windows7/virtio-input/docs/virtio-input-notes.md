@@ -69,17 +69,19 @@ All of these should enumerate as a virtio-input PCI function.
 
 The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contract v1):
 
-- It queries `VIRTIO_INPUT_CFG_ID_NAME` and only accepts the exact strings:
+- It queries `VIRTIO_INPUT_CFG_ID_NAME` and accepts the Aero contract strings:
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
   - `Aero Virtio Tablet`
-- If the name is not recognized, the driver fails start (Code 10) rather than guessing.
+- For keyboard/mouse devices, if the name is not recognized the driver fails start (Code 10) rather than guessing.
+- For tablet/absolute-pointer devices (`EV_ABS`), if the name is not recognized the driver can fall back to identifying the
+  device as a tablet when it advertises `EV_ABS` with `ABS_X`/`ABS_Y` in `EV_BITS`.
 - If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse, `0x0012` tablet),
   it is cross-checked against `ID_NAME` and mismatches fail start (Code 10). Unknown subsystem IDs
   (`0` or other values) are allowed.
 
-This keeps the contract deterministic: device kind is derived from `ID_NAME` and is not guessed from
-other fields.
+This keeps the keyboard/mouse contract deterministic (device kind comes from `ID_NAME`) while still allowing QEMU-style
+absolute-pointer devices to be identified via `EV_BITS` when needed.
 
 ### Optional compat mode (VIO-020)
 
@@ -95,10 +97,10 @@ reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
 When enabled, the driver will:
 
 - Accept common QEMU `ID_NAME` strings (`QEMU Virtio Keyboard`, `QEMU Virtio Mouse`, `QEMU Virtio Tablet`).
-- If `ID_NAME` is missing/unrecognized, infer device kind from `EV_BITS`:
-  - Keyboard: `EV_KEY` + `EV_LED` and “many” keys (heuristic)
-  - Mouse: `EV_REL` with `REL_X`/`REL_Y`
-  - Tablet: `EV_ABS` with `ABS_X`/`ABS_Y`
+- If `ID_NAME` is not one of the known Aero/QEMU strings, infer device kind from `EV_BITS(types)`:
+  - Tablet: `EV_ABS`
+  - Mouse: `EV_REL`
+  - Keyboard: `EV_KEY` (fallback)
 - Relax strict `ID_DEVIDS` validation.
 - For tablets, `ABS_INFO` is **best-effort**; if unavailable, the driver keeps the translation layer’s default coordinate scaling range (`0..32767`).
 

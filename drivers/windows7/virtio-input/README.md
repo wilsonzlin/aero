@@ -532,7 +532,7 @@ Device kind / report descriptor selection:
 
 `DeviceKind` is derived from virtio `ID_NAME` / `ID_DEVIDS` and cross-checked against the PCI subsystem device ID when present.
 In compat mode (`CompatIdName=1`), the driver also accepts common QEMU `ID_NAME` strings and may infer the kind from `EV_BITS`
-when `ID_NAME` is missing/unrecognized. See `docs/virtio-input-notes.md` for details.
+when `ID_NAME` is unrecognized. See `docs/virtio-input-notes.md` for details.
 
 #### Mouse button mapping (`EV_KEY` → HID buttons 1–8)
 
