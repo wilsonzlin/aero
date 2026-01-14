@@ -566,11 +566,9 @@ At PASSIVE_LEVEL (e.g. device reset / D0Exit):
 3. Disable device-side routing:
    * program `msix_config = VIRTIO_PCI_MSI_NO_VECTOR`
    * for each queue: `queue_select = q; queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR`
-   * **Important (Aero Win7 contract):** `VIRTIO_PCI_MSI_NO_VECTOR` is treated as “no MSI-X
-     vector assigned”, and devices fall back to **INTx + ISR** rather than fully suppressing
-     interrupts. Therefore this step disables *MSI-X delivery*, but it does **not** guarantee
-     interrupts are completely quiesced unless INTx is also suppressed (e.g. via
-     `PCI COMMAND.INTX_DISABLE`) and/or OS interrupt delivery is disabled.
+   * **Important (Aero Win7 contract):** when MSI-X is enabled, MSI-X is **exclusive**:
+     `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) suppresses interrupts for that source (**no MSI-X
+     message and no INTx fallback**). This is useful for quiescing the device before reset/teardown.
 4. Synchronize with in-flight DPC work:
    * acquire+release each queue lock once (waits for any running DPC to leave its critical section)
 5. Reset / reinitialize device and queues.

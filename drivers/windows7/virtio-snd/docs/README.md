@@ -99,8 +99,10 @@ The in-tree virtio-snd driver supports both interrupt delivery modes:
 - When message interrupts are present, the driver prefers MSI/MSI-X and programs virtio MSI-X vector routing:
   - if Windows grants enough messages: **vector 0 = config**, **vectors 1..4 = queues 0..3** (`controlq`/`eventq`/`txq`/`rxq`)
   - otherwise: **all sources on vector 0**
-- If MSI/MSI-X is unavailable, cannot be connected, or vector programming fails, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
-  (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`) so the device uses INTx + ISR semantics.
+- If MSI/MSI-X is unavailable or cannot be connected, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
+  (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`). In INTx mode (MSI-X disabled at the PCI layer), the device delivers interrupts via INTx + ISR semantics.
+  When MSI-X is enabled, `0xFFFF` suppresses interrupts for that source (no INTx fallback), so the driver treats MSI-X vector programming failures as fatal
+  unless it can continue with INTx or polling-only mode.
 
 If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under:
 

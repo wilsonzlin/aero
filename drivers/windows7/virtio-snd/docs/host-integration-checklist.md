@@ -111,8 +111,9 @@ To quickly confirm what Windows (and the driver) selected at runtime:
   - [ ] Bit 0 (`QUEUE_INTERRUPT`) is set when the device has published used-ring entries for any queue.
   - [ ] Bit 1 (`CONFIG_INTERRUPT`) is set only for device-specific config change notifications.
   - [ ] Bits 2–7 are `0`.
-- [ ] **INTx** is implemented and functional (baseline requirement for `AERO-W7-VIRTIO` v1; also used as fallback if MSI/MSI-X connect or vector programming fails).
-- [ ] When the driver programs all virtio MSI-X vectors to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), the device uses legacy virtio ISR semantics and delivers interrupts via INTx.
+- [ ] **INTx** is implemented and functional (baseline requirement for `AERO-W7-VIRTIO` v1; also used as fallback if MSI/MSI-X is unavailable or cannot be connected).
+- [ ] In **INTx mode** (PCI MSI-X disabled), the driver programs all virtio MSI-X selectors (`msix_config`, `queue_msix_vector`) to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) and the device delivers interrupts via INTx + ISR semantics.
+  - When MSI-X is enabled at the PCI layer, `0xFFFF` suppresses interrupts for that source (no INTx fallback), so vectors must be programmed to valid indices for MSI/MSI-X mode.
 
 ## virtio-snd `DEVICE_CFG` (read-only)
 

@@ -262,9 +262,11 @@ For queue interrupts specifically:
 - **Virtio spec / QEMU-like behavior:** leaving `queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR`
   (`0xFFFF`) disables MSI-X delivery for that queue (you’ll either poll or never see completions,
   depending on whether you have an INTx path wired).
-- **Aero Win7 virtio contract behavior:** when vectors are unassigned/unusable (`0xFFFF`, masked,
-  unprogrammed entry, etc), devices fall back to **INTx + ISR** rather than fully suppressing
-  interrupts. In other words, `0xFFFF` means “no MSI-X vector assigned”, not “no interrupts”.
+- **Aero Win7 virtio contract behavior:** when MSI-X is enabled at the PCI layer, MSI-X is
+  **exclusive**: if vectors are unassigned/unusable (`0xFFFF`, masked/unprogrammed entry, etc),
+  interrupts for that source are **suppressed** (no MSI-X message and no INTx fallback). When
+  MSI-X is disabled, devices deliver interrupts via **INTx + ISR** semantics (see
+  `docs/windows7-virtio-driver-contract.md` §1.8.4).
 
 ### 3.4 Reset sequencing: MSI-X vectors must be re-programmed after *every* reset
 
@@ -274,7 +276,8 @@ Common pitfall:
 
 - Vectors are programmed once early, then a reset happens, vectors revert to
   `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), and from that point onward **no MSI-X interrupts** ever
-  fire. (On Aero contract devices, this typically means the device is now interrupting via INTx.)
+  fire. (On Aero contract devices, this typically means interrupts are suppressed until vectors
+  are reprogrammed.)
 
 Rule of thumb:
 

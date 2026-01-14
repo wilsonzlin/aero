@@ -76,8 +76,11 @@ This module is **transport-only**. Drivers integrating it must provide:
 If a driver uses MSI-X routing, vector selectors may be disabled (i.e. MSI-X delivery stopped) by
 programming `VIRTIO_PCI_MSI_NO_VECTOR` into `msix_config` / `queue_msix_vector`.
 
-Note: on Aero Win7 contract devices, NO_VECTOR disables MSI-X delivery but the device will fall
-back to INTx + ISR rather than fully suppressing interrupts.
+Note: on Aero Win7 contract devices:
+
+- If the PCI MSI-X capability is **enabled**, `NO_VECTOR` / `0xFFFF` suppresses interrupts for that
+  source (**no MSI-X message and no INTx fallback**).
+- If MSI-X is **disabled**, the device delivers interrupts via legacy **INTx + ISR** semantics.
 
 ## Integration sketch
 
