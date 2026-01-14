@@ -774,6 +774,56 @@ For patchlist topologies:
 
 Patchlist draws are invalid unless both HS and DS are bound.
 
+#### 2.1.1b) IA primitive assembly (non-adjacency; mapping from `primitive_id` → vertex invocations)
+
+For GS emulation (and for any fixed-function logic that depends on IA primitive structure), the
+expansion pipeline needs a deterministic way to map an input `primitive_id` into the **vertex shader
+invocations** that form that primitive.
+
+Key point: the expansion path models the input stream in terms of **vertex invocations**
+(`input_vertex_invocations`), not unique vertices. There is no vertex cache: for indexed draws the
+VS may run multiple times for the same underlying vertex index (legal in D3D; results should be
+equivalent).
+
+Let:
+
+- `vinv` be a vertex invocation ID in `0..input_vertex_invocations`.
+- `instance_id` be `0..instance_count`.
+- `vs_out_index = instance_id * input_vertex_invocations + vinv`.
+
+Then, for non-adjacency topologies, the assembled primitive vertices (as `vinv` IDs) are:
+
+| Topology | Primitive `p` consumes `vinv` IDs |
+|---|---|
+| `POINTLIST` | `(p)` |
+| `LINELIST` | `(2p, 2p + 1)` |
+| `LINESTRIP` | `(p, p + 1)` |
+| `TRIANGLELIST` | `(3p, 3p + 1, 3p + 2)` |
+| `TRIANGLESTRIP` | parity-dependent (see below) |
+
+**Triangle strip winding (important)**
+
+D3D’s `TRIANGLESTRIP` assembly alternates vertex order to maintain consistent winding. For primitive
+`p`:
+
+- if `p` is even: `(p, p + 1, p + 2)`
+- if `p` is odd:  `(p + 1, p, p + 2)` (swap the first two)
+
+This ordering is what a GS that declares `triangle` input should observe when consuming a
+triangle strip.
+
+**Patchlists (tessellation input)**
+
+For patchlists, HS/DS consume **patches** rather than `primitive_id`-assembled points/lines/tris.
+The patch input mapping is:
+
+- `patch_vertex_base = patch_id * control_points`
+- control point `cp` in `0..control_points` corresponds to `vinv = patch_vertex_base + cp`
+- `vs_out_index = instance_id * input_vertex_invocations + vinv`
+
+Adjacency topologies use D3D-defined vertex ordering (`lineadj`/`triadj`) and are out of scope for
+initial bring-up (see limitations above).
+
 #### 2.1.2) Tessellation sizing (P2a: tri domain, integer partitioning; conservative)
 
 Tessellation output sizes depend on **tess factors** produced by the HS patch-constant function, so
@@ -1264,6 +1314,18 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - VS resources (still `@group(0)`; this is the existing stage-scoped VS bind group)
       - Draw parameters (first/vertex/index, base vertex, instance info)
     - Output: `vs_out[i] = ExpandedVertex` for each input control point.
+    - Dispatch mapping (recommended):
+      - Use a 2D grid:
+        - `global_invocation_id.x` = `vinv` in `0..input_vertex_invocations`
+        - `global_invocation_id.y` = `instance_id` in `0..instance_count`
+      - Write to:
+        - `vs_out_index = instance_id * input_vertex_invocations + vinv`
+      - System values:
+        - non-indexed draws: `SV_VertexID = first_vertex + vinv`
+        - indexed draws: `SV_VertexID` is resolved from the index buffer (apply `first_index` and
+          `base_vertex`; see `IndexPullingParams`), and `vinv` corresponds to the “index-in-draw”
+          (`0..index_count`).
+        - `SV_InstanceID = first_instance + instance_id`
 
 2. **Tessellation (optional): HS/DS emulation**
     - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
