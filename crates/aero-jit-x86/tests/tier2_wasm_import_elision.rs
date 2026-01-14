@@ -1499,3 +1499,73 @@ fn tier2_inline_tlb_skips_code_version_table_locals_for_load_only_traces() {
         "expected load-only trace to not load code-version table ptr/len locals"
     );
 }
+
+#[test]
+fn tier2_inline_tlb_value_address_u64_load_emits_cross_page_check() {
+    // For multi-byte accesses with non-constant addresses, we must emit a runtime cross-page check.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: aero_types::Gpr::Rax,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W64,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_i64_gt_u(&wasm),
+        1,
+        "expected non-constant u64 load to emit exactly one cross-page check"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_value_address_u64_store_emits_cross_page_check() {
+    // For multi-byte accesses with non-constant addresses, we must emit a runtime cross-page check.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: aero_types::Gpr::Rax,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(0)),
+                src: Operand::Const(0x1122_3344_5566_7788),
+                width: Width::W64,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_i64_gt_u(&wasm),
+        1,
+        "expected non-constant u64 store to emit exactly one cross-page check"
+    );
+}
