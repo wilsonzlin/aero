@@ -2,6 +2,7 @@ mod common;
 
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Inst, Sm4Program};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
@@ -65,6 +66,46 @@ fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
         out.extend_from_slice(&t.to_le_bytes());
     }
     out
+}
+
+fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
+    let dxbc = DxbcFile::parse(dxbc_bytes).expect("GS DXBC should parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("GS DXBC should contain SM4 program");
+    assert_eq!(
+        program.stage,
+        Sm4ShaderStage::Geometry,
+        "GS DXBC should decode as a geometry shader"
+    );
+
+    // Ensure the token-stream declared length matches the actual chunk payload length. This catches
+    // drift where the hand-authored DXBC is edited but the `len` token isn't updated.
+    let shdr = dxbc
+        .get_chunk(FourCC(*b"SHDR"))
+        .expect("GS DXBC should contain SHDR chunk");
+    assert_eq!(
+        shdr.data.len() / 4,
+        program.tokens.len(),
+        "GS SHDR chunk payload length (dwords) must match declared token length"
+    );
+
+    let module = aero_d3d11::sm4::decode_program(&program).expect("GS SM4 module should decode");
+    assert_eq!(module.stage, Sm4ShaderStage::Geometry);
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, Sm4Inst::Emit { .. })),
+        "GS DXBC should contain an Emit instruction (module.instructions={:?})",
+        module.instructions
+    );
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, Sm4Inst::Cut { .. })),
+        "GS DXBC should contain a Cut instruction (module.instructions={:?})",
+        module.instructions
+    );
 }
 
 fn build_vs_pos_only_dxbc() -> Vec<u8> {
@@ -170,6 +211,8 @@ struct VertexPos3Color4 {
 
 #[test]
 fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
+    assert_gs_dxbc_decodes_as_geometry_and_has_emit(DXBC_GS_POINT_TO_TRIANGLE);
+
     pollster::block_on(async {
         let test_name = concat!(
             module_path!(),
