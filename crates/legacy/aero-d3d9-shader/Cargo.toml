@@ -11,4 +11,7 @@ description = "Legacy SM2/SM3 D3D9 token-stream parser + disassembler (not used 
 aero-dxbc = { path = "../../aero-dxbc" }
 
 [dev-dependencies]
+# Dev-dependencies must use the same source (path/git/registry) as the
+# corresponding normal dependency; Cargo rejects mixed sources for a single
+# package name when resolving the workspace.
 aero-dxbc = { path = "../../aero-dxbc", features = ["test-utils"] }
