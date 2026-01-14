@@ -218,6 +218,23 @@ than CHS reads. The minimum required calls are:
 Implementation reference: `crates/firmware/src/bios/interrupts.rs::handle_int13` (match arms
 `0x41`, `0x42`, `0x48`).
 
+### Supported INT 13h functions for CD-ROM drives (Aero BIOS)
+
+When `DL` is a CD drive number (`0xE0..=0xEF`), Aero’s BIOS implements a minimal, read-oriented INT
+13h surface:
+
+| AH | Function | Notes |
+|---:|---|---|
+| `00h` | Reset disk system | Supported. |
+| `01h` | Get status of last operation | Supported. |
+| `15h` | Get disk type | Supported; reports presence and returns sector count in **2048-byte sectors**. |
+| `41h` | Extensions check (EDD) | Supported; reports EDD 3.0 and `42h`+`48h` support. |
+| `42h` | Extended read (DAP) | Supported (read-only). For CD drives, `LBA` + `count` are in **2048-byte sectors**. |
+| `43h` | Extended write (DAP) | Not supported; returns write-protected (`CF=1`, `AH=03h`). |
+| `48h` | Extended get drive parameters | Supported; reports `bytes_per_sector = 2048` and total sectors in 2048-byte units. |
+| `4Bh` | El Torito disk emulation services | Partially supported (only when booted via El Torito). |
+| other | Legacy CHS, etc. | Not supported; returns `CF=1`, `AH=01h`. |
+
 ### 6.1 AH=41h — Extensions check
 
 Inputs:
@@ -267,6 +284,8 @@ Same as above, plus:
 Semantics:
 
 * Reads `count` sectors starting at `lba` into the destination buffer.
+  * For **CD drives** (`DL=0xE0..`): `lba` and `count` are in **2048-byte sectors** (ISO logical
+    blocks), and the transfer size is `count * 2048` bytes.
 * Error handling must set `CF=1` and return an INT 13h status code in `AH`.
 
 ### 6.3 AH=48h — Extended get drive parameters
@@ -282,6 +301,40 @@ Minimum behavior:
 * Require `buffer_size >= 0x1A`.
 * Fill the EDD parameter table fields needed by Windows boot code (in particular, **bytes per
   sector** and **total sector count**).
+  * For **CD drives**, this means reporting `bytes_per_sector = 2048` and `total_sectors` in
+    **2048-byte units**.
+
+### 6.4 AH=4Bh — El Torito disk emulation services (optional)
+
+Some CD boot images query El Torito metadata via `INT 13h` **AH=4Bh**. Aero implements a minimal
+subset sufficient for those boot images *when booting via El Torito*.
+
+Notes:
+
+* This interface is only available when the BIOS actually booted from a CD (i.e. `boot_drive` is a
+  CD drive number and POST successfully parsed an El Torito boot catalog).
+* Calls must use `DL=<boot_drive>` (typically `0xE0`).
+
+Supported subfunctions (in `AL`):
+
+* `AL=00h` — terminate disk emulation
+  * For **no-emulation** boot this is a no-op; Aero returns success.
+* `AL=01h` — get disk emulation status
+  * Writes a 0x13-byte packet at `ES:DI` containing the boot catalog/image metadata (see below).
+
+#### `AL=01h` status packet layout (0x13 bytes)
+
+| Offset | Size | Field | Notes |
+|---:|---:|---|---|
+| `0x00` | 1 | packet size | Always `0x13` |
+| `0x01` | 1 | media type | `0x00` = no-emulation |
+| `0x02` | 1 | boot drive | `DL` passed to the boot image (e.g. `0xE0`) |
+| `0x03` | 1 | controller index | Usually `0` |
+| `0x04` | 4 | boot image LBA | ISO LBA (**2048-byte units**) |
+| `0x08` | 4 | boot catalog LBA | ISO LBA (**2048-byte units**) |
+| `0x0C` | 2 | load segment | Real-mode segment (or `0`) |
+| `0x0E` | 2 | sector count | Number of **512-byte** sectors loaded for the initial image |
+| `0x10` | 3 | reserved | Zero |
 
 ---
 
