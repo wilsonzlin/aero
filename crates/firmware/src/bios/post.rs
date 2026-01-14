@@ -239,7 +239,7 @@ impl Bios {
             media_type: ElToritoBootMediaType::NoEmulation,
             boot_drive: self.config.boot_drive,
             controller_index: 0,
-            boot_catalog_lba: Some(entry.boot_catalog_lba),
+            boot_catalog_lba: Some(parsed.boot_catalog_lba),
             boot_image_lba: Some(entry.load_rba),
             load_segment: Some(entry.load_segment),
             sector_count: Some(entry.sector_count),
