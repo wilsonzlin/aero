@@ -116,3 +116,115 @@ fn inject_input_batch_mouse_button_release_stays_on_usb_when_virtio_becomes_read
         "expected button release to clear USB state even if virtio becomes ready mid-hold"
     );
 }
+
+#[test]
+fn inject_input_batch_mouse_button_release_after_snapshot_restore_clears_usb_even_if_virtio_becomes_ready(
+) {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Disable i8042 so `inject_input_batch` prefers USB mouse injection.
+        enable_i8042: false,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        enable_debugcon: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+    assert!(
+        !src.virtio_input_mouse_driver_ok(),
+        "virtio mouse should start without DRIVER_OK"
+    );
+
+    let mut mouse = src
+        .usb_hid_mouse_handle()
+        .expect("synthetic USB mouse should be present");
+
+    // Configure the mouse so it can emit interrupt-IN reports.
+    let set_cfg = SetupPacket {
+        bm_request_type: 0x00,
+        b_request: 0x09, // SET_CONFIGURATION
+        w_value: 0x0001,
+        w_index: 0,
+        w_length: 0,
+    };
+    assert_eq!(
+        mouse.handle_control_request(set_cfg, None),
+        ControlResponse::Ack
+    );
+
+    // Enable periodic reports so we can observe the mouse's pressed state after restore even if the
+    // release event is routed to a different backend.
+    let set_idle = SetupPacket {
+        bm_request_type: 0x21, // HostToDevice | Class | Interface
+        b_request: 0x0a,       // SET_IDLE
+        w_value: 0x0100,       // idle_rate=1 (4ms), report_id=0
+        w_index: 0,
+        w_length: 0,
+    };
+    assert_eq!(
+        mouse.handle_control_request(set_idle, None),
+        ControlResponse::Ack
+    );
+
+    // Press left button (DOM bit0) while virtio-input is not ready; this should route to the USB
+    // mouse and leave it in a pressed state.
+    let words_press: [u32; 6] = [1, 0, 3, 0, 0x01, 0];
+    src.inject_input_batch(&words_press);
+    assert_eq!(
+        mouse.handle_interrupt_in(0x81),
+        UsbInResult::Data(vec![0x01, 0, 0, 0, 0])
+    );
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    let mut mouse = restored
+        .usb_hid_mouse_handle()
+        .expect("synthetic USB mouse should be present after restore");
+    if !mouse.configured() {
+        assert_eq!(
+            mouse.handle_control_request(set_cfg, None),
+            ControlResponse::Ack
+        );
+    }
+    assert_eq!(
+        mouse.handle_control_request(set_idle, None),
+        ControlResponse::Ack
+    );
+    assert_eq!(mouse.handle_interrupt_in(0x81), UsbInResult::Nak);
+
+    // Flip virtio mouse to DRIVER_OK before releasing (simulating a backend switch). Snapshot
+    // restore drops host-side button tracking, so the release would otherwise be routed to the new
+    // backend and leave the USB model stuck.
+    let bdf = profile::VIRTIO_INPUT_MOUSE.bdf;
+    let bar0 = bar0_base(&mut restored, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+    let mut cmd = cfg_read(&mut restored, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut restored, bdf, 0x04, 2, u32::from(cmd));
+    restored.write_physical_u8(bar0 + 0x14, VIRTIO_STATUS_DRIVER_OK);
+    assert!(restored.virtio_input_mouse_driver_ok(), "expected DRIVER_OK");
+
+    // Release all buttons after restore.
+    let words_release: [u32; 6] = [1, 0, 3, 0, 0x00, 0];
+    restored.inject_input_batch(&words_release);
+
+    // Advance time so the idle report fires (>= 4ms).
+    for _ in 0..8 {
+        mouse.tick_1ms();
+    }
+    assert_eq!(
+        mouse.handle_interrupt_in(0x81),
+        UsbInResult::Data(vec![0x00, 0, 0, 0, 0]),
+        "expected button release after snapshot restore to clear USB state even if virtio becomes ready"
+    );
+}

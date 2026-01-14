@@ -9534,6 +9534,28 @@ impl Machine {
                             .saturating_sub(1);
                     }
 
+                    if !pressed && !prev_pressed {
+                        // Unknown key-up: best-effort clear both backends. This can happen after a
+                        // snapshot restore (host-side pressed-key tracking is not part of the
+                        // snapshot format), where the guest still has a key held down but the host
+                        // only sends the release event after restore.
+                        if usb_keyboard_present {
+                            self.inject_usb_hid_keyboard_usage(usage, false);
+                        }
+                        if virtio_keyboard_driver_ok {
+                            if let Some(code) = hid_usage_to_linux_key(usage) {
+                                if let Some(kbd) = &self.virtio_input_keyboard {
+                                    let mut dev = kbd.borrow_mut();
+                                    if let Some(input) = dev.device_mut::<VirtioInput>() {
+                                        input.inject_key(code, false);
+                                        virtio_input_dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
                     if use_virtio_keyboard_hid {
                         let Some(code) = hid_usage_to_linux_key(usage) else {
                             continue;
@@ -9687,7 +9709,40 @@ impl Machine {
                     // DOM `MouseEvent.buttons` typically only uses bits 0..4, but the
                     // InputEventQueue wire format supports up to 8 buttons for completeness.
                     let next = (a & 0xff) as u8;
+                    let prev_batch_mask = self.input_batch_mouse_buttons_mask;
                     self.input_batch_mouse_buttons_mask = next;
+
+                    if prev_batch_mask == 0 && next == 0 {
+                        // Unknown "all released" snapshot: best-effort clear all mouse backends.
+                        // Like keyboards, host-side held-state tracking is not part of the snapshot
+                        // format, so after restore we may only observe the release event.
+                        if self.i8042.is_some() {
+                            self.inject_ps2_mouse_buttons(0);
+                        }
+                        if self.usb_hid_mouse.is_some() {
+                            self.inject_usb_hid_mouse_buttons(0);
+                        }
+                        if virtio_mouse_driver_ok {
+                            if let Some(mouse) = &self.virtio_input_mouse {
+                                let mut dev = mouse.borrow_mut();
+                                if let Some(input) = dev.device_mut::<VirtioInput>() {
+                                    use aero_virtio::devices::input::*;
+                                    input.inject_button(BTN_LEFT, false);
+                                    input.inject_button(BTN_RIGHT, false);
+                                    input.inject_button(BTN_MIDDLE, false);
+                                    input.inject_button(BTN_SIDE, false);
+                                    input.inject_button(BTN_EXTRA, false);
+                                    input.inject_button(BTN_FORWARD, false);
+                                    input.inject_button(BTN_BACK, false);
+                                    input.inject_button(BTN_TASK, false);
+                                    virtio_input_dirty = true;
+                                }
+                            }
+                        }
+                        // Clear any invalid marker used by other mouse injection helpers.
+                        self.ps2_mouse_buttons = 0;
+                        continue;
+                    }
                     if use_ps2_mouse {
                         // Payload:
                         //   a = buttons bitmask (low 5 bits match DOM `MouseEvent.buttons`)
