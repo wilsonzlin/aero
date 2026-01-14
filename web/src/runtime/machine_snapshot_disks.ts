@@ -126,6 +126,13 @@ export async function reattachMachineSnapshotDisks(opts: {
         ? 2
         : null;
 
+  const setDiskCowOpen =
+    (machine as unknown as { set_disk_cow_opfs_open?: unknown }).set_disk_cow_opfs_open ??
+    (machine as unknown as { setDiskCowOpfsOpen?: unknown }).setDiskCowOpfsOpen;
+  const setDiskCowOpenAndSetOverlayRef =
+    (machine as unknown as { set_disk_cow_opfs_open_and_set_overlay_ref?: unknown }).set_disk_cow_opfs_open_and_set_overlay_ref ??
+    (machine as unknown as { setDiskCowOpfsOpenAndSetOverlayRef?: unknown }).setDiskCowOpfsOpenAndSetOverlayRef;
+
   const setPrimary =
     (machine as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow ??
     // Back-compat shim: some builds may expose a different spelling; keep this list small and
@@ -133,9 +140,23 @@ export async function reattachMachineSnapshotDisks(opts: {
     (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
   const setPrimaryNeedsBlockSize = typeof setPrimary === "function" && setPrimary.length >= 3;
 
+  const setPrimaryExisting =
+    (machine as unknown as { set_primary_hdd_opfs_existing?: unknown }).set_primary_hdd_opfs_existing ??
+    (machine as unknown as { setPrimaryHddOpfsExisting?: unknown }).setPrimaryHddOpfsExisting;
+
   const setDiskExisting =
     (machine as unknown as { set_disk_opfs_existing?: unknown }).set_disk_opfs_existing ??
     (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
+  const setDiskExistingAndSetOverlayRef =
+    (machine as unknown as { set_disk_opfs_existing_and_set_overlay_ref?: unknown }).set_disk_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
+
+  const setDiskAerosparOpen =
+    (machine as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open ??
+    (machine as unknown as { setDiskAerosparOpfsOpen?: unknown }).setDiskAerosparOpfsOpen;
+  const setDiskAerosparOpenAndSetOverlayRef =
+    (machine as unknown as { set_disk_aerospar_opfs_open_and_set_overlay_ref?: unknown }).set_disk_aerospar_opfs_open_and_set_overlay_ref ??
+    (machine as unknown as { setDiskAerosparOpfsOpenAndSetOverlayRef?: unknown }).setDiskAerosparOpfsOpenAndSetOverlayRef;
 
   const attachIso =
     // Prefer restore-aware helpers when available; they preserve guest-visible ATAPI media state.
@@ -183,19 +204,52 @@ export async function reattachMachineSnapshotDisks(opts: {
     }
 
     if (diskId === (diskIdPrimary >>> 0)) {
-      if (typeof setPrimary !== "function") {
-        throw new Error(
-          "Snapshot restore requires Machine.set_primary_hdd_opfs_cow(base_image, overlay_image) but it is unavailable in this WASM build.",
-        );
-      }
       if (!overlay) {
-        if (typeof setDiskExisting !== "function") {
+        const isAerosparBase = base.toLowerCase().endsWith(".aerospar");
+        if (isAerosparBase) {
+          const openAerospar = typeof setDiskAerosparOpenAndSetOverlayRef === "function" ? setDiskAerosparOpenAndSetOverlayRef : setDiskAerosparOpen;
+          if (typeof openAerospar !== "function") {
+            throw new Error(
+              `${prefix} Snapshot restore reported an aerosparse base disk for disk_id=${diskId}, but this WASM build cannot open it (missing Machine.set_disk_aerospar_opfs_open* exports).`,
+            );
+          }
+          await callMaybeAsync(openAerospar as (...args: unknown[]) => unknown, machine, [base]);
+          machine.set_ahci_port0_disk_overlay_ref?.(base, "");
+          continue;
+        }
+
+        const attachExisting =
+          typeof setPrimaryExisting === "function"
+            ? setPrimaryExisting
+            : typeof setDiskExistingAndSetOverlayRef === "function"
+              ? setDiskExistingAndSetOverlayRef
+              : setDiskExisting;
+        if (typeof attachExisting !== "function") {
           throw new Error(
-            "Snapshot restore requires Machine.set_disk_opfs_existing(path) to reattach a base-only primary disk, but it is unavailable in this WASM build.",
+            "Snapshot restore requires Machine.set_primary_hdd_opfs_existing(path) or Machine.set_disk_opfs_existing(path) to reattach a base-only primary disk, but none are available in this WASM build.",
           );
         }
-        await callMaybeAsync(setDiskExisting as (...args: unknown[]) => unknown, machine, [base]);
+        await callMaybeAsync(attachExisting as (...args: unknown[]) => unknown, machine, [base]);
+        machine.set_ahci_port0_disk_overlay_ref?.(base, "");
         continue;
+      }
+
+      const attachCow =
+        typeof setDiskCowOpenAndSetOverlayRef === "function"
+          ? setDiskCowOpenAndSetOverlayRef
+          : typeof setDiskCowOpen === "function"
+            ? setDiskCowOpen
+            : null;
+      if (attachCow != null) {
+        await callMaybeAsync(attachCow as (...args: unknown[]) => unknown, machine, [base, overlay]);
+        machine.set_ahci_port0_disk_overlay_ref?.(base, overlay);
+        continue;
+      }
+
+      if (typeof setPrimary !== "function") {
+        throw new Error(
+          "Snapshot restore requires Machine.set_disk_cow_opfs_open(base_image, overlay_image) or Machine.set_primary_hdd_opfs_cow(base_image, overlay_image) but none are available in this WASM build.",
+        );
       }
       const args: unknown[] = [base, overlay];
       if (setPrimaryNeedsBlockSize) {

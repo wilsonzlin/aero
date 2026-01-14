@@ -137,6 +137,75 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "primary", "iso"]);
   });
 
+  it("reattaches aerosparse base disks via Machine.set_disk_aerospar_opfs_open when available", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.aerospar", overlay_image: "" }];
+    });
+    const set_disk_aerospar_opfs_open = vi.fn(async (_path: string) => {
+      events.push("aerospar");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_disk_aerospar_opfs_open,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_disk_aerospar_opfs_open).toHaveBeenCalledWith("aero/disks/win7.aerospar");
+    expect(events).toEqual(["restore", "take", "aerospar"]);
+  });
+
+  it("prefers Machine.set_disk_cow_opfs_open when available (supports non-raw base images)", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.aerospar", overlay_image: "aero/disks/win7.overlay" }];
+    });
+    const set_disk_cow_opfs_open = vi.fn(async (_base: string, _overlay: string) => {
+      events.push("cow");
+    });
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string) => {
+      events.push("primary");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_disk_cow_opfs_open,
+      set_primary_hdd_opfs_cow,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_disk_cow_opfs_open).toHaveBeenCalledWith("aero/disks/win7.aerospar", "aero/disks/win7.overlay");
+    expect(set_primary_hdd_opfs_cow).not.toHaveBeenCalled();
+    expect(events).toEqual(["restore", "take", "cow"]);
+  });
+
   it("reattaches disk overlay refs after Machine.restore_snapshot(bytes)", async () => {
     const events: string[] = [];
     const bytes = new Uint8Array([0x01, 0x02]);
