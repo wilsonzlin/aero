@@ -32,7 +32,13 @@ class Win7VirtioHarnessWorkflowNetInputsTests(unittest.TestCase):
         self.assertIn('require_net_csum_offload="${{ inputs.require_net_csum_offload }}"', self.text)
         self.assertIn("args+=(--require-net-csum-offload)", self.text)
 
+    def test_workflow_plumbs_require_net_udp_csum_offload(self) -> None:
+        self.assertIn("require_net_udp_csum_offload:", self.text)
+        self.assertIn(
+            'require_net_udp_csum_offload="${{ inputs.require_net_udp_csum_offload }}"', self.text
+        )
+        self.assertIn("args+=(--require-net-udp-csum-offload)", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
-

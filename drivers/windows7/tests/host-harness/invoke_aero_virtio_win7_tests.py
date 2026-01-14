@@ -3430,6 +3430,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-net-udp-csum-offload",
+        action="store_true",
+        help=(
+            "Require at least one UDP checksum-offloaded TX packet from the virtio-net driver. "
+            "This checks the guest marker: "
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_udp=... "
+            "(fails if the marker is missing/FAIL, missing tx_udp (and tx_udp4/tx_udp6) fields, or tx_udp=0)."
+        ),
+    )
+    parser.add_argument(
         "--with-virtio-snd",
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
@@ -6419,7 +6429,7 @@ def main() -> int:
                                 result_code = 1
                                 break
 
-                        if args.require_net_csum_offload:
+                        if args.require_net_csum_offload or getattr(args, "require_net_udp_csum_offload", False):
                             csum_tail = (
                                 virtio_net_offload_csum_marker_line.encode("utf-8")
                                 if virtio_net_offload_csum_marker_line is not None
@@ -6427,46 +6437,87 @@ def main() -> int:
                             )
                             stats = _extract_virtio_net_offload_csum_stats(csum_tail)
                             if stats is None:
-                                print(
-                                    "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
-                                    "--require-net-csum-offload was enabled",
-                                    file=sys.stderr,
-                                )
+                                if args.require_net_csum_offload:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
+                                        "--require-net-csum-offload was enabled",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
+                                        "--require-net-udp-csum-offload was enabled",
+                                        file=sys.stderr,
+                                    )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
 
                             if stats.get("status") != "PASS":
-                                print(
-                                    "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS "
-                                    f"(status={stats.get('status')})",
-                                    file=sys.stderr,
-                                )
+                                if args.require_net_csum_offload:
+                                    print(
+                                        "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS "
+                                        f"(status={stats.get('status')})",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS "
+                                        f"(status={stats.get('status')})",
+                                        file=sys.stderr,
+                                    )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
 
-                            tx_csum = stats.get("tx_csum")
-                            if tx_csum is None:
-                                print(
-                                    "FAIL: VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_csum field",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+                            if args.require_net_csum_offload:
+                                tx_csum = stats.get("tx_csum")
+                                if tx_csum is None:
+                                    print(
+                                        "FAIL: VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_csum field",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
 
-                            if int(tx_csum) <= 0:
-                                rx_csum = stats.get("rx_csum")
-                                fallback = stats.get("fallback")
-                                print(
-                                    "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met "
-                                    f"(tx_csum={tx_csum} rx_csum={rx_csum} fallback={fallback})",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+                                if int(tx_csum) <= 0:
+                                    rx_csum = stats.get("rx_csum")
+                                    fallback = stats.get("fallback")
+                                    print(
+                                        "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met "
+                                        f"(tx_csum={tx_csum} rx_csum={rx_csum} fallback={fallback})",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if getattr(args, "require_net_udp_csum_offload", False):
+                                tx_udp = stats.get("tx_udp")
+                                tx_udp4 = stats.get("tx_udp4")
+                                tx_udp6 = stats.get("tx_udp6")
+                                if tx_udp is None:
+                                    if tx_udp4 is None and tx_udp6 is None:
+                                        print(
+                                            "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_udp/tx_udp4/tx_udp6 fields",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+                                    tx_udp = int(tx_udp4 or 0) + int(tx_udp6 or 0)
+
+                                if int(tx_udp) <= 0:
+                                    fallback = stats.get("fallback")
+                                    print(
+                                        "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO: UDP checksum offload requirement not met "
+                                        f"(tx_udp={tx_udp} tx_udp4={tx_udp4} tx_udp6={tx_udp6} fallback={fallback})",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -8084,7 +8135,7 @@ def main() -> int:
                                     result_code = 1
                                     break
 
-                            if args.require_net_csum_offload:
+                            if args.require_net_csum_offload or getattr(args, "require_net_udp_csum_offload", False):
                                 csum_tail = (
                                     virtio_net_offload_csum_marker_line.encode("utf-8")
                                     if virtio_net_offload_csum_marker_line is not None
@@ -8092,46 +8143,87 @@ def main() -> int:
                                 )
                                 stats = _extract_virtio_net_offload_csum_stats(csum_tail)
                                 if stats is None:
-                                    print(
-                                        "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
-                                        "--require-net-csum-offload was enabled",
-                                        file=sys.stderr,
-                                    )
+                                    if args.require_net_csum_offload:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
+                                            "--require-net-csum-offload was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
+                                            "--require-net-udp-csum-offload was enabled",
+                                            file=sys.stderr,
+                                        )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
 
                                 if stats.get("status") != "PASS":
-                                    print(
-                                        "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS "
-                                        f"(status={stats.get('status')})",
-                                        file=sys.stderr,
-                                    )
+                                    if args.require_net_csum_offload:
+                                        print(
+                                            "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS "
+                                            f"(status={stats.get('status')})",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS "
+                                            f"(status={stats.get('status')})",
+                                            file=sys.stderr,
+                                        )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
 
-                                tx_csum = stats.get("tx_csum")
-                                if tx_csum is None:
-                                    print(
-                                        "FAIL: VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_csum field",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
+                                if args.require_net_csum_offload:
+                                    tx_csum = stats.get("tx_csum")
+                                    if tx_csum is None:
+                                        print(
+                                            "FAIL: VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_csum field",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
 
-                                if int(tx_csum) <= 0:
-                                    rx_csum = stats.get("rx_csum")
-                                    fallback = stats.get("fallback")
-                                    print(
-                                        "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met "
-                                        f"(tx_csum={tx_csum} rx_csum={rx_csum} fallback={fallback})",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
+                                    if int(tx_csum) <= 0:
+                                        rx_csum = stats.get("rx_csum")
+                                        fallback = stats.get("fallback")
+                                        print(
+                                            "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met "
+                                            f"(tx_csum={tx_csum} rx_csum={rx_csum} fallback={fallback})",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+
+                                if getattr(args, "require_net_udp_csum_offload", False):
+                                    tx_udp = stats.get("tx_udp")
+                                    tx_udp4 = stats.get("tx_udp4")
+                                    tx_udp6 = stats.get("tx_udp6")
+                                    if tx_udp is None:
+                                        if tx_udp4 is None and tx_udp6 is None:
+                                            print(
+                                                "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_udp/tx_udp4/tx_udp6 fields",
+                                                file=sys.stderr,
+                                            )
+                                            _print_tail(serial_log)
+                                            result_code = 1
+                                            break
+                                        tx_udp = int(tx_udp4 or 0) + int(tx_udp6 or 0)
+
+                                    if int(tx_udp) <= 0:
+                                        fallback = stats.get("fallback")
+                                        print(
+                                            "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO: UDP checksum offload requirement not met "
+                                            f"(tx_udp={tx_udp} tx_udp4={tx_udp4} tx_udp6={tx_udp6} fallback={fallback})",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break
@@ -9474,6 +9566,18 @@ def _extract_virtio_net_offload_csum_stats(tail: bytes) -> Optional[dict[str, ob
         "tx_csum": parse_u64("tx_csum"),
         "rx_csum": parse_u64("rx_csum"),
         "fallback": parse_u64("fallback"),
+        "tx_tcp": parse_u64("tx_tcp"),
+        "tx_udp": parse_u64("tx_udp"),
+        "rx_tcp": parse_u64("rx_tcp"),
+        "rx_udp": parse_u64("rx_udp"),
+        "tx_tcp4": parse_u64("tx_tcp4"),
+        "tx_tcp6": parse_u64("tx_tcp6"),
+        "tx_udp4": parse_u64("tx_udp4"),
+        "tx_udp6": parse_u64("tx_udp6"),
+        "rx_tcp4": parse_u64("rx_tcp4"),
+        "rx_tcp6": parse_u64("rx_tcp6"),
+        "rx_udp4": parse_u64("rx_udp4"),
+        "rx_udp6": parse_u64("rx_udp6"),
         "fields": fields,
         "line": marker_line,
     }

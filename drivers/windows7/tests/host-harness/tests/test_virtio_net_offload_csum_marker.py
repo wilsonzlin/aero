@@ -36,6 +36,35 @@ class VirtioNetOffloadCsumMarkerTests(unittest.TestCase):
         self.assertEqual(stats["tx_csum"], 123)
         self.assertEqual(stats["rx_csum"], 456)
         self.assertEqual(stats["fallback"], 7)
+        # Optional breakdown fields are absent in this minimal marker.
+        self.assertIsNone(stats["tx_udp"])
+        self.assertIsNone(stats["tx_udp4"])
+        self.assertIsNone(stats["tx_udp6"])
+
+    def test_extracts_udp_breakdown_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=10|rx_csum=20|fallback=3|"
+            b"tx_tcp=4|tx_udp=6|rx_tcp=7|rx_udp=13|tx_udp4=2|tx_udp6=4|rx_udp4=9|rx_udp6=4\n"
+        )
+        stats = self.harness._extract_virtio_net_offload_csum_stats(tail)
+        assert stats is not None
+        self.assertEqual(stats["status"], "PASS")
+        self.assertEqual(stats["tx_udp"], 6)
+        self.assertEqual(stats["tx_udp4"], 2)
+        self.assertEqual(stats["tx_udp6"], 4)
+        self.assertEqual(stats["rx_udp4"], 9)
+        self.assertEqual(stats["rx_udp6"], 4)
+
+    def test_extracts_udp4_udp6_when_tx_udp_missing(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=10|rx_csum=20|fallback=3|"
+            b"tx_udp4=2|tx_udp6=4\n"
+        )
+        stats = self.harness._extract_virtio_net_offload_csum_stats(tail)
+        assert stats is not None
+        self.assertIsNone(stats["tx_udp"])
+        self.assertEqual(stats["tx_udp4"], 2)
+        self.assertEqual(stats["tx_udp6"], 4)
 
     def test_uses_last_marker(self) -> None:
         tail = (
@@ -56,4 +85,3 @@ class VirtioNetOffloadCsumMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

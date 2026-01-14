@@ -165,6 +165,8 @@ When the harness is run with:
   is treated as a hard failure). This path also triggers a runtime QMP resize.
 - `-RequireNetCsumOffload` / `--require-net-csum-offload`, the harness additionally requires `virtio-net-offload-csum` to report
   `PASS` and `tx_csum > 0` (at least one checksum-offloaded TX packet was observed).
+- `--require-net-udp-csum-offload` (Python harness), the harness additionally requires `virtio-net-offload-csum` to report
+  `PASS` and `tx_udp > 0` (at least one UDP checksum-offloaded TX packet was observed).
 
 Note:
 - The guest selftest also emits standalone IRQ diagnostic lines for `virtio-net` / `virtio-snd` / `virtio-input`:
