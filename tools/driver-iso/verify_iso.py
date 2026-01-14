@@ -212,7 +212,9 @@ def _list_iso_files(iso_path: Path) -> set[str]:
     try:
         import pycdlib  # type: ignore  # noqa: F401
 
-        return _list_iso_files_with_pycdlib(iso_path)
+        files = _list_iso_files_with_pycdlib(iso_path)
+        print("Using ISO listing backend: pycdlib")
+        return files
     except ModuleNotFoundError:
         pass
     except SystemExit as e:
@@ -222,14 +224,18 @@ def _list_iso_files(iso_path: Path) -> set[str]:
     xorriso = shutil.which("xorriso")
     if xorriso:
         try:
-            return _list_iso_files_with_xorriso(iso_path)
+            files = _list_iso_files_with_xorriso(iso_path)
+            print("Using ISO listing backend: xorriso")
+            return files
         except SystemExit as e:
             errors.append(str(e))
 
     # Existing behavior: Mount-DiskImage on Windows hosts.
     if os.name == "nt":
         try:
-            return _list_iso_files_with_powershell_mount(iso_path)
+            files = _list_iso_files_with_powershell_mount(iso_path)
+            print("Using ISO listing backend: powershell (Mount-DiskImage)")
+            return files
         except SystemExit as e:
             errors.append(str(e))
 
@@ -237,7 +243,9 @@ def _list_iso_files(iso_path: Path) -> set[str]:
     # pycdlib/xorriso are not installed).
     if shutil.which("cargo"):
         try:
-            return _list_iso_files_with_aero_iso_ls(iso_path)
+            files = _list_iso_files_with_aero_iso_ls(iso_path)
+            print("Using ISO listing backend: rust (aero_iso_ls)")
+            return files
         except SystemExit as e:
             errors.append(str(e))
 
