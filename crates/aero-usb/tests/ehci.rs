@@ -299,6 +299,41 @@ fn ehci_hcreset_resets_operational_regs_but_preserves_port_connection() {
 }
 
 #[test]
+fn ehci_usbsts_schedule_status_bits_track_usbcmd() {
+    let mut c = EhciController::new();
+
+    // Initial state: halted, schedules inactive.
+    let st0 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st0 & (regs::USBSTS_PSS | regs::USBSTS_ASS), 0);
+
+    // Enabling schedules while halted should not raise the status bits.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_PSE | regs::USBCMD_ASE);
+    let st1 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st1 & (regs::USBSTS_PSS | regs::USBSTS_ASS), 0);
+
+    // When running, schedule enable bits should be reflected in USBSTS.
+    c.mmio_write(
+        regs::REG_USBCMD,
+        4,
+        regs::USBCMD_RS | regs::USBCMD_PSE | regs::USBCMD_ASE,
+    );
+    let st2 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st2 & regs::USBSTS_PSS, 0);
+    assert_ne!(st2 & regs::USBSTS_ASS, 0);
+
+    // Clearing one enable bit should clear the corresponding status bit.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+    let st3 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st3 & regs::USBSTS_PSS, 0);
+    assert_eq!(st3 & regs::USBSTS_ASS, 0);
+
+    // Stopping the controller clears both status bits.
+    c.mmio_write(regs::REG_USBCMD, 4, 0);
+    let st4 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st4 & (regs::USBSTS_PSS | regs::USBSTS_ASS), 0);
+}
+
+#[test]
 fn ehci_async_advance_doorbell_sets_iaa_and_clears_iaad() {
     let mut c = EhciController::new();
     let mut mem = TestMemory::new(0x1000);

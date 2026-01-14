@@ -58,10 +58,14 @@ pub const USBSTS_FLR: u32 = 1 << 3;
 pub const USBSTS_HSE: u32 = 1 << 4;
 pub const USBSTS_IAA: u32 = 1 << 5;
 pub const USBSTS_HCHALTED: u32 = 1 << 12;
+/// Periodic Schedule Status (PSS).
+pub const USBSTS_PSS: u32 = 1 << 14;
+/// Asynchronous Schedule Status (ASS).
+pub const USBSTS_ASS: u32 = 1 << 15;
 
 pub const USBSTS_W1C_MASK: u32 =
     USBSTS_USBINT | USBSTS_USBERRINT | USBSTS_PCD | USBSTS_FLR | USBSTS_HSE | USBSTS_IAA;
-pub const USBSTS_READ_MASK: u32 = USBSTS_W1C_MASK | USBSTS_HCHALTED;
+pub const USBSTS_READ_MASK: u32 = USBSTS_W1C_MASK | USBSTS_HCHALTED | USBSTS_PSS | USBSTS_ASS;
 
 /// Subset of USBSTS bits that can raise interrupts when enabled in USBINTR.
 pub const USBSTS_IRQ_MASK: u32 = USBSTS_W1C_MASK;

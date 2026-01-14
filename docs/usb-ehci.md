@@ -213,9 +213,8 @@ The EHCI operational register block includes:
 - Status bits that are defined as **W1C** are W1C in Aero. Writes that attempt to set read-only
   bits are masked out.
 - `USBSTS.HCHALTED` is derived from `USBCMD.RunStop` and reset state; it is not directly writable.
-- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are part of the EHCI spec, but are not
-  currently modeled in Aero’s bring-up implementation. If/when we model them, these bits should
-  reflect whether the periodic/asynchronous schedules are active.
+- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are modeled as read-only bits derived
+  from `USBCMD.ASE` / `USBCMD.PSE` (and `USBCMD.RunStop`).
 - `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
   not implicitly detach devices from the root hub; device topology is modeled separately.
 
