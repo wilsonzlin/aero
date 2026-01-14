@@ -229,7 +229,7 @@ Supported operand surface (initial):
 - swizzles, write masks, destination saturate (`_sat`), and basic operand modifiers (`abs` / `-` / `-abs`)
 - system values:
   - `SV_PrimitiveID`
-  - `SV_GSInstanceID` (honors `dcl_gsinstancecount` / `[instance(n)]`; values 0..n-1, default 0)
+  - `SV_GSInstanceID` (GS instancing is not supported end-to-end yet; draws reject `gsinstancecount > 1`, so this currently always evaluates to 0)
 
 Everything else (resource access like texture sampling / buffer loads/stores, barriers, most other
 SM4/SM5 opcodes, etc) is currently rejected by translation.
@@ -247,6 +247,8 @@ Known limitations include:
     `CREATE_SHADER_DXBC` time.
 - **No stream-out (SO / transform feedback)**
   - GS output cannot be captured into D3D stream-out buffers
+- **No GS instancing**
+  - `[instance(n)]` / `dcl_gsinstancecount` with `n > 1` is rejected (fail-fast) at draw time.
 - **No adjacency (end-to-end)**
   - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
 - **Limited output topology / payload**
