@@ -533,6 +533,109 @@ static int RunD3D9MipmappedTextureSmoke(int argc, char** argv) {
                          (unsigned long)kMip1Color);
   }
 
+  // ---------------------------------------------------------------------------
+  // Systemmem staging + UpdateTexture path
+  // ---------------------------------------------------------------------------
+  //
+  // This covers the common D3D9 texture upload workflow:
+  //   - fill a SYSTEMMEM mip chain via LockRect(level)
+  //   - UpdateTexture into a DEFAULT-pool mip chain
+  //   - render + validate a sampled pixel
+  //
+  // Additionally, LockRect calls use a non-zero sub-rect (when possible) so the
+  // underlying DDI Lock offset falls *inside* the mip level; the expected Pitch
+  // is still the full mip row pitch.
+  const UINT kSysTexW = 8;
+  const UINT kSysTexH = 8;
+  const UINT kSysLevels = 4;
+  const D3DFORMAT kSysFmt = D3DFMT_X8R8G8B8;
+
+  const D3DCOLOR kSysMipColors[kSysLevels] = {
+      D3DCOLOR_XRGB(0xCC, 0x00, 0xCC), // mip0: purple
+      D3DCOLOR_XRGB(0x00, 0xCC, 0xCC), // mip1: cyan
+      D3DCOLOR_XRGB(0xCC, 0xCC, 0x00), // mip2: yellow
+      D3DCOLOR_XRGB(0xCC, 0xCC, 0xCC), // mip3: grey
+  };
+
+  ComPtr<IDirect3DTexture9> sys_tex;
+  hr = dev->CreateTexture(kSysTexW, kSysTexH, kSysLevels, 0, kSysFmt, D3DPOOL_SYSTEMMEM, sys_tex.put(), NULL);
+  if (FAILED(hr) || !sys_tex) {
+    return reporter.FailHresult("CreateTexture(SYSTEMMEM mipchain)", FAILED(hr) ? hr : E_FAIL);
+  }
+
+  for (UINT level = 0; level < kSysLevels; ++level) {
+    UINT w = kSysTexW >> level;
+    UINT h = kSysTexH >> level;
+    if (w == 0) w = 1;
+    if (h == 0) h = 1;
+
+    const UINT expected_pitch = w * 4u;
+
+    // Lock a 1x1 sub-rect at (1,1) when possible to ensure the lock offset is
+    // inside the mip level, not at its base.
+    RECT r;
+    r.left = (w > 1) ? 1 : 0;
+    r.top = (h > 1) ? 1 : 0;
+    r.right = r.left + 1;
+    r.bottom = r.top + 1;
+
+    D3DLOCKED_RECT lr;
+    ZeroMemory(&lr, sizeof(lr));
+    hr = sys_tex->LockRect(level, &lr, &r, 0);
+    if (FAILED(hr) || !lr.pBits) {
+      return reporter.FailHresult(aerogpu_test::FormatString("LockRect(SYSTEMMEM level=%u)", (unsigned)level).c_str(),
+                                  FAILED(hr) ? hr : E_FAIL);
+    }
+    if ((UINT)lr.Pitch != expected_pitch) {
+      sys_tex->UnlockRect(level);
+      return reporter.Fail("SYSTEMMEM LockRect Pitch mismatch level=%u: got %d expected %u",
+                           (unsigned)level,
+                           (int)lr.Pitch,
+                           (unsigned)expected_pitch);
+    }
+    sys_tex->UnlockRect(level);
+
+    hr = FillTextureLevelSolid(sys_tex.get(), level, w, h, kSysMipColors[level]);
+    if (FAILED(hr)) {
+      return reporter.FailHresult(aerogpu_test::FormatString("FillTextureLevelSolid(SYSTEMMEM level=%u)", (unsigned)level).c_str(), hr);
+    }
+  }
+
+  ComPtr<IDirect3DTexture9> sys_upload_tex;
+  hr = dev->CreateTexture(kSysTexW, kSysTexH, kSysLevels, 0, kSysFmt, D3DPOOL_DEFAULT, sys_upload_tex.put(), NULL);
+  if (FAILED(hr) || !sys_upload_tex) {
+    return reporter.FailHresult("CreateTexture(DEFAULT mipchain for UpdateTexture)", FAILED(hr) ? hr : E_FAIL);
+  }
+  hr = dev->UpdateTexture(sys_tex.get(), sys_upload_tex.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("UpdateTexture(SYSTEMMEM->DEFAULT mipchain)", hr);
+  }
+
+  // Make this check deterministic: force mip0 sampling regardless of quad size.
+  hr = dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(MIPFILTER=NONE)", hr);
+  }
+  hr = dev->SetTexture(0, sys_upload_tex.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTexture(sys_upload_tex)", hr);
+  }
+
+  hr = DrawQuad(dev.get(), vb_full.get(), D3DCOLOR_XRGB(0, 0, 0));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DrawQuad(UpdateTexture fullscreen)", hr);
+  }
+  px = 0;
+  hr = ReadBackbufferCenterPixel(dev.get(), dump, &reporter, L"d3d9_mipmapped_texture_smoke_update.bmp", &px);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("ReadBackbufferCenterPixel(UpdateTexture)", hr);
+  }
+  if ((px & 0x00FFFFFFu) != (kSysMipColors[0] & 0x00FFFFFFu)) {
+    return reporter.Fail("UpdateTexture sample mismatch: got 0x%08lX expected 0x%08lX",
+                         (unsigned long)px,
+                         (unsigned long)kSysMipColors[0]);
+  }
+
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("PresentEx", hr);
