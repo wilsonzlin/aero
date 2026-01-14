@@ -527,7 +527,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       await expect(
         waitForWorkerMessage(
           worker,
-          (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === earlyFence,
+          (msg) =>
+            (msg as { type?: unknown; fence?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" &&
+            (msg as { type?: unknown; fence?: unknown }).fence === earlyFence,
           200,
         ),
       ).rejects.toThrow(/timed out/i);
@@ -570,7 +572,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       const lateFence = 222n;
       const completion = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === lateFence,
+        (msg) =>
+          (msg as { type?: unknown; fence?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" &&
+          (msg as { type?: unknown; fence?: unknown }).fence === lateFence,
         10_000,
       );
       worker.postMessage({ kind: "aerogpu.complete_fence", fence: lateFence });
@@ -630,7 +634,8 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
         waitForWorkerMessage(
           worker,
           (msg) =>
-            (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === fence,
+            (msg as { type?: unknown; fence?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" &&
+            (msg as { type?: unknown; fence?: unknown }).fence === fence,
           200,
         ),
       ).rejects.toThrow(/timed out/i);
@@ -644,7 +649,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       );
       const completion = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === fence,
+        (msg) =>
+          (msg as { type?: unknown; fence?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" &&
+          (msg as { type?: unknown; fence?: unknown }).fence === fence,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });

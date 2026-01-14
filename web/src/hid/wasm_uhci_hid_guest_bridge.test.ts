@@ -42,7 +42,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       productId: 0xabcd,
       productName: "Demo",
       guestPath: [...guestPath],
-      collections: [{ some: "collection" }] as any,
+      collections: [],
       hasInterruptOut: false,
     };
     guest.attach(attach);
@@ -89,7 +89,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       productId: 0xabcd,
       productName: "Legacy",
       guestPath: [WEBUSB_GUEST_ROOT_PORT],
-      collections: [{ some: "collection" }] as any,
+      collections: [],
       hasInterruptOut: false,
     };
     guest.attach(attach);
@@ -137,7 +137,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       productId: 0xabcd,
       productName: "Legacy",
       guestPort: WEBUSB_GUEST_ROOT_PORT,
-      collections: [{ some: "collection" }] as any,
+      collections: [],
       hasInterruptOut: false,
     };
     guest.attach(attach);

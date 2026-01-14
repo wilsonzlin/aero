@@ -5,6 +5,7 @@ import {
   computeInputReportPayloadByteLengths,
   computeOutputReportPayloadByteLengths,
 } from "./hid_report_sizes";
+import type { NormalizedHidCollectionInfo } from "./webhid_normalize";
 
 describe("hid/computeInputReportPayloadByteLengths", () => {
   it("aggregates bit lengths across collections per reportId and rounds up to whole bytes", () => {
@@ -42,7 +43,7 @@ describe("hid/computeInputReportPayloadByteLengths", () => {
         outputReports: [],
         featureReports: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
 
     const sizes = computeInputReportPayloadByteLengths(collections);
     // reportId 1: 32+1 bits => 5 bytes
@@ -88,7 +89,7 @@ describe("hid/computeFeatureReportPayloadByteLengths", () => {
           },
         ],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
 
     const sizes = computeFeatureReportPayloadByteLengths(collections);
     // reportId 1: 32+1 bits => 5 bytes
@@ -134,7 +135,7 @@ describe("hid/computeOutputReportPayloadByteLengths", () => {
         ],
         featureReports: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
 
     const sizes = computeOutputReportPayloadByteLengths(collections);
     // reportId 1: 32+1 bits => 5 bytes
