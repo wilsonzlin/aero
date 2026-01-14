@@ -1242,12 +1242,23 @@ function Write-JsonUtf8NoBom {
 function Write-IntegrityManifest {
     param(
         [Parameter(Mandatory = $true)][string] $ManifestPath,
+        [Parameter(Mandatory = $true)][string] $ArtifactPath,
+        [Parameter(Mandatory = $true)][string] $SigningPolicy,
         [Parameter(Mandatory = $true)][string] $PackageName,
         [Parameter(Mandatory = $true)][string] $Version,
         [Parameter(Mandatory = $true)][long] $SourceDateEpoch,
         [string] $BuildId,
         [Parameter(Mandatory = $true)] $Files
     )
+
+    $artifact = Get-Item -LiteralPath $ArtifactPath -ErrorAction SilentlyContinue
+    if (-not $artifact -or $artifact.Length -le 0) {
+        throw "Expected artifact to exist and be non-empty: '$ArtifactPath'."
+    }
+    $artifactSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $ArtifactPath).Hash.ToLowerInvariant()
+    $artifactLeaf = Split-Path -Leaf $ArtifactPath
+
+    $normalizedPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
 
     $pkg = [ordered]@{
         name    = $PackageName
@@ -1260,6 +1271,11 @@ function Write-IntegrityManifest {
 
     $manifest = [ordered]@{
         schema_version = 1
+        path          = $artifactLeaf
+        size          = [long] $artifact.Length
+        sha256        = $artifactSha256
+        version       = $Version
+        signing_policy = $normalizedPolicy
         package        = $pkg
         # Force JSON array output even if the file list has only one entry.
         files          = @($Files)
@@ -1360,27 +1376,32 @@ function Invoke-PackageDrivers {
     $manifestFilesX86 = $null
     $manifestFilesX64 = $null
     $manifestFilesBundle = $null
+    $manifestFilesFat = $null
 
     $manifestX86 = $null
     $manifestX64 = $null
     $manifestBundle = $null
     $manifestIso = $null
+    $manifestFat = $null
 
-        if ($shouldWriteManifests) {
-            $manifestX86 = [System.IO.Path]::ChangeExtension($zipX86, "manifest.json")
-            $manifestX64 = [System.IO.Path]::ChangeExtension($zipX64, "manifest.json")
-            $manifestBundle = [System.IO.Path]::ChangeExtension($zipBundle, "manifest.json")
-            if (-not $NoIso) {
-                $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
-            }
-
-            $buildId = Get-BuildIdString
-
-            # Enumerate and hash staged files BEFORE archiving; these entries must match the staged bytes.
-            $manifestFilesX86 = Get-ManifestFileEntries -Root $stageX86
-            $manifestFilesX64 = Get-ManifestFileEntries -Root $stageX64
-            $manifestFilesBundle = Get-ManifestFileEntries -Root $stageBundle
+    if ($shouldWriteManifests) {
+        $manifestX86 = [System.IO.Path]::ChangeExtension($zipX86, "manifest.json")
+        $manifestX64 = [System.IO.Path]::ChangeExtension($zipX64, "manifest.json")
+        $manifestBundle = [System.IO.Path]::ChangeExtension($zipBundle, "manifest.json")
+        if (-not $NoIso) {
+            $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
         }
+        if ($shouldMakeFatImage) {
+            $manifestFat = [System.IO.Path]::ChangeExtension($fatVhd, "manifest.json")
+        }
+
+        $buildId = Get-BuildIdString
+
+        # Enumerate and hash staged files BEFORE archiving; these entries must match the staged bytes.
+        $manifestFilesX86 = Get-ManifestFileEntries -Root $stageX86
+        $manifestFilesX64 = Get-ManifestFileEntries -Root $stageX64
+        $manifestFilesBundle = Get-ManifestFileEntries -Root $stageBundle
+    }
 
     $success = $false
     try {
@@ -1398,6 +1419,9 @@ function Invoke-PackageDrivers {
 
         if ($shouldMakeFatImage) {
             New-FatImageInputFromBundle -BundleRoot $stageBundle -SigningPolicy $SigningPolicy -CertSourcePath $certPathResolved -DestRoot $stageFat -IncludeCerts:$includeCerts
+            if ($shouldWriteManifests) {
+                $manifestFilesFat = Get-ManifestFileEntries -Root $stageFat
+            }
 
             $helper = Join-Path $PSScriptRoot "make-fat-image.ps1"
             if (-not (Test-Path $helper)) {
@@ -1409,12 +1433,24 @@ function Invoke-PackageDrivers {
 
         if ($shouldWriteManifests) {
             # Keep package.name stable across releases; version is encoded separately.
-            Write-IntegrityManifest -ManifestPath $manifestX86 -PackageName "AeroVirtIO-Win7-x86" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX86
-            Write-IntegrityManifest -ManifestPath $manifestX64 -PackageName "AeroVirtIO-Win7-x64" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX64
-            Write-IntegrityManifest -ManifestPath $manifestBundle -PackageName "AeroVirtIO-Win7-bundle" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+            Write-IntegrityManifest -ManifestPath $manifestX86 -ArtifactPath $zipX86 -SigningPolicy $SigningPolicy -PackageName "AeroVirtIO-Win7-x86" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX86
+            Write-IntegrityManifest -ManifestPath $manifestX64 -ArtifactPath $zipX64 -SigningPolicy $SigningPolicy -PackageName "AeroVirtIO-Win7-x64" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX64
+            Write-IntegrityManifest -ManifestPath $manifestBundle -ArtifactPath $zipBundle -SigningPolicy $SigningPolicy -PackageName "AeroVirtIO-Win7-bundle" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
 
             if (-not $NoIso) {
-                Write-IntegrityManifest -ManifestPath $manifestIso -PackageName "AeroVirtIO-Win7" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+                Write-IntegrityManifest -ManifestPath $manifestIso -ArtifactPath $isoBundle -SigningPolicy $SigningPolicy -PackageName "AeroVirtIO-Win7" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+            }
+
+            if ($shouldMakeFatImage -and (Test-Path -LiteralPath $fatVhd -PathType Leaf)) {
+                if ($null -eq $manifestFilesFat) {
+                    # Defensive: stageFat is populated in the FAT image path, but ensure we have the
+                    # staged file list if that step was skipped for any reason.
+                    $manifestFilesFat = Get-ManifestFileEntries -Root $stageFat
+                }
+                if ($null -eq $manifestFat) {
+                    $manifestFat = [System.IO.Path]::ChangeExtension($fatVhd, "manifest.json")
+                }
+                Write-IntegrityManifest -ManifestPath $manifestFat -ArtifactPath $fatVhd -SigningPolicy $SigningPolicy -PackageName "AeroVirtIO-Win7-fat" -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesFat
             }
         }
         $success = $true
@@ -1438,6 +1474,9 @@ function Invoke-PackageDrivers {
         if (-not $NoIso) {
             Write-Host "  $manifestIso"
         }
+        if ($shouldMakeFatImage -and (Test-Path -LiteralPath $fatVhd -PathType Leaf)) {
+            Write-Host "  $manifestFat"
+        }
     }
 
     if ($shouldMakeFatImage) {
@@ -1458,6 +1497,7 @@ function Invoke-PackageDrivers {
         ManifestX64 = $manifestX64
         ManifestBundle = $manifestBundle
         ManifestIso = $manifestIso
+        ManifestFat = $manifestFat
         FatVhd = $fatVhd
         OutDir = $outDirResolved
     }
