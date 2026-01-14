@@ -1876,7 +1876,13 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     entriesToCopy = tmpEntries;
     if (usingCache && entryCount <= AEROGPU_ALLOC_TABLE_SCRATCH_STACK_COPY_MAX_ENTRIES) {
-        RtlCopyMemory(stackEntries, tmpEntries, (SIZE_T)entryCount * sizeof(stackEntries[0]));
+        SIZE_T stackCopyBytes = 0;
+        st = RtlSizeTMult((SIZE_T)entryCount, sizeof(stackEntries[0]), &stackCopyBytes);
+        if (!NT_SUCCESS(st)) {
+            st = STATUS_INTEGER_OVERFLOW;
+            goto cleanup;
+        }
+        RtlCopyMemory(stackEntries, tmpEntries, stackCopyBytes);
         entriesToCopy = stackEntries;
         ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
         scratchLockHeld = FALSE;
