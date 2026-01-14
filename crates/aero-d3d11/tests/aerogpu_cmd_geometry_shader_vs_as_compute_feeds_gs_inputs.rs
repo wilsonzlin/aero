@@ -2,7 +2,7 @@ mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::*;
-use aero_d3d11::{FourCC, Swizzle, WriteMask};
+use aero_d3d11::{DxbcFile, FourCC, Sm4Program, Swizzle, WriteMask};
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -286,6 +286,15 @@ fn aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs() {
         );
 
         let vs_dxbc = build_vs_shift_x_and_passthrough_color_dxbc();
+        // Sanity-check the DXBC decodes into the expected SM4 IR so runtime failures are easier to
+        // debug.
+        {
+            let dxbc = DxbcFile::parse(&vs_dxbc).expect("VS DXBC should parse");
+            let program = Sm4Program::parse_from_dxbc(&dxbc).expect("VS DXBC should decode");
+            let module =
+                aero_d3d11::sm4::decode_program(&program).expect("VS SM4 decode should work");
+            let _ = module;
+        }
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, &vs_dxbc);
         writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, GS_CUT);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);

@@ -3704,9 +3704,10 @@ impl AerogpuD3d11Executor {
             .map(|s| (s.shader_location, s.input_register))
             .collect();
 
-        // Build a small compute shader that fills `gs_inputs` from the IA vertex buffers using the
-        // vertex-pulling bind group.
-        let fill_wgsl = {
+        // Prefer executing the bound VS as compute so the GS sees VS output registers (correct
+        // D3D11 semantics). Fall back to the legacy IA->gs_inputs path when VS-as-compute is
+        // unavailable and we can prove the VS is a pure passthrough.
+        let fill_wgsl_ia = {
             use crate::input_layout::DxgiFormatComponentType;
             let mut out = String::new();
             out.push_str(&pulling.wgsl_prelude());
@@ -3918,6 +3919,469 @@ impl AerogpuD3d11Executor {
             out.push_str("  }\n");
             out.push_str("}\n");
             out
+        };
+
+        fn vs_is_identity_passthrough_for_gs_inputs(
+            module: &crate::sm4_ir::Sm4Module,
+            gs_input_reg_count: u32,
+        ) -> bool {
+            use crate::sm4_ir::{OperandModifier, RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
+
+            if module.stage != crate::sm4::ShaderStage::Vertex {
+                return false;
+            }
+
+            let mut wrote = vec![false; gs_input_reg_count as usize];
+
+            for inst in &module.instructions {
+                match inst {
+                    Sm4Inst::Mov { dst, src } => {
+                        if dst.reg.file != RegFile::Output {
+                            return false;
+                        }
+                        if dst.saturate {
+                            return false;
+                        }
+                        if dst.mask != WriteMask::XYZW {
+                            return false;
+                        }
+                        let SrcKind::Register(src_reg) = &src.kind else {
+                            return false;
+                        };
+                        if src_reg.file != RegFile::Input {
+                            return false;
+                        }
+                        if src_reg.index != dst.reg.index {
+                            return false;
+                        }
+                        if src.swizzle != Swizzle::XYZW {
+                            return false;
+                        }
+                        if src.modifier != OperandModifier::None {
+                            return false;
+                        }
+
+                        if let Some(slot) = wrote.get_mut(dst.reg.index as usize) {
+                            *slot = true;
+                        }
+                    }
+                    Sm4Inst::Ret => break,
+                    _ => return false,
+                }
+            }
+
+            wrote.into_iter().all(|v| v)
+        }
+
+        fn build_vs_as_compute_gs_input_wgsl(
+            module: &crate::sm4_ir::Sm4Module,
+            pulling: &VertexPullingLayout,
+            vs_location_to_input_reg: &HashMap<u32, u32>,
+            gs_input_reg_count: u32,
+            indexed_draw: bool,
+        ) -> Result<String> {
+            use crate::sm4_ir::{RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
+
+            if module.stage != crate::sm4::ShaderStage::Vertex {
+                bail!(
+                    "VS-as-compute: expected vertex shader module, got {:?}",
+                    module.stage
+                );
+            }
+
+            let mut max_temp: i32 = -1;
+            let mut inst_count = 0usize;
+
+            // Pre-scan for temp register usage and validate supported instruction set.
+            for inst in &module.instructions {
+                match inst {
+                    Sm4Inst::Mov { dst, src } => {
+                        if dst.reg.file == RegFile::Temp {
+                            max_temp = max_temp.max(dst.reg.index as i32);
+                        } else if dst.reg.file == RegFile::Output {
+                            if dst.reg.index >= gs_input_reg_count {
+                                bail!(
+                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
+                                    dst.reg.index,
+                                    gs_input_reg_count
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "VS-as-compute: unsupported mov dst reg file {:?}",
+                                dst.reg.file
+                            );
+                        }
+
+                        match &src.kind {
+                            SrcKind::Register(reg) => {
+                                if reg.file == RegFile::Temp {
+                                    max_temp = max_temp.max(reg.index as i32);
+                                } else if reg.file == RegFile::Output {
+                                    if reg.index >= gs_input_reg_count {
+                                        bail!(
+                                            "VS-as-compute: reads from o{} but GS expects only {} output regs",
+                                            reg.index,
+                                            gs_input_reg_count
+                                        );
+                                    }
+                                } else if reg.file != RegFile::Input {
+                                    bail!(
+                                        "VS-as-compute: unsupported mov src reg file {:?}",
+                                        reg.file
+                                    );
+                                }
+                            }
+                            SrcKind::ImmediateF32(_) => {}
+                            other => {
+                                bail!(
+                                    "VS-as-compute: unsupported mov src operand kind {:?}",
+                                    other
+                                );
+                            }
+                        }
+                    }
+                    Sm4Inst::Add { dst, a, b } => {
+                        if dst.reg.file == RegFile::Temp {
+                            max_temp = max_temp.max(dst.reg.index as i32);
+                        } else if dst.reg.file == RegFile::Output {
+                            if dst.reg.index >= gs_input_reg_count {
+                                bail!(
+                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
+                                    dst.reg.index,
+                                    gs_input_reg_count
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "VS-as-compute: unsupported add dst reg file {:?}",
+                                dst.reg.file
+                            );
+                        }
+
+                        for src in [a, b] {
+                            match &src.kind {
+                                SrcKind::Register(reg) => {
+                                    if reg.file == RegFile::Temp {
+                                        max_temp = max_temp.max(reg.index as i32);
+                                    } else if reg.file == RegFile::Output {
+                                        if reg.index >= gs_input_reg_count {
+                                            bail!(
+                                                "VS-as-compute: reads from o{} but GS expects only {} output regs",
+                                                reg.index,
+                                                gs_input_reg_count
+                                            );
+                                        }
+                                    } else if reg.file != RegFile::Input {
+                                        bail!(
+                                            "VS-as-compute: unsupported add src reg file {:?}",
+                                            reg.file
+                                        );
+                                    }
+                                }
+                                SrcKind::ImmediateF32(_) => {}
+                                other => {
+                                    bail!(
+                                        "VS-as-compute: unsupported add src operand kind {:?}",
+                                        other
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Sm4Inst::Ret => break,
+                    _ => bail!("VS-as-compute: unsupported VS instruction {:?}", inst),
+                }
+                inst_count += 1;
+            }
+
+            let temp_reg_count: u32 = (max_temp + 1).max(1) as u32;
+
+            fn swizzle_to_wgsl(swizzle: Swizzle) -> String {
+                let mut s = String::new();
+                for &lane in &swizzle.0 {
+                    s.push(match lane {
+                        0 => 'x',
+                        1 => 'y',
+                        2 => 'z',
+                        _ => 'w',
+                    });
+                }
+                s
+            }
+
+            fn f32_bits_to_wgsl(bits: u32) -> String {
+                let v = f32::from_bits(bits);
+                // Use Debug formatting for stable `1.0`-style literals.
+                format!("{v:?}")
+            }
+
+            fn emit_write_masked(
+                out: &mut String,
+                dst_expr: &str,
+                mask: WriteMask,
+                tmp_name: &str,
+            ) {
+                if mask == WriteMask::XYZW {
+                    out.push_str(&format!("  {dst_expr} = {tmp_name};\n"));
+                    return;
+                }
+                for (bit, ch) in [
+                    (WriteMask::X.0, 'x'),
+                    (WriteMask::Y.0, 'y'),
+                    (WriteMask::Z.0, 'z'),
+                    (WriteMask::W.0, 'w'),
+                ] {
+                    if (mask.0 & bit) != 0 {
+                        out.push_str(&format!("  {dst_expr}.{ch} = {tmp_name}.{ch};\n"));
+                    }
+                }
+            }
+
+            fn eval_src(
+                src: &crate::sm4_ir::SrcOperand,
+                vertex_index_var: &str,
+                out_reg_count: u32,
+            ) -> Result<String> {
+                use crate::sm4_ir::{OperandModifier, RegFile, SrcKind};
+
+                let base = match &src.kind {
+                    SrcKind::Register(reg) => match reg.file {
+                        RegFile::Input => {
+                            format!("aero_vs_load_input_reg({}u, {vertex_index_var})", reg.index)
+                        }
+                        RegFile::Temp => format!("r[{}u]", reg.index),
+                        RegFile::Output => {
+                            if reg.index >= out_reg_count {
+                                bail!(
+                                    "VS-as-compute: reads from o{} but out_reg_count={out_reg_count}",
+                                    reg.index
+                                );
+                            }
+                            format!("o[{}u]", reg.index)
+                        }
+                        other => bail!("VS-as-compute: unsupported src register file {:?}", other),
+                    },
+                    SrcKind::ImmediateF32(bits) => format!(
+                        "vec4<f32>({},{},{},{})",
+                        f32_bits_to_wgsl(bits[0]),
+                        f32_bits_to_wgsl(bits[1]),
+                        f32_bits_to_wgsl(bits[2]),
+                        f32_bits_to_wgsl(bits[3])
+                    ),
+                    other => bail!("VS-as-compute: unsupported src operand kind {:?}", other),
+                };
+
+                let swz = swizzle_to_wgsl(src.swizzle);
+                let mut expr = if swz == "xyzw" {
+                    base
+                } else {
+                    format!("({base}).{swz}")
+                };
+
+                expr = match src.modifier {
+                    OperandModifier::None => expr,
+                    OperandModifier::Neg => format!("-({expr})"),
+                    OperandModifier::Abs => format!("abs({expr})"),
+                    OperandModifier::AbsNeg => format!("-abs({expr})"),
+                };
+
+                Ok(expr)
+            }
+
+            let mut out = String::new();
+            out.push_str(&pulling.wgsl_prelude());
+            out.push('\n');
+            if indexed_draw {
+                out.push_str(&super::index_pulling::wgsl_index_pulling_lib(
+                    VERTEX_PULLING_GROUP,
+                    INDEX_PULLING_PARAMS_BINDING,
+                    INDEX_PULLING_BUFFER_BINDING,
+                ));
+                out.push('\n');
+            }
+            out.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n");
+            out.push_str(
+                "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
+            );
+            out.push_str(&format!(
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
+                gs_input_reg_count
+            ));
+            out.push_str(&format!(
+                "const TEMP_REG_COUNT: u32 = {}u;\n\n",
+                temp_reg_count
+            ));
+            out.push_str(
+                "fn aero_vs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
+            );
+
+            // Input register loads (`v#`) from IA buffers.
+            out.push_str("fn aero_vs_load_input_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str("  switch reg {\n");
+            for attr in &pulling.attributes {
+                let reg = vs_location_to_input_reg
+                    .get(&attr.shader_location)
+                    .copied()
+                    .unwrap_or(attr.shader_location);
+                let slot = attr.pulling_slot;
+                let offset = attr.offset_bytes;
+                let element_index_expr = match attr.step_mode {
+                    wgpu::VertexStepMode::Vertex => "vertex_index",
+                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                };
+                out.push_str(&format!("    case {reg}u: {{\n"));
+                out.push_str(&format!(
+                    "      let addr: u32 = aero_vp_ia.slots[{slot}u].base_offset_bytes + ({element_index_expr}) * aero_vp_ia.slots[{slot}u].stride_bytes + {offset}u;\n"
+                ));
+
+                use crate::input_layout::DxgiFormatComponentType;
+                let expr = match (attr.format.component_type, attr.format.component_count) {
+                    (DxgiFormatComponentType::F32, 1) => {
+                        "let x: f32 = load_attr_f32(slot, addr);\n      return vec4<f32>(x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 2) => {
+                        "let v: vec2<f32> = load_attr_f32x2(slot, addr);\n      return vec4<f32>(v, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 3) => {
+                        "let v: vec3<f32> = load_attr_f32x3(slot, addr);\n      return vec4<f32>(v, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 4) => "return load_attr_f32x4(slot, addr);".to_owned(),
+                    (DxgiFormatComponentType::Unorm8, 4) => {
+                        "return load_attr_unorm8x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm10_10_10_2, 4) => {
+                        "return load_attr_unorm10_10_10_2(slot, addr);".to_owned()
+                    }
+                    _ => "return aero_vs_default();".to_owned(),
+                };
+
+                out.push_str(&format!("      let slot: u32 = {slot}u;\n"));
+                out.push_str("      ");
+                out.push_str(&expr.replace('\n', "\n      "));
+                out.push('\n');
+                out.push_str("    }\n");
+            }
+            out.push_str("    default: { return aero_vs_default(); }\n");
+            out.push_str("  }\n");
+            out.push_str("}\n\n");
+
+            out.push_str("@compute @workgroup_size(1)\n");
+            out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
+            out.push_str("  let prim_id: u32 = id.x;\n");
+            if indexed_draw {
+                out.push_str(
+                    "  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id));\n",
+                );
+            } else {
+                out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
+            }
+            out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
+            out.push_str(&format!(
+                "  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
+            ));
+            out.push_str("  for (var i: u32 = 0u; i < TEMP_REG_COUNT; i = i + 1u) { r[i] = vec4<f32>(0.0); }\n");
+            out.push_str("  for (var i: u32 = 0u; i < GS_INPUT_REG_COUNT; i = i + 1u) { o[i] = aero_vs_default(); }\n\n");
+
+            for (idx, inst) in module.instructions.iter().enumerate().take(inst_count) {
+                match inst {
+                    Sm4Inst::Mov { dst, src } => {
+                        let expr = eval_src(src, "vertex_index", gs_input_reg_count)?;
+                        let mut val = expr;
+                        if dst.saturate {
+                            val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
+                        }
+                        let tmp_name = format!("inst{idx}_val");
+                        out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
+                        let dst_expr = match dst.reg.file {
+                            RegFile::Temp => format!("r[{}u]", dst.reg.index),
+                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                            other => {
+                                bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
+                            }
+                        };
+                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                    }
+                    Sm4Inst::Add { dst, a, b } => {
+                        let a_expr = eval_src(a, "vertex_index", gs_input_reg_count)?;
+                        let b_expr = eval_src(b, "vertex_index", gs_input_reg_count)?;
+                        let mut val = format!("({a_expr}) + ({b_expr})");
+                        if dst.saturate {
+                            val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
+                        }
+                        let tmp_name = format!("inst{idx}_val");
+                        out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
+                        let dst_expr = match dst.reg.file {
+                            RegFile::Temp => format!("r[{}u]", dst.reg.index),
+                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                            other => {
+                                bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
+                            }
+                        };
+                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                    }
+                    Sm4Inst::Ret => {}
+                    other => bail!("VS-as-compute: unsupported VS instruction {:?}", other),
+                }
+            }
+
+            out.push_str(
+                "\n  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
+            );
+            out.push_str("    let idx: u32 = prim_id * GS_INPUT_REG_COUNT + reg;\n");
+            out.push_str("    gs_inputs.data[idx] = o[reg];\n");
+            out.push_str("  }\n");
+            out.push_str("}\n");
+            Ok(out)
+        }
+
+        let fill_wgsl = match vs_shader.sm4_module.as_deref() {
+            Some(module) => match build_vs_as_compute_gs_input_wgsl(
+                module,
+                &pulling,
+                &vs_location_to_input_reg,
+                gs_meta.input_reg_count,
+                indexed_draw,
+            ) {
+                Ok(wgsl) => wgsl,
+                Err(err) => {
+                    // Only allow IA-fill fallback when VS is a strict passthrough. Otherwise the
+                    // GS would observe incorrect register values (VS-side transforms would be
+                    // skipped).
+                    if vs_is_identity_passthrough_for_gs_inputs(module, gs_meta.input_reg_count) {
+                        fill_wgsl_ia
+                    } else if super::env_var_truthy("AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS") {
+                        eprintln!(
+                            "aero-d3d11: WARNING: VS-as-compute translation failed for VS shader {} (using incorrect IA-fill fallback): {:#}",
+                            vs_handle,
+                            err
+                        );
+                        fill_wgsl_ia
+                    } else {
+                        bail!(
+                            "GS prepass requires VS-as-compute to feed GS inputs, but VS-as-compute translation failed for VS shader {vs_handle}: {err:#}\n\
+                             Set AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1 to fall back to IA-fill (may misrender)."
+                        );
+                    }
+                }
+            },
+            None => {
+                if super::env_var_truthy("AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS") {
+                    eprintln!(
+                        "aero-d3d11: WARNING: missing decoded SM4 module for VS shader {} (using incorrect IA-fill fallback)",
+                        vs_handle
+                    );
+                    fill_wgsl_ia
+                } else {
+                    bail!(
+                        "GS prepass requires VS-as-compute to feed GS inputs, but the bound VS shader {vs_handle} has no decoded SM4 module available.\n\
+                         Set AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1 to fall back to IA-fill (may misrender)."
+                    );
+                }
+            }
         };
 
         let fill_bgl_entries = [wgpu::BindGroupLayoutEntry {
@@ -5240,7 +5704,6 @@ impl AerogpuD3d11Executor {
                 }
             }
         };
-
         let fill_bgl_entries = [wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::COMPUTE,

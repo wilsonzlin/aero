@@ -387,25 +387,157 @@ fn default_varyings_from_decls(module: &Sm4Module) -> Vec<u32> {
     // This keeps the behavior robust for typical FXC/DXC output signatures without requiring the
     // executor to know which pixel-shader varyings will be consumed at draw time.
     //
-    // Note: `Sm4Decl::Output` declarations come from `dcl_output o#.*` tokens. System-value outputs
-    // (`Sm4Decl::OutputSiv`) are currently ignored by the GS prepass translator; position is always
-    // assumed to be `o0` and is stored in `ExpandedVertex.pos`.
-    let mut out = Vec::new();
+    // Some toolchains omit explicit `dcl_output` tokens even when the output signature (`OSGN`)
+    // contains non-position varyings. To keep translation robust across fixtures, also include any
+    // output registers written by the instruction stream.
+    //
+    // Note: System-value outputs (`Sm4Decl::OutputSiv`) are currently ignored by the GS prepass
+    // translator; position is always assumed to be `o0` and is stored in `ExpandedVertex.pos`.
+
+    let mut out: BTreeSet<u32> = BTreeSet::new();
+
+    // Declared outputs (`dcl_output o#.*`).
     for decl in &module.decls {
         let Sm4Decl::Output { reg, mask } = decl else {
             continue;
         };
-        if *reg == 0 {
+        if *reg == 0 || mask.0 == 0 {
             continue;
         }
-        if mask.0 == 0 {
-            continue;
-        }
-        out.push(*reg);
+        out.insert(*reg);
     }
-    out.sort_unstable();
-    out.dedup();
-    out
+
+    fn maybe_add_dst(dst: &crate::sm4_ir::DstOperand, out: &mut BTreeSet<u32>) {
+        if dst.mask.0 == 0 {
+            return;
+        }
+        if dst.reg.file != RegFile::Output {
+            return;
+        }
+        if dst.reg.index == 0 {
+            return;
+        }
+        out.insert(dst.reg.index);
+    }
+
+    fn scan_inst(inst: &Sm4Inst, out: &mut BTreeSet<u32>) {
+        use Sm4Inst::*;
+
+        match inst {
+            Predicated { inner, .. } => scan_inst(inner, out),
+            Mov { dst, .. }
+            | Movc { dst, .. }
+            | Utof { dst, .. }
+            | Itof { dst, .. }
+            | Ftoi { dst, .. }
+            | Ftou { dst, .. }
+            | And { dst, .. }
+            | Add { dst, .. }
+            | Mul { dst, .. }
+            | Mad { dst, .. }
+            | Dp3 { dst, .. }
+            | Dp4 { dst, .. }
+            | Min { dst, .. }
+            | Max { dst, .. }
+            | IAdd { dst, .. }
+            | ISub { dst, .. }
+            | Or { dst, .. }
+            | Xor { dst, .. }
+            | Not { dst, .. }
+            | IShl { dst, .. }
+            | IShr { dst, .. }
+            | UShr { dst, .. }
+            | Cmp { dst, .. }
+            | IMin { dst, .. }
+            | IMax { dst, .. }
+            | UMin { dst, .. }
+            | UMax { dst, .. }
+            | IAbs { dst, .. }
+            | INeg { dst, .. }
+            | Rcp { dst, .. }
+            | Rsq { dst, .. }
+            | Bfi { dst, .. }
+            | Ubfe { dst, .. }
+            | Ibfe { dst, .. }
+            | Bfrev { dst, .. }
+            | CountBits { dst, .. }
+            | FirstbitHi { dst, .. }
+            | FirstbitLo { dst, .. }
+            | FirstbitShi { dst, .. }
+            | F32ToF16 { dst, .. }
+            | F16ToF32 { dst, .. }
+            | Sample { dst, .. }
+            | SampleL { dst, .. }
+            | ResInfo { dst, .. }
+            | Ld { dst, .. }
+            | LdRaw { dst, .. }
+            | LdUavRaw { dst, .. }
+            | LdStructured { dst, .. }
+            | LdStructuredUav { dst, .. }
+            | BufInfoRaw { dst, .. }
+            | BufInfoStructured { dst, .. }
+            | BufInfoRawUav { dst, .. }
+            | BufInfoStructuredUav { dst, .. } => {
+                maybe_add_dst(dst, out);
+            }
+            IMul { dst_lo, dst_hi, .. }
+            | UMul { dst_lo, dst_hi, .. }
+            | IMad { dst_lo, dst_hi, .. }
+            | UMad { dst_lo, dst_hi, .. } => {
+                maybe_add_dst(dst_lo, out);
+                if let Some(dst_hi) = dst_hi.as_ref() {
+                    maybe_add_dst(dst_hi, out);
+                }
+            }
+            IAddC {
+                dst_sum, dst_carry, ..
+            }
+            | UAddC {
+                dst_sum, dst_carry, ..
+            } => {
+                maybe_add_dst(dst_sum, out);
+                maybe_add_dst(dst_carry, out);
+            }
+            ISubC {
+                dst_diff,
+                dst_carry,
+                ..
+            } => {
+                maybe_add_dst(dst_diff, out);
+                maybe_add_dst(dst_carry, out);
+            }
+            USubB {
+                dst_diff,
+                dst_borrow,
+                ..
+            } => {
+                maybe_add_dst(dst_diff, out);
+                maybe_add_dst(dst_borrow, out);
+            }
+            UDiv {
+                dst_quot, dst_rem, ..
+            }
+            | IDiv {
+                dst_quot, dst_rem, ..
+            } => {
+                maybe_add_dst(dst_quot, out);
+                maybe_add_dst(dst_rem, out);
+            }
+            AtomicAdd { dst, .. } => {
+                if let Some(dst) = dst.as_ref() {
+                    maybe_add_dst(dst, out);
+                }
+            }
+            // Non-register-writing instructions.
+            _ => {}
+        }
+    }
+
+    for inst in &module.instructions {
+        scan_inst(inst, &mut out);
+    }
+
+    out.into_iter().collect()
 }
 
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
