@@ -144,6 +144,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
   - `crates/aero-gpu/src/command_processor_d3d9.rs`
   - `crates/aero-gpu/src/aerogpu_d3d9_executor.rs`
   - `crates/aero-gpu/src/acmd_executor.rs`
+  - `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` (via a thin wrapper)
 
 **Implementing commits (high-signal):**
 - `36c5e5f2` — `refactor(aero-gpu): use SharedSurfaceTable in command processor`
