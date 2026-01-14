@@ -248,7 +248,11 @@ impl AerogpuCmdRuntime {
             &vec![0u8; DUMMY_UNIFORM_SIZE_BYTES as usize],
         );
 
-        let dummy_storage_usage = if supports_compute {
+        // Some downlevel devices can advertise compute support but still expose zero storage buffer
+        // slots. Guard against that to avoid wgpu validation errors during buffer creation.
+        let supports_storage_buffers =
+            supports_compute && device.limits().max_storage_buffers_per_shader_stage > 0;
+        let dummy_storage_usage = if supports_storage_buffers {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST
         } else {
             wgpu::BufferUsages::COPY_DST
@@ -439,9 +443,12 @@ impl AerogpuCmdRuntime {
             self.next_buffer_id = 1;
         }
         // Geometry shader emulation (VS-as-compute + GS-as-compute) requires binding IA buffers as
-        // storage buffers. Some WebGPU backends (e.g. wgpu-GL) do not support compute at all; in
-        // that case, avoid adding STORAGE usage to keep buffer creation compatible.
-        let usage = if self.supports_compute {
+        // storage buffers. Some backends/devices either do not support compute at all or expose
+        // zero storage buffer slots; in those cases, avoid adding STORAGE usage to keep buffer
+        // creation compatible.
+        let supports_storage_buffers =
+            self.supports_compute && self.device.limits().max_storage_buffers_per_shader_stage > 0;
+        let usage = if supports_storage_buffers {
             usage | wgpu::BufferUsages::STORAGE
         } else {
             usage
