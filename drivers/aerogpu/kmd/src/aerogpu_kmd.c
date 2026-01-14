@@ -1282,7 +1282,7 @@ static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICA
      * continuously (cursor/scanout) which can destabilize guests and makes
      * transitions flicker/black.
      */
-    const ULONG enable = (Adapter->SourceVisible && FbPa.QuadPart != 0) ? 1u : 0u;
+    const ULONG enable = (Adapter->SourceVisible && !Adapter->PostDisplayOwnershipReleased && FbPa.QuadPart != 0) ? 1u : 0u;
 
     if (Adapter->UsingNewAbi || Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
@@ -1330,7 +1330,7 @@ static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG
         return;
     }
 
-    if (Enable && Adapter->CurrentScanoutFbPa.QuadPart == 0) {
+    if (Enable && (Adapter->CurrentScanoutFbPa.QuadPart == 0 || Adapter->PostDisplayOwnershipReleased)) {
         /*
          * Be conservative: never enable scanout unless we have a non-zero cached
          * framebuffer address. This prevents accidental DMA from GPA 0 when
@@ -3657,10 +3657,20 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
         return STATUS_SUCCESS;
     }
 
+    const BOOLEAN wasReleased = adapter->PostDisplayOwnershipReleased ? TRUE : FALSE;
+    if (wasReleased) {
+        /*
+         * We are now reacquiring ownership; clear the release flag before
+         * programming scanout so AeroGpuProgramScanout/AeroGpuSetScanoutEnable
+         * can re-enable scanout.
+         */
+        adapter->PostDisplayOwnershipReleased = FALSE;
+    }
+
     /* Re-program scanout registers using the last cached mode + FB address. */
     AeroGpuProgramScanout(adapter, adapter->CurrentScanoutFbPa);
 
-    if (adapter->PostDisplayOwnershipReleased) {
+    if (wasReleased) {
         /*
          * Restore vblank IRQ generation if it was enabled before the release.
          *
@@ -3698,8 +3708,6 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
 
             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
         }
-
-        adapter->PostDisplayOwnershipReleased = FALSE;
     }
 
     return STATUS_SUCCESS;
