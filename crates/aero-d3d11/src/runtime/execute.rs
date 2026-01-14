@@ -12,6 +12,7 @@ use aero_gpu::protocol_d3d11::{
     BindingType, BufferUsage, CmdPacket, CmdStream, D3D11Opcode, DxgiFormat, IndexFormat,
     PipelineKind, PrimitiveTopology, ShaderStageFlags, TextureUsage, VertexFormat, VertexStepMode,
 };
+use aero_gpu::GpuCapabilities;
 use aero_gpu::GpuError;
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -111,9 +112,8 @@ impl D3D11Runtime {
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
         let downlevel = adapter.get_downlevel_capabilities();
-        let supports_compute = downlevel
-            .flags
-            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let supports_compute =
+            GpuCapabilities::supports_compute_from_downlevel_flags(downlevel.flags);
 
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
