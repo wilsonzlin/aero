@@ -1192,6 +1192,76 @@ test("rejects concurrent HTTP session allocations with the same JWT sid", async 
   }
 });
 
+test("releases JWT sid after /session preallocation TTL expires", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+  const token = mintHS256JWT({
+    sid: "sess_e2e_prealloc_ttl",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+    SESSION_PREALLOC_TTL: "1s",
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, token }) => {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const postSession = async () => {
+          const resp = await fetch(`http://127.0.0.1:${relayPort}/session`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const text = await resp.text();
+          let json = null;
+          try {
+            json = JSON.parse(text);
+          } catch {
+            // ignore
+          }
+          return { status: resp.status, text, json };
+        };
+
+        const first = await postSession();
+        const second = await postSession();
+
+        // Wait until the preallocated session expires and the stable sid key is released.
+        let third = null;
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          await sleep(100);
+          third = await postSession();
+          if (third.status === 201) break;
+        }
+
+        return { first, second, third };
+      },
+      { relayPort: relay.port, token },
+    );
+
+    expect(res.first.status).toBe(201);
+    expect(res.first.text.trim()).toMatch(/^[0-9a-f]{32}$/);
+
+    expect(res.second.status).toBe(409);
+    expect(res.second.json?.code).toBe("session_already_active");
+
+    expect(res.third?.status).toBe(201);
+    expect(res.third?.text.trim()).toMatch(/^[0-9a-f]{32}$/);
+  } finally {
+    await Promise.all([web.close(), relay.kill()]);
+  }
+});
+
 test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt", async ({ page }) => {
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
