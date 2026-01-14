@@ -102,6 +102,10 @@ static std::string WideToUtf8(const std::wstring &s) {
   return WideToUtf8(s.c_str());
 }
 
+static bool IsOptionLikeArg(const wchar_t *s) {
+  return s && (s[0] == L'-' || s[0] == L'/');
+}
+
 static bool IsNumericArg(const wchar_t *s) {
   if (!s || !s[0]) {
     return false;
@@ -11363,7 +11367,7 @@ int wmain(int argc, wchar_t **argv) {
         // Disambiguate between JSON output path and the next option:
         // - options use '-' or '/' prefixes
         // - numeric args are more likely to be values for other flags/commands (use `--json=<path>` for numeric file names)
-        if (next && next[0] != L'-' && next[0] != L'/' && !IsNumericArg(next)) {
+        if (next && !IsOptionLikeArg(next) && !IsNumericArg(next)) {
           g_json_path = next;
           i += 1;
         }
@@ -11394,7 +11398,7 @@ int wmain(int argc, wchar_t **argv) {
         wcscmp(a, L"--dump-cursor-bmp") == 0 || wcscmp(a, L"--dump-cursor-png") == 0) {
       if (i + 1 < argc) {
         const wchar_t *next = argv[i + 1];
-        if (next && next[0] != L'-' && next[0] != L'/') {
+        if (next && !IsOptionLikeArg(next)) {
           i += 1;
         }
       }
@@ -11452,7 +11456,7 @@ int wmain(int argc, wchar_t **argv) {
         // Disambiguate between JSON output path and the next option:
         // - options use '-' or '/' prefixes
         // - numeric args are more likely to be values for other flags/commands (use `--json=<path>` for numeric file names)
-        if (next && next[0] != L'-' && next[0] != L'/' && !IsNumericArg(next)) {
+        if (next && !IsOptionLikeArg(next) && !IsNumericArg(next)) {
           g_json_path = next;
           i += 1;
         }
@@ -11476,7 +11480,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--display") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--display requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11491,7 +11495,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--ring-id") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--ring-id requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11519,7 +11523,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--timeout-ms") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--timeout-ms requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11549,7 +11553,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--size") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--size requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11587,7 +11591,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--out") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--out requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11620,7 +11624,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--cmd-out") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--cmd-out requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11648,7 +11652,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--alloc-out") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--alloc-out requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11681,7 +11685,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--map-shared-handle") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--map-shared-handle requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11712,7 +11716,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--read-gpa") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--read-gpa requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11742,7 +11746,7 @@ int wmain(int argc, wchar_t **argv) {
       // Also support positional size: `--read-gpa <gpa> <size_bytes>`.
       if (i + 1 < argc) {
         const wchar_t *maybeSize = argv[i + 1];
-        if (maybeSize[0] != L'-' && maybeSize[0] != L'/') {
+        if (!IsOptionLikeArg(maybeSize)) {
           if (readGpaSizeBytes != 0) {
             fwprintf(stderr, L"--read-gpa size specified multiple times\n");
             PrintUsage();
@@ -11775,7 +11779,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--vblank-samples") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--vblank-samples requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11804,7 +11808,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--vblank-interval-ms") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--vblank-interval-ms requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11833,7 +11837,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--samples") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--samples requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11862,7 +11866,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--interval-ms") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--interval-ms requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11892,7 +11896,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--csv") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--csv requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11917,7 +11921,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--index-from-tail") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--index-from-tail requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -11945,7 +11949,7 @@ int wmain(int argc, wchar_t **argv) {
     }
 
     if (wcscmp(a, L"--count") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--count requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -12027,7 +12031,7 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
     if (wcscmp(a, L"--dump-scanout-bmp") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--dump-scanout-bmp requires an output path\n");
         PrintUsage();
         if (g_json_output) {
@@ -12045,7 +12049,7 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
     if (wcscmp(a, L"--dump-scanout-png") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--dump-scanout-png requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -12069,7 +12073,7 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
     if (wcscmp(a, L"--dump-cursor-bmp") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--dump-cursor-bmp requires an argument\n");
         PrintUsage();
         if (g_json_output) {
@@ -12087,7 +12091,7 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
     if (wcscmp(a, L"--dump-cursor-png") == 0) {
-      if (i + 1 >= argc) {
+      if (i + 1 >= argc || IsOptionLikeArg(argv[i + 1])) {
         fwprintf(stderr, L"--dump-cursor-png requires an argument\n");
         PrintUsage();
         if (g_json_output) {
