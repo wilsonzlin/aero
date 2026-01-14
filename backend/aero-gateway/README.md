@@ -217,6 +217,12 @@ When configured, the gateway includes an `udpRelay` field in `POST /session` res
 
 Note: inbound UDP filtering (NAT behavior) is configured on the relay service itself. By default, `proxy/webrtc-udp-relay` only forwards inbound UDP from remote address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
 
+Note: the relay also configures pion/SCTP message size caps to mitigate oversized WebRTC DataChannel message DoS (to bound receive-side buffering/allocation before `DataChannel.OnMessage` runs). These are configured on the relay service itself:
+
+- `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP `a=max-message-size` hint; 0 = auto)
+- `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (hard receive-side cap; 0 = auto; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
+- `WEBRTC_SESSION_CONNECT_TIMEOUT` (close server-side PeerConnections that never connect; default `30s`)
+
 ### Built-in TLS (HTTPS/WSS)
 
 - `TLS_ENABLED=1|0` (default: `0`)
