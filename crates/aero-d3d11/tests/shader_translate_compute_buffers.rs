@@ -22,6 +22,177 @@ fn assert_wgsl_validates(wgsl: &str) {
 }
 
 #[test]
+fn translates_compute_system_value_builtins_to_wgsl_builtins() {
+    // Translation-only test: ensure compute-stage `dcl_input_siv` system values map to the correct
+    // WGSL builtins, and preserve raw integer bits via `bitcast<f32>(...)` into the untyped
+    // `vec4<f32>` register file model.
+    const D3D_NAME_DISPATCH_THREAD_ID: u32 = 20;
+    const D3D_NAME_GROUP_ID: u32 = 21;
+    const D3D_NAME_GROUP_INDEX: u32 = 22;
+    const D3D_NAME_GROUP_THREAD_ID: u32 = 23;
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::XYZW,
+                sys_value: D3D_NAME_DISPATCH_THREAD_ID,
+            },
+            Sm4Decl::InputSiv {
+                reg: 1,
+                mask: WriteMask::XYZW,
+                sys_value: D3D_NAME_GROUP_THREAD_ID,
+            },
+            Sm4Decl::InputSiv {
+                reg: 2,
+                mask: WriteMask::XYZW,
+                sys_value: D3D_NAME_GROUP_ID,
+            },
+            Sm4Decl::InputSiv {
+                reg: 3,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_GROUP_INDEX,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::Register(aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: aero_d3d11::OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::Register(aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Input,
+                        index: 1,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: aero_d3d11::OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 2,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::Register(aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Input,
+                        index: 2,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: aero_d3d11::OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 3,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::Register(aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Input,
+                        index: 3,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: aero_d3d11::OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("@builtin(global_invocation_id)"),
+        "expected dispatch thread ID lowering to global_invocation_id:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("@builtin(local_invocation_id)"),
+        "expected group thread ID lowering to local_invocation_id:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("@builtin(workgroup_id)"),
+        "expected group ID lowering to workgroup_id:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("@builtin(local_invocation_index)"),
+        "expected group index lowering to local_invocation_index:\n{}",
+        translated.wgsl
+    );
+
+    assert!(
+        translated.wgsl.contains(
+            "vec4<f32>(bitcast<f32>(input.global_invocation_id.x), bitcast<f32>(input.global_invocation_id.y), bitcast<f32>(input.global_invocation_id.z), 1.0)"
+        ),
+        "expected dispatch thread ID lanes to be expanded as raw bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(
+            "vec4<f32>(bitcast<f32>(input.local_invocation_id.x), bitcast<f32>(input.local_invocation_id.y), bitcast<f32>(input.local_invocation_id.z), 1.0)"
+        ),
+        "expected group thread ID lanes to be expanded as raw bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains(
+            "vec4<f32>(bitcast<f32>(input.workgroup_id.x), bitcast<f32>(input.workgroup_id.y), bitcast<f32>(input.workgroup_id.z), 1.0)"
+        ),
+        "expected group ID lanes to be expanded as raw bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("vec4<f32>(bitcast<f32>(input.local_invocation_index), 0.0, 0.0, 1.0)"),
+        "expected group index to be expanded as scalar raw bits:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_compute_buffer_load_store_raw() {
     let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
