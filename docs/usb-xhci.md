@@ -61,6 +61,9 @@ Regression tests:
 - `crates/aero-machine/tests/xhci_snapshot.rs` asserts machine-level snapshot/restore semantics for
   xHCI (restores controller state, re-drives PCI INTx into the platform interrupt sink, preserves
   host-attached device handles, and clears passthrough host async state).
+- `crates/aero-machine/tests/machine_xhci.rs` asserts machine-level PCI/MMIO integration semantics
+  for xHCI (PCI identity, `COMMAND.MEM` gating for MMIO, `RUN/STOP` toggling `USBSTS.HCHALTED`, and
+  MSI/MSI-X behavior).
 - `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` asserts that detaching a device clears
   any pending endpoint activations/doorbells so re-attaching at the same topology path does not
   spuriously consume TRBs without a new doorbell.
@@ -495,6 +498,7 @@ Rust-side USB/controller/device-model tests:
 ```bash
 cargo test -p aero-usb --locked
 cargo test -p aero-devices --locked
+cargo test -p aero-machine --locked
 ```
 
 Web runtime unit tests (includes USB broker/runtime helpers, rings, and device wrappers):
@@ -529,6 +533,8 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
 - `crates/aero-usb/tests/xhci_control_*.rs` (EP0 control transfer behavior)
 - `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
+- `crates/aero-machine/tests/machine_xhci.rs` (machine-level PCI/MMIO integration)
+- `crates/aero-machine/tests/xhci_snapshot.rs` (machine-level snapshot/restore integration)
 - `crates/emulator/tests/xhci_mmio_gating.rs` (emulator-side PCI/MMIO/BME gating; requires `--features legacy-usb-xhci`)
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
