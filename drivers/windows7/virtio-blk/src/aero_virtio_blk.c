@@ -2,6 +2,9 @@
 
 #include "virtio_pci_aero_layout_miniport.h"
 
+#define VIRTIO_PCI_ISR_QUEUE_INTERRUPT  0x01u
+#define VIRTIO_PCI_ISR_CONFIG_INTERRUPT 0x02u
+
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
 
 static VOID AerovblkCaptureInterruptMode(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -182,6 +185,27 @@ static VOID AerovblkWriteBe64(_Out_writes_bytes_(8) UCHAR* p, _In_ ULONGLONG v) 
   p[7] = (UCHAR)v;
 }
 
+static __forceinline ULONGLONG AerovblkReadCapacitySectors(_In_ const PAEROVBLK_DEVICE_EXTENSION devExt) {
+  if (devExt == NULL) {
+    return 0;
+  }
+  return (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)&devExt->CapacitySectors, 0, 0);
+}
+
+static __forceinline VOID AerovblkWriteCapacitySectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ ULONGLONG sectors) {
+  if (devExt == NULL) {
+    return;
+  }
+  (VOID)InterlockedExchange64((volatile LONGLONG*)&devExt->CapacitySectors, (LONGLONG)sectors);
+}
+
+static __forceinline ULONGLONG AerovblkReadCapacityChangeEvents(_In_ const PAEROVBLK_DEVICE_EXTENSION devExt) {
+  if (devExt == NULL) {
+    return 0;
+  }
+  return (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)&devExt->CapacityChangeEvents, 0, 0);
+}
+
 static __forceinline ULONG AerovblkSectorsPerLogicalBlock(_In_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   if (devExt->LogicalSectorSize < AEROVBLK_LOGICAL_SECTOR_SIZE) {
     return 1;
@@ -194,13 +218,21 @@ static __forceinline ULONG AerovblkSectorsPerLogicalBlock(_In_ PAEROVBLK_DEVICE_
 
 static __forceinline ULONGLONG AerovblkTotalLogicalBlocks(_In_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   ULONGLONG capBytes;
+  ULONGLONG capacitySectors;
+  ULONG logicalSectorSize;
 
-  if (devExt->LogicalSectorSize == 0) {
+  if (devExt == NULL) {
     return 0;
   }
 
-  capBytes = devExt->CapacitySectors * (ULONGLONG)AEROVBLK_LOGICAL_SECTOR_SIZE;
-  return capBytes / (ULONGLONG)devExt->LogicalSectorSize;
+  logicalSectorSize = devExt->LogicalSectorSize;
+  if (logicalSectorSize == 0) {
+    return 0;
+  }
+
+  capacitySectors = AerovblkReadCapacitySectors(devExt);
+  capBytes = capacitySectors * (ULONGLONG)AEROVBLK_LOGICAL_SECTOR_SIZE;
+  return capBytes / (ULONGLONG)logicalSectorSize;
 }
 
 static VOID AerovblkResetRequestContextsLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -440,6 +472,71 @@ static VOID AerovblkVirtioNotifyQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt
   VirtioPciNotifyQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX);
 }
 
+static VOID AerovblkHandleConfigInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  VIRTIO_BLK_CONFIG cfg;
+  NTSTATUS st;
+  ULONGLONG newCapacitySectors;
+  ULONG newLogicalSectorSize;
+  BOOLEAN changed;
+  STOR_LOCK_HANDLE lock;
+
+  if (devExt == NULL) {
+    return;
+  }
+
+  if (devExt->Removed) {
+    return;
+  }
+
+  if (devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
+    return;
+  }
+
+  RtlZeroMemory(&cfg, sizeof(cfg));
+  st = AerovblkVirtioReadBlkConfig(devExt, &cfg);
+  if (!NT_SUCCESS(st)) {
+    return;
+  }
+
+  newCapacitySectors = cfg.Capacity;
+  newLogicalSectorSize = AEROVBLK_LOGICAL_SECTOR_SIZE;
+  if ((devExt->NegotiatedFeatures & AEROVBLK_FEATURE_BLK_BLK_SIZE) && cfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE &&
+      (cfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0) {
+    newLogicalSectorSize = cfg.BlkSize;
+  }
+
+  changed = FALSE;
+
+  StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+
+  if (!devExt->Removed) {
+    const ULONGLONG oldCapacitySectors = AerovblkReadCapacitySectors(devExt);
+    const ULONG oldLogicalSectorSize = devExt->LogicalSectorSize;
+
+    if (newCapacitySectors != oldCapacitySectors || newLogicalSectorSize != oldLogicalSectorSize) {
+      /*
+       * Best-effort support for device models that resize the disk at runtime.
+       * Update geometry under the interrupt lock so StartIo/queueing observes a
+       * consistent capacity when validating I/O bounds.
+       */
+      devExt->LogicalSectorSize = newLogicalSectorSize;
+      AerovblkWriteCapacitySectors(devExt, newCapacitySectors);
+      (VOID)InterlockedIncrement64((volatile LONGLONG*)&devExt->CapacityChangeEvents);
+      changed = TRUE;
+    }
+  }
+
+  StorPortReleaseSpinLock(devExt, &lock);
+
+  if (changed) {
+    /*
+     * Notify StorPort / class drivers that something about the target has
+     * changed. This encourages a rescan/re-read of disk capacity.
+     */
+    StorPortNotification(BusChangeDetected, devExt, 0);
+  }
+}
+
 static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   int vqRes;
   uint16_t indirectMaxDesc;
@@ -587,7 +684,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     cfg.SegMax = 0;
   }
 
-  devExt->CapacitySectors = cfg.Capacity;
+  AerovblkWriteCapacitySectors(devExt, cfg.Capacity);
   devExt->LogicalSectorSize = AEROVBLK_LOGICAL_SECTOR_SIZE;
   if ((negotiated & AEROVBLK_FEATURE_BLK_BLK_SIZE) && cfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE &&
       (cfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0) {
@@ -696,6 +793,33 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     StorPortReleaseSpinLock(devExt, &lock);
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
     return TRUE;
+  }
+
+  /*
+   * Capacity may change at runtime if the device model triggers a virtio config
+   * change interrupt. Perform a final bounds check under the interrupt lock so
+   * no out-of-range I/O is queued after a resize event.
+   */
+  if (reqType == VIRTIO_BLK_T_IN || reqType == VIRTIO_BLK_T_OUT) {
+    ULONGLONG capSectors;
+    ULONGLONG sectorsLen;
+
+    if ((srb->DataTransferLength % AEROVBLK_LOGICAL_SECTOR_SIZE) != 0) {
+      StorPortReleaseSpinLock(devExt, &lock);
+      AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x24, 0x00);
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
+      return TRUE;
+    }
+
+    sectorsLen = (ULONGLONG)srb->DataTransferLength / (ULONGLONG)AEROVBLK_LOGICAL_SECTOR_SIZE;
+    capSectors = AerovblkReadCapacitySectors(devExt);
+
+    if (startSector + sectorsLen < startSector || startSector + sectorsLen > capSectors) {
+      StorPortReleaseSpinLock(devExt, &lock);
+      AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x21, 0x00);
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
+      return TRUE;
+    }
   }
 
   sgCount = (sg == NULL) ? 0 : sg->NumberOfElements;
@@ -1115,6 +1239,7 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     outInfo.ResetBusSrbCount = (ULONG)devExt->ResetBusSrbCount;
     outInfo.PnpSrbCount = (ULONG)devExt->PnpSrbCount;
     outInfo.IoctlResetCount = (ULONG)devExt->IoctlResetCount;
+    outInfo.CapacityChangeEvents = (ULONG)AerovblkReadCapacityChangeEvents(devExt);
 
     copyLen = payloadLen;
     if (copyLen > sizeof(outInfo)) {
@@ -1373,7 +1498,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   }
 
   devExt->LogicalSectorSize = AEROVBLK_LOGICAL_SECTOR_SIZE;
-  devExt->CapacitySectors = blkCfg.Capacity;
+  AerovblkWriteCapacitySectors(devExt, blkCfg.Capacity);
   if (blkCfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE && (blkCfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0) {
     devExt->LogicalSectorSize = blkCfg.BlkSize;
   }
@@ -1627,13 +1752,15 @@ BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
     return FALSE;
   }
 
+  if ((isr & VIRTIO_PCI_ISR_CONFIG_INTERRUPT) != 0) {
+    AerovblkHandleConfigInterrupt(devExt);
+  }
+
   return AerovblkServiceInterrupt(devExt);
 }
 
 BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId) {
   PAEROVBLK_DEVICE_EXTENSION devExt;
-
-  UNREFERENCED_PARAMETER(messageId);
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
 
@@ -1644,8 +1771,14 @@ BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId) 
    *
    * virtio-blk (contract v1) uses one virtqueue (queue 0). We program config
    * on message 0 and queue 0 on message 1 when available, with fallback to
-   * sharing message 0. Draining completions is safe regardless of messageId.
+   * sharing message 0. When queue and config share a single message ID, we
+   * cannot reliably distinguish config changes from I/O completions, so only
+   * process config interrupts when a dedicated config message is available.
    */
+  if (messageId == 0 && devExt->MsiMessageCount >= 2u) {
+    AerovblkHandleConfigInterrupt(devExt);
+  }
+
   return AerovblkServiceInterrupt(devExt);
 }
 
@@ -1901,7 +2034,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       return TRUE;
     }
 
-    if (virtioSector + sectorsLen > devExt->CapacitySectors) {
+    if (virtioSector + sectorsLen > AerovblkReadCapacitySectors(devExt)) {
       AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x21, 0x00);
       AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
       return TRUE;
@@ -1955,7 +2088,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       return TRUE;
     }
 
-    if (virtioSector + sectorsLen > devExt->CapacitySectors) {
+    if (virtioSector + sectorsLen > AerovblkReadCapacitySectors(devExt)) {
       AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x21, 0x00);
       AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
       return TRUE;

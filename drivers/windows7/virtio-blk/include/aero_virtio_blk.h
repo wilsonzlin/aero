@@ -130,6 +130,13 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     ULONG LogicalSectorSize;
     ULONG SegMax;
 
+    /*
+     * Optional: count of capacity/config change events handled via the Virtio
+     * CONFIG_INTERRUPT ISR bit (bit1). This is best-effort compatibility logic
+     * for device models that violate the "static config" assumption.
+     */
+    ULONGLONG CapacityChangeEvents;
+
     PAEROVBLK_REQUEST_CONTEXT RequestContexts;
     ULONG RequestContextCount;
     LIST_ENTRY FreeRequestList;
@@ -176,19 +183,19 @@ typedef struct _AEROVBLK_QUERY_INFO {
     USHORT UsedIdx;
 
     /*
-      * Interrupt observability (virtio-pci modern).
-      *
-      * - InterruptMode reports whether the driver is currently operating in
-      *   legacy INTx mode or using message-signaled interrupts (MSI/MSI-X).
-      * - Msix*Vector report the currently programmed virtio MSI-X vectors.
-      *   A value of 0xFFFF means "no vector assigned" per the virtio spec.
-      * - MessageCount reports the number of message interrupts assigned by
-      *   StorPort (0 for INTx).
-      *
-      * These fields are appended for backwards compatibility: callers that only
-      * understand the original v1 layout can request/consume just the first 16
-      * bytes (through UsedIdx).
-      */
+     * Interrupt observability (virtio-pci modern).
+     *
+     * - InterruptMode reports whether the driver is currently operating in
+     *   legacy INTx mode or using message-signaled interrupts (MSI/MSI-X).
+     * - Msix*Vector report the currently programmed virtio MSI-X vectors.
+     *   A value of 0xFFFF means "no vector assigned" per the virtio spec.
+     * - MessageCount reports the number of message interrupts assigned by
+     *   StorPort (0 for INTx).
+     *
+     * These fields are appended for backwards compatibility: callers that only
+     * understand the original v1 layout can request/consume just the first 16
+     * bytes (through UsedIdx).
+     */
     ULONG InterruptMode;
     USHORT MsixConfigVector;
     USHORT MsixQueue0Vector;
@@ -206,6 +213,11 @@ typedef struct _AEROVBLK_QUERY_INFO {
     ULONG ResetBusSrbCount;
     ULONG PnpSrbCount;
     ULONG IoctlResetCount;
+
+    /*
+     * Optional (appended): number of capacity change events handled at runtime.
+     */
+    ULONG CapacityChangeEvents;
 } AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
 #pragma pack(pop)
 
@@ -224,7 +236,11 @@ C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, ResetDeviceSrbCount) == 0x24);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, ResetBusSrbCount) == 0x28);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, PnpSrbCount) == 0x2C);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, IoctlResetCount) == 0x30);
-C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x34);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, CapacityChangeEvents) == 0x34);
+C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x38);
+
+/* Minimum payload size for legacy callers (v1) that only expect the queue/feature fields. */
+#define AEROVBLK_QUERY_INFO_V1_SIZE FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode)
 
 ULONG AerovblkHwFindAdapter(
     _In_ PVOID deviceExtension,
