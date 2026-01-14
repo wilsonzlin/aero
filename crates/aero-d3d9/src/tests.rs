@@ -545,6 +545,79 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_exp_log_pow() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, -2.0, -2.0, -2.0, -2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0xC000_0000,
+            0xC000_0000,
+            0xC000_0000,
+            0xC000_0000,
+        ],
+    ));
+    // def c1, 2.0, 2.0, 2.0, 2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x4000_0000,
+            0x4000_0000,
+            0x4000_0000,
+            0x4000_0000,
+        ],
+    ));
+    // def c2, 0.25, 0.25, 0.25, 0.25
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+        ],
+    ));
+    // def c3, 2.0, 2.0, 2.0, 2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 3, 0xF),
+            0x4000_0000,
+            0x4000_0000,
+            0x4000_0000,
+            0x4000_0000,
+        ],
+    ));
+
+    // exp r0, c0
+    out.extend(enc_inst(0x000E, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // log r1, c1
+    out.extend(enc_inst(0x000F, &[enc_dst(0, 1, 0xF), enc_src(2, 1, 0xE4)]));
+    // pow r2, c2, c3
+    out.extend(enc_inst(
+        0x0020,
+        &[enc_dst(0, 2, 0xF), enc_src(2, 2, 0xE4), enc_src(2, 3, 0xE4)],
+    ));
+
+    // mov r3, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)]));
+    // mov r3.y, r1.x
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)]));
+    // mov r3.z, r2.x
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)]));
+    // mov r3.w, r1.x
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x8), enc_src(0, 1, 0x00)]));
+
+    // mov oC0, r3
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 3, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn build_sm3_ir(words: &[u32]) -> sm3::ShaderIr {
     let decoded = sm3::decode_u32_tokens(words).unwrap();
     let ir = sm3::build_ir(&decoded).unwrap();
@@ -1036,6 +1109,55 @@ fn sm3_predicated_mov_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "96055b069d3aa23d0ac33ad4f4a7d443a8d511620cf2d63269d89e5fd0c2bf2b"
+    );
+}
+
+#[test]
+fn sm3_exp_log_pow_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_exp_log_pow());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    for (pos, (u, v), color) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, color);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // R = exp2(-2.0) = 0.25, G = log2(2.0) = 1.0, B = pow(0.25, 2.0) = 0.0625, A = 1.0.
+    assert_eq!(rt.get(4, 4).to_rgba8(), [64, 255, 16, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "1806680cf63f0d89928fe033c641adc922232f74f257867de050efb43f50edb9"
     );
 }
 
