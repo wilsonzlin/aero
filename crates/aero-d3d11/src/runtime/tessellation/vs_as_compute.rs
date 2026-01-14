@@ -19,25 +19,48 @@ use anyhow::{anyhow, bail, Result};
 use crate::input_layout::DxgiFormatComponentType;
 
 use crate::runtime::expansion_scratch::{ExpansionScratchAlloc, ExpansionScratchAllocator};
-use crate::runtime::index_pulling::wgsl_index_pulling_lib;
+use crate::runtime::index_pulling::{
+    wgsl_index_pulling_lib, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
+};
 use crate::runtime::vertex_pulling::{
     VertexPullingAttribute, VertexPullingLayout, VERTEX_PULLING_GROUP,
-    VERTEX_PULLING_UNIFORM_BINDING,
+    VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 
 /// `@binding` number for [`crate::runtime::index_pulling::IndexPullingParams`] when VS-as-compute
 /// needs indexed draw support.
 ///
-/// This lives in [`VERTEX_PULLING_GROUP`] alongside the vertex pulling bindings. Vertex pulling uses
-/// binding `0..slot_count` for vertex buffers and binding [`VERTEX_PULLING_UNIFORM_BINDING`] (32) for
-/// its uniform, so we reserve subsequent bindings for additional emulation plumbing.
-pub const VS_AS_COMPUTE_INDEX_PARAMS_BINDING: u32 = 33;
+/// This lives in [`VERTEX_PULLING_GROUP`] alongside the vertex pulling bindings. Index pulling is
+/// bound in the same *internal* binding range as vertex pulling (`@binding >= BINDING_BASE_INTERNAL`)
+/// to avoid collisions with D3D11 register-space bindings when sharing bind group 3.
+///
+/// Alias of [`crate::runtime::index_pulling::INDEX_PULLING_PARAMS_BINDING`].
+pub const VS_AS_COMPUTE_INDEX_PARAMS_BINDING: u32 = INDEX_PULLING_PARAMS_BINDING;
 
 /// `@binding` number for the index buffer word storage when VS-as-compute needs indexed draw support.
-pub const VS_AS_COMPUTE_INDEX_BUFFER_BINDING: u32 = 34;
+///
+/// Alias of [`crate::runtime::index_pulling::INDEX_PULLING_BUFFER_BINDING`].
+pub const VS_AS_COMPUTE_INDEX_BUFFER_BINDING: u32 = INDEX_PULLING_BUFFER_BINDING;
 
 /// `@binding` number for the output register storage buffer (`vs_out_regs`).
-pub const VS_AS_COMPUTE_VS_OUT_REGS_BINDING: u32 = 35;
+///
+/// This is placed immediately after the index pulling bindings so it remains disjoint from:
+/// - vertex pulling's per-slot vertex buffers (`VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot`)
+/// - index pulling's params + index buffer bindings
+/// - the D3D11 register-space binding ranges used by guest shaders
+pub const VS_AS_COMPUTE_VS_OUT_REGS_BINDING: u32 = VS_AS_COMPUTE_INDEX_BUFFER_BINDING + 1;
+
+fn vs_as_compute_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
+    // Keep ordering consistent with `VertexPullingLayout::bind_group_layout_entries()`:
+    // - vertex buffers in pulling-slot order
+    // - uniform last
+    let mut out = Vec::with_capacity(slot_count as usize + 1);
+    for slot in 0..slot_count {
+        out.push(VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot);
+    }
+    out.push(VERTEX_PULLING_UNIFORM_BINDING);
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VsAsComputeConfig {
@@ -167,7 +190,7 @@ impl VsAsComputePipeline {
 
         for (slot, buf) in vertex_buffers.iter().enumerate() {
             entries.push(wgpu::BindGroupEntry {
-                binding: slot as u32,
+                binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot as u32,
                 resource: buf.as_entire_binding(),
             });
         }
@@ -280,10 +303,11 @@ fn create_vs_as_compute_bind_group_layout(
 ) -> wgpu::BindGroupLayout {
     // Start with the IA vertex pulling bindings.
     let slot_count = vertex_pulling.slot_count();
+    let pulling_bindings = vs_as_compute_vertex_pulling_binding_numbers(slot_count);
     let mut entries: Vec<wgpu::BindGroupLayoutEntry> = Vec::new();
     for slot in 0..slot_count {
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: slot,
+            binding: pulling_bindings[slot as usize],
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -294,7 +318,7 @@ fn create_vs_as_compute_bind_group_layout(
         });
     }
     entries.push(wgpu::BindGroupLayoutEntry {
-        binding: VERTEX_PULLING_UNIFORM_BINDING,
+        binding: *pulling_bindings.last().unwrap(),
         visibility: wgpu::ShaderStages::COMPUTE,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
@@ -570,4 +594,37 @@ fn aero_vp_load_loc{loc}(vertex_id: i32, instance_id: u32) -> vec4<f32> {{
         load_stmt = load_stmt,
         expand_stmt = expand_stmt
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn vs_as_compute_vertex_pulling_binding_numbers_match_vertex_pulling_layout() {
+        // Construct a minimal `VertexPullingLayout` with 3 pulling slots.
+        let mut d3d_slot_to_pulling_slot = BTreeMap::new();
+        d3d_slot_to_pulling_slot.insert(0, 0);
+        d3d_slot_to_pulling_slot.insert(1, 1);
+        d3d_slot_to_pulling_slot.insert(2, 2);
+
+        let pulling = VertexPullingLayout {
+            d3d_slot_to_pulling_slot,
+            pulling_slot_to_d3d_slot: vec![0, 1, 2],
+            attributes: Vec::new(),
+        };
+
+        let layout_bindings: Vec<u32> = pulling
+            .bind_group_layout_entries()
+            .into_iter()
+            .map(|e| e.binding)
+            .collect();
+        let wiring_bindings = vs_as_compute_vertex_pulling_binding_numbers(pulling.slot_count());
+
+        assert_eq!(
+            wiring_bindings, layout_bindings,
+            "VS-as-compute vertex pulling bindings must match VertexPullingLayout"
+        );
+    }
 }
