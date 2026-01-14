@@ -5281,7 +5281,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
     if (width == 0 || height == 0 || width > 16384u || height > 16384u || width > (0xFFFFFFFFu / 4u)) {
         sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return STATUS_SUCCESS;
+        return STATUS_INVALID_PARAMETER;
     }
 
     if (!AeroGpuIsSupportedVidPnModeDimensions(width, height)) {
@@ -5313,7 +5313,15 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
 
         adapter->CurrentPitch = pitch;
     }
-    adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    switch (fmt) {
+    case D3DDDIFMT_A8R8G8B8:
+        adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8A8_UNORM;
+        break;
+    case D3DDDIFMT_X8R8G8B8:
+    default:
+        adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8X8_UNORM;
+        break;
+    }
 
     sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
     vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
