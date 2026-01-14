@@ -802,9 +802,32 @@ mod tests {
         let update = rgba_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, AeroGpuFormat::R8G8B8A8UnormSrgb as u32);
 
+        // 16bpp formats should also be representable in the shared scanout descriptor.
+        let b5g6r5 = AeroGpuScanoutConfig {
+            pitch_bytes: 640 * 2,
+            format: AeroGpuFormat::B5G6R5Unorm,
+            ..cfg
+        };
+        let update = b5g6r5.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.width, 640);
+        assert_eq!(update.height, 480);
+        assert_eq!(update.pitch_bytes, 640 * 2);
+        assert_eq!(update.format, SCANOUT_FORMAT_B5G6R5);
+
+        let b5g5r5a1 = AeroGpuScanoutConfig {
+            pitch_bytes: 640 * 2,
+            format: AeroGpuFormat::B5G5R5A1Unorm,
+            ..cfg
+        };
+        let update = b5g5r5a1.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.width, 640);
+        assert_eq!(update.height, 480);
+        assert_eq!(update.pitch_bytes, 640 * 2);
+        assert_eq!(update.format, SCANOUT_FORMAT_B5G5R5A1);
+
         // Unsupported format must not panic and must publish a disabled descriptor.
         let unsupported = AeroGpuScanoutConfig {
-            format: AeroGpuFormat::B5G6R5Unorm,
+            format: AeroGpuFormat::D24UnormS8Uint,
             ..cfg
         };
         let update0 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
