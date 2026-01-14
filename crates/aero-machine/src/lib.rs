@@ -2409,6 +2409,9 @@ struct AeroGpuDevice {
 impl AeroGpuDevice {
     fn default_dac_palette() -> [[u8; 3]; 256] {
         let mut out = [[0u8; 3]; 256];
+        // Map an 8-bit (0..=255) channel value to a VGA 6-bit DAC value (0..=63) with rounding.
+        let to_6bit = |v: u8| -> u8 { ((u16::from(v) * 63 + 127) / 255) as u8 };
+
         // Standard EGA 16-color palette encoded as VGA DAC 6-bit components.
         //
         // This matches the VGA device model's default palette for indices 0..15.
@@ -2431,7 +2434,42 @@ impl AeroGpuDevice {
             [63, 63, 63], // 15 white
         ];
         out[..16].copy_from_slice(&EGA_6BIT);
+
+        // 6x6x6 color cube (indices 16..231), similar to the classic VGA palette.
+        let mut idx = 16usize;
+        for r in 0..6u8 {
+            for g in 0..6u8 {
+                for b in 0..6u8 {
+                    let scale8 = |v: u8| -> u8 { ((u16::from(v) * 255) / 5) as u8 };
+                    out[idx] = [to_6bit(scale8(r)), to_6bit(scale8(g)), to_6bit(scale8(b))];
+                    idx += 1;
+                }
+            }
+        }
+
+        // Grayscale ramp (232..255).
+        for i in 0..24u8 {
+            let v8 = ((u16::from(i) * 255) / 23) as u8;
+            let v6 = to_6bit(v8);
+            out[232 + i as usize] = [v6, v6, v6];
+        }
         out
+    }
+
+    fn default_attr_regs() -> [u8; 256] {
+        // VGA text mode defaults (matching `aero_gpu_vga::VgaDevice::set_text_mode_80x25`):
+        // - Mode Control: bit0=0 => text; bit2=line graphics enable.
+        // - Color Plane Enable: enable all 4 planes so color indices are not masked to 0.
+        // - Color Select: select palette page 0.
+        let mut regs = [0u8; 256];
+        regs[0x10] = 1 << 2;
+        regs[0x12] = 0x0F;
+        regs[0x14] = 0x00;
+        // Identity palette mapping for indices 0..15.
+        for i in 0..16u8 {
+            regs[i as usize] = i;
+        }
+        regs
     }
 
     fn new() -> Self {
@@ -2447,7 +2485,7 @@ impl AeroGpuDevice {
             crtc_index: 0,
             crtc_regs: [0; 256],
             attr_index: 0,
-            attr_regs: [0; 256],
+            attr_regs: Self::default_attr_regs(),
             attr_flip_flop: false,
             pel_mask: 0xFF,
             dac_write_index: 0,
@@ -2471,7 +2509,7 @@ impl AeroGpuDevice {
         self.crtc_index = 0;
         self.crtc_regs.fill(0);
         self.attr_index = 0;
-        self.attr_regs.fill(0);
+        self.attr_regs = Self::default_attr_regs();
         self.attr_flip_flop = false;
         self.pel_mask = 0xFF;
         self.dac_write_index = 0;
@@ -4621,11 +4659,15 @@ impl Machine {
     fn display_present_aerogpu_text_mode(&mut self) {
         // Avoid holding a `RefCell` borrow of the AeroGPU device while reading from guest memory:
         // legacy VRAM is MMIO-routed back into the same device and may borrow it again.
-        let (pel_mask, dac_palette) = if let Some(aerogpu) = &self.aerogpu {
+        let (pel_mask, dac_palette, attr_regs) = if let Some(aerogpu) = &self.aerogpu {
             let dev = aerogpu.borrow();
-            (dev.pel_mask, dev.dac_palette)
+            (dev.pel_mask, dev.dac_palette, dev.attr_regs)
         } else {
-            (0xFF, AeroGpuDevice::default_dac_palette())
+            (
+                0xFF,
+                AeroGpuDevice::default_dac_palette(),
+                AeroGpuDevice::default_attr_regs(),
+            )
         };
 
         let (w, h) = aerogpu_legacy_text::render_into(
@@ -4633,6 +4675,7 @@ impl Machine {
             &mut self.mem,
             &dac_palette,
             pel_mask,
+            &attr_regs,
         );
         self.display_width = w;
         self.display_height = h;
