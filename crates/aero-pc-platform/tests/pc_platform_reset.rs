@@ -392,6 +392,7 @@ fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
     // Same setup as the full-platform reset test above, but exercise `PcPlatform::reset_pci()`
     // directly so regressions in that helper are also caught.
     let expected_pin = PciInterruptPin::IntC;
+    let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
 
     let bdf = {
         let mut pci_cfg = pc.pci_cfg.borrow_mut();
@@ -413,6 +414,13 @@ fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
     };
     pc.register_pci_intx_source(bdf, expected_pin, |_pc| false);
 
+    let pin_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+    let line_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+    assert_eq!(pin_before, expected_pin.to_config_u8());
+    let pirq_index_before = (usize::from(bdf.device) + usize::from(pin_before - 1)) & 3;
+    let expected_line_before = u8::try_from(pirq_to_gsi[pirq_index_before]).unwrap();
+    assert_eq!(line_before, expected_line_before);
+
     // Smash the guest-visible INTx routing metadata.
     write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c, 0x5a);
     write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d, 0x04);
@@ -431,7 +439,6 @@ fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
     let line_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
     assert_eq!(pin_after, expected_pin.to_config_u8());
 
-    let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
     let pirq_index_after = (usize::from(bdf.device) + usize::from(pin_after - 1)) & 3;
     let expected_line_after = u8::try_from(pirq_to_gsi[pirq_index_after]).unwrap();
     assert_eq!(line_after, expected_line_after);
