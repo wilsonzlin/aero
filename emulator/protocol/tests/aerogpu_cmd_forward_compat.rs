@@ -55,6 +55,7 @@ fn build_bind_shaders_stream(extended: bool, with_extra_trailing: bool) -> Vec<u
 #[test]
 fn cmd_stream_accepts_extended_bind_shaders_packet() {
     let base = build_bind_shaders_stream(false, false);
+    let base_with_trailing = build_bind_shaders_stream(false, true);
     let extended = build_bind_shaders_stream(true, false);
     let extended_with_trailing = build_bind_shaders_stream(true, true);
 
@@ -74,6 +75,20 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
     assert_eq!(base_size_bytes, 24);
     assert_eq!((base_vs, base_ps, base_cs), (1, 2, 3));
     assert_eq!(base_ex, None);
+
+    let (base_trailing_cmd, base_trailing_ex) = decode(&base_with_trailing);
+    let base_trailing_size_bytes = base_trailing_cmd.hdr.size_bytes;
+    let (base_trailing_vs, base_trailing_ps, base_trailing_cs) = (
+        base_trailing_cmd.vs,
+        base_trailing_cmd.ps,
+        base_trailing_cmd.cs,
+    );
+    assert_eq!(base_trailing_size_bytes, 28);
+    assert_eq!(
+        (base_trailing_vs, base_trailing_ps, base_trailing_cs),
+        (1, 2, 3)
+    );
+    assert_eq!(base_trailing_ex, None);
 
     let (ext_cmd, ext_ex) = decode(&extended);
     let ext_size_bytes = ext_cmd.hdr.size_bytes;
@@ -113,4 +128,8 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
 
     // Legacy decode (vs/ps/cs) must remain stable between base and extended packets.
     assert_eq!((base_vs, base_ps, base_cs), (ext_vs, ext_ps, ext_cs));
+    assert_eq!(
+        (base_vs, base_ps, base_cs),
+        (base_trailing_vs, base_trailing_ps, base_trailing_cs),
+    );
 }

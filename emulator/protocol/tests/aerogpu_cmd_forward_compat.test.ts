@@ -224,29 +224,36 @@ function buildBindShadersStream(extended: boolean, withExtraTrailing: boolean): 
 
 test("BIND_SHADERS decoders accept append-only extensions for additional stages", () => {
   const base = buildBindShadersStream(false, false);
+  const baseWithTrailing = buildBindShadersStream(false, true);
   const extended = buildBindShadersStream(true, false);
   const extendedWithTrailing = buildBindShadersStream(true, true);
 
   const packetsBase = decodeCmdStreamView(base).packets;
+  const packetsBaseTrailing = decodeCmdStreamView(baseWithTrailing).packets;
   const packetsExt = decodeCmdStreamView(extended).packets;
   const packetsExtTrailing = decodeCmdStreamView(extendedWithTrailing).packets;
   assert.equal(packetsBase.length, 1);
+  assert.equal(packetsBaseTrailing.length, 1);
   assert.equal(packetsExt.length, 1);
   assert.equal(packetsExtTrailing.length, 1);
 
   assert.equal(packetsBase[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
+  assert.equal(packetsBaseTrailing[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
   assert.equal(packetsExt[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
   assert.equal(packetsExtTrailing[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
   assert.equal(packetsBase[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE);
+  assert.equal(packetsBaseTrailing[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 4);
   assert.equal(packetsExt[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
   assert.equal(packetsExtTrailing[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12 + 4);
 
   const decodedBase = decodeCmdBindShadersPayload(base, packetsBase[0]!.offsetBytes);
+  const decodedBaseTrailing = decodeCmdBindShadersPayload(baseWithTrailing, packetsBaseTrailing[0]!.offsetBytes);
   const decodedExt = decodeCmdBindShadersPayload(extended, packetsExt[0]!.offsetBytes);
   const decodedExtTrailing = decodeCmdBindShadersPayload(extendedWithTrailing, packetsExtTrailing[0]!.offsetBytes);
 
   // Packet-based decoders should agree with the byte+offset helpers.
   assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsBase[0]!), decodedBase);
+  assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsBaseTrailing[0]!), decodedBaseTrailing);
   assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsExt[0]!), decodedExt);
   assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsExtTrailing[0]!), decodedExtTrailing);
 
@@ -261,6 +268,7 @@ test("BIND_SHADERS decoders accept append-only extensions for additional stages"
     };
   };
   const legacyBase = decodeLegacy(base, packetsBase[0]!.offsetBytes);
+  const legacyBaseTrailing = decodeLegacy(baseWithTrailing, packetsBaseTrailing[0]!.offsetBytes);
   const legacyExt = decodeLegacy(extended, packetsExt[0]!.offsetBytes);
   const legacyExtTrailing = decodeLegacy(extendedWithTrailing, packetsExtTrailing[0]!.offsetBytes);
 
@@ -269,6 +277,12 @@ test("BIND_SHADERS decoders accept append-only extensions for additional stages"
     { vs: decodedBase.vs, ps: decodedBase.ps, cs: decodedBase.cs, reserved0: decodedBase.reserved0 },
     { vs: decodedExt.vs, ps: decodedExt.ps, cs: decodedExt.cs, reserved0: decodedExt.reserved0 },
   );
+  assert.deepEqual(legacyBaseTrailing, legacyBase);
+  assert.deepEqual(
+    { vs: decodedBaseTrailing.vs, ps: decodedBaseTrailing.ps, cs: decodedBaseTrailing.cs, reserved0: decodedBaseTrailing.reserved0 },
+    { vs: decodedBase.vs, ps: decodedBase.ps, cs: decodedBase.cs, reserved0: decodedBase.reserved0 },
+  );
+  assert.equal(decodedBaseTrailing.ex, undefined);
   assert.deepEqual(legacyBase, legacyExt);
   assert.deepEqual(legacyExtTrailing, legacyExt);
   assert.deepEqual(
