@@ -12,7 +12,9 @@ use crate::devices::aerogpu_regs::{
     AEROGPU_PCI_SUBSYSTEM_VENDOR_ID, AEROGPU_PCI_VENDOR_ID, FEATURE_CURSOR, FEATURE_VBLANK,
 };
 use crate::devices::aerogpu_ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
-use crate::devices::aerogpu_scanout::{composite_cursor_rgba_over_scanout, AeroGpuFormat};
+use crate::devices::aerogpu_scanout::{
+    composite_cursor_rgba_over_scanout, scanout_config_to_scanout_state_update, AeroGpuFormat,
+};
 use crate::gpu_worker::aerogpu_backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use crate::gpu_worker::aerogpu_executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
@@ -213,10 +215,8 @@ impl AeroGpuPciDevice {
         // Claim only when the scanout configuration is valid for presentation. Invalid/unsupported
         // scanout configurations are treated as "disabled" and must not steal ownership from
         // legacy sources.
-        let update = self
-            .regs
-            .scanout0
-            .to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update =
+            scanout_config_to_scanout_state_update(&self.regs.scanout0, SCANOUT_SOURCE_WDDM);
         if update.width == 0 || update.height == 0 {
             return;
         }
@@ -668,10 +668,8 @@ impl AeroGpuPciDevice {
             return;
         };
 
-        let update = self
-            .regs
-            .scanout0
-            .to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update =
+            scanout_config_to_scanout_state_update(&self.regs.scanout0, SCANOUT_SOURCE_WDDM);
 
         if self.last_published_scanout0 == Some(update) {
             return;

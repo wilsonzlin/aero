@@ -1,360 +1,86 @@
-use memory::MemoryBus;
-
-pub use aero_devices_gpu::AeroGpuFormat;
+pub use aero_devices_gpu::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
 use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8};
 
-// -----------------------------------------------------------------------------
-// Defensive caps (host readback paths)
-// -----------------------------------------------------------------------------
-//
-// `AeroGpu*Config::read_rgba` reads guest-controlled scanout/cursor bitmaps and returns a host-owned
-// `Vec<u8>` containing RGBA8 pixels. Since the guest controls width/height/pitch, these helpers
-// must not allocate unbounded memory.
-const MAX_HOST_SCANOUT_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels (~4K@32bpp)
-const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixels (~1024x1024)
-
-// Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
-//
-// Format semantics (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h` and
-// `docs/16-gpu-command-abi.md` §2.5.1):
-// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting to RGBA for
-//   scanout/cursor presentation or blending, treat alpha as fully opaque (`A=0xFF`) and ignore the
-//   stored `X` byte.
-// - `*_SRGB` formats are byte-layout-identical to their UNORM counterparts; only the color space
-//   interpretation differs (sampling decodes sRGB→linear; render-target writes may encode
-//   linear→sRGB). Presenters must avoid double-applying gamma.
-
-#[derive(Clone, Debug)]
-pub struct AeroGpuScanoutConfig {
-    pub enable: bool,
-    pub width: u32,
-    pub height: u32,
-    pub format: AeroGpuFormat,
-    pub pitch_bytes: u32,
-    pub fb_gpa: u64,
-}
-
-impl Default for AeroGpuScanoutConfig {
-    fn default() -> Self {
-        Self {
-            enable: false,
-            width: 0,
-            height: 0,
-            format: AeroGpuFormat::Invalid,
-            pitch_bytes: 0,
-            fb_gpa: 0,
-        }
+fn disabled_scanout_state_update(source: u32) -> ScanoutStateUpdate {
+    ScanoutStateUpdate {
+        source,
+        base_paddr_lo: 0,
+        base_paddr_hi: 0,
+        width: 0,
+        height: 0,
+        pitch_bytes: 0,
+        // Keep format at a stable default even while disabled.
+        format: SCANOUT_FORMAT_B8G8R8X8,
     }
 }
 
-impl AeroGpuScanoutConfig {
-    fn disabled_scanout_state_update(source: u32) -> ScanoutStateUpdate {
-        ScanoutStateUpdate {
-            source,
-            base_paddr_lo: 0,
-            base_paddr_hi: 0,
-            width: 0,
-            height: 0,
-            pitch_bytes: 0,
-            // Keep format at a stable default even while disabled.
-            format: SCANOUT_FORMAT_B8G8R8X8,
-        }
+/// Convert a scanout register block into a shared [`ScanoutStateUpdate`].
+///
+/// If the configuration is disabled or invalid (including unsupported pixel formats), this returns
+/// a "disabled" descriptor with `width/height/base_paddr/pitch = 0`.
+pub fn scanout_config_to_scanout_state_update(
+    cfg: &AeroGpuScanoutConfig,
+    source: u32,
+) -> ScanoutStateUpdate {
+    if !cfg.enable {
+        return disabled_scanout_state_update(source);
     }
 
-    /// Convert this scanout register block into a shared [`ScanoutStateUpdate`].
-    ///
-    /// If the configuration is disabled or invalid (including unsupported pixel formats), this
-    /// returns a "disabled" descriptor with `width/height/base_paddr/pitch = 0`.
-    pub fn to_scanout_state_update(&self, source: u32) -> ScanoutStateUpdate {
-        if !self.enable {
-            return Self::disabled_scanout_state_update(source);
-        }
-
-        let width = self.width;
-        let height = self.height;
-        if width == 0 || height == 0 {
-            return Self::disabled_scanout_state_update(source);
-        }
-
-        let fb_gpa = self.fb_gpa;
-        if fb_gpa == 0 {
-            return Self::disabled_scanout_state_update(source);
-        }
-
-        // Scanout state supports only the packed pixel formats that scanout consumers can present
-        // deterministically today.
-        let Some(bytes_per_pixel) = self.format.bytes_per_pixel() else {
-            return Self::disabled_scanout_state_update(source);
-        };
-        let format = self.format as u32;
-
-        // Validate pitch >= width*bytes_per_pixel and that address arithmetic doesn't overflow.
-        let row_bytes = u64::from(width).checked_mul(bytes_per_pixel as u64);
-        let Some(row_bytes) = row_bytes else {
-            return Self::disabled_scanout_state_update(source);
-        };
-        let pitch = u64::from(self.pitch_bytes);
-        if pitch < row_bytes {
-            return Self::disabled_scanout_state_update(source);
-        }
-        if bytes_per_pixel != 0 && pitch % (bytes_per_pixel as u64) != 0 {
-            // Scanout consumers treat the pitch as a byte stride for `bytes_per_pixel`-sized pixels.
-            // If it's not a multiple of the pixel size, row starts would land mid-pixel.
-            return Self::disabled_scanout_state_update(source);
-        }
-
-        // Ensure `fb_gpa + (height-1)*pitch + row_bytes` does not overflow.
-        let Some(last_row_offset) = u64::from(height)
-            .checked_sub(1)
-            .and_then(|rows| rows.checked_mul(pitch))
-        else {
-            return Self::disabled_scanout_state_update(source);
-        };
-        let Some(end_offset) = last_row_offset.checked_add(row_bytes) else {
-            return Self::disabled_scanout_state_update(source);
-        };
-        if fb_gpa.checked_add(end_offset).is_none() {
-            return Self::disabled_scanout_state_update(source);
-        }
-
-        ScanoutStateUpdate {
-            source,
-            base_paddr_lo: fb_gpa as u32,
-            base_paddr_hi: (fb_gpa >> 32) as u32,
-            width,
-            height,
-            pitch_bytes: self.pitch_bytes,
-            format,
-        }
+    let width = cfg.width;
+    let height = cfg.height;
+    if width == 0 || height == 0 {
+        return disabled_scanout_state_update(source);
     }
 
-    pub fn read_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
-        if !self.enable {
-            return None;
-        }
-        let bytes_per_pixel = self.format.bytes_per_pixel()?;
-        let width = usize::try_from(self.width).ok()?;
-        let height = usize::try_from(self.height).ok()?;
-        if width == 0 || height == 0 {
-            return None;
-        }
-        if self.fb_gpa == 0 {
-            return None;
-        }
-        let pitch = usize::try_from(self.pitch_bytes).ok()?;
-        let row_bytes = width.checked_mul(bytes_per_pixel)?;
-        if pitch < row_bytes {
-            return None;
-        }
-
-        // Validate GPA arithmetic does not wrap.
-        let pitch_u64 = u64::from(self.pitch_bytes);
-        let row_bytes_u64 = u64::try_from(row_bytes).ok()?;
-        let last_row_gpa = self
-            .fb_gpa
-            .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
-        last_row_gpa.checked_add(row_bytes_u64)?;
-
-        let out_len = width.checked_mul(height)?.checked_mul(4)?;
-        if out_len > MAX_HOST_SCANOUT_RGBA8888_BYTES {
-            return None;
-        }
-        let mut out = vec![0u8; out_len];
-        let mut row_buf = vec![0u8; row_bytes];
-
-        for y in 0..height {
-            let row_gpa = self.fb_gpa + (y as u64) * pitch_u64;
-            mem.read_physical(row_gpa, &mut row_buf);
-            let dst_row = &mut out[y * width * 4..(y + 1) * width * 4];
-
-            match self.format {
-                AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
-                    for x in 0..width {
-                        let src = &row_buf[x * 4..x * 4 + 4];
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = src[2];
-                        dst[1] = src[1];
-                        dst[2] = src[0];
-                        dst[3] = src[3];
-                    }
-                }
-                AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
-                    for x in 0..width {
-                        let src = &row_buf[x * 4..x * 4 + 4];
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = src[2];
-                        dst[1] = src[1];
-                        dst[2] = src[0];
-                        dst[3] = 0xff;
-                    }
-                }
-                AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
-                    dst_row.copy_from_slice(&row_buf);
-                }
-                AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
-                    for x in 0..width {
-                        let src = &row_buf[x * 4..x * 4 + 4];
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = src[0];
-                        dst[1] = src[1];
-                        dst[2] = src[2];
-                        dst[3] = 0xff;
-                    }
-                }
-                AeroGpuFormat::B5G6R5Unorm => {
-                    for x in 0..width {
-                        let pix = u16::from_le_bytes([row_buf[x * 2], row_buf[x * 2 + 1]]);
-                        let b = (pix & 0x1f) as u8;
-                        let g = ((pix >> 5) & 0x3f) as u8;
-                        let r = ((pix >> 11) & 0x1f) as u8;
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = (r << 3) | (r >> 2);
-                        dst[1] = (g << 2) | (g >> 4);
-                        dst[2] = (b << 3) | (b >> 2);
-                        dst[3] = 0xff;
-                    }
-                }
-                AeroGpuFormat::B5G5R5A1Unorm => {
-                    for x in 0..width {
-                        let pix = u16::from_le_bytes([row_buf[x * 2], row_buf[x * 2 + 1]]);
-                        let b = (pix & 0x1f) as u8;
-                        let g = ((pix >> 5) & 0x1f) as u8;
-                        let r = ((pix >> 10) & 0x1f) as u8;
-                        let a = ((pix >> 15) & 0x1) as u8;
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = (r << 3) | (r >> 2);
-                        dst[1] = (g << 3) | (g >> 2);
-                        dst[2] = (b << 3) | (b >> 2);
-                        dst[3] = if a != 0 { 0xff } else { 0x00 };
-                    }
-                }
-                _ => return None,
-            }
-        }
-
-        Some(out)
+    let fb_gpa = cfg.fb_gpa;
+    if fb_gpa == 0 {
+        return disabled_scanout_state_update(source);
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct AeroGpuCursorConfig {
-    pub enable: bool,
-    pub x: i32,
-    pub y: i32,
-    pub hot_x: u32,
-    pub hot_y: u32,
-    pub width: u32,
-    pub height: u32,
-    pub format: AeroGpuFormat,
-    pub fb_gpa: u64,
-    pub pitch_bytes: u32,
-}
+    // Scanout state supports only the packed pixel formats that scanout consumers can present
+    // deterministically today.
+    let Some(bytes_per_pixel) = cfg.format.bytes_per_pixel() else {
+        return disabled_scanout_state_update(source);
+    };
+    let format = cfg.format as u32;
 
-impl Default for AeroGpuCursorConfig {
-    fn default() -> Self {
-        Self {
-            enable: false,
-            x: 0,
-            y: 0,
-            hot_x: 0,
-            hot_y: 0,
-            width: 0,
-            height: 0,
-            format: AeroGpuFormat::Invalid,
-            fb_gpa: 0,
-            pitch_bytes: 0,
-        }
+    // Validate pitch >= width*bytes_per_pixel and that address arithmetic doesn't overflow.
+    let row_bytes = u64::from(width).checked_mul(bytes_per_pixel as u64);
+    let Some(row_bytes) = row_bytes else {
+        return disabled_scanout_state_update(source);
+    };
+    let pitch = u64::from(cfg.pitch_bytes);
+    if pitch < row_bytes {
+        return disabled_scanout_state_update(source);
     }
-}
+    if bytes_per_pixel != 0 && pitch % (bytes_per_pixel as u64) != 0 {
+        // Scanout consumers treat the pitch as a byte stride for `bytes_per_pixel`-sized pixels.
+        // If it's not a multiple of the pixel size, row starts would land mid-pixel.
+        return disabled_scanout_state_update(source);
+    }
 
-impl AeroGpuCursorConfig {
-    pub fn read_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
-        if !self.enable {
-            return None;
-        }
+    // Ensure `fb_gpa + (height-1)*pitch + row_bytes` does not overflow.
+    let Some(last_row_offset) = u64::from(height)
+        .checked_sub(1)
+        .and_then(|rows| rows.checked_mul(pitch))
+    else {
+        return disabled_scanout_state_update(source);
+    };
+    let Some(end_offset) = last_row_offset.checked_add(row_bytes) else {
+        return disabled_scanout_state_update(source);
+    };
+    if fb_gpa.checked_add(end_offset).is_none() {
+        return disabled_scanout_state_update(source);
+    }
 
-        let bytes_per_pixel = self.format.bytes_per_pixel()?;
-        if bytes_per_pixel != 4 {
-            // MVP: only support 32bpp cursor formats.
-            return None;
-        }
-
-        let width = usize::try_from(self.width).ok()?;
-        let height = usize::try_from(self.height).ok()?;
-        if width == 0 || height == 0 {
-            return None;
-        }
-        if self.fb_gpa == 0 {
-            return None;
-        }
-
-        let pitch = usize::try_from(self.pitch_bytes).ok()?;
-        let row_bytes = width.checked_mul(bytes_per_pixel)?;
-        if pitch < row_bytes {
-            return None;
-        }
-
-        // Validate GPA arithmetic does not wrap.
-        let pitch_u64 = u64::from(self.pitch_bytes);
-        let row_bytes_u64 = u64::try_from(row_bytes).ok()?;
-        let last_row_gpa = self
-            .fb_gpa
-            .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
-        last_row_gpa.checked_add(row_bytes_u64)?;
-
-        let out_len = width.checked_mul(height)?.checked_mul(4)?;
-        if out_len > MAX_HOST_CURSOR_RGBA8888_BYTES {
-            return None;
-        }
-        let mut out = vec![0u8; out_len];
-        let mut row_buf = vec![0u8; row_bytes];
-
-        for y in 0..height {
-            let row_gpa = self.fb_gpa + (y as u64) * (self.pitch_bytes as u64);
-            mem.read_physical(row_gpa, &mut row_buf);
-            let dst_row = &mut out[y * width * 4..(y + 1) * width * 4];
-
-            match self.format {
-                AeroGpuFormat::B8G8R8A8Unorm | AeroGpuFormat::B8G8R8A8UnormSrgb => {
-                    for x in 0..width {
-                        let src = &row_buf[x * 4..x * 4 + 4];
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = src[2];
-                        dst[1] = src[1];
-                        dst[2] = src[0];
-                        dst[3] = src[3];
-                    }
-                }
-                AeroGpuFormat::R8G8B8A8Unorm | AeroGpuFormat::R8G8B8A8UnormSrgb => {
-                    dst_row.copy_from_slice(&row_buf);
-                }
-                // Cursor should be ARGB, but accept XRGB for now (opaque alpha) so
-                // diagnostics/debug cursors are visible even if the guest picks X8R8G8B8.
-                AeroGpuFormat::B8G8R8X8Unorm | AeroGpuFormat::B8G8R8X8UnormSrgb => {
-                    for x in 0..width {
-                        let src = &row_buf[x * 4..x * 4 + 4];
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = src[2];
-                        dst[1] = src[1];
-                        dst[2] = src[0];
-                        dst[3] = 0xff;
-                    }
-                }
-                AeroGpuFormat::R8G8B8X8Unorm | AeroGpuFormat::R8G8B8X8UnormSrgb => {
-                    for x in 0..width {
-                        let src = &row_buf[x * 4..x * 4 + 4];
-                        let dst = &mut dst_row[x * 4..x * 4 + 4];
-                        dst[0] = src[0];
-                        dst[1] = src[1];
-                        dst[2] = src[2];
-                        dst[3] = 0xff;
-                    }
-                }
-                _ => return None,
-            }
-        }
-
-        Some(out)
+    ScanoutStateUpdate {
+        source,
+        base_paddr_lo: fb_gpa as u32,
+        base_paddr_hi: (fb_gpa >> 32) as u32,
+        width,
+        height,
+        pitch_bytes: cfg.pitch_bytes,
+        format,
     }
 }
 
@@ -434,6 +160,10 @@ mod tests {
         SCANOUT_FORMAT_B5G5R5A1, SCANOUT_FORMAT_B5G6R5, SCANOUT_FORMAT_B8G8R8A8,
         SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_WDDM,
     };
+    use memory::MemoryBus;
+
+    const MAX_HOST_SCANOUT_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels (~4K@32bpp)
+    const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixels (~1024x1024)
 
     #[derive(Clone, Debug)]
     struct VecMemory {
@@ -539,12 +269,13 @@ mod tests {
     fn cursor_read_rgba_is_capped() {
         let mut mem = VecMemory::new(0x1000);
 
-        // 1024x1024 at 4Bpp is exactly 4MiB; exceed it by one row.
+        let pixel_count = MAX_HOST_CURSOR_RGBA8888_BYTES / 4 + 1;
+        let height = u32::try_from(pixel_count).expect("pixel_count fits u32");
         let cfg = AeroGpuCursorConfig {
             enable: true,
-            width: 1024,
-            height: 1025,
-            pitch_bytes: 1024 * 4,
+            width: 1,
+            height,
+            pitch_bytes: 4,
             fb_gpa: 0x100,
             format: AeroGpuFormat::R8G8B8A8Unorm,
             ..Default::default()
@@ -626,7 +357,7 @@ mod tests {
             format: AeroGpuFormat::B8G8R8X8Unorm,
         };
 
-        let update = cfg.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&cfg, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.source, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.width, 640);
         assert_eq!(update.height, 480);
@@ -638,9 +369,9 @@ mod tests {
         // BGRA should preserve the scanout format discriminant.
         let bgra = AeroGpuScanoutConfig {
             format: AeroGpuFormat::B8G8R8A8Unorm,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = bgra.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&bgra, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.width, 640);
         assert_eq!(update.height, 480);
         assert_eq!(update.pitch_bytes, 640 * 4);
@@ -649,54 +380,54 @@ mod tests {
         // RGBX/RGBA should be passed through so scanout consumers can swizzle appropriately.
         let rgbx = AeroGpuScanoutConfig {
             format: AeroGpuFormat::R8G8B8X8Unorm,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = rgbx.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&rgbx, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, AeroGpuFormat::R8G8B8X8Unorm as u32);
 
         let rgba = AeroGpuScanoutConfig {
             format: AeroGpuFormat::R8G8B8A8Unorm,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = rgba.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&rgba, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, AeroGpuFormat::R8G8B8A8Unorm as u32);
 
         // sRGB discriminants should be preserved.
         let bgrx_srgb = AeroGpuScanoutConfig {
             format: AeroGpuFormat::B8G8R8X8UnormSrgb,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = bgrx_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&bgrx_srgb, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8_SRGB);
 
         let bgra_srgb = AeroGpuScanoutConfig {
             format: AeroGpuFormat::B8G8R8A8UnormSrgb,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = bgra_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&bgra_srgb, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
 
         let rgbx_srgb = AeroGpuScanoutConfig {
             format: AeroGpuFormat::R8G8B8X8UnormSrgb,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = rgbx_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&rgbx_srgb, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, AeroGpuFormat::R8G8B8X8UnormSrgb as u32);
 
         let rgba_srgb = AeroGpuScanoutConfig {
             format: AeroGpuFormat::R8G8B8A8UnormSrgb,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = rgba_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&rgba_srgb, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, AeroGpuFormat::R8G8B8A8UnormSrgb as u32);
 
         // 16bpp formats should also be representable in the shared scanout descriptor.
         let b5g6r5 = AeroGpuScanoutConfig {
             pitch_bytes: 640 * 2,
             format: AeroGpuFormat::B5G6R5Unorm,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = b5g6r5.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&b5g6r5, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.width, 640);
         assert_eq!(update.height, 480);
         assert_eq!(update.pitch_bytes, 640 * 2);
@@ -705,9 +436,9 @@ mod tests {
         let b5g5r5a1 = AeroGpuScanoutConfig {
             pitch_bytes: 640 * 2,
             format: AeroGpuFormat::B5G5R5A1Unorm,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = b5g5r5a1.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&b5g5r5a1, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.width, 640);
         assert_eq!(update.height, 480);
         assert_eq!(update.pitch_bytes, 640 * 2);
@@ -716,10 +447,10 @@ mod tests {
         // Unsupported format must not panic and must publish a disabled descriptor.
         let unsupported = AeroGpuScanoutConfig {
             format: AeroGpuFormat::D24UnormS8Uint,
-            ..cfg
+            ..cfg.clone()
         };
-        let update0 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
-        let update1 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update0 = scanout_config_to_scanout_state_update(&unsupported, SCANOUT_SOURCE_WDDM);
+        let update1 = scanout_config_to_scanout_state_update(&unsupported, SCANOUT_SOURCE_WDDM);
         assert_eq!(
             update0, update1,
             "disabled descriptor must be deterministic"
@@ -735,9 +466,9 @@ mod tests {
         // Pitch that isn't a multiple of the pixel size is rejected as an invalid descriptor.
         let misaligned_pitch = AeroGpuScanoutConfig {
             pitch_bytes: cfg.pitch_bytes + 2,
-            ..cfg
+            ..cfg.clone()
         };
-        let update = misaligned_pitch.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        let update = scanout_config_to_scanout_state_update(&misaligned_pitch, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.width, 0);
         assert_eq!(update.height, 0);
     }
