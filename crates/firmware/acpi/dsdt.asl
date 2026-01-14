@@ -311,7 +311,12 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
     // CPU objects (default generator config emits CPU0 only).
     Scope (\_PR_)
     {
-        Processor (CPU0, 0x00, 0x00000000, 0x00) {}
+        Device (CPU0)
+        {
+            Name (_HID, "ACPI0007")
+            Name (_UID, Zero)
+            Name (_STA, 0x0F)
+        }
     }
 
     Name (_S5, Package (0x02) { 0x05, 0x05 })

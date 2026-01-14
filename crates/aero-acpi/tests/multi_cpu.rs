@@ -86,26 +86,53 @@ fn multi_cpu_tables_emit_topology_in_madt_and_dsdt() {
     assert!(tables.dsdt.len() >= 36, "DSDT too short");
     let aml = &tables.dsdt[36..];
 
-    let processor_op = [0x5B, 0x83];
-    let processor_count = aml
-        .windows(processor_op.len())
-        .filter(|w| *w == processor_op)
-        .count();
-    assert_eq!(
-        processor_count,
-        cpu_count as usize,
-        "DSDT AML should contain exactly cpu_count ProcessorOp encodings"
-    );
+    fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
+        let b0 = *bytes.get(offset)?;
+        let follow_bytes = (b0 >> 6) as usize;
+        let mut len: usize = (b0 & 0x3F) as usize;
+        for i in 0..follow_bytes {
+            let b = *bytes.get(offset + 1 + i)?;
+            len |= (b as usize) << (4 + i * 8);
+        }
+        Some((len, 1 + follow_bytes))
+    }
 
-    // Verify CPU name segments for CPU IDs < 16 ("CPU0".."CPUF").
+    fn count_device_ops_named(aml: &[u8], name: [u8; 4]) -> usize {
+        // DeviceOp = ExtOpPrefix(0x5B) + 0x82.
+        let mut i = 0usize;
+        let mut count = 0usize;
+        while i + 2 < aml.len() {
+            if aml[i] == 0x5B && aml[i + 1] == 0x82 {
+                if let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, i + 2) {
+                    // PkgLength includes its own encoding bytes.
+                    let payload_start = i + 2 + pkg_len_bytes;
+                    let payload_len = pkg_len
+                        .checked_sub(pkg_len_bytes)
+                        .expect("DeviceOp PkgLength should include its own encoding bytes");
+                    let pkg_end = payload_start + payload_len;
+                    if pkg_end <= aml.len() && payload_start + 4 <= pkg_end {
+                        if aml[payload_start..payload_start + 4] == name {
+                            count += 1;
+                        }
+                    }
+                    i = pkg_end;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        count
+    }
+
+    // Verify CPU device objects for CPU IDs < 16 ("CPU0".."CPUF").
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for cpu_id in 0..cpu_count {
         let name = [b'C', b'P', b'U', HEX[cpu_id as usize]];
-        assert!(
-            aml.windows(4).any(|w| w == name),
-            "missing CPU object name segment {:?} in DSDT AML",
+        assert_eq!(
+            count_device_ops_named(aml, name),
+            1,
+            "expected exactly one CPU DeviceOp named {} in DSDT AML",
             core::str::from_utf8(&name).unwrap()
         );
     }
 }
-

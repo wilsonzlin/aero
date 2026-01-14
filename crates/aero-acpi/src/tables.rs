@@ -778,10 +778,10 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     sb.extend_from_slice(&aml_device_timr());
     out.extend_from_slice(&aml_scope(*b"_SB_", &sb));
 
-    // Scope (_PR_) { Processor (CPUx, ...) }
+    // Scope (_PR_) { Device (CPUx) }
     let mut pr = Vec::new();
     for cpu_id in 0..cfg.cpu_count {
-        pr.extend_from_slice(&aml_processor(cpu_id));
+        pr.extend_from_slice(&aml_device_cpu(cpu_id));
     }
     out.extend_from_slice(&aml_scope(*b"_PR_", &pr));
 
@@ -858,6 +858,14 @@ fn aml_name_integer(name: [u8; 4], value: u64) -> Vec<u8> {
     out
 }
 
+fn aml_name_string(name: [u8; 4], value: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(0x08); // NameOp
+    out.extend_from_slice(&name);
+    out.extend_from_slice(&aml_string(value));
+    out
+}
+
 fn aml_integer(value: u64) -> Vec<u8> {
     match value {
         0 => vec![0x00], // ZeroOp
@@ -879,6 +887,15 @@ fn aml_integer(value: u64) -> Vec<u8> {
             out
         }
     }
+}
+
+fn aml_string(value: &str) -> Vec<u8> {
+    assert!(!value.as_bytes().contains(&0), "AML strings must not contain NULs");
+    let mut out = Vec::new();
+    out.push(0x0D); // StringPrefix
+    out.extend_from_slice(value.as_bytes());
+    out.push(0x00); // NUL terminator
+    out
 }
 
 fn aml_scope(name: [u8; 4], body: &[u8]) -> Vec<u8> {
@@ -905,7 +922,7 @@ fn aml_device(name: [u8; 4], body: &[u8]) -> Vec<u8> {
     out
 }
 
-fn aml_processor(cpu_id: u8) -> Vec<u8> {
+fn aml_device_cpu(cpu_id: u8) -> Vec<u8> {
     // ACPI NameSeg is always 4 bytes, so we need a 4-character scheme.
     // Common firmware uses CPU0..CPUx; we support:
     // - CPU0..CPUF for 0..=15
@@ -922,20 +939,13 @@ fn aml_processor(cpu_id: u8) -> Vec<u8> {
         ]
     };
 
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&name);
-    payload.push(cpu_id); // Processor ID
-    // Do not advertise a CPU PBLK (processor power management I/O ports) unless we actually
-    // implement the device model behind it. Some OSes (notably Windows 7) may probe/use these
-    // ports based on FADT/CPU feature flags.
-    payload.extend_from_slice(&0u32.to_le_bytes()); // PblkAddress
-    payload.push(0x00); // PblkLength
-
-    let mut out = Vec::new();
-    out.extend_from_slice(&[0x5B, 0x83]); // ProcessorOp
-    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
-    out.extend_from_slice(&payload);
-    out
+    let mut body = Vec::new();
+    // ACPI Processor Device (ACPI 6.0+ recommended encoding; avoids ACPICA "legacy Processor()"
+    // warnings when roundtripping through `iasl -d`).
+    body.extend_from_slice(&aml_name_string(*b"_HID", "ACPI0007"));
+    body.extend_from_slice(&aml_name_integer(*b"_UID", u64::from(cpu_id)));
+    body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
+    aml_device(name, &body)
 }
 
 fn aml_op_region(name: [u8; 4], space: u8, offset: u64, len: u64) -> Vec<u8> {
