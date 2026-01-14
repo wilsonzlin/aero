@@ -1,5 +1,6 @@
 mod common;
 
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::{
     translate_sm4_module_to_wgsl, BufferRef, DstOperand, DxbcFile, OperandModifier, RegFile,
@@ -10,14 +11,7 @@ use aero_d3d11::{
 fn build_minimal_dxbc() -> Vec<u8> {
     // Minimal DXBC container with zero chunks. The signature-driven translator uses DXBC only for
     // diagnostics today, but it requires a valid container reference.
-    let total_size = 4 + 16 + 4 + 4 + 4;
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
-    bytes
+    dxbc_test_utils::build_container(&[])
 }
 
 #[test]

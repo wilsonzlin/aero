@@ -1,5 +1,6 @@
 mod common;
 
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::binding_model::BINDING_BASE_UAV;
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_d3d11::{
@@ -29,13 +30,7 @@ async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: 
 fn dummy_dxbc_bytes() -> Vec<u8> {
     // Minimal DXBC container with no chunks. The signature-driven SM4→WGSL translator only uses the
     // DXBC input for diagnostics, so this is sufficient for compute-stage tests.
-    let mut bytes = Vec::with_capacity(32);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
-    bytes
+    dxbc_test_utils::build_container(&[])
 }
 
 fn assert_wgsl_validates(wgsl: &str) {
@@ -326,4 +321,3 @@ fn compute_bit_utils_produce_expected_results() {
         expect_block(4, expected_firstbit_shi);
     });
 }
-

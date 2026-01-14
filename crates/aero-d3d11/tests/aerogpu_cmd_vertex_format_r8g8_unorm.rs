@@ -1,5 +1,6 @@
 mod common;
 
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -71,35 +72,11 @@ struct Vertex {
 }
 
 fn make_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    // Minimal DXBC container sufficient for `aero_dxbc` + the SM4/5 parser.
-    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test DXBC");
-    let header_size = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_size;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor as u32);
-        cursor += 8 + data.len();
-    }
-    let total_size = cursor as u32;
-
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // "one"
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for off in offsets {
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(fourcc);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-    }
-
-    assert_eq!(bytes.len(), total_size as usize);
-    bytes
+    let refs: Vec<(FourCC, &[u8])> = chunks
+        .iter()
+        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
+        .collect();
+    dxbc_test_utils::build_container(&refs)
 }
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -544,4 +521,3 @@ fn aerogpu_cmd_renders_with_r8g8_unorm_vertex_attribute() {
         }
     });
 }
-
