@@ -297,6 +297,14 @@ aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.
 
 Copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host.
 
+Tips:
+- To dump multiple recent submissions in one run (useful if the newest submission is a tiny no-op), use `--count N`:
+  - `aerogpu_dbgctl --dump-last-cmd --count 4 --out C:\cmd.bin`
+  - This writes one output per submission (for example `C:\cmd_0.bin`, `C:\cmd_1.bin`, ...) plus per-submission `.txt`
+    metadata and (on AGPU) optional `.alloc_table.bin` dumps.
+- To select an older submission explicitly, use `--index-from-tail K` (0 = newest):
+  - `aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out C:\prev_cmd.bin`
+
 Host (repo root):
 
 ```bash
