@@ -990,7 +990,7 @@ fn sm5_gs_emit_stream_cut_stream_fixture_rejects_nonzero_stream() {
         err,
         GsTranslateError::UnsupportedStream {
             inst_index: 0,
-            opcode: "emit",
+            opcode: "emit_stream",
             stream: 2
         }
     );

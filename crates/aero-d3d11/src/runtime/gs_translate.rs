@@ -1399,7 +1399,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 if *stream != 0 {
                     return Err(GsTranslateError::UnsupportedStream {
                         inst_index,
-                        opcode: "emit",
+                        opcode: "emit_stream",
                         stream: *stream,
                     });
                 }
@@ -1408,7 +1408,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 if *stream != 0 {
                     return Err(GsTranslateError::UnsupportedStream {
                         inst_index,
-                        opcode: "cut",
+                        opcode: "cut_stream",
                         stream: *stream,
                     });
                 }
@@ -1417,7 +1417,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                 if *stream != 0 {
                     return Err(GsTranslateError::UnsupportedStream {
                         inst_index,
-                        opcode: "emitthen_cut",
+                        opcode: "emitthen_cut_stream",
                         stream: *stream,
                     });
                 }
