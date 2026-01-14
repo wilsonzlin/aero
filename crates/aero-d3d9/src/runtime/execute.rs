@@ -143,6 +143,16 @@ pub enum ShaderStage {
     Fragment,
 }
 
+/// The D3D9 constant register file is modelled as a single uniform buffer containing
+/// `MAX_SHADER_CONSTANTS_F32_PER_STAGE` vec4 registers for the vertex stage followed by the same
+/// amount for the fragment stage. This matches the layout used by the shader translator
+/// (`crates/aero-d3d9/src/shader.rs`).
+const MAX_SHADER_CONSTANTS_F32_PER_STAGE: u16 = 256;
+const TOTAL_SHADER_CONSTANTS_F32_VEC4: u32 = (MAX_SHADER_CONSTANTS_F32_PER_STAGE as u32) * 2;
+const SHADER_CONSTANT_VEC4_SIZE_BYTES: u64 = 16;
+const SHADER_CONSTANTS_BUFFER_SIZE_BYTES: u64 =
+    (TOTAL_SHADER_CONSTANTS_F32_VEC4 as u64) * SHADER_CONSTANT_VEC4_SIZE_BYTES;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexFormat {
     U16,
@@ -453,7 +463,10 @@ impl D3D9Runtime {
                 label: Some("aero-d3d9-constants-bgl"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // D3D9 exposes constant registers to both vertex and pixel shaders. Even the
+                    // built-in shaders use vertex constants (for microtests), so expose the uniform
+                    // buffer to both stages.
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -497,7 +510,7 @@ impl D3D9Runtime {
 
         let constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d9-constants-ubo"),
-            size: 16,
+            size: SHADER_CONSTANTS_BUFFER_SIZE_BYTES,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -511,11 +524,13 @@ impl D3D9Runtime {
             }],
         });
 
-        queue.write_buffer(
-            &constants_buffer,
-            0,
-            bytemuck::bytes_of(&[1.0f32, 1.0, 1.0, 1.0]),
-        );
+        // Keep a deterministic initial value for the register file. The built-in `fs_solid`
+        // shader reads pixel shader register c0, which is stored at index 256 in the packed
+        // register file.
+        let mut constants_init = vec![0.0f32; (TOTAL_SHADER_CONSTANTS_F32_VEC4 as usize) * 4];
+        let pixel_c0 = MAX_SHADER_CONSTANTS_F32_PER_STAGE as usize * 4;
+        constants_init[pixel_c0..pixel_c0 + 4].copy_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+        queue.write_buffer(&constants_buffer, 0, bytemuck::cast_slice(&constants_init));
 
         let default_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d9-default-texture"),
@@ -1347,8 +1362,8 @@ impl D3D9Runtime {
                 self.tracker.set_vertex_shader(shader);
             }
             ShaderStage::Fragment => {
-                // Fragment shaders: 1 = solid color, 2 = textured.
-                if shader.is_some() && key != 1 && key != 2 {
+                // Fragment shaders: 1 = solid color, 2 = textured, 3 = constants diagnostic.
+                if shader.is_some() && key != 1 && key != 2 && key != 3 {
                     return Err(RuntimeError::UnsupportedShaderKey(key));
                 }
                 self.tracker.set_pixel_shader(shader);
@@ -1363,13 +1378,38 @@ impl D3D9Runtime {
         start_register: u16,
         vec4_data: &[f32],
     ) -> Result<(), RuntimeError> {
-        if stage != ShaderStage::Fragment || start_register != 0 || vec4_data.len() != 4 {
-            return Err(RuntimeError::UnsupportedConstantsUpdate {
-                stage,
-                start_register,
-                vec4_count: (vec4_data.len() / 4) as u16,
-            });
+        if vec4_data.is_empty() {
+            return Ok(());
         }
+        if vec4_data.len() % 4 != 0 {
+            return Err(RuntimeError::Validation(format!(
+                "set_constants_f32: vec4_data length {} is not a multiple of 4",
+                vec4_data.len()
+            )));
+        }
+        let vec4_count = vec4_data.len() / 4;
+        if vec4_count > u16::MAX as usize {
+            return Err(RuntimeError::Validation(format!(
+                "set_constants_f32: vec4_count {vec4_count} exceeds u16::MAX"
+            )));
+        }
+        let vec4_count = vec4_count as u16;
+
+        let max = MAX_SHADER_CONSTANTS_F32_PER_STAGE;
+        if start_register >= max || start_register.saturating_add(vec4_count) > max {
+            return Err(RuntimeError::Validation(format!(
+                "set_constants_f32: update out of range for {stage:?} constants (start_register={start_register} vec4_count={vec4_count} max_registers={max})"
+            )));
+        }
+
+        let base_register = match stage {
+            ShaderStage::Vertex => 0u16,
+            ShaderStage::Fragment => MAX_SHADER_CONSTANTS_F32_PER_STAGE,
+        };
+
+        let dst_register = base_register.saturating_add(start_register) as u64;
+        let dst_offset = dst_register * SHADER_CONSTANT_VEC4_SIZE_BYTES;
+        let size_bytes = (vec4_count as u64) * SHADER_CONSTANT_VEC4_SIZE_BYTES;
 
         // Encode the update into the current command encoder so ordering with draws is preserved.
         self.ensure_encoder();
@@ -1385,7 +1425,7 @@ impl D3D9Runtime {
             .encoder
             .as_mut()
             .expect("ensure_encoder initializes encoder");
-        encoder.copy_buffer_to_buffer(&staging, 0, &self.constants_buffer, 0, 16);
+        encoder.copy_buffer_to_buffer(&staging, 0, &self.constants_buffer, dst_offset, size_bytes);
         Ok(())
     }
 
@@ -2135,7 +2175,7 @@ struct VsOut {
 }
 
 struct Constants {
-    color: vec4<f32>,
+    c: array<vec4<f32>, 512>,
 }
 
 @group(0) @binding(0)
@@ -2150,19 +2190,29 @@ var tex0: texture_2d<f32>;
 @vertex
 fn vs_main(input: VsIn) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(input.pos, 0.0, 1.0);
+    let offset = constants.c[0u].xy + constants.c[1u].xy;
+    out.position = vec4<f32>(input.pos + offset, 0.0, 1.0);
     out.uv = input.uv;
     return out;
 }
 
 @fragment
 fn fs_solid(_input: VsOut) -> @location(0) vec4<f32> {
-    return constants.color;
+    return constants.c[256u];
 }
 
 @fragment
 fn fs_textured(input: VsOut) -> @location(0) vec4<f32> {
     return textureSample(tex0, samp0, input.uv);
+}
+
+@fragment
+fn fs_constants(_input: VsOut) -> @location(0) vec4<f32> {
+    // Read multiple constant registers to validate partial/ranged updates.
+    let r = constants.c[256u].x;
+    let g = constants.c[257u].y;
+    let b = constants.c[258u].z;
+    return vec4<f32>(r, g, b, 1.0);
 }
 "#;
         self.builtin_shader_module = Some(self.device.create_shader_module(
@@ -2188,6 +2238,7 @@ fn builtin_entry_points(key: &PipelineKey) -> Result<(&'static str, &'static str
     let fs_entry = match key.pixel_shader.0 {
         1 => "fs_solid",
         2 => "fs_textured",
+        3 => "fs_constants",
         other => {
             return Err(RuntimeError::UnsupportedShaderKey(
                 other.try_into().unwrap_or(u32::MAX),
