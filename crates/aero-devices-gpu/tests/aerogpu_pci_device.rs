@@ -64,11 +64,11 @@ struct NoDmaMemory;
 
 impl MemoryBus for NoDmaMemory {
     fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
-        panic!("unexpected DMA read while DMA is disabled");
+        panic!("unexpected physical read");
     }
 
     fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
-        panic!("unexpected DMA write while DMA is disabled");
+        panic!("unexpected physical write");
     }
 }
 
@@ -404,6 +404,33 @@ fn ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
         mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
         0
     );
+}
+
+#[test]
+fn ring_reset_dma_overflow_records_oob_error_without_touching_guest_memory() {
+    let mut mem = NoDmaMemory;
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
+
+    // Choose a ring GPA that will overflow when adding the ring tail offset.
+    let ring_gpa = u64::MAX - (RING_TAIL_OFFSET - 1);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
+    dev.write(mmio::RING_SIZE_BYTES, 4, 0x1000);
+
+    // Trigger a ring reset. The DMA portion is processed by `tick` and must not wrap addresses.
+    dev.write(
+        mmio::RING_CONTROL,
+        4,
+        (ring_control::RESET | ring_control::ENABLE) as u64,
+    );
+
+    dev.tick(&mut mem, 0);
+
+    assert_eq!(dev.regs.error_code, AerogpuErrorCode::Oob as u32);
+    assert_eq!(dev.regs.error_fence, 0);
+    assert_eq!(dev.regs.error_count, 1);
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
 }
 
 #[test]
