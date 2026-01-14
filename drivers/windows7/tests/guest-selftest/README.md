@@ -52,6 +52,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Emits a dedicated machine marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set` when the test is not enabled
+        (older selftest binaries may emit `...|SKIP|flag_not_set`)
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` when the miniport reports the reset IOCTL
         is not supported
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...` on failure
