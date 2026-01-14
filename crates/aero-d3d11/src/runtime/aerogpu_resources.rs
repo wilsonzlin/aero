@@ -1826,7 +1826,7 @@ mod tests {
         assert!(!bu.contains(wgpu::BufferUsages::STORAGE));
 
         let storage = map_buffer_usage_flags(
-            aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_STORAGE,
+            AEROGPU_RESOURCE_USAGE_STORAGE,
             false,
         );
         assert!(!storage.contains(wgpu::BufferUsages::STORAGE));
