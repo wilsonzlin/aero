@@ -2065,7 +2065,7 @@ function renderAudioPanel(): HTMLElement {
 }
 
 function renderInputBackendHudPanel(): HTMLElement {
-  const output = el("pre", { class: "mono", text: "Waiting for IO worker status…" });
+  const output = el("pre", { class: "mono", text: "Waiting for VM status…" });
 
   function resolveCoordinator(): WorkerCoordinator | null {
     const g = globalThis as unknown as { __aeroWorkerCoordinator?: unknown };
@@ -2123,7 +2123,7 @@ function renderInputBackendHudPanel(): HTMLElement {
   (timer as unknown as { unref?: () => void }).unref?.();
   update();
 
-  return el("div", { class: "panel" }, el("h2", { text: "Input backend HUD (IO worker)" }), output);
+  return el("div", { class: "panel" }, el("h2", { text: "Input backend HUD" }), output);
 }
 
 function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {
