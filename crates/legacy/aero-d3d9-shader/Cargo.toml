@@ -8,7 +8,7 @@ publish = false
 description = "Legacy SM2/SM3 D3D9 token-stream parser + disassembler (not used by runtime)."
 
 [dependencies]
-aero-dxbc = { path = "../aero-dxbc" }
+aero-dxbc = { path = "../../aero-dxbc" }
 
 [dev-dependencies]
 aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
