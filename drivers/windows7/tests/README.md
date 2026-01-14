@@ -134,6 +134,12 @@ Note:
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
+- The host harness may also emit additional summary/diagnostic markers (informational; do not affect PASS/FAIL), such as:
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|...`
 - To assert that virtio-blk is actually using MSI/MSI-X (fail if the miniport reports INTx), run the guest
   selftest with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`). This is useful when
   running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors` or per-device `--virtio-<dev>-vectors`)
