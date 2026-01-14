@@ -204,6 +204,76 @@ static int test_tx_tso_build_with_partial_ipv6_buffer(void) {
   return 0;
 }
 
+static int test_tx_csum_build_with_partial_ipv4_udp_buffer(void) {
+  /* L2+IPv4+UDP headers only; total_len claims a larger packet. */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv4 */
+      0x08, 0x00,
+      /* IPv4 header */
+      0x45, 0x00, 0x07, 0xd0, /* ihl=5, total_len=2000 */
+      0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, /* proto=UDP */
+      0xc0, 0x00, 0x02, 0x01, 0xc6, 0x33, 0x64, 0x02,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, /* ports 1234->5678 */
+      0x07, 0xbc, 0x00, 0x00, /* len=1980, csum=0 */
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 34);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 6);
+
+  return 0;
+}
+
+static int test_tx_csum_build_with_partial_ipv6_udp_buffer(void) {
+  /* L2+IPv6+UDP headers only; payload_len claims a larger packet. */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=2000, next=UDP, hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x07, 0xd0, 0x11, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, /* ports 1234->5678 */
+      0x07, 0xd0, 0x00, 0x00, /* len=2000, csum=0 */
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 54);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 6);
+
+  return 0;
+}
+
 static int test_no_offload_builds_zero(void) {
   VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
   VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
@@ -1279,6 +1349,8 @@ int main(void) {
   rc |= test_ipv4_tcp_no_vlan();
   rc |= test_tx_tso_build_with_partial_ipv4_buffer();
   rc |= test_tx_tso_build_with_partial_ipv6_buffer();
+  rc |= test_tx_csum_build_with_partial_ipv4_udp_buffer();
+  rc |= test_tx_csum_build_with_partial_ipv6_udp_buffer();
   rc |= test_no_offload_builds_zero();
   rc |= test_ipv4_udp_no_vlan();
   rc |= test_ipv4_vlan_udp();
