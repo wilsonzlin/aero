@@ -75,10 +75,14 @@ pub const VGA_PCI_PROG_IF: u8 = 0x00;
 /// Full legacy VGA I/O decode range, including the mono + color CRTC aliasing ranges.
 pub const VGA_LEGACY_IO_START: u16 = 0x3B0;
 pub const VGA_LEGACY_IO_END: u16 = 0x3DF;
+/// Length of [`VGA_LEGACY_IO_START`]..=[`VGA_LEGACY_IO_END`] in I/O ports.
+pub const VGA_LEGACY_IO_LEN: u16 = VGA_LEGACY_IO_END - VGA_LEGACY_IO_START + 1;
 
 /// Legacy VGA memory window covering the 128KiB aperture (`A0000-BFFFF`).
 pub const VGA_LEGACY_MEM_START: u32 = 0xA0000;
 pub const VGA_LEGACY_MEM_END: u32 = 0xBFFFF;
+/// Length of [`VGA_LEGACY_MEM_START`]..=[`VGA_LEGACY_MEM_END`] in bytes.
+pub const VGA_LEGACY_MEM_LEN: u32 = VGA_LEGACY_MEM_END - VGA_LEGACY_MEM_START + 1;
 
 /// Default Bochs VBE linear framebuffer base address (alias for [`SVGA_LFB_BASE`]).
 pub const DEFAULT_LFB_BASE: u32 = SVGA_LFB_BASE;
