@@ -2004,6 +2004,36 @@ def _test_cors_expose_last_modified_if_present(
     return TestResult(name=name, status="PASS", details=f"value={last_modified!r} (CORS-safelisted)")
 
 
+def _test_cors_expose_content_encoding_if_present(
+    *, name: str, resp: HttpResponse | None, origin: str | None
+) -> TestResult:
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    content_encoding = _header(resp, "Content-Encoding")
+    if content_encoding is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no Content-Encoding header)")
+    expose = _header(resp, "Access-Control-Expose-Headers")
+    if expose is None:
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=(
+                "Content-Encoding is present but Access-Control-Expose-Headers is missing "
+                "(browsers won't expose Content-Encoding to JS)"
+            ),
+        )
+    tokens = _csv_tokens(expose)
+    if "*" in tokens or "content-encoding" in tokens:
+        return TestResult(name=name, status="PASS", details=f"Expose-Headers={expose!r}")
+    return TestResult(
+        name=name,
+        status="WARN",
+        details=f"Content-Encoding not exposed via Access-Control-Expose-Headers: {expose!r}",
+    )
+
+
 def _test_x_content_type_options_nosniff(*, name: str, resp: HttpResponse | None) -> TestResult:
     if resp is None:
         return TestResult(name=name, status="SKIP", details="skipped (no response)")
@@ -2102,6 +2132,13 @@ def _main_chunked(args: argparse.Namespace) -> int:
         _test_chunked_chunk_encoding(
             name="manifest: Content-Encoding is identity/absent",
             resp=manifest_resp,
+        )
+    )
+    results.append(
+        _test_cors_expose_content_encoding_if_present(
+            name="manifest: CORS exposes Content-Encoding when present",
+            resp=manifest_resp,
+            origin=origin,
         )
     )
     results.append(
@@ -2320,6 +2357,13 @@ def _main_chunked(args: argparse.Namespace) -> int:
                     )
                 )
                 results.append(
+                    _test_cors_expose_content_encoding_if_present(
+                        name=f"chunk {label}: CORS exposes Content-Encoding when present",
+                        resp=chunk_resp,
+                        origin=origin,
+                    )
+                )
+                results.append(
                     _test_cache_control_immutable(
                         name=(
                             f"chunk {label}: Cache-Control includes immutable"
@@ -2486,6 +2530,13 @@ def main(argv: Sequence[str]) -> int:
         _test_content_headers(
             name="HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff",
             resp=head_info.resp if head_info is not None else None,
+        )
+    )
+    results.append(
+        _test_cors_expose_content_encoding_if_present(
+            name="HEAD: CORS exposes Content-Encoding when present",
+            resp=head_info.resp if head_info is not None else None,
+            origin=origin,
         )
     )
     results.append(
