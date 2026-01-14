@@ -230,9 +230,13 @@ mod tests {
             }
 
             unsafe {
-                core::ptr::write_bytes(layout.guest_base() as *mut u8, 0, oversized_len);
-                let slice =
-                    core::slice::from_raw_parts(layout.guest_base() as *const u8, oversized_len);
+                let guest_base = layout.guest_base() as usize;
+                let base_ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(guest_base);
+                core::ptr::write_bytes(base_ptr, 0, oversized_len);
+                let slice = core::slice::from_raw_parts(
+                    core::ptr::with_exposed_provenance(guest_base),
+                    oversized_len,
+                );
                 let bytes = Uint8Array::view(slice);
                 Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
                     .expect("Reflect::set(bytes)");
