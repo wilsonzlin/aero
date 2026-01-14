@@ -136,7 +136,9 @@ pub(crate) fn set_ehci_webusb_connected(
 mod tests {
     use super::*;
 
+    use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionOut};
     use aero_usb::hub::UsbHubDevice;
+    use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
     fn is_external_hub_attached(ctrl: &mut EhciController) -> bool {
         let Some(dev) = ctrl.hub_mut().port_device(0) else {
@@ -206,5 +208,91 @@ mod tests {
         let found = collect_ehci_webusb_devices(&mut ctrl);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, vec![crate::webusb_ports::WEBUSB_ROOT_PORT]);
+    }
+
+    const NO_DATA_CONTROL_OUT: SetupPacket = SetupPacket {
+        bm_request_type: 0x00,
+        b_request: 0x00,
+        w_value: 0,
+        w_index: 0,
+        w_length: 0,
+    };
+
+    fn run_no_data_control_out_roundtrip(dev: &UsbWebUsbPassthroughDevice) -> u32 {
+        let mut model = dev.clone();
+        assert_eq!(
+            model.handle_control_request(NO_DATA_CONTROL_OUT, None),
+            ControlResponse::Nak
+        );
+
+        let actions = dev.drain_actions();
+        assert_eq!(actions.len(), 1);
+        let id = match &actions[0] {
+            UsbHostAction::ControlOut { id, .. } => *id,
+            other => panic!("expected ControlOut action, got: {other:?}"),
+        };
+
+        dev.push_completion(UsbHostCompletion::ControlOut {
+            id,
+            result: UsbHostCompletionOut::Success { bytes_written: 0 },
+        });
+
+        let mut model = dev.clone();
+        let resp = model.handle_control_request(NO_DATA_CONTROL_OUT, None);
+        assert!(matches!(resp, ControlResponse::Ack));
+
+        id
+    }
+
+    fn advance_passthrough_next_id(dev: &UsbWebUsbPassthroughDevice, count: u32) -> u32 {
+        let mut last_id = 0u32;
+        for _ in 0..count {
+            last_id = run_no_data_control_out_roundtrip(dev);
+        }
+        if count == 0 {
+            1
+        } else {
+            last_id.wrapping_add(1).max(1)
+        }
+    }
+
+    #[test]
+    fn restore_style_handle_clearing_prefers_restored_webusb_state_over_stale_handle() {
+        let mut ctrl = EhciController::new();
+        ctrl.hub_mut()
+            .attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(16)))
+            .unwrap();
+
+        // Simulate a snapshot-restored WebUSB device that already has some internal monotonic
+        // passthrough state (next_id advanced).
+        let restored = UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High);
+        let restored_next_id = advance_passthrough_next_id(&restored, 4);
+        ctrl.hub_mut()
+            .attach_at_path(&[2], Box::new(restored.clone()))
+            .unwrap();
+
+        // Simulate a stale host-side handle that existed before restore.
+        let stale = UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High);
+        let stale_next_id = advance_passthrough_next_id(&stale, 1);
+        let mut handle = Some(stale);
+
+        // Bridge restore semantics: if the restored controller already contains a WebUSB device,
+        // drop the existing handle and adopt the restored one.
+        let has_webusb =
+            !crate::ehci_webusb_topology::collect_ehci_webusb_devices(&mut ctrl).is_empty();
+        assert!(has_webusb);
+        if has_webusb {
+            handle = None;
+        }
+
+        assert!(set_ehci_webusb_connected(&mut ctrl, &mut handle, true));
+        let Some(active) = handle.as_ref() else {
+            panic!("expected restored WebUSB handle to be recovered");
+        };
+
+        // The next host action ID must match the restored device state, not the stale handle.
+        let id = run_no_data_control_out_roundtrip(active);
+        assert_eq!(id, restored_next_id);
+        assert_ne!(id, stale_next_id);
     }
 }
