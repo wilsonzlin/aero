@@ -247,7 +247,7 @@ fn apply_op(c: &mut I8042Controller, op: &Op) -> Option<u8> {
 
 #[test]
 fn i8042_randomized_snapshot_restore_produces_equivalent_controller() {
-    const SEED: u64 = 0xC0FFEE_8042_1234;
+    const SEED: u64 = 0x00C0_FFEE_8042_1234;
     const STEPS: usize = 10_000;
     const CHECKPOINTS: usize = 3;
 
@@ -344,4 +344,3 @@ fn i8042_randomized_snapshot_restore_produces_equivalent_controller() {
         "seed={SEED:#x} final snapshot mismatch"
     );
 }
-
