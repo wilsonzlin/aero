@@ -718,7 +718,7 @@ test("AerogpuCmdWriter emits stage_ex binding packets (SET_CONSTANT_BUFFERS)", (
 });
 
 test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {
-  const alignUpFn = (AerogpuCmdWriter as any)._alignUp as (v: number, a: number) => number;
+  const alignUpFn = (AerogpuCmdWriter as unknown as { _alignUp: (v: number, a: number) => number })._alignUp;
 
   const v = 2 ** 31 + 1;
   const aligned = alignUpFn(v, 4);

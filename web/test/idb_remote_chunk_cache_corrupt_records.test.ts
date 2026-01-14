@@ -94,7 +94,7 @@ test("IdbRemoteChunkCache: corrupt chunk records are treated as cache misses", a
         data: new Uint8Array(CHUNK_SIZE).fill(0x11).buffer,
         byteLength: "oops",
         lastAccess: 1,
-      } as any);
+      });
       await idbTxDone(tx);
     } finally {
       db.close();
@@ -115,4 +115,3 @@ test("IdbRemoteChunkCache: corrupt chunk records are treated as cache misses", a
     }
   });
 });
-

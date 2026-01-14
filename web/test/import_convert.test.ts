@@ -628,7 +628,7 @@ test("convertToAeroSparse: rejects aerosparse allocation table larger than 64MiB
   const src = new HugeZeroSource(diskSizeBytes);
   const sync = new MemSyncAccessHandle();
   await assert.rejects(
-    convertToAeroSparse(src as any, "raw", sync, { blockSizeBytes: 512 }),
+    convertToAeroSparse(src, "raw", sync, { blockSizeBytes: 512 }),
     (err: any) => err instanceof Error && /aerosparse allocation table too large/i.test(err.message),
   );
 });
@@ -687,7 +687,7 @@ test("convertToAeroSparse: qcow2 rejects oversized output table before parsing t
   const src = new HugeQcow2Source(fileSize);
   const sync = new MemSyncAccessHandle();
   await assert.rejects(
-    convertToAeroSparse(src as any, "qcow2", sync, { blockSizeBytes: 512 }),
+    convertToAeroSparse(src, "qcow2", sync, { blockSizeBytes: 512 }),
     (err: any) => err instanceof Error && /aerosparse allocation table too large/i.test(err.message),
   );
 });
@@ -997,7 +997,7 @@ test("convertToAeroSparse: dynamic VHD rejects oversized output table before rea
   const src = new FakeVhdSource(fileSize);
   const sync = new MemSyncAccessHandle();
   await assert.rejects(
-    convertToAeroSparse(src as any, "vhd", sync, { blockSizeBytes: 512 }),
+    convertToAeroSparse(src, "vhd", sync, { blockSizeBytes: 512 }),
     (err: any) => err instanceof Error && /aerosparse allocation table too large/i.test(err.message),
   );
 });

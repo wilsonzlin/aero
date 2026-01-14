@@ -29,13 +29,13 @@ afterEach(() => {
   if (originalNavigatorDescriptor) {
     Object.defineProperty(globalThis, "navigator", originalNavigatorDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "navigator");
+    Reflect.deleteProperty(globalThis, "navigator");
   }
 
   if (originalDocumentDescriptor) {
     Object.defineProperty(globalThis, "document", originalDocumentDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "document");
+    Reflect.deleteProperty(globalThis, "document");
   }
 });
 
@@ -139,12 +139,12 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       getDevices: vi.fn(async () => [device]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -175,12 +175,12 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       getDevices: vi.fn(async () => [forgettable, normal]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -202,12 +202,12 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       getDevices: vi.fn(async () => [device]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -240,12 +240,12 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       getDevices: vi.fn(async () => [device]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -284,10 +284,10 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       getDevices: vi.fn(async () => [device]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager({
       target: {
         postMessage: (msg: HidPassthroughMessage) => {
@@ -298,7 +298,7 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
         },
       },
     });
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
     const attachButton = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Attach")[0];
@@ -330,12 +330,12 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       getDevices: vi.fn(async () => [device]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -458,8 +458,11 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     const devA = makeDevice(1, 1, "A");
     await manager.attachKnownDevice(devA);
 
-    const firstAttach = target.messages.find((m) => m.type === "hid:attach") as any;
+    const firstAttach = target.messages.find(
+      (m): m is Extract<HidPassthroughMessage, { type: "hid:attach" }> => m.type === "hid:attach",
+    );
     expect(firstAttach).toBeTruthy();
+    if (!firstAttach) throw new Error("expected hid:attach message");
     expect(typeof firstAttach.numericDeviceId).toBe("number");
     const numericDeviceId = firstAttach.numericDeviceId;
 
@@ -495,6 +498,7 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
   });
 
   it("forgets known devices without calling requestDevice()", async () => {
+    const forgetSpy = vi.fn(async () => {});
     const device = {
       productName: "Forgettable Device",
       vendorId: 0x0003,
@@ -502,20 +506,19 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
       opened: false,
       open: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      forget: vi.fn(async () => {}),
+      forget: forgetSpy,
     } as unknown as HIDDevice;
 
     const hid = new FakeHid({
       getDevices: vi.fn(async () => [device]),
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -524,14 +527,16 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
 
     await (forgetButtons[0].onclick as () => Promise<void>)();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect(forgetSpy).toHaveBeenCalledTimes(1);
     expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });
 
   it("detaches before forgetting attached devices", async () => {
     let opened = false;
     const callOrder: string[] = [];
+    const forgetSpy = vi.fn(async () => {
+      callOrder.push("forget");
+    });
     const device = {
       productName: "Forgettable Attached Device",
       vendorId: 0x0010,
@@ -550,10 +555,7 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
         opened = false;
         callOrder.push("close");
       }),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      forget: vi.fn(async () => {
-        callOrder.push("forget");
-      }),
+      forget: forgetSpy,
     } as unknown as HIDDevice;
 
     // Note: `mountWebHidPassthroughPanel` triggers an initial refreshKnownDevices()
@@ -564,12 +566,12 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
       getDevices,
       requestDevice: vi.fn(async () => []),
     });
-    stubNavigator({ hid } as any);
+    stubNavigator({ hid });
     stubDocument(new FakeDocument());
 
-    const host = (document as any).createElement("div") as FakeElement;
+    const host = (document as unknown as FakeDocument).createElement("div");
     const manager = new WebHidPassthroughManager();
-    mountWebHidPassthroughPanel(host as any, manager);
+    mountWebHidPassthroughPanel(host as unknown as HTMLElement, manager);
 
     await manager.refreshKnownDevices();
 
@@ -582,8 +584,7 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     await (forgetButtons[0].onclick as () => Promise<void>)();
 
     expect(callOrder).toEqual(["open", "close", "forget"]);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect(forgetSpy).toHaveBeenCalledTimes(1);
     expect((device.close as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
     expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });

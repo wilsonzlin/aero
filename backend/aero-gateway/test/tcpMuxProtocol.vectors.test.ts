@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import {
+  type TcpMuxMsgType,
   TcpMuxFrameParser,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,
@@ -60,7 +61,7 @@ describe("tcp-mux protocol vectors", () => {
       assert.deepEqual(parsed[0]!.payload, payload);
       assert.doesNotThrow(() => parser.finish());
 
-      const encoded = encodeTcpMuxFrame(v.msgType as any, v.streamId, payload);
+      const encoded = encodeTcpMuxFrame(v.msgType as TcpMuxMsgType, v.streamId, payload);
       assert.deepEqual(encoded, expectedFrame);
     });
   }

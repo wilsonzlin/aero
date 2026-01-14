@@ -85,12 +85,11 @@ test("ACMD COPY_BUFFER writeback supports guest paddr in high-RAM remap window (
     subarray(start: number, end: number): Uint8Array {
       this.lastSubarray = { start, end };
       // Return a minimal view-like object that implements `set()`.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return {
         set: (src: Uint8Array, offset = 0) => {
           this.lastWrite = { start: start + (offset >>> 0), data: Array.from(src) };
         },
-      } as any as Uint8Array;
+      } as unknown as Uint8Array;
     }
   }
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type http from 'node:http';
 import { PassThrough } from 'node:stream';
 import { describe, it } from 'node:test';
 
@@ -77,7 +78,7 @@ describe('tcp target parsing + policy (property)', () => {
               const parsed = parseQuery({ target, host, port, v });
               assert.equal(typeof parsed, 'object');
               assert.ok(parsed);
-              const t = parsed as any;
+              const t = parsed as Record<string, unknown>;
               assert.equal(typeof t.host, 'string');
               assert.equal(typeof t.port, 'number');
               assert.equal(t.version, 1);
@@ -215,11 +216,11 @@ describe('tcp target parsing + policy (property)', () => {
       fc.assert(
         fc.property(fc.string(), fc.string(), (target, garbagePath) => {
           const socketTcp = new PassThrough();
-          const reqTcp = { url: `/tcp?target=${encodeURIComponent(target)}`, headers: {} } as any;
+          const reqTcp = { url: `/tcp?target=${encodeURIComponent(target)}`, headers: {} } as unknown as http.IncomingMessage;
           assert.doesNotThrow(() => handleTcpProxyUpgrade(reqTcp, socketTcp, Buffer.alloc(0)));
 
           const socketMux = new PassThrough();
-          const reqMux = { url: `/${encodeURIComponent(garbagePath)}`, headers: {} } as any;
+          const reqMux = { url: `/${encodeURIComponent(garbagePath)}`, headers: {} } as unknown as http.IncomingMessage;
           assert.doesNotThrow(() => handleTcpMuxUpgrade(reqMux, socketMux, Buffer.alloc(0)));
         }),
         { numRuns: FC_NUM_RUNS, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },

@@ -70,6 +70,9 @@ class FakeHidDevice {
 }
 
 type Posted = { message: HidPassthroughMessage; transfer?: Transferable[] };
+type HidAttachMessage = Extract<HidPassthroughMessage, { type: "hid:attach" }>;
+type HidInputReportMessage = Extract<HidPassthroughMessage, { type: "hid:inputReport" }>;
+type HidFeatureReportResultMessage = Extract<HidPassthroughMessage, { type: "hid:featureReportResult" }>;
 
 class TestTarget {
   readonly posted: Posted[] = [];
@@ -90,7 +93,7 @@ afterEach(() => {
   if (originalCrossOriginIsolatedDescriptor) {
     Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
   } else if (original) {
-    Reflect.deleteProperty(globalThis as any, "crossOriginIsolated");
+    Reflect.deleteProperty(globalThis, "crossOriginIsolated");
   }
 });
 
@@ -106,6 +109,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(target.posted[0]!.message.type).toBe("hid:attachHub");
     const attach = target.posted[1]!.message;
     expect(attach.type).toBe("hid:attach");
+    if (attach.type !== "hid:attach") throw new Error("expected hid:attach message");
     expect(attach).toMatchObject({
       guestPort: 0,
       guestPath: [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
@@ -113,11 +117,11 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       productId: device.productId,
       productName: device.productName,
     });
-    expect(typeof (attach as any).deviceId).toBe("string");
-    expect(Array.isArray((attach as any).collections)).toBe(true);
-    expect(((attach as any).collections as unknown[]).length).toBeGreaterThan(0);
+    expect(typeof attach.deviceId).toBe("string");
+    expect(Array.isArray(attach.collections)).toBe(true);
+    expect(attach.collections.length).toBeGreaterThan(0);
 
-    const deviceId = (attach as any).deviceId as string;
+    const deviceId = attach.deviceId;
 
     const backing = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
     const slice = backing.subarray(1, 3); // [0xad, 0xbe]
@@ -126,9 +130,10 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     expect(target.posted).toHaveLength(3);
     const input = target.posted[2]!.message;
     expect(input.type).toBe("hid:inputReport");
+    if (input.type !== "hid:inputReport") throw new Error("expected hid:inputReport message");
     expect(input).toMatchObject({ deviceId, reportId: 7 });
 
-    const data = (input as any).data as ArrayBuffer;
+    const data = input.data;
     expect(Array.from(new Uint8Array(data))).toEqual([0xad, 0xbe]);
 
     const transfer = target.posted[2]!.transfer;
@@ -160,14 +165,14 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const huge = new Uint8Array(1024 * 1024);
       huge.set([1, 2, 3, 4], 0);
       device.dispatchInputReport(1, new DataView(huge.buffer));
 
-      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as any;
+      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as HidInputReportMessage;
       expect(input.deviceId).toBe(deviceId);
       expect(input.reportId).toBe(1);
       const data = input.data as ArrayBuffer;
@@ -202,12 +207,12 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       device.dispatchInputReport(1, new DataView(new Uint8Array([9, 8]).buffer));
 
-      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as any;
+      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as HidInputReportMessage;
       expect(input.deviceId).toBe(deviceId);
       expect(input.reportId).toBe(1);
       expect(Array.from(new Uint8Array(input.data as ArrayBuffer))).toEqual([9, 8, 0, 0]);
@@ -235,14 +240,14 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const huge = new Uint8Array(1024 * 1024);
       huge.set([1, 2, 3], 0);
       device.dispatchInputReport(99, new DataView(huge.buffer));
 
-      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as any;
+      const input = target.posted.find((p) => p.message.type === "hid:inputReport")!.message as HidInputReportMessage;
       expect(input.deviceId).toBe(deviceId);
       expect(input.reportId).toBe(99);
       const bytes = new Uint8Array(input.data as ArrayBuffer);
@@ -259,7 +264,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const manager = new WebHidPassthroughManager({ hid: null, target });
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
-    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
     const deviceId = attach.deviceId as string;
 
     device.dispatchInputReport(1, new DataView(new Uint8Array([9]).buffer));
@@ -328,7 +333,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const huge = new Uint8Array(1024 * 1024);
@@ -380,7 +385,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       manager.handleWorkerMessage({
@@ -424,7 +429,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const huge = new Uint8Array(0xffff + 64);
@@ -478,7 +483,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const huge = new Uint8Array(1024 * 1024);
@@ -513,7 +518,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     device.receiveFeatureReport.mockImplementationOnce(async () => new DataView(Uint8Array.of(1, 2, 3).buffer));
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
-    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
     const deviceId = attach.deviceId as string;
 
     manager.handleWorkerMessage({
@@ -530,7 +535,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
 
     const resEntry = target.posted.find((p) => p.message.type === "hid:featureReportResult")!;
     expect(resEntry.message).toMatchObject({ deviceId, requestId: 1, reportId: 7, ok: true });
-    const data = (resEntry.message as any).data as ArrayBuffer;
+    const data = (resEntry.message as HidFeatureReportResultMessage).data as ArrayBuffer;
     expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3]);
     expect(resEntry.transfer?.[0]).toBe(data);
   });
@@ -566,7 +571,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       manager.handleWorkerMessage({
@@ -579,10 +584,10 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       const resEntry = target.posted.find(
-        (p) => p.message.type === "hid:featureReportResult" && (p.message as any).requestId === 1,
+        (p) => p.message.type === "hid:featureReportResult" && (p.message as HidFeatureReportResultMessage).requestId === 1,
       )!;
       expect(resEntry.message).toMatchObject({ deviceId, requestId: 1, reportId: 7, ok: true });
-      const data = (resEntry.message as any).data as ArrayBuffer;
+      const data = (resEntry.message as HidFeatureReportResultMessage).data as ArrayBuffer;
       expect(new Uint8Array(data).byteLength).toBe(4);
       expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3, 4]);
       expect(resEntry.transfer?.[0]).toBe(data);
@@ -617,7 +622,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       manager.handleWorkerMessage({ type: "hid:getFeatureReport", deviceId, requestId: 1, reportId: 99 });
@@ -627,14 +632,15 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       const results = target.posted.filter(
-        (p) => p.message.type === "hid:featureReportResult" && (p.message as any).ok === true,
-      ) as any[];
+        (p): p is Posted & { message: HidFeatureReportResultMessage } =>
+          p.message.type === "hid:featureReportResult" && p.message.ok === true,
+      );
       const a = results.find((r) => r.message.requestId === 1);
       const b = results.find((r) => r.message.requestId === 2);
       expect(a).toBeTruthy();
       expect(b).toBeTruthy();
 
-      for (const entry of [a, b]) {
+      for (const entry of [a!, b!]) {
         const data = entry.message.data as ArrayBuffer;
         expect(new Uint8Array(data).byteLength).toBe(4096);
         expect(Array.from(new Uint8Array(data).slice(0, 3))).toEqual([1, 2, 3]);
@@ -653,7 +659,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const manager = new WebHidPassthroughManager({ hid: null, target });
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
-    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
     const deviceId = attach.deviceId as string;
 
     const first = deferred<void>();
@@ -694,7 +700,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     const manager = new WebHidPassthroughManager({ hid: null, target });
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
-    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
     const deviceId = attach.deviceId as string;
 
     const first = deferred<void>();
@@ -735,7 +741,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       device.sendReport.mockImplementationOnce(async () => {
@@ -781,7 +787,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       manager.setInputReportRing(null, status);
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const first = deferred<void>();
@@ -912,7 +918,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const manager = new WebHidPassthroughManager({ hid: null, target, maxPendingDeviceSends: 1 });
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as HidAttachMessage;
       const deviceId = attach.deviceId as string;
 
       const first = deferred<void>();
@@ -942,7 +948,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       });
 
       const resEntry = target.posted.find(
-        (p) => p.message.type === "hid:featureReportResult" && (p.message as any).requestId === 99,
+        (p) => p.message.type === "hid:featureReportResult" && (p.message as HidFeatureReportResultMessage).requestId === 99,
       );
       expect(resEntry).toBeTruthy();
       expect(resEntry!.message).toMatchObject({
@@ -951,7 +957,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
         reportId: 7,
         ok: false,
       });
-      expect((resEntry!.message as any).error).toMatch(/Too many pending HID report tasks/i);
+      expect((resEntry!.message as HidFeatureReportResultMessage).error).toMatch(/Too many pending HID report tasks/i);
       expect(device.receiveFeatureReport).not.toHaveBeenCalled();
 
       first.resolve(undefined);
@@ -974,7 +980,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     manager.setInputReportRing(ring, status);
 
     await manager.attachKnownDevice(device as unknown as HIDDevice);
-    const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as any;
+    const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as HidAttachMessage;
     expect(typeof attach.numericDeviceId).toBe("number");
 
     const before = target.posted.length;
@@ -1020,7 +1026,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       manager.setInputReportRing(ring, status);
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as HidAttachMessage;
       expect(typeof attach.numericDeviceId).toBe("number");
 
       const before = target.posted.length;
@@ -1072,7 +1078,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       manager.setInputReportRing(ring, status);
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as HidAttachMessage;
       expect(typeof attach.numericDeviceId).toBe("number");
 
       const before = target.posted.length;
@@ -1116,7 +1122,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       manager.setInputReportRing(ring, status);
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
-      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as any;
+      const attach = target.posted.find((p) => p.message.type === "hid:attach")!.message as HidAttachMessage;
       expect(typeof attach.numericDeviceId).toBe("number");
 
       const before = target.posted.length;

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  TcpMuxMsgType,
   TcpMuxFrameParser,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,
@@ -54,7 +55,7 @@ for (const v of vectors.frames) {
     assert.deepEqual(parsed[0]!.payload, payload);
     assert.doesNotThrow(() => parser.finish());
 
-    const encoded = encodeTcpMuxFrame(v.msgType as any, v.streamId, payload);
+    const encoded = encodeTcpMuxFrame(v.msgType as TcpMuxMsgType, v.streamId, payload);
     assert.deepEqual(encoded, expectedFrame);
   });
 }

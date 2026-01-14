@@ -26,9 +26,11 @@ function extractSessionCookie(setCookie: string | string[] | undefined): { cooki
   const tokenParts = cookieValue.split('.');
   assert.equal(tokenParts.length, 2, 'expected session token payload.sig');
   const [payloadPart] = tokenParts;
-  const payload = JSON.parse(decodeBase64Url(payloadPart).toString('utf8')) as any;
-  assert.ok(payload && typeof payload.sid === 'string' && payload.sid.length > 0, 'expected sid in session token');
-  return { cookieValue, sessionId: payload.sid };
+  const payloadRaw = JSON.parse(decodeBase64Url(payloadPart).toString('utf8')) as unknown;
+  assert.ok(payloadRaw && typeof payloadRaw === 'object', 'expected session token payload object');
+  const sid = (payloadRaw as Record<string, unknown>).sid;
+  assert.ok(typeof sid === 'string' && sid.length > 0, 'expected sid in session token');
+  return { cookieValue, sessionId: sid };
 }
 
 const baseConfig = {
@@ -102,8 +104,9 @@ test('POST /session includes udpRelay endpoints when configured (auth_mode=none)
 
   const res = await app.inject({ method: 'POST', url: '/session', headers: { origin: 'http://localhost' } });
   assert.equal(res.statusCode, 201);
-  const body = JSON.parse(res.body) as any;
-  assert.deepEqual(body.udpRelay, {
+  const body = JSON.parse(res.body) as unknown;
+  assert.ok(body && typeof body === 'object', 'expected JSON object response');
+  assert.deepEqual((body as Record<string, unknown>).udpRelay, {
     baseUrl: 'https://relay.example.com',
     authMode: 'none',
     endpoints: {
@@ -128,8 +131,11 @@ test('POST /session preserves ws(s) UDP_RELAY_BASE_URL schemes in udpRelay.baseU
 
     const res = await app.inject({ method: 'POST', url: '/session', headers: { origin: 'http://localhost' } });
     assert.equal(res.statusCode, 201);
-    const body = JSON.parse(res.body) as any;
-    assert.equal(body.udpRelay.baseUrl, baseUrl);
+    const body = JSON.parse(res.body) as unknown;
+    assert.ok(body && typeof body === 'object', 'expected JSON object response');
+    const udpRelay = (body as Record<string, unknown>).udpRelay;
+    assert.ok(udpRelay && typeof udpRelay === 'object', 'expected udpRelay object');
+    assert.equal((udpRelay as Record<string, unknown>).baseUrl, baseUrl);
 
     await app.close();
   }
@@ -147,10 +153,14 @@ test('POST /session includes api_key token when configured', async () => {
 
   const res = await app.inject({ method: 'POST', url: '/session', headers: { origin: 'http://localhost' } });
   assert.equal(res.statusCode, 201);
-  const body = JSON.parse(res.body) as any;
-  assert.equal(body.udpRelay.authMode, 'api_key');
-  assert.equal(body.udpRelay.token, 'dev-key');
-  assert.ok(typeof body.udpRelay.expiresAt === 'string');
+  const body = JSON.parse(res.body) as unknown;
+  assert.ok(body && typeof body === 'object', 'expected JSON object response');
+  const udpRelay = (body as Record<string, unknown>).udpRelay;
+  assert.ok(udpRelay && typeof udpRelay === 'object', 'expected udpRelay object');
+  const udpRelayRec = udpRelay as Record<string, unknown>;
+  assert.equal(udpRelayRec.authMode, 'api_key');
+  assert.equal(udpRelayRec.token, 'dev-key');
+  assert.ok(typeof udpRelayRec.expiresAt === 'string');
 
   await app.close();
 });
@@ -174,8 +184,11 @@ test('POST /session mints a short-lived UDP relay JWT token bound to session id'
   assert.equal(res.statusCode, 201);
   const { sessionId } = extractSessionCookie(res.headers['set-cookie']);
 
-  const body = JSON.parse(res.body) as any;
-  const token = body.udpRelay.token as string;
+  const body = JSON.parse(res.body) as unknown;
+  assert.ok(body && typeof body === 'object', 'expected JSON object response');
+  const udpRelay = (body as Record<string, unknown>).udpRelay;
+  assert.ok(udpRelay && typeof udpRelay === 'object', 'expected udpRelay object');
+  const token = (udpRelay as Record<string, unknown>).token as string;
   assert.ok(typeof token === 'string' && token.length > 0, 'expected udpRelay.token');
 
   const parts = token.split('.');
@@ -183,12 +196,14 @@ test('POST /session mints a short-lived UDP relay JWT token bound to session id'
   const [headerPart, payloadPart, signaturePart] = parts;
   assert.ok(headerPart && payloadPart && signaturePart);
 
-  const payload = JSON.parse(decodeBase64Url(payloadPart).toString('utf8')) as any;
-  assert.equal(payload.sid, sessionId);
-  assert.equal(payload.origin, 'http://localhost');
-  assert.equal(payload.aud, 'aero-udp-relay');
-  assert.equal(payload.iss, 'aero-gateway');
-  assert.equal(payload.exp - payload.iat, ttlSeconds);
+  const payload = JSON.parse(decodeBase64Url(payloadPart).toString('utf8')) as unknown;
+  assert.ok(payload && typeof payload === 'object', 'expected JWT payload object');
+  const payloadRec = payload as Record<string, unknown>;
+  assert.equal(payloadRec.sid, sessionId);
+  assert.equal(payloadRec.origin, 'http://localhost');
+  assert.equal(payloadRec.aud, 'aero-udp-relay');
+  assert.equal(payloadRec.iss, 'aero-gateway');
+  assert.equal((payloadRec.exp as number) - (payloadRec.iat as number), ttlSeconds);
 
   const expectedSig = encodeBase64Url(createHmac('sha256', secret).update(`${headerPart}.${payloadPart}`).digest());
   assert.equal(signaturePart, expectedSig);

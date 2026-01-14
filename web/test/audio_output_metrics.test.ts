@@ -10,7 +10,7 @@ import {
   requiredBytes,
   wrapRingBuffer,
 } from "../src/audio/audio_worklet_ring";
-import { createAudioOutput, startAudioPerfSampling, writeRingBufferInterleaved } from "../src/platform/audio.ts";
+import { createAudioOutput, startAudioPerfSampling, writeRingBufferInterleaved, type EnabledAudioOutput } from "../src/platform/audio.ts";
 
 test("AudioOutput exposes getOverrunCount() reading ring buffer header[3]", async () => {
   const originalAudioContext = (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
@@ -190,8 +190,7 @@ test("startAudioPerfSampling() emits audio.* counters and prefers worklet underr
     getUnderrunCount: () => metrics.underrunCount,
     getOverrunCount: () => metrics.overrunCount,
     getMetrics: () => metrics,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
+  } as unknown as EnabledAudioOutput;
 
   const calls: Array<{ name: string; value: number }> = [];
   const perf = {

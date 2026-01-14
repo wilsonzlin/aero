@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   TcpMuxFrameParser,
+  type TcpMuxMsgType,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,
   decodeTcpMuxOpenPayload,
@@ -82,7 +83,7 @@ describe("tcp-mux protocol vectors", () => {
       expect(Buffer.from(parsed[0]!.payload)).toEqual(Buffer.from(payload));
       expect(() => parser.finish()).not.toThrow();
 
-      const encoded = encodeTcpMuxFrame(v.msgType as any, v.streamId, payload);
+      const encoded = encodeTcpMuxFrame(v.msgType as TcpMuxMsgType, v.streamId, payload);
       expect(Buffer.from(encoded)).toEqual(Buffer.from(expectedFrame));
     });
   }
@@ -171,4 +172,3 @@ describe("tcp-mux protocol vectors", () => {
     });
   }
 });
-

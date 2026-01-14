@@ -225,7 +225,7 @@ test("disk_worker stat_disk", async (t) => {
       createdAtMs: Date.now(),
       remote: { url: "https://example.com/disk.img", blockSizeBytes: 2048 },
     };
-    await store.putDisk(meta as any);
+    await store.putDisk(meta);
 
     // Runtime overlay (created when opened in COW mode).
     await writeOpfsFile(`${diskId}.overlay.aerospar`, 12);

@@ -6,9 +6,20 @@ import test from "node:test";
 import { installOpfsMock } from "./opfs_mock.ts";
 import { PersistentGpuCache } from "../gpu-cache/persistent_cache.ts";
 
+type MutableNavigator = { storage?: unknown };
+
+function getMutableNavigator(): MutableNavigator {
+  return navigator as unknown as MutableNavigator;
+}
+
+function getCacheDb(cache: PersistentGpuCache): IDBDatabase {
+  return (cache as unknown as { _db: IDBDatabase })._db;
+}
+
 test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in IDB", async () => {
-  const realNavigatorStorage = (navigator as any).storage;
-  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
+  const nav = getMutableNavigator();
+  const realNavigatorStorage = nav.storage;
+  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
   const root = installOpfsMock();
 
   try {
@@ -41,7 +52,7 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
       await cache1.putShader(key, { wgsl, reflection });
 
       // Verify IDB record is metadata-only and points at OPFS.
-      const tx = (cache1 as any)._db.transaction(["shaders"], "readonly");
+      const tx = getCacheDb(cache1).transaction(["shaders"], "readonly");
       const store = tx.objectStore("shaders");
       const record = await new Promise<any>((resolve, reject) => {
         const req = store.get(key);
@@ -152,16 +163,17 @@ test("PersistentGpuCache OPFS: large shader spills to OPFS and metadata stays in
     }
   } finally {
     if (hadNavigatorStorage) {
-      (navigator as any).storage = realNavigatorStorage;
+      nav.storage = realNavigatorStorage;
     } else {
-      delete (navigator as any).storage;
+      delete nav.storage;
     }
   }
 });
 
 test("PersistentGpuCache OPFS: write failure falls back to IDB and cleans up the OPFS file", async () => {
-  const realNavigatorStorage = (navigator as any).storage;
-  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
+  const nav = getMutableNavigator();
+  const realNavigatorStorage = nav.storage;
+  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
   const root = installOpfsMock();
 
   try {
@@ -187,15 +199,14 @@ test("PersistentGpuCache OPFS: write failure falls back to IDB and cleans up the
       const cacheDir = await root.getDirectoryHandle("aero-gpu-cache");
       const shadersDir = await cacheDir.getDirectoryHandle("shaders");
       const handle = await shadersDir.getFileHandle(`${key}.json`, { create: true });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (handle as any).createWritable = async () => {
+      (handle as unknown as { createWritable?: unknown }).createWritable = async () => {
         throw new Error("synthetic OPFS createWritable failure");
       };
 
       await cache.putShader(key, { wgsl, reflection });
 
       // Verify the IDB record stored the payload directly (OPFS was skipped).
-      const tx = (cache as any)._db.transaction(["shaders"], "readonly");
+      const tx = getCacheDb(cache).transaction(["shaders"], "readonly");
       const store = tx.objectStore("shaders");
       const record = await new Promise<any>((resolve, reject) => {
         const req = store.get(key);
@@ -237,16 +248,17 @@ test("PersistentGpuCache OPFS: write failure falls back to IDB and cleans up the
     }
 
     if (hadNavigatorStorage) {
-      (navigator as any).storage = realNavigatorStorage;
+      nav.storage = realNavigatorStorage;
     } else {
-      delete (navigator as any).storage;
+      delete nav.storage;
     }
   }
 });
 
 test("PersistentGpuCache OPFS: createWritable option mismatch falls back to default createWritable()", async () => {
-  const realNavigatorStorage = (navigator as any).storage;
-  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
+  const nav = getMutableNavigator();
+  const realNavigatorStorage = nav.storage;
+  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
   const root = installOpfsMock();
 
   try {
@@ -273,17 +285,17 @@ test("PersistentGpuCache OPFS: createWritable option mismatch falls back to defa
       const cacheDir = await root.getDirectoryHandle("aero-gpu-cache");
       const shadersDir = await cacheDir.getDirectoryHandle("shaders");
       const handle = await shadersDir.getFileHandle(`${key}.json`, { create: true });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const originalCreateWritable = (handle as any).createWritable;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (handle as any).createWritable = async (...args: any[]) => {
+      const handleWithCreateWritable = handle as unknown as { createWritable?: (...args: unknown[]) => unknown };
+      const originalCreateWritable = handleWithCreateWritable.createWritable;
+      handleWithCreateWritable.createWritable = async (...args: unknown[]) => {
         if (args.length > 0) throw new Error("synthetic createWritable options not supported");
-        return originalCreateWritable.call(handle);
+        if (typeof originalCreateWritable !== "function") throw new Error("missing original createWritable()");
+        return (originalCreateWritable as Function).call(handle);
       };
 
       await cache.putShader(key, { wgsl, reflection });
 
-      const tx = (cache as any)._db.transaction(["shaders"], "readonly");
+      const tx = getCacheDb(cache).transaction(["shaders"], "readonly");
       const store = tx.objectStore("shaders");
       const record = await new Promise<any>((resolve, reject) => {
         const req = store.get(key);
@@ -318,16 +330,17 @@ test("PersistentGpuCache OPFS: createWritable option mismatch falls back to defa
     }
 
     if (hadNavigatorStorage) {
-      (navigator as any).storage = realNavigatorStorage;
+      nav.storage = realNavigatorStorage;
     } else {
-      delete (navigator as any).storage;
+      delete nav.storage;
     }
   }
 });
 
 test("PersistentGpuCache OPFS: large pipeline descriptor spills to OPFS and can migrate back to IDB", async () => {
-  const realNavigatorStorage = (navigator as any).storage;
-  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(navigator as any, "storage");
+  const nav = getMutableNavigator();
+  const realNavigatorStorage = nav.storage;
+  const hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
   const root = installOpfsMock();
 
   try {
@@ -354,7 +367,7 @@ test("PersistentGpuCache OPFS: large pipeline descriptor spills to OPFS and can 
       await cache1.putPipelineDescriptor(key, largeDesc);
 
       // Verify IDB record is metadata-only and points at OPFS.
-      const tx = (cache1 as any)._db.transaction(["pipelines"], "readonly");
+      const tx = getCacheDb(cache1).transaction(["pipelines"], "readonly");
       const store = tx.objectStore("pipelines");
       const record = await new Promise<any>((resolve, reject) => {
         const req = store.get(key);
@@ -443,9 +456,9 @@ test("PersistentGpuCache OPFS: large pipeline descriptor spills to OPFS and can 
     }
 
     if (hadNavigatorStorage) {
-      (navigator as any).storage = realNavigatorStorage;
+      nav.storage = realNavigatorStorage;
     } else {
-      delete (navigator as any).storage;
+      delete nav.storage;
     }
   }
 });

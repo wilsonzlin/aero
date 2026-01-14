@@ -3,7 +3,13 @@ import { describe, it } from 'node:test';
 
 import fc from 'fast-check';
 
-import { encodeTcpMuxFrame, TcpMuxFrameParser, TCP_MUX_HEADER_BYTES, type TcpMuxFrame } from '../../src/protocol/tcpMux.js';
+import {
+  encodeTcpMuxFrame,
+  TcpMuxFrameParser,
+  TCP_MUX_HEADER_BYTES,
+  type TcpMuxFrame,
+  type TcpMuxMsgType,
+} from '../../src/protocol/tcpMux.js';
 
 const FC_NUM_RUNS = process.env.FC_NUM_RUNS ? Number(process.env.FC_NUM_RUNS) : process.env.CI ? 200 : 500;
 const FC_TIME_LIMIT_MS = process.env.CI ? 2_000 : 5_000;
@@ -46,7 +52,7 @@ describe('tcp-mux frame codec (property)', () => {
           fc.array(fc.integer({ min: 1, max: 32 }), { minLength: 1, maxLength: 20 }),
           (frames, chunkSizes) => {
             const encodedStream = Buffer.concat(
-              frames.map((frame) => encodeTcpMuxFrame(frame.msgType as any, frame.streamId, frame.payload)),
+              frames.map((frame) => encodeTcpMuxFrame(frame.msgType as TcpMuxMsgType, frame.streamId, frame.payload)),
             );
 
             const parser = new TcpMuxFrameParser();
