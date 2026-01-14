@@ -290,7 +290,7 @@ fn compute_translate_and_run_group_id_and_group_index_write_linear_id() {
         const D3D_NAME_GROUP_ID: u32 = 21;
         const D3D_NAME_GROUP_INDEX: u32 = 22;
 
-        // Use a 4-thread workgroup and dispatch 4 workgroups: total invocations = 16.
+        // Use a 2x2 workgroup (4 threads) and dispatch 4 workgroups: total invocations = 16.
         //
         // Compute `global = (group_id.x << 2) | group_index` using `bfi` (no integer add opcode in
         // our minimal IR) and write it to `u0[global]`.
@@ -301,7 +301,7 @@ fn compute_translate_and_run_group_id_and_group_index_write_linear_id() {
             stage: ShaderStage::Compute,
             model: ShaderModel { major: 5, minor: 0 },
             decls: vec![
-                Sm4Decl::ThreadGroupSize { x: 4, y: 1, z: 1 },
+                Sm4Decl::ThreadGroupSize { x: 2, y: 2, z: 1 },
                 Sm4Decl::InputSiv {
                     reg: 0,
                     mask: WriteMask::XYZW,
@@ -487,14 +487,19 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
             return;
         }
 
-        // D3D10_SB_NAME_GROUP_THREAD_ID.
+        // D3D10_SB_NAME_GROUP_THREAD_ID / D3D10_SB_NAME_GROUP_ID / D3D10_SB_NAME_GROUP_INDEX.
         const D3D_NAME_GROUP_THREAD_ID: u32 = 23;
+        const D3D_NAME_GROUP_ID: u32 = 21;
+        const D3D_NAME_GROUP_INDEX: u32 = 22;
 
-        // One 2x2 workgroup = 4 invocations.
-        const ELEMENTS: u32 = 4;
+        // Two 2x2 workgroups = 8 invocations.
+        const WORKGROUPS_X: u32 = 2;
+        const ELEMENTS: u32 = 8;
         let size_bytes = (ELEMENTS as u64) * 4;
 
-        // Compute `linear = id.x | (id.y << 1)` via `bfi`, then write it to u0[linear].
+        // Compute `linear = id.x | (id.y << 1)` via `bfi` (expected to be `0..3` for each
+        // workgroup), then write it to a unique global slot computed from `SV_GroupID` and
+        // `SV_GroupIndex`.
         //
         // This is sensitive to whether `SV_GroupThreadID` is lowered as raw integer bits in the
         // internal `vec4<f32>` register model: numeric float conversion would yield float bit
@@ -509,6 +514,16 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
                     mask: WriteMask::XYZW,
                     sys_value: D3D_NAME_GROUP_THREAD_ID,
                 },
+                Sm4Decl::InputSiv {
+                    reg: 1,
+                    mask: WriteMask::XYZW,
+                    sys_value: D3D_NAME_GROUP_ID,
+                },
+                Sm4Decl::InputSiv {
+                    reg: 2,
+                    mask: WriteMask::XYZW,
+                    sys_value: D3D_NAME_GROUP_INDEX,
+                },
                 Sm4Decl::UavBuffer {
                     slot: 0,
                     stride: 0,
@@ -516,7 +531,7 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
                 },
             ],
             instructions: vec![
-                // r0.x = id.x | (id.y << 1)
+                // r0.x = local_linear = id.x | (id.y << 1)
                 Sm4Inst::Bfi {
                     dst: dst(RegFile::Temp, 0, WriteMask::X),
                     width: src_imm_u32(31),
@@ -524,18 +539,26 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
                     insert: src_reg(RegFile::Input, 0, Swizzle::YYYY),
                     base: src_reg(RegFile::Input, 0, Swizzle::XXXX),
                 },
-                // r1.x = linear << 2 (byte address)
+                // r1.x = global = (group_id.x << 2) | group_index
                 Sm4Inst::Bfi {
                     dst: dst(RegFile::Temp, 1, WriteMask::X),
                     width: src_imm_u32(30),
                     offset: src_imm_u32(2),
-                    insert: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
+                    insert: src_reg(RegFile::Input, 1, Swizzle::XXXX),
+                    base: src_reg(RegFile::Input, 2, Swizzle::XXXX),
+                },
+                // r2.x = addr = global << 2 (byte address)
+                Sm4Inst::Bfi {
+                    dst: dst(RegFile::Temp, 2, WriteMask::X),
+                    width: src_imm_u32(30),
+                    offset: src_imm_u32(2),
+                    insert: src_reg(RegFile::Temp, 1, Swizzle::XXXX),
                     base: src_imm_u32(0),
                 },
-                // store_raw u0.x, r1.x, r0.x
+                // store_raw u0.x, r2.x, r0.x
                 Sm4Inst::StoreRaw {
                     uav: UavRef { slot: 0 },
-                    addr: src_reg(RegFile::Temp, 1, Swizzle::XXXX),
+                    addr: src_reg(RegFile::Temp, 2, Swizzle::XXXX),
                     value: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
                     mask: WriteMask::X,
                 },
@@ -551,6 +574,16 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
         assert!(
             translated.wgsl.contains("@builtin(local_invocation_id)"),
             "expected local_invocation_id builtin in WGSL:\n{}",
+            translated.wgsl
+        );
+        assert!(
+            translated.wgsl.contains("@builtin(workgroup_id)"),
+            "expected workgroup_id builtin in WGSL:\n{}",
+            translated.wgsl
+        );
+        assert!(
+            translated.wgsl.contains("@builtin(local_invocation_index)"),
+            "expected local_invocation_index builtin in WGSL:\n{}",
             translated.wgsl
         );
         let binding_u0 = BINDING_BASE_UAV + 0;
@@ -639,7 +672,7 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(2, &bind_group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
+            pass.dispatch_workgroups(WORKGROUPS_X, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
         queue.submit([encoder.finish()]);
@@ -653,7 +686,10 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
                 data[at..at + 4].try_into().expect("read 4 bytes"),
             ));
         }
-        let expected: Vec<u32> = (0..ELEMENTS).collect();
+        let mut expected = Vec::<u32>::with_capacity(ELEMENTS as usize);
+        for _ in 0..WORKGROUPS_X {
+            expected.extend(0..4u32);
+        }
         assert_eq!(got, expected);
     });
 }
