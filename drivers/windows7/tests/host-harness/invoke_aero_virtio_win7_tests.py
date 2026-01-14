@@ -1326,15 +1326,24 @@ def _require_virtio_msix_check_failure_message(
     if not (require_virtio_net_msix or require_virtio_blk_msix or require_virtio_snd_msix):
         return None
 
+    req_flags: list[str] = []
+    if require_virtio_net_msix:
+        req_flags.append("--require-virtio-net-msix/--require-net-msix")
+    if require_virtio_blk_msix:
+        req_flags.append("--require-virtio-blk-msix/--require-blk-msix")
+    if require_virtio_snd_msix:
+        req_flags.append("--require-virtio-snd-msix/--require-snd-msix")
+    ctx = f" (while {', '.join(req_flags)} was enabled)" if req_flags else ""
+
     try:
         query_infos, info_infos, query_supported, info_supported = _qmp_collect_pci_msix_info(endpoint)
     except Exception as e:
-        return f"FAIL: QMP_MSIX_CHECK_FAILED: failed to query PCI state via QMP: {e}"
+        return f"FAIL: QMP_MSIX_CHECK_FAILED: failed to query PCI state via QMP: {e}{ctx}"
 
     if not query_supported and not info_supported:
         return (
             "FAIL: QMP_MSIX_CHECK_UNSUPPORTED: QEMU QMP does not support query-pci or human-monitor-command "
-            "(required for MSI-X verification)"
+            f"(required for MSI-X verification){ctx}"
         )
 
     requirements: list[tuple[str, str, set[int]]] = []
@@ -1351,7 +1360,9 @@ def _require_virtio_msix_check_failure_message(
         any_matches = q + h
         if not any_matches:
             ids_str = ",".join(f"{_VIRTIO_PCI_VENDOR_ID:04x}:{d:04x}" for d in sorted(device_ids))
-            return f"FAIL: {token}: did not find {device_name} PCI function(s) ({ids_str}) in QEMU PCI introspection output"
+            return (
+                f"FAIL: {token}: did not find {device_name} PCI function(s) ({ids_str}) in QEMU PCI introspection output{ctx}"
+            )
 
         # Prefer structured query-pci output when it provides an explicit enabled bit.
         matches: Optional[list[_PciMsixInfo]] = None
@@ -1369,7 +1380,7 @@ def _require_virtio_msix_check_failure_message(
                 extra = f",...(+{len(any_matches)-4})"
             return (
                 "FAIL: QMP_MSIX_CHECK_UNSUPPORTED: could not determine MSI-X enabled state for "
-                f"{device_name} PCI function(s) ({ids_str}) (bdf={bdfs}{extra})"
+                f"{device_name} PCI function(s) ({ids_str}) (bdf={bdfs}{extra}){ctx}"
             )
 
         not_enabled = [i for i in matches if not i.msix_enabled]
@@ -1377,7 +1388,7 @@ def _require_virtio_msix_check_failure_message(
             i = not_enabled[0]
             return (
                 f"FAIL: {token}: {device_name} PCI function {i.pci_id()} at {i.bdf()} "
-                f"reported MSI-X disabled (source={i.source})"
+                f"reported MSI-X disabled (source={i.source}){ctx}"
             )
 
     return None
@@ -7964,7 +7975,11 @@ def main() -> int:
                                         file=sys.stderr,
                                     )
                                 else:
-                                    print(f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}", file=sys.stderr)
+                                    print(
+                                        "FAIL: VIRTIO_NET_MSIX_REQUIRED: "
+                                        f"{reason} (while --require-virtio-net-msix/--require-net-msix was enabled)",
+                                        file=sys.stderr,
+                                    )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -7976,7 +7991,11 @@ def main() -> int:
                             )
                             ok, reason = _require_virtio_blk_msix_marker(msix_tail)
                             if not ok:
-                                print(f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}", file=sys.stderr)
+                                print(
+                                    "FAIL: VIRTIO_BLK_MSIX_REQUIRED: "
+                                    f"{reason} (while --require-virtio-blk-msix/--require-blk-msix was enabled)",
+                                    file=sys.stderr,
+                                )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -7989,7 +8008,8 @@ def main() -> int:
                             ok, reason = _require_virtio_snd_msix_marker(msix_tail)
                             if not ok:
                                 print(
-                                    f"FAIL: VIRTIO_SND_MSIX_REQUIRED: {reason}",
+                                    "FAIL: VIRTIO_SND_MSIX_REQUIRED: "
+                                    f"{reason} (while --require-virtio-snd-msix/--require-snd-msix was enabled)",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -8031,7 +8051,11 @@ def main() -> int:
                                         file=sys.stderr,
                                     )
                                 else:
-                                    print(f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: {reason}", file=sys.stderr)
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: "
+                                        f"{reason} (while --require-virtio-input-msix/--require-input-msix was enabled)",
+                                        file=sys.stderr,
+                                    )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -10077,7 +10101,11 @@ def main() -> int:
                                                     file=sys.stderr,
                                                 )
                                     else:
-                                        print(f"FAIL: VIRTIO_NET_MSIX_REQUIRED: {reason}", file=sys.stderr)
+                                        print(
+                                            "FAIL: VIRTIO_NET_MSIX_REQUIRED: "
+                                            f"{reason} (while --require-virtio-net-msix/--require-net-msix was enabled)",
+                                            file=sys.stderr,
+                                        )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
@@ -10089,7 +10117,11 @@ def main() -> int:
                                 )
                                 ok, reason = _require_virtio_blk_msix_marker(msix_tail)
                                 if not ok:
-                                    print(f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}", file=sys.stderr)
+                                    print(
+                                        "FAIL: VIRTIO_BLK_MSIX_REQUIRED: "
+                                        f"{reason} (while --require-virtio-blk-msix/--require-blk-msix was enabled)",
+                                        file=sys.stderr,
+                                    )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
@@ -10102,7 +10134,8 @@ def main() -> int:
                                 ok, reason = _require_virtio_snd_msix_marker(msix_tail)
                                 if not ok:
                                     print(
-                                        f"FAIL: VIRTIO_SND_MSIX_REQUIRED: {reason}",
+                                        "FAIL: VIRTIO_SND_MSIX_REQUIRED: "
+                                        f"{reason} (while --require-virtio-snd-msix/--require-snd-msix was enabled)",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -10142,7 +10175,11 @@ def main() -> int:
                                                     file=sys.stderr,
                                                 )
                                     else:
-                                        print(f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: {reason}", file=sys.stderr)
+                                        print(
+                                            "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: "
+                                            f"{reason} (while --require-virtio-input-msix/--require-input-msix was enabled)",
+                                            file=sys.stderr,
+                                        )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
