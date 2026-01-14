@@ -20,7 +20,10 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
     }
 
     const config = {
-      guestMemoryMiB: 16,
+      // Keep guest RAM tiny: this test only needs enough space for a small scanout test pattern.
+      // 1MiB also keeps the legacy shared framebuffer out of guest RAM (disabling the moving WASM
+      // demo and keeping the CPU worker on the deterministic JS fallback path).
+      guestMemoryMiB: 1,
       vramMiB: 0,
       enableWorkers: true,
       enableWebGPU: false,
@@ -141,8 +144,9 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
       const scanoutWidth = 3;
       const scanoutHeight = 2;
       const pitchBytes = 16; // 12 bytes of pixels + 4 bytes padding per row.
-      // Keep this well above any demo framebuffer scratch regions in guest RAM.
-      const basePaddr = 0xc0_0000; // 12MiB
+      // Keep this above the VGA text region (0xB8000) and other low-memory demo scratch buffers.
+      // 0x0C0_000 = 768KiB.
+      const basePaddr = 0x0c0_000;
 
       const guestLayout = sharedLayout.readGuestRamLayoutFromStatus(status);
       const guestU8 = new Uint8Array(guestMemory.buffer as ArrayBuffer, guestLayout.guest_base, guestLayout.guest_size);

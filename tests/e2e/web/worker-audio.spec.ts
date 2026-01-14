@@ -65,27 +65,27 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
      <button id="start">Start audio</button>
      <pre id="log"></pre>
      <script type="module">
-       import { WorkerCoordinator } from "/web/src/runtime/coordinator.ts";
-       import { createAudioOutput } from "/web/src/platform/audio.ts";
+        import { WorkerCoordinator } from "/web/src/runtime/coordinator.ts";
+        import { createAudioOutput } from "/web/src/platform/audio.ts";
 
-       const log = document.getElementById("log");
-       const coordinator = new WorkerCoordinator();
-       window.__coordinator = coordinator;
+        const log = document.getElementById("log");
+        const coordinator = new WorkerCoordinator();
+        window.__coordinator = coordinator;
 
         // Minimal config that keeps worker boot cheap.
         const config = {
-         // Keep guest memory small; the runtime reserves a large fixed region for
-         // the WASM heap, so huge guest sizes significantly increase total
-         // SharedArrayBuffer memory pressure and can cause audio underruns in
-         // headless CI.
-          guestMemoryMiB: 16,
+          // Keep guest memory small; the runtime reserves a large fixed region for
+          // the WASM heap, so huge guest sizes significantly increase total
+          // SharedArrayBuffer memory pressure and can cause audio underruns in
+          // headless CI.
+          guestMemoryMiB: 1,
           vramMiB: 0,
           enableWorkers: true,
           enableWebGPU: false,
           proxyUrl: null,
           activeDiskImage: null,
           logLevel: "info",
-      };
+        };
 
         try {
           coordinator.start(config);
@@ -94,25 +94,25 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
           log.textContent = err instanceof Error ? err.message : String(err);
         }
 
-      document.getElementById("start").addEventListener("click", async () => {
-        log.textContent = "";
-        const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
-        window.__aeroAudioOutput = output;
-        if (!output.enabled) {
-          log.textContent = output.message;
-          return;
-        }
+        document.getElementById("start").addEventListener("click", async () => {
+          log.textContent = "";
+          const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
+          window.__aeroAudioOutput = output;
+          if (!output.enabled) {
+            log.textContent = output.message;
+            return;
+          }
 
-        coordinator.setAudioRingBuffer(
-          output.ringBuffer.buffer,
-          output.ringBuffer.capacityFrames,
-          output.ringBuffer.channelCount,
-          output.context.sampleRate,
-        );
+          coordinator.setAudioRingBuffer(
+            output.ringBuffer.buffer,
+            output.ringBuffer.capacityFrames,
+            output.ringBuffer.channelCount,
+            output.context.sampleRate,
+          );
 
-        await output.resume();
-        log.textContent = "started";
-      });
+          await output.resume();
+          log.textContent = "started";
+        });
     </script>
   `);
 

@@ -56,8 +56,10 @@ async function main() {
 
   const coordinator = new WorkerCoordinator();
   const config = {
-    // Keep allocations small: this harness only needs enough guest RAM for the shared framebuffer demo.
-    guestMemoryMiB: 16,
+    // Keep allocations small: this harness only needs enough guest RAM for a few tiny demo buffers.
+    // Using 1MiB also prevents embedding the legacy shared framebuffer in guest RAM, keeping the
+    // CPU worker on the deterministic JS fallback render path (vs the optional moving WASM demo).
+    guestMemoryMiB: 1,
     // This harness uses legacy shared-framebuffer presentation; it does not need the BAR1/VRAM aperture.
     vramMiB: 0,
     enableWorkers: true,

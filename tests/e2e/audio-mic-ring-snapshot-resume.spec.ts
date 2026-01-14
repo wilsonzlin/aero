@@ -36,7 +36,9 @@ test("Worker snapshot resume discards buffered mic samples (stale latency avoida
       const coord = (globalThis as any).__aeroWorkerCoordinator as any;
 
       const workerConfig = {
-        guestMemoryMiB: 16,
+        // Keep guest memory tiny: this test only needs enough RAM for worker bring-up + snapshot pause/resume
+        // bookkeeping. Avoid large shared WebAssembly.Memory allocations in CI.
+        guestMemoryMiB: 1,
         vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,
