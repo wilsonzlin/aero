@@ -6157,8 +6157,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       // The fixed-function fog PS reads TEXCOORD0.z. For pre-transformed vertices
       // without TEX1, the base VS already writes TEXCOORD0 from position, so fog
       // can still work without a dedicated fog VS variant.
-      const uint32_t base_fvf = fixedfunc_fvf_from_variant(variant);
-      fog_coord_available = fixedfunc_variant_uses_rhw(variant) && ((base_fvf & kD3dFvfTex1) == 0);
+      fog_coord_available = (variant == FixedFuncVariant::RHW_COLOR);
     }
     if (!fog_coord_available) {
       ps_key.fog_enabled = false;
