@@ -95,6 +95,13 @@ export type WebHidInputReportRingStats = Readonly<{
 }>;
 
 export type WebHidOutputSendStats = Readonly<{
+  /**
+   * Maximum queued (not yet running) sends per device.
+   */
+  maxPendingDeviceSends: number;
+  /**
+   * Legacy alias for {@link maxPendingDeviceSends}.
+   */
   maxPendingSendsPerDevice: number;
   /**
    * Optional global cap across all devices. When unset, this is `null`.
@@ -359,6 +366,7 @@ export class WebHidBroker {
       }));
 
     return {
+      maxPendingDeviceSends: this.#maxPendingSendsPerDevice,
       maxPendingSendsPerDevice: this.#maxPendingSendsPerDevice,
       maxPendingSendsTotal: Number.isFinite(this.#maxPendingSendsTotal) ? this.#maxPendingSendsTotal : null,
       pendingTotal: this.#pendingDeviceSendTotal,
@@ -529,7 +537,7 @@ export class WebHidBroker {
     const dropped = this.#outputSendDroppedByDevice.get(deviceId) ?? 0;
     const pending = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
     console.warn(
-      `[webhid] Dropping HID output/feature sends for deviceId=${deviceId} (pending=${pending} maxPendingSendsPerDevice=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
+      `[webhid] Dropping HID output/feature sends for deviceId=${deviceId} (pending=${pending} maxPendingDeviceSends=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
     );
   }
 
