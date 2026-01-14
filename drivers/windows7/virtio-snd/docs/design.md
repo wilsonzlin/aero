@@ -68,7 +68,10 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 - **Transport:** virtio-pci **modern** (BAR0 MMIO + PCI vendor-specific capabilities; negotiates `VIRTIO_F_VERSION_1`).
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four; PortCls
   uses `controlq` (0) + `txq` (2) for render (stream 0) and `controlq` (0) + `rxq` (3) for capture (stream 1).
-  `eventq` is currently unused by the PortCls endpoints.
+  `eventq` is initialized and drained best-effort. When running with the virtio backend, the WaveRT miniport
+  may also register an optional `eventq` callback so virtio-snd PCM events can be integrated into the WaveRT
+  pipeline (e.g. `PCM_PERIOD_ELAPSED` as an additional period-DPC wakeup source and `PCM_XRUN` best-effort
+  recovery). Contract v1 correctness must not depend on `eventq` (timer-based pacing remains the baseline).
 - **Interrupts:** MSI/MSI-X (message interrupts) preferred when granted by Windows (the shipped INF opts in). When MSI/MSI-X is active, the driver programs virtio MSI-X routing (`common_cfg.msix_config`, `common_cfg.queue_msix_vector`) and verifies read-back. If message interrupts are unavailable/cannot be connected, the driver uses INTx (contract v1 baseline).
   - On Aero contract devices, MSI-X is **exclusive** when enabled: if a virtio MSI-X selector is `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are **suppressed** (no MSI-X message and no INTx fallback). Therefore vector-programming failures must be treated as fatal unless the driver can switch to INTx or polling-only mode.
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1.
@@ -93,7 +96,9 @@ The driver still initializes `eventq` and posts a small buffer pool so it can sa
 - devices that unexpectedly complete event buffers, and
 - future device models that begin emitting async events (jack connect/disconnect, period elapsed, XRUN, etc.).
 
-Audio streaming MUST remain correct even when `eventq` is silent (most contract-v1 devices) or noisy.
+When the virtio backend is active, the WaveRT miniport may also register an optional `eventq` callback so PCM
+notifications (period-elapsed / XRUN) can be used as *best-effort* wakeups/recovery signals. Audio streaming MUST
+remain correct even when `eventq` is silent (most contract-v1 devices) or noisy.
 
 ### Multi-format/device capability variance (non-contract)
 
@@ -259,7 +264,7 @@ Contract v1 requirements include:
 - Queue indices/max sizes (see `docs/windows7-virtio-driver-contract.md` and
   `include/virtiosnd_queue.h`):
   - `controlq = 64`
-  - `eventq = 64` (initialized; currently unused unless the device model emits events)
+  - `eventq = 64` (initialized; drained best-effort; may optionally deliver PCM events to WaveRT via callback)
   - `txq = 256`
   - `rxq = 64` (initialized; used by the WaveRT capture endpoint)
 
