@@ -246,6 +246,20 @@ fn tri_integer_index_count(level: u32) -> u32 {{
   return tri_index_count(level);
 }}
 
+fn tri_integer_row_start(level: u32, i: u32) -> u32 {{
+  let l = tri_clamp_level(level);
+  return tri_vertex_index(l, i, 0u);
+}}
+
+fn tri_integer_vertex_index(level: u32, i: u32, j: u32) -> u32 {{
+  let l = tri_clamp_level(level);
+  return tri_vertex_index(l, i, j);
+}}
+
+fn tri_integer_vertex_index_from_ijk(level: u32, ijk: vec3<u32>) -> u32 {{
+  return tri_integer_vertex_index(level, ijk.x, ijk.y);
+}}
+
 fn tri_integer_vertex_ijk(level: u32, local_vertex: u32) -> vec3<u32> {{
   let l = tri_clamp_level(level);
   let vtx_count = tri_vertex_count(l);
@@ -308,6 +322,28 @@ pub fn tri_integer_vertex_count(n: u32) -> u32 {
 pub fn tri_integer_index_count(n: u32) -> u32 {
     let n = n as u64;
     (n * n * 3) as u32
+}
+
+/// Starting vertex index of integer barycentric row `i` (`i = 0..=n`).
+///
+/// Rows follow the canonical vertex enumeration:
+/// - row `i` has `n - i + 1` vertices (`j = 0..=(n - i)`),
+/// - and row starts are:
+///   `start(i) = sum_{r=0..i-1} (n - r + 1) = i*(2n + 3 - i)/2`.
+pub fn tri_integer_row_start(n: u32, i: u32) -> u32 {
+    assert!(i <= n, "row index i={i} out of range for n={n}");
+    let n = n as u64;
+    let i = i as u64;
+    ((i * (2 * n + 3 - i)) / 2) as u32
+}
+
+/// Map `(i, j)` integer barycentric coordinates to local vertex index.
+///
+/// Requires `i + j <= n` (and therefore `k = n - i - j >= 0`).
+pub fn tri_integer_vertex_index(n: u32, i: u32, j: u32) -> u32 {
+    assert!(i <= n, "i={i} out of range for n={n}");
+    assert!(j <= n - i, "j={j} out of range for n={n}, i={i}");
+    tri_integer_row_start(n, i) + j
 }
 
 /// Map `local_vertex_index -> (i, j, k)` integer barycentric coordinates where `i + j + k = n`.
@@ -481,6 +517,8 @@ fn main() {{
   let _vc_i = tri_integer_vertex_count(4u);
   let _ic_i = tri_integer_index_count(4u);
   let _ijk = tri_integer_vertex_ijk(4u, 0u);
+  let _row = tri_integer_row_start(4u, 0u);
+  let _vid = tri_integer_vertex_index_from_ijk(4u, _ijk);
   let _tri_cw = tri_index_to_vertex_indices_cw(4u, 0u);
 }}
 "#

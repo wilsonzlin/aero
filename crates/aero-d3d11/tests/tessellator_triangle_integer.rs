@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use aero_d3d11::runtime::tessellator::{
     tri_index_to_vertex_indices_cw, tri_integer_index_count, tri_integer_indices_cw,
-    tri_integer_vertex_count, tri_integer_vertex_ijk, TriIntegerBarycentric,
+    tri_integer_vertex_count, tri_integer_vertex_ijk, tri_integer_vertex_index,
+    TriIntegerBarycentric,
 };
 
 #[test]
@@ -35,6 +36,13 @@ fn triangle_integer_vertex_ijk_is_valid_and_unique() {
             assert!(
                 seen.insert(ijk),
                 "duplicate barycentric coords for n={n}: {ijk:?}"
+            );
+
+            // Inverse mapping: local index -> ijk -> (i,j) must round-trip.
+            assert_eq!(
+                tri_integer_vertex_index(n, ijk.i, ijk.j),
+                v,
+                "vertex_index(i,j) must invert vertex_ijk for n={n}, v={v}"
             );
         }
 
