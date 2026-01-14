@@ -1364,3 +1364,99 @@ async fn chunked_symlink_escape_is_blocked_for_manifests() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_symlink_escape_is_blocked_for_versioned_chunk_objects() {
+    use std::os::unix::fs::symlink;
+
+    let root_dir = tempdir().expect("tempdir");
+    let outside_dir = tempdir().expect("tempdir");
+
+    // Directory listing fallback: image_id must correspond to an on-disk file.
+    tokio::fs::write(root_dir.path().join(IMAGE_ID), b"raw image bytes")
+        .await
+        .expect("write image file");
+
+    let outside_path = outside_dir.path().join("secret.bin");
+    tokio::fs::write(&outside_path, b"TOP-SECRET")
+        .await
+        .expect("write outside file");
+
+    let chunk_dir = root_dir
+        .path()
+        .join("chunked")
+        .join(IMAGE_ID)
+        .join("v1")
+        .join("chunks");
+    tokio::fs::create_dir_all(&chunk_dir)
+        .await
+        .expect("create chunk dirs");
+
+    let link_path = chunk_dir.join("00000000.bin");
+    symlink(&outside_path, &link_path).expect("create symlink");
+
+    let store = Arc::new(LocalFsImageStore::new(root_dir.path()));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/images/{IMAGE_ID}/chunked/v1/chunks/00000000.bin"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_symlink_escape_is_blocked_for_versioned_manifests() {
+    use std::os::unix::fs::symlink;
+
+    let root_dir = tempdir().expect("tempdir");
+    let outside_dir = tempdir().expect("tempdir");
+
+    tokio::fs::write(root_dir.path().join(IMAGE_ID), b"raw image bytes")
+        .await
+        .expect("write image file");
+
+    let outside_path = outside_dir.path().join("secret.json");
+    tokio::fs::write(&outside_path, b"{\"leak\":true}")
+        .await
+        .expect("write outside file");
+
+    let image_chunk_root = root_dir.path().join("chunked").join(IMAGE_ID).join("v1");
+    tokio::fs::create_dir_all(image_chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+
+    let link_path = image_chunk_root.join("manifest.json");
+    symlink(&outside_path, &link_path).expect("create symlink");
+
+    let store = Arc::new(LocalFsImageStore::new(root_dir.path()));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/images/{IMAGE_ID}/chunked/v1/manifest.json"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
