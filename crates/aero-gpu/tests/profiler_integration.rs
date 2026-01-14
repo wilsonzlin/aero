@@ -6,9 +6,11 @@ use aero_gpu::{GpuBackendKind, GpuCapabilities, GpuProfiler, GpuProfilerConfig};
 fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
     common::ensure_xdg_runtime_dir();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
+            // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for
+            // some shader pipelines (observed in CI sandboxes), which turns these tests into hard
+            // failures.
+            wgpu::Backends::PRIMARY
         } else {
             // Prefer "native" backends; this avoids noisy platform warnings from
             // initializing GL/WAYLAND stacks in headless CI environments.

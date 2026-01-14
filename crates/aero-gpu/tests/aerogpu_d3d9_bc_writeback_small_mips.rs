@@ -81,15 +81,20 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
         None
     }
 
-    // Prefer GL on Linux CI (avoid crashes in some Vulkan software adapters), but fall back to
-    // other backends if GL doesn't expose BC support.
+    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
+    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
     if cfg!(target_os = "linux") {
-        if let Some(exec) = try_create(wgpu::Backends::GL).await {
+        if let Some(exec) = try_create(wgpu::Backends::PRIMARY).await {
             return Some(exec);
         }
     }
 
-    try_create(wgpu::Backends::all()).await
+    let backends = if cfg!(target_os = "linux") {
+        wgpu::Backends::all() - wgpu::Backends::GL
+    } else {
+        wgpu::Backends::all()
+    };
+    try_create(backends).await
 }
 
 #[test]

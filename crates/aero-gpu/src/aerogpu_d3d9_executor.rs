@@ -1090,12 +1090,12 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters (seen with
-        // `gpu-alloc` UB checks). The GL backend is sufficient for the headless integration tests
-        // we can run on CI; tests that require higher downlevel capabilities should skip when the
-        // backend does not support them.
+        // On Linux, avoid wgpu's GL backend for this executor: wgpu-hal's GLES pipeline reflection
+        // can panic for some D3D9 shader pipelines (observed in CI sandboxes), which turns test
+        // runs into hard failures. Prefer the native backends and let tests skip on machines
+        // without a usable adapter.
         let backends = if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
+            wgpu::Backends::PRIMARY
         } else {
             wgpu::Backends::all()
         };
@@ -1103,24 +1103,14 @@ impl AerogpuD3d9Executor {
             backends,
             ..Default::default()
         });
-        let adapter = match instance
+        let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
-                force_fallback_adapter: true,
+                force_fallback_adapter: false,
             })
             .await
-        {
-            Some(adapter) => adapter,
-            None => instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-                .ok_or(AerogpuD3d9Error::AdapterNotFound)?,
-        };
+            .ok_or(AerogpuD3d9Error::AdapterNotFound)?;
 
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 

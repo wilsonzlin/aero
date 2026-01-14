@@ -5,10 +5,11 @@ use aero_gpu::{GpuCapabilities, TextureDesc, TextureFormat, TextureManager, Text
 async fn create_device_queue_bc() -> Option<(wgpu::Device, wgpu::Queue)> {
     common::ensure_xdg_runtime_dir();
 
-    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
+    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
+            wgpu::Backends::PRIMARY
         } else {
             wgpu::Backends::all()
         },

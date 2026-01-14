@@ -43,10 +43,11 @@ fn texture_compression_disabled_by_env() -> bool {
 async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
 
-    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
+    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
+            wgpu::Backends::PRIMARY
         } else {
             wgpu::Backends::all()
         },
@@ -157,10 +158,10 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
         None
     }
 
-    // Prefer GL on Linux CI (avoid crashes in some Vulkan software adapters), but fall back to
-    // other backends if GL doesn't expose BC support.
+    // Avoid wgpu's GL backend on Linux (see note above), but fall back to other backends if the
+    // native stack doesn't expose BC support.
     if cfg!(target_os = "linux") {
-        if let Some(exec) = try_create(wgpu::Backends::GL).await {
+        if let Some(exec) = try_create(wgpu::Backends::PRIMARY).await {
             return Some(exec);
         }
     }

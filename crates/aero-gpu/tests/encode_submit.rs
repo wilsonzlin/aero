@@ -92,9 +92,11 @@ fn encode_and_submit_command_list_without_validation_errors() {
         }
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
             backends: if cfg!(target_os = "linux") {
-                wgpu::Backends::GL
+                // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic
+                // for some shader pipelines (observed in CI sandboxes), which turns these tests
+                // into hard failures.
+                wgpu::Backends::PRIMARY
             } else {
                 wgpu::Backends::all()
             },
