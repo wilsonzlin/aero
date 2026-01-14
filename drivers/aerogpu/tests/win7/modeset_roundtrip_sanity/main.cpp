@@ -87,7 +87,7 @@ static DWORD WINAPI ChangeDisplaySettingsThreadProc(LPVOID param) {
     return 0;
   }
   // Note: ChangeDisplaySettingsExW takes a non-const DEVMODEW*.
-  ctx->result = ChangeDisplaySettingsExW(NULL, &ctx->dm, NULL, CDS_FULLSCREEN, NULL);
+  ctx->result = ChangeDisplaySettingsExW(NULL, &ctx->dm, NULL, 0, NULL);
   return 0;
 }
 
