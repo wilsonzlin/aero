@@ -2858,7 +2858,10 @@ const presentOnce = async (): Promise<boolean> => {
             category: "Scanout",
             message,
             details: {
-              scanout: scanoutSnap,
+              scanout: {
+                ...scanoutSnap,
+                format_str: aerogpuFormatToString(scanoutSnap.format >>> 0),
+              },
               vram_base_paddr: `0x${vramBase.toString(16)}`,
               vram_size_bytes: vramSizeBytes,
             },
