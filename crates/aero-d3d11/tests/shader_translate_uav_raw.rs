@@ -4,17 +4,10 @@ use aero_d3d11::{
     ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand,
     Swizzle, UavRef, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 fn build_empty_dxbc() -> Vec<u8> {
-    // Minimal DXBC container with no chunks.
-    let total_size = 4 + 16 + 4 + 4 + 4;
-    let mut bytes = Vec::with_capacity(total_size);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // chunk count
-    bytes
+    dxbc_test_utils::build_container(&[])
 }
 
 fn assert_wgsl_validates(wgsl: &str) {

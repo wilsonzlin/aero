@@ -3,39 +3,14 @@ use aero_d3d11::{
     OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
-    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
-    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_len;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor as u32);
-        cursor += 8 + data.len();
-    }
-    let total_size = cursor as u32;
-
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for off in offsets {
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(&fourcc.0);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-    }
-    assert_eq!(bytes.len(), total_size as usize);
-    bytes
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 fn sig_param(name: &str, index: u32, register: u32, mask: u8) -> DxbcSignatureParameter {
@@ -218,4 +193,3 @@ fn translates_integer_and_bitwise_ops() {
     assert!(translated.wgsl.contains("<<"));
     assert!(translated.wgsl.contains(">>"));
 }
-

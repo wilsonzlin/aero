@@ -3890,14 +3890,11 @@ fn rejects_malformed_lrp_with_too_few_operands_legacy_translator() {
 fn dxbc_container_rejects_excessive_chunk_count() {
     use crate::shader_limits::MAX_D3D9_DXBC_CHUNK_COUNT;
 
-    // Minimal DXBC header with an absurd chunk count. The parser must reject this without
-    // doing pathological work based on the untrusted count.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
-    bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
-    bytes.extend_from_slice(&(MAX_D3D9_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
+    // Start with a valid empty DXBC container, then patch the declared chunk count to exceed our
+    // hard cap. `extract_shader_bytecode` should reject this *before* attempting to validate an
+    // enormous offset table.
+    let mut bytes = dxbc_test_utils::build_container(&[]);
+    bytes[28..32].copy_from_slice(&(MAX_D3D9_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
 
     let err = dxbc::extract_shader_bytecode(&bytes).unwrap_err();
     assert!(
@@ -3910,13 +3907,10 @@ fn dxbc_container_rejects_excessive_chunk_count() {
 fn dxbc_container_does_not_panic_on_huge_chunk_offset() {
     // On 32-bit targets (notably wasm32), `usize` arithmetic can overflow when parsing a DXBC
     // container that includes absurd chunk offsets. Ensure we return an error instead of panicking.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
-    bytes.extend_from_slice(&36u32.to_le_bytes()); // total size
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
-    bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // chunk offset
+    let mut bytes = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"JUNK"), &[][..])]);
+    // Offset table starts immediately after the fixed header (32 bytes) for a single-chunk
+    // container.
+    bytes[32..36].copy_from_slice(&u32::MAX.to_le_bytes()); // chunk offset
 
     let result = std::panic::catch_unwind(|| dxbc::extract_shader_bytecode(&bytes));
     assert!(result.is_ok(), "extract_shader_bytecode panicked");

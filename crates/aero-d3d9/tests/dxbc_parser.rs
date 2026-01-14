@@ -3,6 +3,8 @@
 use std::fs;
 
 use aero_dxbc::robust::{DxbcError, DxbcShader, FourCc, ShaderModel, ShaderType};
+use aero_dxbc::test_utils as dxbc_test_utils;
+use aero_dxbc::FourCC;
 
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/dxbc/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -137,14 +139,10 @@ fn rejects_invalid_magic() {
 
 #[test]
 fn rejects_oob_chunk_offset() {
-    // Minimal DXBC with chunk_count=1 but offset points past the declared container size.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]);
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&36u32.to_le_bytes()); // total size
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
-    bytes.extend_from_slice(&0x1000u32.to_le_bytes()); // chunk offset
+    // Start with a valid DXBC container, then patch the offset table entry so it points past the
+    // declared container size.
+    let mut bytes = dxbc_test_utils::build_container(&[(FourCC(*b"JUNK"), &[][..])]);
+    bytes[32..36].copy_from_slice(&0x1000u32.to_le_bytes()); // chunk offset
 
     match DxbcShader::parse(&bytes) {
         Err(DxbcError::ChunkOffsetOutOfBounds { .. }) => {}
@@ -155,15 +153,9 @@ fn rejects_oob_chunk_offset() {
 #[test]
 fn rejects_chunk_size_past_end() {
     // DXBC with one chunk whose size runs past the declared container size.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]);
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&44u32.to_le_bytes()); // total size
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
-    bytes.extend_from_slice(&36u32.to_le_bytes()); // chunk offset
-    bytes.extend_from_slice(b"SHDR");
-    bytes.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
+    let mut bytes = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), &[][..])]);
+    // The first (and only) chunk header starts at offset 36 in a single-chunk container.
+    bytes[36 + 4..36 + 8].copy_from_slice(&u32::MAX.to_le_bytes()); // chunk size
 
     match DxbcShader::parse(&bytes) {
         Err(DxbcError::ChunkDataOutOfBounds { .. }) => {}
