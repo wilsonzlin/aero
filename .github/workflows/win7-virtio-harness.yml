@@ -868,6 +868,12 @@ jobs:
           net_udp_dns_host_marker=""
           net_offload_csum_host_marker=""
           net_diag_host_marker=""
+          snd_host_marker=""
+          snd_capture_host_marker=""
+          snd_duplex_host_marker=""
+          snd_buffer_limits_host_marker=""
+          snd_format_host_marker=""
+          snd_eventq_host_marker=""
            snd_capture_marker=""
            snd_duplex_marker=""
            snd_buffer_limits_marker=""
@@ -954,6 +960,12 @@ jobs:
               net_udp_dns_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|' "${harness_log}" | tail -n 1 || true)"
               net_offload_csum_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|' "${harness_log}" | tail -n 1 || true)"
               net_diag_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|' "${harness_log}" | tail -n 1 || true)"
+              snd_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|' "${harness_log}" | tail -n 1 || true)"
+              snd_capture_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|' "${harness_log}" | tail -n 1 || true)"
+              snd_duplex_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|' "${harness_log}" | tail -n 1 || true)"
+              snd_buffer_limits_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|' "${harness_log}" | tail -n 1 || true)"
+              snd_format_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|' "${harness_log}" | tail -n 1 || true)"
+              snd_eventq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|' "${harness_log}" | tail -n 1 || true)"
               net_link_flap_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|' "${harness_log}" | tail -n 1 || true)"
               # Extract the last structured failure token from the harness output, if present.
               # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
@@ -1077,6 +1089,24 @@ jobs:
             fi
             if [[ -n "${net_diag_host_marker}" ]]; then
               echo "- Host virtio-net-diag marker: \`${net_diag_host_marker}\`"
+            fi
+            if [[ -n "${snd_host_marker}" ]]; then
+              echo "- Host virtio-snd marker: \`${snd_host_marker}\`"
+            fi
+            if [[ -n "${snd_capture_host_marker}" ]]; then
+              echo "- Host virtio-snd-capture marker: \`${snd_capture_host_marker}\`"
+            fi
+            if [[ -n "${snd_duplex_host_marker}" ]]; then
+              echo "- Host virtio-snd-duplex marker: \`${snd_duplex_host_marker}\`"
+            fi
+            if [[ -n "${snd_buffer_limits_host_marker}" ]]; then
+              echo "- Host virtio-snd-buffer-limits marker: \`${snd_buffer_limits_host_marker}\`"
+            fi
+            if [[ -n "${snd_format_host_marker}" ]]; then
+              echo "- Host virtio-snd-format marker: \`${snd_format_host_marker}\`"
+            fi
+            if [[ -n "${snd_eventq_host_marker}" ]]; then
+              echo "- Host virtio-snd-eventq marker: \`${snd_eventq_host_marker}\`"
             fi
             if [[ -n "${snd_marker}" ]]; then
               echo "- Guest virtio-snd marker: ${snd_marker}"
