@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -13,28 +14,43 @@ class PowerShellInputRequireAliasTests(unittest.TestCase):
         text = ps_path.read_text(encoding="utf-8", errors="replace")
 
         # Keep these aliases stable for ergonomics (and to match the Python harness).
-        self.assertIn(
-            'Alias("WithVirtioInputEvents", "EnableVirtioInputEvents", "RequireVirtioInputEvents")',
+        # Avoid brittle exact-string matching so alias ordering or formatting changes do not break tests.
+        self.assertRegex(
             text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputEvents")(?=[^)]*"EnableVirtioInputEvents")(?=[^)]*"RequireVirtioInputEvents")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
         )
-        self.assertIn(
-            'Alias("WithVirtioInputMediaKeys", "EnableVirtioInputMediaKeys", "RequireVirtioInputMediaKeys")',
+        self.assertRegex(
             text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputMediaKeys")(?=[^)]*"EnableVirtioInputMediaKeys")(?=[^)]*"RequireVirtioInputMediaKeys")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
         )
-        self.assertIn(
-            'Alias("WithVirtioInputLed", "EnableVirtioInputLed", "RequireVirtioInputLed")',
+        self.assertRegex(
             text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputLed")(?=[^)]*"EnableVirtioInputLed")(?=[^)]*"RequireVirtioInputLed")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
         )
-        self.assertIn(
-            'Alias("WithVirtioInputWheel", "EnableVirtioInputWheel", "RequireVirtioInputWheel")',
+        self.assertRegex(
             text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputWheel")(?=[^)]*"EnableVirtioInputWheel")(?=[^)]*"RequireVirtioInputWheel")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
         )
-        self.assertIn(
-            'Alias("WithVirtioInputTabletEvents", "EnableVirtioInputTabletEvents", "RequireVirtioInputTabletEvents", "WithTabletEvents", "EnableTabletEvents")',
+        self.assertRegex(
             text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioInputTabletEvents")(?=[^)]*"EnableVirtioInputTabletEvents")(?=[^)]*"RequireVirtioInputTabletEvents")(?=[^)]*"WithTabletEvents")(?=[^)]*"EnableTabletEvents")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
         )
 
 
 if __name__ == "__main__":
     unittest.main()
-

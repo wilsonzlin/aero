@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -13,10 +14,14 @@ class PowerShellSndBufferLimitsAliasTests(unittest.TestCase):
         text = ps_path.read_text(encoding="utf-8", errors="replace")
 
         # Keep these aliases stable for ergonomics (and to match Python flags).
-        self.assertIn('Alias("WithVirtioSndBufferLimits"', text)
-        self.assertIn('"EnableSndBufferLimits"', text)
-        self.assertIn('"EnableVirtioSndBufferLimits"', text)
-        self.assertIn('"RequireVirtioSndBufferLimits"', text)
+        # Avoid brittle exact-string matching so alias ordering or formatting changes do not break tests.
+        self.assertRegex(
+            text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"WithVirtioSndBufferLimits")(?=[^)]*"EnableSndBufferLimits")(?=[^)]*"EnableVirtioSndBufferLimits")(?=[^)]*"RequireVirtioSndBufferLimits")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
+        )
 
 
 if __name__ == "__main__":

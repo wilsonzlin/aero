@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -13,10 +14,23 @@ class PowerShellMsixAliasTests(unittest.TestCase):
         text = ps_path.read_text(encoding="utf-8", errors="replace")
 
         # Keep these aliases stable for ergonomics (and to match provisioning script naming).
-        self.assertIn('Alias("RequireNetMsix")', text)
-        self.assertIn('Alias("RequireBlkMsix")', text)
-        self.assertIn('Alias("RequireSndMsix")', text)
-        self.assertIn('Alias("RequireInputMsix")', text)
+        # Avoid brittle exact-string matching so whitespace/formatting changes do not break tests.
+        self.assertRegex(
+            text,
+            re.compile(r'\[Alias\s*\((?=[^)]*"RequireNetMsix")[^)]*\)\]', re.IGNORECASE),
+        )
+        self.assertRegex(
+            text,
+            re.compile(r'\[Alias\s*\((?=[^)]*"RequireBlkMsix")[^)]*\)\]', re.IGNORECASE),
+        )
+        self.assertRegex(
+            text,
+            re.compile(r'\[Alias\s*\((?=[^)]*"RequireSndMsix")[^)]*\)\]', re.IGNORECASE),
+        )
+        self.assertRegex(
+            text,
+            re.compile(r'\[Alias\s*\((?=[^)]*"RequireInputMsix")[^)]*\)\]', re.IGNORECASE),
+        )
 
 
 if __name__ == "__main__":

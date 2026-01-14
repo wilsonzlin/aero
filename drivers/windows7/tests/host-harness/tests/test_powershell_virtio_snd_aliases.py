@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -13,9 +14,15 @@ class PowerShellVirtioSndAliasTests(unittest.TestCase):
         text = ps_path.read_text(encoding="utf-8", errors="replace")
 
         # Keep these aliases stable for ergonomics (and to match the Python harness).
-        self.assertIn('Alias("EnableVirtioSnd", "RequireVirtioSnd")', text)
+        # Avoid brittle exact-string matching so alias ordering or formatting changes do not break tests.
+        self.assertRegex(
+            text,
+            re.compile(
+                r'\[Alias\s*\((?=[^)]*"EnableVirtioSnd")(?=[^)]*"RequireVirtioSnd")[^)]*\)\]',
+                re.IGNORECASE,
+            ),
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
-
