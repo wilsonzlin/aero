@@ -15,13 +15,21 @@ const PS_PRIMITIVE_ID: &[u8] = include_bytes!("fixtures/ps_primitive_id.dxbc");
 #[test]
 fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
 
         const RT: u32 = 1;
         const VS: u32 = 2;
@@ -59,7 +67,7 @@ fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
         if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-            if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
+            if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
                 return;
             }
             panic!("execute_cmd_stream failed: {err:#}");

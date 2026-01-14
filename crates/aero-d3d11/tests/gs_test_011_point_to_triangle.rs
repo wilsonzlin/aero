@@ -169,16 +169,24 @@ fn rgba_at(pixels: &[u8], width: usize, x: usize, y: usize) -> &[u8] {
 #[test]
 fn gs_test_011_point_to_triangle_emulation_renders_triangle() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::gs_test_011_point_to_triangle_emulation_renders_triangle"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
              }
          };
 
-         // Draw a single point near the top-right. Without GS emulation the point does not cover
-         // the center pixel. With GS emulation, the GS emits a centered triangle.
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
+
+          // Draw a single point near the top-right. Without GS emulation the point does not cover
+          // the center pixel. With GS emulation, the GS emits a centered triangle.
          let vertex = VertexPos3Color4 {
              pos: [0.75, 0.75, 0.0],
              color: [0.0, 0.0, 0.0, 1.0],
@@ -257,15 +265,15 @@ fn gs_test_011_point_to_triangle_emulation_renders_triangle() {
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
 
-         let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-             Ok(report) => report,
-             Err(err) => {
-                 if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
-                     return;
-                 }
-                 panic!("GS emulation draw failed: {err:#}");
-             }
-         };
+          let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+              Ok(report) => report,
+              Err(err) => {
+                 if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                      return;
+                  }
+                  panic!("GS emulation draw failed: {err:#}");
+              }
+          };
 
         exec.poll_wait();
 

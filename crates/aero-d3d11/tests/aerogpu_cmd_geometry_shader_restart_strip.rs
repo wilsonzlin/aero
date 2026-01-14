@@ -448,13 +448,21 @@ struct VertexPos2Color4 {
 #[test]
 fn aerogpu_cmd_geometry_shader_restart_strip_point_list_to_quads_has_no_bridge_triangles() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_restart_strip_point_list_to_quads_has_no_bridge_triangles"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
 
         const VB: u32 = 1;
         const RT: u32 = 2;
@@ -544,8 +552,12 @@ fn aerogpu_cmd_geometry_shader_restart_strip_point_list_to_quads_has_no_bridge_t
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("execute_cmd_stream should succeed");
+        if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                return;
+            }
+            panic!("execute_cmd_stream failed: {err:#}");
+        }
         exec.poll_wait();
 
         let pixels = exec
