@@ -115,7 +115,7 @@ fn encode_aerogpu_snapshot_v1_from_machine(
 
     // Host-only latch.
     let wddm_scanout_active = m
-        .aerogpu_mmio()
+        .aerogpu()
         .expect("missing AeroGPU MMIO device")
         .borrow()
         .scanout0_state()

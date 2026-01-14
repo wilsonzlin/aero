@@ -77,7 +77,7 @@ fn aerogpu_backend_scanout_is_presented_via_machine_display_present() {
     })
     .unwrap();
 
-    let mmio = m.aerogpu_mmio().expect("aerogpu enabled");
+    let mmio = m.aerogpu().expect("aerogpu enabled");
     mmio.borrow_mut()
         .set_backend(Box::new(FakeScanoutBackend::with_solid_rgba8(
             2,
