@@ -696,6 +696,35 @@ def _split_inf_csv_fields(line: str) -> list[str]:
     return parts
 
 
+def _self_test_inf_inline_comment_stripping() -> None:
+    # Semicolons inside quoted strings are data, not comment delimiters.
+    line = 'Foo = "Aero; Project"; trailing comment'
+    stripped = _strip_inf_inline_comment(line).strip()
+    if stripped != 'Foo = "Aero; Project"':
+        fail(
+            format_error(
+                "internal unit-test failed: _strip_inf_inline_comment mis-handled semicolons inside quotes:",
+                [f"input:    {line!r}", f"got:      {stripped!r}", 'expected: \'Foo = "Aero; Project"\''],
+            )
+        )
+
+    sample_inf = r"""
+[Strings]
+Foo = "Aero; Project"; comment
+"""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "sample.inf"
+        path.write_text(sample_inf, encoding="utf-8")
+        parsed = parse_inf_strings_map(path)
+        if parsed.get("foo") != "Aero; Project":
+            fail(
+                format_error(
+                    "internal unit-test failed: parse_inf_strings_map mis-handled semicolons inside quoted values:",
+                    [f"got: {parsed.get('foo')!r}", "expected: 'Aero; Project'"],
+                )
+            )
+
+
 def _unquote_inf_token(token: str) -> str:
     token = token.strip()
     if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
@@ -2663,6 +2692,7 @@ def parse_aero_virtio_device_feature_usage() -> Mapping[str, dict[str, bool]]:
 def main() -> None:
     errors: list[str] = []
 
+    _self_test_inf_inline_comment_stripping()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
     _self_test_parse_guest_selftest_expected_service_names()
