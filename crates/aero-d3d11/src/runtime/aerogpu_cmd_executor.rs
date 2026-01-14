@@ -14372,67 +14372,54 @@ mod tests {
             exec.exec_create_buffer(&cmd_bytes, &allocs)
                 .expect("CREATE_BUFFER should succeed");
 
-            let wgsl = r#"
-@group(0) @binding(0)
-var<storage, read> data: array<u32>;
+            let supports_compute = exec.caps.supports_compute;
+            let buf = exec.resources.buffers.get(&BUF).expect("buffer exists");
 
-@compute @workgroup_size(1)
-fn main() {
-    let _x: u32 = data[0];
-}
-"#;
-            let shader = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("aerogpu_cmd storage flag bind test shader"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
-            });
-            let bgl = exec
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("aerogpu_cmd storage flag bind test bgl"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
+            // The command-stream executor only enables STORAGE usage on compute-capable backends.
+            if supports_compute {
+                assert!(
+                    buf.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "AEROGPU_RESOURCE_USAGE_STORAGE must enable STORAGE usage when compute is supported"
+                );
+
+                let bgl = exec
+                    .device
+                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("aerogpu_cmd storage flag bind test bgl"),
+                        entries: &[wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(4),
+                            },
+                            count: None,
+                        }],
+                    });
+
+                exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                exec.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd storage flag bind test bg"),
+                    layout: &bgl,
+                    entries: &[wgpu::BindGroupEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(4),
-                        },
-                        count: None,
+                        resource: buf.buffer.as_entire_binding(),
                     }],
                 });
-            let pipeline_layout = exec
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aerogpu_cmd storage flag bind test pipeline layout"),
-                    bind_group_layouts: &[&bgl],
-                    push_constant_ranges: &[],
-                });
-            exec.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("aerogpu_cmd storage flag bind test pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader,
-                    entry_point: "main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                });
-
-            let buffer = &exec.resources.buffers.get(&BUF).expect("buffer exists").buffer;
-            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            exec.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd storage flag bind test bg"),
-                layout: &bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
-            });
-            #[cfg(not(target_arch = "wasm32"))]
-            exec.device.poll(wgpu::Maintain::Wait);
-            let err = exec.device.pop_error_scope().await;
-            assert!(
-                err.is_none(),
-                "buffer created with AEROGPU_RESOURCE_USAGE_STORAGE must be bindable as STORAGE, got: {err:?}"
-            );
+                #[cfg(not(target_arch = "wasm32"))]
+                exec.device.poll(wgpu::Maintain::Wait);
+                let err = exec.device.pop_error_scope().await;
+                assert!(
+                    err.is_none(),
+                    "buffer created with AEROGPU_RESOURCE_USAGE_STORAGE must be bindable as STORAGE, got: {err:?}"
+                );
+            } else {
+                assert!(
+                    !buf.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "AEROGPU_RESOURCE_USAGE_STORAGE must be ignored when compute/storage buffers are unsupported"
+                );
+            }
         });
     }
 
