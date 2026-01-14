@@ -1,5 +1,6 @@
 use aero_devices::acpi_pm::{
-    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, SLP_TYP_S5,
+    register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, PM1_STS_SLPBTN,
+    SLP_TYP_S5,
 };
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
@@ -67,6 +68,40 @@ fn pm1_status_write_one_to_clear_and_sci_level() {
 
     // Clear PWRBTN_STS -> SCI should deassert.
     bus.write(cfg.pm1a_evt_blk, 2, u32::from(PM1_STS_PWRBTN));
+    assert!(!pm.borrow().sci_level());
+    assert_eq!(sci_log.borrow().as_slice(), &[true, false]);
+}
+
+#[test]
+fn pm1_sleep_button_status_w1c_and_sci_level() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+
+    let sci_log: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let callbacks = AcpiPmCallbacks {
+        sci_irq: Box::new(TestIrqLine(sci_log.clone())),
+        request_power_off: None,
+    };
+
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+        cfg, callbacks, clock,
+    )));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm.clone());
+
+    // Enable SLPBTN in PM1_EN.
+    bus.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_SLPBTN));
+    // Enable ACPI (sets SCI_EN).
+    bus.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    assert!(!pm.borrow().sci_level());
+
+    pm.borrow_mut().trigger_sleep_button();
+    assert!(pm.borrow().sci_level());
+    assert_eq!(sci_log.borrow().as_slice(), &[true]);
+
+    // Clear SLPBTN_STS -> SCI should deassert.
+    bus.write(cfg.pm1a_evt_blk, 2, u32::from(PM1_STS_SLPBTN));
     assert!(!pm.borrow().sci_level());
     assert_eq!(sci_log.borrow().as_slice(), &[true, false]);
 }
