@@ -2535,6 +2535,100 @@ fn ata_alt_status_does_not_clear_irq_latch_on_dma_completion() {
 }
 
 #[test]
+fn status_read_acknowledges_irq_only_on_the_target_channel() {
+    // Ensure STATUS reads clear only the IRQ latch for that channel, not globally.
+    let capacity = 4 * SECTOR_SIZE as u64;
+
+    let mut disk0 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(1);
+    }
+    disk0.write_sectors(0, &sector0).unwrap();
+
+    let mut disk1 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector1 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector1.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(5).wrapping_add(7);
+    }
+    disk1.write_sectors(0, &sector1).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    {
+        let mut dev = ide.borrow_mut();
+        dev.controller
+            .attach_primary_master_ata(AtaDrive::new(Box::new(disk0)).unwrap());
+        dev.controller
+            .attach_secondary_master_ata(AtaDrive::new(Box::new(disk1)).unwrap());
+        dev.config_mut().set_command(0x0005); // IO decode + Bus Master
+    }
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x40_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    // Program PRDs for each channel.
+    let prd_primary = 0x1000u64;
+    let buf_primary = 0x3000u64;
+    mem.write_u32(prd_primary, buf_primary as u32);
+    mem.write_u16(prd_primary + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_primary + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_primary as u32);
+
+    let prd_secondary = 0x1010u64;
+    let buf_secondary = 0x4000u64;
+    mem.write_u32(prd_secondary, buf_secondary as u32);
+    mem.write_u16(prd_secondary + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_secondary + 6, 0x8000);
+    ioports.write(bm_base + 8 + 4, 4, prd_secondary as u32);
+
+    // Issue READ DMA on both channels.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(SECONDARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    // Start both BMIDE engines and tick once to complete both transfers.
+    ioports.write(bm_base, 1, 0x09);
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    assert!(ide.borrow().controller.primary_irq_pending());
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    // Acknowledge only the primary channel IRQ.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+    assert!(
+        ide.borrow().controller.secondary_irq_pending(),
+        "primary STATUS read must not clear secondary IRQ latch"
+    );
+
+    // Now acknowledge the secondary IRQ.
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Data should have landed in both DMA buffers.
+    let mut out0 = vec![0u8; SECTOR_SIZE];
+    let mut out1 = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(buf_primary, &mut out0);
+    mem.read_physical(buf_secondary, &mut out1);
+    assert_eq!(out0, sector0);
+    assert_eq!(out1, sector1);
+}
+
+#[test]
 fn ata_dma_is_gated_by_pci_bus_master_enable() {
     // Disk with recognizable first sector.
     let capacity = 4 * SECTOR_SIZE as u64;
