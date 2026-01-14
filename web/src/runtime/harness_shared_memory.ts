@@ -50,10 +50,16 @@ export function allocateHarnessSharedMemorySegments(opts: {
   ioIpcBytes?: number;
   vramBytes?: number;
 }): SharedMemorySegments {
-  const guestRamBytes = Math.max(0, Math.trunc(opts.guestRamBytes));
-  const pages = bytesToPages(guestRamBytes);
+  const requestedGuestBytes = Math.max(0, Math.trunc(opts.guestRamBytes));
+  const pages = bytesToPages(requestedGuestBytes);
   if (pages <= 0) {
-    throw new Error(`guestRamBytes must be > 0 (got ${guestRamBytes})`);
+    throw new Error(`guestRamBytes must be > 0 (got ${requestedGuestBytes})`);
+  }
+  // wasm32 linear memories are always sized in 64KiB pages. Treat `guestRamBytes` as a minimum and
+  // round up so the guest size reported in the status SAB matches the actual available bytes.
+  const guestRamBytes = pages * WASM_PAGE_BYTES;
+  if (guestRamBytes > 0xffff_ffff) {
+    throw new Error(`guestRamBytes too large (rounded=${guestRamBytes})`);
   }
 
   const guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
