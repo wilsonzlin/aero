@@ -883,6 +883,7 @@ jobs:
           net_link_flap_host_marker=""
           net_offload_csum_marker=""
           snd_marker=""
+          snd_marker_line=""
           input_events_marker=""
           input_events_marker_line=""
           input_wheel_marker=""
@@ -918,9 +919,12 @@ jobs:
           snd_format_host_marker=""
           snd_eventq_host_marker=""
            snd_capture_marker=""
+           snd_capture_marker_line=""
            snd_duplex_marker=""
+           snd_duplex_marker_line=""
            snd_buffer_limits_marker=""
-           wav_marker=""
+           snd_buffer_limits_marker_line=""
+            wav_marker=""
           failure_token=""
           failure_line=""
           error_line=""
@@ -964,6 +968,9 @@ jobs:
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            snd_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-snd|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
@@ -990,8 +997,17 @@ jobs:
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             snd_capture_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            snd_capture_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
            snd_duplex_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+           snd_duplex_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
            snd_buffer_limits_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+           snd_buffer_limits_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
           fi
            if [[ -f "${harness_log}" ]]; then
               wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
@@ -1210,6 +1226,9 @@ jobs:
             if [[ -n "${snd_marker}" ]]; then
               echo "- Guest virtio-snd marker: \`${snd_marker}\`"
             fi
+            if [[ -n "${snd_marker_line}" ]]; then
+              echo "- Guest virtio-snd marker line: \`${snd_marker_line}\`"
+            fi
             if [[ -n "${input_events_marker}" ]]; then
               echo "- Guest virtio-input-events marker: \`${input_events_marker}\`"
             fi
@@ -1267,14 +1286,23 @@ jobs:
              if [[ -n "${pci_preflight_marker}" ]]; then
                echo "- Host QEMU PCI preflight marker: \`${pci_preflight_marker}\`"
              fi
-             if [[ -n "${snd_capture_marker}" ]]; then
-               echo "- Guest virtio-snd-capture marker: \`${snd_capture_marker}\`"
-             fi
+            if [[ -n "${snd_capture_marker}" ]]; then
+              echo "- Guest virtio-snd-capture marker: \`${snd_capture_marker}\`"
+            fi
+            if [[ -n "${snd_capture_marker_line}" ]]; then
+              echo "- Guest virtio-snd-capture marker line: \`${snd_capture_marker_line}\`"
+            fi
             if [[ -n "${snd_duplex_marker}" ]]; then
               echo "- Guest virtio-snd-duplex marker: \`${snd_duplex_marker}\`"
             fi
+            if [[ -n "${snd_duplex_marker_line}" ]]; then
+              echo "- Guest virtio-snd-duplex marker line: \`${snd_duplex_marker_line}\`"
+            fi
             if [[ -n "${snd_buffer_limits_marker}" ]]; then
               echo "- Guest virtio-snd-buffer-limits marker: \`${snd_buffer_limits_marker}\`"
+            fi
+            if [[ -n "${snd_buffer_limits_marker_line}" ]]; then
+              echo "- Guest virtio-snd-buffer-limits marker line: \`${snd_buffer_limits_marker_line}\`"
             fi
             if [[ -n "${wav_marker}" ]]; then
               echo "- Host wav marker: \`${wav_marker}\`"
