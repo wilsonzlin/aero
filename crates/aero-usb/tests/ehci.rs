@@ -991,3 +991,27 @@ fn ehci_periodic_qh_self_loop_sets_hse_and_halts() {
     assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
     assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
 }
+
+#[test]
+fn ehci_periodic_itd_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+
+    let fl_base: u32 = 0x7000;
+    let itd: u32 = 0x1800;
+
+    // Frame list entry 0 points at an iTD (type=0). The iTD's forward pointer (dword0) points back
+    // to itself, which would loop forever without periodic traversal cycle detection.
+    mem.write_u32(fl_base, itd & LINK_ADDR_MASK);
+    mem.write_u32(itd + 0x00, itd & LINK_ADDR_MASK);
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
