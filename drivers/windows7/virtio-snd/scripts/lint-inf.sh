@@ -486,6 +486,18 @@ if [ -f "$INF_IOPORT" ]; then
     'AeroVirtioSndIoPort.AddReg' \
     'hkr,parameters,forcenullbackend,0x00010001,0' \
     "inf/aero-virtio-snd-ioport.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Install.NT.HW' \
+    'aerovirtiosndioport_parameters_addreg' \
+    "inf/aero-virtio-snd-ioport.inf must apply AeroVirtioSndIoPort_Parameters_AddReg via [AeroVirtioSndIoPort_Install.NT.HW]"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Parameters_AddReg' \
+    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    "inf/aero-virtio-snd-ioport.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
 fi
 
 section_contains_norm \
