@@ -103,12 +103,6 @@ export const AEROGPU_IRQ_SCANOUT_VBLANK = 1 << 1;
 // NOTE: avoid `1 << 31` (signed 32-bit) which yields a negative number in JS.
 export const AEROGPU_IRQ_ERROR = 0x8000_0000;
 
-// Error reporting (ABI 1.3+).
-export const AEROGPU_MMIO_REG_ERROR_CODE = 0x0310;
-export const AEROGPU_MMIO_REG_ERROR_FENCE_LO = 0x0314;
-export const AEROGPU_MMIO_REG_ERROR_FENCE_HI = 0x0318;
-export const AEROGPU_MMIO_REG_ERROR_COUNT = 0x031c;
-
 export const AEROGPU_MMIO_REG_SCANOUT0_ENABLE = 0x0400;
 export const AEROGPU_MMIO_REG_SCANOUT0_WIDTH = 0x0404;
 export const AEROGPU_MMIO_REG_SCANOUT0_HEIGHT = 0x0408;

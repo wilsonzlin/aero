@@ -4895,9 +4895,10 @@ function renderAudioPanel(): HTMLElement {
             summaryLines.push(`microphone-buffered: ${micRes.error}`);
           }
 
-          if (capturedAny || micRes.ok) {
-            entries.push({ path: `${dir}/audio-samples.txt`, data: encoder.encode(summaryLines.join("\n") + "\n") });
+          if (!capturedAny && !micRes.ok) {
+            summaryLines.push("note: no WAV snapshots captured (see lines above).");
           }
+          entries.push({ path: `${dir}/audio-samples.txt`, data: encoder.encode(summaryLines.join("\n") + "\n") });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/audio-samples-error.txt`, data: encoder.encode(message) });
