@@ -7726,7 +7726,7 @@ try {
         -SerialLogPath $SerialLogPath
       if ($null -ne $line) {
         if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
-        elseif ($line -match "\|SKIP\|([^|\r\n=]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
       if ($reason -eq "flag_not_set") {
         Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but -WithBlkReset was enabled (provision the guest with --test-blk-reset)"
@@ -7748,7 +7748,7 @@ try {
         -SerialLogPath $SerialLogPath
       if ($null -ne $line) {
         if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
-        elseif ($line -match "\|FAIL\|([^|\r\n=]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
       }
       Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset was enabled (reason=$reason err=$err)"

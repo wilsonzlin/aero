@@ -41,7 +41,7 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
     def test_skip_reason_fallback_handles_legacy_marker_token(self) -> None:
         # Backcompat: older guest selftests may emit `...|SKIP|flag_not_set` (no `reason=` field).
         # Ensure the harness has a fallback parser for that token form.
-        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)", self.text)
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", self.text)
 
     def test_fail_reason_and_err_are_parsed_from_marker(self) -> None:
         # Ensure we surface fail reason/err in the deterministic failure token.
@@ -49,7 +49,7 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
         self.assertIn('reason=([^|\\r\\n]+)', self.text)
         self.assertIn('err=([^|\\r\\n]+)', self.text)
         # Backcompat: older guest selftests may emit `...|FAIL|post_reset_io_failed` (no `reason=` field).
-        self.assertIn("\\|FAIL\\|([^|\\r\\n=]+)", self.text)
+        self.assertIn("\\|FAIL\\|([^|\\r\\n=]+)(?:\\||$)", self.text)
 
     def test_host_marker_is_emitted(self) -> None:
         # The PowerShell harness should mirror the guest marker into a stable host marker
