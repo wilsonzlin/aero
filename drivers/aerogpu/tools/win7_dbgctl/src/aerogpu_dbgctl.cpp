@@ -5507,6 +5507,14 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       goto cleanup;
     }
 
+    if (curGpa > (~(uint64_t)0) - (uint64_t)bytesRead) {
+      fwprintf(stderr,
+               L"read-gpa address overflow: gpa=0x%I64x bytes_read=%lu\n",
+               (unsigned long long)curGpa,
+               (unsigned long)bytesRead);
+      rc = 2;
+      goto cleanup;
+    }
     curGpa += (uint64_t)bytesRead;
     remaining -= (uint64_t)bytesRead;
 
