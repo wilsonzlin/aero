@@ -150,9 +150,11 @@ fn imm_f32x4(v: [f32; 4]) -> Vec<u32> {
 fn build_vs_shift_x_only_dxbc() -> Vec<u8> {
     // vs_4_0:
     //   o0 = v0 + float4(1,0,0,0)
+    //   o1 = v1
     //   ret
     //
-    // Include an unused COLOR input so we can bind the existing POS3+COLOR input-layout fixture.
+    // Include (and write) a COLOR input/output so VS-as-compute input feeding is exercised even when
+    // the GS reads only `v0` and the VS writes extra output regs (`o1`).
     let isgn = build_signature_chunk(&[
         SigParam {
             semantic_name: "POSITION",
@@ -167,12 +169,20 @@ fn build_vs_shift_x_only_dxbc() -> Vec<u8> {
             mask: 0x0f,
         },
     ]);
-    let osgn = build_signature_chunk(&[SigParam {
-        semantic_name: "SV_Position",
-        semantic_index: 0,
-        register: 0,
-        mask: 0x0f,
-    }]);
+    let osgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x0f,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
 
     let mut body = Vec::<u32>::new();
 
@@ -182,6 +192,13 @@ fn build_vs_shift_x_only_dxbc() -> Vec<u8> {
     inst.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XYZW));
     inst.extend_from_slice(&imm_f32x4([1.0, 0.0, 0.0, 0.0]));
     inst[0] = opcode_token(OPCODE_ADD, inst.len() as u32);
+    body.extend_from_slice(&inst);
+
+    // mov o1, v1
+    let mut inst = vec![0u32];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    inst.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::XYZW));
+    inst[0] = opcode_token(OPCODE_MOV, inst.len() as u32);
     body.extend_from_slice(&inst);
 
     body.push(opcode_token(OPCODE_RET, 1));
