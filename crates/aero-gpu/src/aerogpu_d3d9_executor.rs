@@ -1272,11 +1272,7 @@ fn build_alpha_test_wgsl_variant(
                 let Some((before_colon, _ty)) = part.split_once(':') else {
                     continue;
                 };
-                let name = before_colon
-                    .split_whitespace()
-                    .last()
-                    .unwrap_or("")
-                    .trim();
+                let name = before_colon.split_whitespace().last().unwrap_or("").trim();
                 if !name.is_empty() {
                     names.push(name.to_owned());
                 }
