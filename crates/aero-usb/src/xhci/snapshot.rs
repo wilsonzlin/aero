@@ -62,6 +62,15 @@ const MAX_SLOT_RECORD_BYTES: usize = 16 * 1024;
 const MAX_PORT_RECORD_BYTES: usize = 5 * 1024 * 1024;
 const MAX_EP_RECORD_BYTES: usize = 16 * 1024;
 
+fn decode_ring_cursor(ptr: u64, cycle: bool) -> Option<RingCursor> {
+    // Ring dequeue pointers are 16-byte aligned. Treat reserved low bits as invalid rather than
+    // masking them away so malformed snapshots cannot alias a different aligned pointer.
+    if ptr == 0 || (ptr & 0x0f) != 0 {
+        return None;
+    }
+    Some(RingCursor::new(ptr, cycle))
+}
+
 fn encode_slot_context(ctx: &SlotContext) -> [u32; SLOT_CONTEXT_DWORDS] {
     let mut out = [0u32; SLOT_CONTEXT_DWORDS];
     for (i, slot) in out.iter_mut().enumerate() {
@@ -147,7 +156,7 @@ fn decode_slot_state(slot: &mut SlotState, buf: &[u8]) -> SnapshotResult<()> {
         if present {
             let dequeue_ptr = d.u64()?;
             let cycle = d.bool()?;
-            *ring = Some(RingCursor::new(dequeue_ptr, cycle));
+            *ring = decode_ring_cursor(dequeue_ptr, cycle);
         } else {
             *ring = None;
         }
@@ -227,7 +236,7 @@ fn decode_command_ring(buf: &[u8]) -> SnapshotResult<Option<RingCursor>> {
     let out = if present {
         let ptr = d.u64()?;
         let cycle = d.bool()?;
-        Some(RingCursor::new(ptr, cycle))
+        decode_ring_cursor(ptr, cycle)
     } else {
         None
     };
@@ -341,14 +350,14 @@ fn decode_ep0_control_td(dst: &mut [ControlTdState], buf: &[u8]) -> SnapshotResu
         let td_start = if d.bool()? {
             let ptr = d.u64()?;
             let cycle = d.bool()?;
-            Some(RingCursor::new(ptr, cycle))
+            decode_ring_cursor(ptr, cycle)
         } else {
             None
         };
         let td_cursor = if d.bool()? {
             let ptr = d.u64()?;
             let cycle = d.bool()?;
-            Some(RingCursor::new(ptr, cycle))
+            decode_ring_cursor(ptr, cycle)
         } else {
             None
         };
@@ -438,11 +447,7 @@ fn decode_ep0_control_td_full(dst: &mut [ControlTdState], buf: &[u8]) -> Snapsho
         st.td_start = if start_present {
             let ptr = d.u64()?;
             let cycle = d.bool()?;
-            if ptr == 0 {
-                None
-            } else {
-                Some(RingCursor::new(ptr, cycle))
-            }
+            decode_ring_cursor(ptr, cycle)
         } else {
             None
         };
@@ -451,11 +456,7 @@ fn decode_ep0_control_td_full(dst: &mut [ControlTdState], buf: &[u8]) -> Snapsho
         st.td_cursor = if cursor_present {
             let ptr = d.u64()?;
             let cycle = d.bool()?;
-            if ptr == 0 {
-                None
-            } else {
-                Some(RingCursor::new(ptr, cycle))
-            }
+            decode_ring_cursor(ptr, cycle)
         } else {
             None
         };
