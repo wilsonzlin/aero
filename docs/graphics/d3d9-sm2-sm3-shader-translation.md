@@ -10,6 +10,23 @@ For the broader “scratchpad task ID → implementation/test” audit, see
 
 ## Task status
 
+### Task 216 / 217 — `dp2` + `dsx`/`dsy` derivatives
+
+**Status:** ✅ Done
+
+**What:** Support `dsx`/`dsy` derivative ops (lowered to WGSL `dpdx`/`dpdy`) and the `dp2` opcode, including
+predication-safe lowering for derivatives (avoid non-uniform control flow).
+
+**Where:**
+- `crates/aero-d3d9/src/sm3/{decode.rs,ir_builder.rs,verify.rs,wgsl.rs}`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `wgsl_dsx_dsy_derivatives_compile`
+  - `wgsl_dsx_dsy_can_feed_texldd_gradients`
+  - `wgsl_predicated_derivative_avoids_non_uniform_control_flow`
+- `crates/aero-d3d9/tests/sm3_wgsl_dp2.rs`
+
 ### Task 401 — Texture sampling lowering (`texld`/`texldp`/`texldd`/`texldl`)
 
 **Status:** ✅ Done

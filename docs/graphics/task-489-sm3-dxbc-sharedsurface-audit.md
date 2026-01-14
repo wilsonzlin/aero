@@ -177,10 +177,19 @@ Ops/features referenced by the scratchpad tasks:
 **Implementing commits (high-signal):**
 - `571cfa54` — `feat(d3d9-sm3): add dp2 opcode end-to-end`
 - `5067c94f` — `feat(d3d9-sm3): support dsx/dsy derivatives`
+- `8660b7710` — `feat(d3d9): add dsx/dsy support to legacy shader translator` (fallback path)
+- `4c9adf49c` — `feat(legacy): add dsx/dsy opcode support to aero-d3d9-shader parser` (reference disassembler)
 
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl_dp2.rs`
-- `crates/aero-d3d9/tests/sm3_wgsl.rs::wgsl_dsx_dsy_derivatives_compile`
+- `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `wgsl_dsx_dsy_derivatives_compile`
+  - `wgsl_dsx_dsy_can_feed_texldd_gradients`
+  - `wgsl_predicated_derivative_avoids_non_uniform_control_flow`
+- `crates/aero-d3d9/tests/sm3_decode.rs`
+  - `decode_rejects_dsx_in_vertex_shader`
+  - `decode_rejects_dsy_in_vertex_shader`
+- `crates/aero-d3d9/src/tests.rs::translate_entrypoint_legacy_fallback_supports_derivatives`
 
 ---
 
