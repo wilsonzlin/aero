@@ -236,8 +236,7 @@ jobs:
              -CertPath 'out/certs/aero-test.cer' `
              -SpecPath 'tools/packaging/specs/win7-signed.json' `
              -OutDir 'artifacts' `
-             -Version '${{ github.ref_name }}' `
-             -BuildId '${{ github.run_id }}'
+             -Version '${{ github.ref_name }}'
 
           # The Guest Tools wrapper script previously emitted `aero-guest-tools.manifest.json`,
           # but now emits `manifest.json` directly. Keep both filenames available for
