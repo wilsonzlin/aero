@@ -85,7 +85,7 @@ func TestSessionRelay_EnforcesOutboundUDPRateLimit(t *testing.T) {
 		// ok
 	}
 
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited metric increment")
 	}
 }
@@ -165,7 +165,7 @@ func TestSessionRelay_EnforcesInboundDataChannelRateLimit(t *testing.T) {
 		// ok
 	}
 
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited metric increment")
 	}
 }

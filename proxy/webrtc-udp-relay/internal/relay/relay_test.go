@@ -212,12 +212,12 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 
 	deadline = time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal) >= 1 {
+		if m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal] >= 1 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 1 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal]; got != 1 {
 		t.Fatalf("expected %s=1, got %d", metrics.UDPRemoteAllowlistOverflowDropsTotal, got)
 	}
 }

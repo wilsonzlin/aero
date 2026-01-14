@@ -922,21 +922,21 @@ func TestUDPWebSocketServer_InboundFilterAddressAndPort_DropsUnexpectedSourcePor
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal) > 0 {
+		if m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal] > 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 1 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal]; got != 1 {
 		t.Fatalf("expected %s=1, got %d", metrics.UDPRemoteAllowlistOverflowDropsTotal, got)
 	}
 
 	// The inbound allowlist drop occurs in the UDP binding read loop and should
 	// not be counted as a /udp WebSocket drop.
-	if got := m.Get(metrics.UDPWSDropped); got != 0 {
+	if got := m.Snapshot()[metrics.UDPWSDropped]; got != 0 {
 		t.Fatalf("expected %s=0, got %d", metrics.UDPWSDropped, got)
 	}
-	if got := m.Get(metrics.UDPWSDatagramsOut); got != 0 {
+	if got := m.Snapshot()[metrics.UDPWSDatagramsOut]; got != 0 {
 		t.Fatalf("expected %s=0, got %d", metrics.UDPWSDatagramsOut, got)
 	}
 }
@@ -1001,13 +1001,13 @@ func TestUDPWebSocketServer_InboundFilterAny_AllowsUnexpectedSourcePort(t *testi
 		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello")
 	}
 
-	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 0 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal]; got != 0 {
 		t.Fatalf("%s=%d, want 0", metrics.UDPRemoteAllowlistOverflowDropsTotal, got)
 	}
-	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistEvictionsTotal]; got != 0 {
 		t.Fatalf("%s=%d, want 0", metrics.UDPRemoteAllowlistEvictionsTotal, got)
 	}
-	if got := m.Get(metrics.UDPWSDropped); got != 0 {
+	if got := m.Snapshot()[metrics.UDPWSDropped]; got != 0 {
 		t.Fatalf("expected %s=0, got %d", metrics.UDPWSDropped, got)
 	}
 }
@@ -1065,7 +1065,7 @@ func TestUDPWebSocketServer_RemoteAllowlistEvictionIncrementsMetric(t *testing.T
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPRemoteAllowlistEvictionsTotal) > 0 {
+		if m.Snapshot()[metrics.UDPRemoteAllowlistEvictionsTotal] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1118,7 +1118,7 @@ func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDroppedDeniedByPolicy) > 0 {
+		if m.Snapshot()[metrics.UDPWSDroppedDeniedByPolicy] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1178,7 +1178,7 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDroppedRateLimited) > 0 {
+		if m.Snapshot()[metrics.UDPWSDroppedRateLimited] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1245,7 +1245,7 @@ func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDroppedQuotaExceeded) > 0 {
+		if m.Snapshot()[metrics.UDPWSDroppedQuotaExceeded] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1315,7 +1315,7 @@ func TestUDPWebSocketServer_DroppedOversizedIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDroppedOversized) > 0 && m.Get(metrics.UDPWSDropped) > 0 {
+		if m.Snapshot()[metrics.UDPWSDroppedOversized] > 0 && m.Snapshot()[metrics.UDPWSDropped] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1323,8 +1323,8 @@ func TestUDPWebSocketServer_DroppedOversizedIncrementsMetric(t *testing.T) {
 	t.Fatalf("expected %s/%s metric increment; got dropped=%d oversized=%d",
 		metrics.UDPWSDropped,
 		metrics.UDPWSDroppedOversized,
-		m.Get(metrics.UDPWSDropped),
-		m.Get(metrics.UDPWSDroppedOversized),
+		m.Snapshot()[metrics.UDPWSDropped],
+		m.Snapshot()[metrics.UDPWSDroppedOversized],
 	)
 }
 
@@ -1384,7 +1384,7 @@ func TestUDPWebSocketServer_DroppedMalformedIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDroppedMalformed) > 0 && m.Get(metrics.UDPWSDropped) > 0 {
+		if m.Snapshot()[metrics.UDPWSDroppedMalformed] > 0 && m.Snapshot()[metrics.UDPWSDropped] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1392,8 +1392,8 @@ func TestUDPWebSocketServer_DroppedMalformedIncrementsMetric(t *testing.T) {
 	t.Fatalf("expected %s/%s metric increment; got dropped=%d malformed=%d",
 		metrics.UDPWSDropped,
 		metrics.UDPWSDroppedMalformed,
-		m.Get(metrics.UDPWSDropped),
-		m.Get(metrics.UDPWSDroppedMalformed),
+		m.Snapshot()[metrics.UDPWSDropped],
+		m.Snapshot()[metrics.UDPWSDroppedMalformed],
 	)
 }
 
@@ -1441,7 +1441,7 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDatagramsIn) > 0 && m.Get(metrics.UDPWSDatagramsOut) > 0 {
+		if m.Snapshot()[metrics.UDPWSDatagramsIn] > 0 && m.Snapshot()[metrics.UDPWSDatagramsOut] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -1450,8 +1450,8 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 		"expected %s and %s metric increments (got in=%d out=%d)",
 		metrics.UDPWSDatagramsIn,
 		metrics.UDPWSDatagramsOut,
-		m.Get(metrics.UDPWSDatagramsIn),
-		m.Get(metrics.UDPWSDatagramsOut),
+		m.Snapshot()[metrics.UDPWSDatagramsIn],
+		m.Snapshot()[metrics.UDPWSDatagramsOut],
 	)
 }
 
@@ -1498,7 +1498,7 @@ func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
 		t.Fatalf("expected policy violation close; got %v", err)
 	}
-	if m.Get(metrics.AuthFailure) == 0 {
+	if m.Snapshot()[metrics.AuthFailure] == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 }
@@ -1545,7 +1545,7 @@ func TestUDPWebSocketServer_AuthTimeoutClosesWithoutAuthMessage(t *testing.T) {
 	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
 		t.Fatalf("expected policy violation close; got %v", err)
 	}
-	if m.Get(metrics.AuthFailure) == 0 {
+	if m.Snapshot()[metrics.AuthFailure] == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 }
@@ -1750,7 +1750,7 @@ func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
 	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
 		t.Fatalf("expected policy violation close; got %v", err)
 	}
-	if m.Get(metrics.AuthFailure) == 0 {
+	if m.Snapshot()[metrics.AuthFailure] == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 }
@@ -1915,7 +1915,7 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPWSDroppedBackpressure) > 0 {
+		if m.Snapshot()[metrics.UDPWSDroppedBackpressure] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

@@ -309,8 +309,8 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 		}
 		assertICENoStoreHeaders(t, resp)
-		if m.Get(metrics.AuthFailure) != 1 {
-			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
+		if m.Snapshot()[metrics.AuthFailure] != 1 {
+			t.Fatalf("auth_failure=%d, want %d", m.Snapshot()[metrics.AuthFailure], 1)
 		}
 	})
 
@@ -329,8 +329,8 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 		}
 		assertICENoStoreHeaders(t, resp)
-		if m.Get(metrics.AuthFailure) != 2 {
-			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 2)
+		if m.Snapshot()[metrics.AuthFailure] != 2 {
+			t.Fatalf("auth_failure=%d, want %d", m.Snapshot()[metrics.AuthFailure], 2)
 		}
 	})
 
@@ -417,8 +417,8 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 		}
 		assertICENoStoreHeaders(t, resp)
-		if m.Get(metrics.AuthFailure) != 1 {
-			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
+		if m.Snapshot()[metrics.AuthFailure] != 1 {
+			t.Fatalf("auth_failure=%d, want %d", m.Snapshot()[metrics.AuthFailure], 1)
 		}
 	})
 
@@ -438,8 +438,8 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 		}
 		assertICENoStoreHeaders(t, resp)
-		if m.Get(metrics.AuthFailure) != 2 {
-			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 2)
+		if m.Snapshot()[metrics.AuthFailure] != 2 {
+			t.Fatalf("auth_failure=%d, want %d", m.Snapshot()[metrics.AuthFailure], 2)
 		}
 	})
 

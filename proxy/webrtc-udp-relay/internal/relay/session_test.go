@@ -32,7 +32,7 @@ func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 	if forwarded != 2 {
 		t.Fatalf("expected 2 forwarded packets, got %d", forwarded)
 	}
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited drops to be recorded")
 	}
 	if s.isClosed() {
@@ -68,7 +68,7 @@ func TestSession_HardModeClosesAfterViolations(t *testing.T) {
 	if !s.isClosed() {
 		t.Fatalf("expected session to close in hard mode")
 	}
-	if m.Get(metrics.SessionHardClosed) == 0 {
+	if m.Snapshot()[metrics.SessionHardClosed] == 0 {
 		t.Fatalf("expected session_hard_closed metric increment")
 	}
 }
@@ -93,7 +93,7 @@ func TestSession_EnforcesUniqueDestinationQuota(t *testing.T) {
 	if allowed {
 		t.Fatalf("expected second unique destination to be rejected")
 	}
-	if m.Get(metrics.DropReasonQuotaExceeded) == 0 || m.Get("too_many_destinations") == 0 {
+	if m.Snapshot()[metrics.DropReasonQuotaExceeded] == 0 || m.Snapshot()["too_many_destinations"] == 0 {
 		t.Fatalf("expected destination quota metrics to be incremented")
 	}
 }
@@ -116,7 +116,7 @@ func TestSession_EnforcesDataChannelBps(t *testing.T) {
 	if s.HandleInboundToClient([]byte("x")) {
 		t.Fatalf("expected second frame to be dropped due to rate limit")
 	}
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited metric increment")
 	}
 }
@@ -141,7 +141,7 @@ func TestSession_EnforcesUDPBpsPerSession(t *testing.T) {
 	if allowed {
 		t.Fatalf("expected second packet to be dropped due to byte limit")
 	}
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited metric increment")
 	}
 }
@@ -167,7 +167,7 @@ func TestSession_EnforcesUDPPpsPerDest(t *testing.T) {
 	if allowed {
 		t.Fatalf("expected second packet to be dropped due to per-dest rate limit")
 	}
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited metric increment")
 	}
 }
@@ -192,7 +192,7 @@ func TestSession_UDPDestBucketEvictionsMetric(t *testing.T) {
 		}
 	}
 
-	if got, want := m.Get(metrics.UDPPerDestBucketEvictions), uint64(6); got != want {
+	if got, want := m.Snapshot()[metrics.UDPPerDestBucketEvictions], uint64(6); got != want {
 		t.Fatalf("%s=%d, want %d", metrics.UDPPerDestBucketEvictions, got, want)
 	}
 }

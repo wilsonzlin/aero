@@ -134,12 +134,6 @@ func (m *Metrics) Add(name string, delta uint64) {
 	m.mu.Unlock()
 }
 
-func (m *Metrics) Get(name string) uint64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.m[name]
-}
-
 // Snapshot returns a copy of all counters.
 func (m *Metrics) Snapshot() map[string]uint64 {
 	m.mu.Lock()

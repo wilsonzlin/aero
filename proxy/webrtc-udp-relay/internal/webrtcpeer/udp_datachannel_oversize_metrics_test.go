@@ -67,7 +67,7 @@ func TestSession_RejectsOversizedUDPDataChannelMessage_Metrics(t *testing.T) {
 
 	waitForDataChannelState(t, clientDC, webrtc.DataChannelStateClosed, 5*time.Second)
 
-	if got := m.Get(metrics.WebRTCUDPDroppedOversized); got == 0 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDroppedOversized]; got == 0 {
 		t.Fatalf("expected %s metric increment", metrics.WebRTCUDPDroppedOversized)
 	}
 }

@@ -66,7 +66,7 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 	if err != ErrTooManySessions {
 		t.Fatalf("CreateSession err=%v, want %v", err, ErrTooManySessions)
 	}
-	if got := m.Get(metrics.DropReasonTooManySessions); got == 0 {
+	if got := m.Snapshot()[metrics.DropReasonTooManySessions]; got == 0 {
 		t.Fatalf("expected %s metric increment", metrics.DropReasonTooManySessions)
 	}
 

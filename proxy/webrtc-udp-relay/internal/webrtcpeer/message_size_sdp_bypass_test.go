@@ -105,7 +105,7 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		t.Fatalf("timed out waiting for session close after oversized message")
 	}
 
-	if got := m.Get(metrics.WebRTCDataChannelMessageTooLargeUDP); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCDataChannelMessageTooLargeUDP]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelMessageTooLargeUDP, got)
 	}
 }
@@ -199,7 +199,7 @@ func TestWebRTCDataChannel_OversizeL2Message_IgnoresSDP_ClosesSession(t *testing
 		t.Fatalf("timed out waiting for session close after oversized message")
 	}
 
-	if got := m.Get(metrics.WebRTCDataChannelMessageTooLargeL2); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCDataChannelMessageTooLargeL2]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelMessageTooLargeL2, got)
 	}
 }

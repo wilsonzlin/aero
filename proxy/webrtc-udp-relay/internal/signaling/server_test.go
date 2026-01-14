@@ -116,7 +116,7 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		t.Fatalf("unexpected message: %#v", msg)
 	}
 
-	if m.Get(metrics.DropReasonTooManySessions) == 0 {
+	if m.Snapshot()[metrics.DropReasonTooManySessions] == 0 {
 		t.Fatalf("expected too_many_sessions metric increment")
 	}
 }
@@ -264,7 +264,7 @@ func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 		}
 	}
 
-	if got := m.Get(metrics.AuthFailure); got != 0 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got != 0 {
 		t.Fatalf("auth_failure=%d, want 0", got)
 	}
 }
@@ -345,7 +345,7 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 		}
 	})
 
-	if got := m.Get(metrics.AuthFailure); got != 0 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got != 0 {
 		t.Fatalf("auth_failure=%d, want 0", got)
 	}
 }
@@ -443,7 +443,7 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("request took too long: %s", elapsed)
 	}
 
-	if got := m.Get(metrics.ICEGatheringTimeout); got != 1 {
+	if got := m.Snapshot()[metrics.ICEGatheringTimeout]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.ICEGatheringTimeout, got)
 	}
 }
@@ -540,7 +540,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("request took too long: %s", elapsed)
 	}
 
-	if got := m.Get(metrics.ICEGatheringTimeout); got != 1 {
+	if got := m.Snapshot()[metrics.ICEGatheringTimeout]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.ICEGatheringTimeout, got)
 	}
 }
@@ -655,7 +655,7 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 		sess, err := sm.CreateSessionWithKey("")
 		if err == nil {
 			sess.Close()
-			if got := m.Get(metrics.ICEGatheringTimeout); got != 0 {
+			if got := m.Snapshot()[metrics.ICEGatheringTimeout]; got != 0 {
 				t.Fatalf("%s=%d, want 0", metrics.ICEGatheringTimeout, got)
 			}
 			return
@@ -783,7 +783,7 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 		sess, err := sm.CreateSessionWithKey("")
 		if err == nil {
 			sess.Close()
-			if got := m.Get(metrics.ICEGatheringTimeout); got != 0 {
+			if got := m.Snapshot()[metrics.ICEGatheringTimeout]; got != 0 {
 				t.Fatalf("%s=%d, want 0", metrics.ICEGatheringTimeout, got)
 			}
 			return
@@ -832,7 +832,7 @@ func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
 	}
-	if got := m.Get(metrics.AuthFailure); got == 0 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 	srv.mu.Lock()
@@ -1025,7 +1025,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 		webrtcSessions := len(srv.webrtcSessions)
 		srv.mu.Unlock()
 
-		if webrtcSessions == 0 && m.Get(metrics.WebRTCSessionConnectTimeout) > 0 {
+		if webrtcSessions == 0 && m.Snapshot()[metrics.WebRTCSessionConnectTimeout] > 0 {
 			sess, err := sm.CreateSessionWithKey("")
 			if err == nil {
 				sess.Close()
@@ -1049,7 +1049,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 	if gotWebRTCSessions != 0 {
 		t.Fatalf("server webrtcSessions=%d, want 0", gotWebRTCSessions)
 	}
-	if got := m.Get(metrics.WebRTCSessionConnectTimeout); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCSessionConnectTimeout]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.WebRTCSessionConnectTimeout, got)
 	}
 }

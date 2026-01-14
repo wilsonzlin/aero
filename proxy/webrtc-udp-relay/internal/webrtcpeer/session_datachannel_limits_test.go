@@ -167,13 +167,13 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 	}
 	waitForDataChannelState(t, l2c2, webrtc.DataChannelStateClosed, 5*time.Second)
 
-	if got := m.Get(metrics.WebRTCDataChannelRejectedUnknownLabel); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCDataChannelRejectedUnknownLabel]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelRejectedUnknownLabel, got)
 	}
-	if got := m.Get(metrics.WebRTCDataChannelRejectedDuplicateUDP); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCDataChannelRejectedDuplicateUDP]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelRejectedDuplicateUDP, got)
 	}
-	if got := m.Get(metrics.WebRTCDataChannelRejectedDuplicateL2); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCDataChannelRejectedDuplicateL2]; got != 1 {
 		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelRejectedDuplicateL2, got)
 	}
 }

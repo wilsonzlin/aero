@@ -89,7 +89,7 @@ func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 		t.Fatalf("expected new remote (D) to be added")
 	}
 
-	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 1 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistEvictionsTotal]; got != 1 {
 		t.Fatalf("eviction metric=%d, want 1", got)
 	}
 }
@@ -184,7 +184,7 @@ func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
 	if len(b.allowed) != cfg.MaxAllowedRemotesPerBinding {
 		t.Fatalf("allowlist size=%d, want %d", len(b.allowed), cfg.MaxAllowedRemotesPerBinding)
 	}
-	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistEvictionsTotal]; got != 0 {
 		t.Fatalf("eviction metric=%d, want 0 (expired entry should be pruned, not evicted)", got)
 	}
 }
@@ -228,10 +228,10 @@ func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
 		t.Fatalf("allowlist size=%d after remoteAllowed, want 0 (config.UDPInboundFilterModeAny should not track remotes)", n)
 	}
 
-	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistEvictionsTotal]; got != 0 {
 		t.Fatalf("eviction metric=%d, want 0 (config.UDPInboundFilterModeAny should not evict)", got)
 	}
-	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 0 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal]; got != 0 {
 		t.Fatalf("drop metric=%d, want 0 (config.UDPInboundFilterModeAny should not drop)", got)
 	}
 }

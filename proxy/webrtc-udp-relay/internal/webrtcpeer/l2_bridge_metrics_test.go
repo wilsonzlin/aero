@@ -37,7 +37,7 @@ func TestL2Bridge_OversizedMessageIncrementsMetricAndClosesBridge(t *testing.T) 
 
 	b.HandleDataChannelMessage([]byte{0x01, 0x02})
 
-	if got := m.Get(metrics.L2BridgeDroppedOversizedTotal); got != 1 {
+	if got := m.Snapshot()[metrics.L2BridgeDroppedOversizedTotal]; got != 1 {
 		t.Fatalf("%s=%d, want %d", metrics.L2BridgeDroppedOversizedTotal, got, 1)
 	}
 
@@ -96,7 +96,7 @@ func TestL2Bridge_QuotaDropIncrementsMetric(t *testing.T) {
 
 	_ = b.wsReadLoop(conn)
 
-	if got := m.Get(metrics.L2BridgeDroppedRateLimitedTotal); got != 1 {
+	if got := m.Snapshot()[metrics.L2BridgeDroppedRateLimitedTotal]; got != 1 {
 		t.Fatalf("%s=%d, want %d", metrics.L2BridgeDroppedRateLimitedTotal, got, 1)
 	}
 }
@@ -131,10 +131,10 @@ func TestL2Bridge_DialCanceledDoesNotIncrementDialErrorMetric(t *testing.T) {
 
 	_, _ = b.dialBackend()
 
-	if got := m.Get(metrics.L2BridgeDialsTotal); got != 1 {
+	if got := m.Snapshot()[metrics.L2BridgeDialsTotal]; got != 1 {
 		t.Fatalf("%s=%d, want %d", metrics.L2BridgeDialsTotal, got, 1)
 	}
-	if got := m.Get(metrics.L2BridgeDialErrorsTotal); got != 0 {
+	if got := m.Snapshot()[metrics.L2BridgeDialErrorsTotal]; got != 0 {
 		t.Fatalf("%s=%d, want %d (canceled dial)", metrics.L2BridgeDialErrorsTotal, got, 0)
 	}
 }

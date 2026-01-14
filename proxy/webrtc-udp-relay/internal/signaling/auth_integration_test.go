@@ -272,7 +272,7 @@ func TestAuth_APIKey_WebRTCOffer(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	if got := m.Get(metrics.AuthFailure); got < 2 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got < 2 {
 		t.Fatalf("auth failure metric=%d, want >= 2", got)
 	}
 
@@ -398,7 +398,7 @@ func TestAuth_APIKey_WebSocketSignal_AuthTimeoutClosesUnauthenticatedConnection(
 		t.Fatalf("expected close policy violation, got %v", err)
 	}
 
-	if got := m.Get(metrics.AuthFailure); got == 0 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got == 0 {
 		t.Fatalf("expected auth failure metric increment")
 	}
 }
@@ -1601,7 +1601,7 @@ func TestAuth_APIKey_Offer(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	if got := m.Get(metrics.AuthFailure); got < 2 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got < 2 {
 		t.Fatalf("auth failure metric=%d, want >= 2", got)
 	}
 
@@ -1654,7 +1654,7 @@ func TestAuth_JWT_Offer(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	if got := m.Get(metrics.AuthFailure); got < 2 {
+	if got := m.Snapshot()[metrics.AuthFailure]; got < 2 {
 		t.Fatalf("auth failure metric=%d, want >= 2", got)
 	}
 
@@ -2012,7 +2012,7 @@ func TestWebSocketAuthTimeout(t *testing.T) {
 	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
 		t.Fatalf("expected policy violation close; got %v", err)
 	}
-	if m.Get(metrics.AuthFailure) == 0 {
+	if m.Snapshot()[metrics.AuthFailure] == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 }
@@ -2125,7 +2125,7 @@ func TestWebSocketRejectsOfferBeforeAuth(t *testing.T) {
 	_, msg, err := c.ReadMessage()
 	if err != nil {
 		if websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
-			if m.Get(metrics.AuthFailure) == 0 {
+			if m.Snapshot()[metrics.AuthFailure] == 0 {
 				t.Fatalf("expected auth_failure metric increment")
 			}
 			return
@@ -2139,7 +2139,7 @@ func TestWebSocketRejectsOfferBeforeAuth(t *testing.T) {
 	if parsed.Type != "error" || parsed.Code != "unauthorized" {
 		t.Fatalf("unexpected server message: %#v", parsed)
 	}
-	if m.Get(metrics.AuthFailure) == 0 {
+	if m.Snapshot()[metrics.AuthFailure] == 0 {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 
@@ -2188,7 +2188,7 @@ func TestWebSocketRateLimitExceeded(t *testing.T) {
 	if parsed.Type != "error" || parsed.Code != "rate_limited" {
 		t.Fatalf("unexpected server message: %#v", parsed)
 	}
-	if m.Get(metrics.DropReasonRateLimited) == 0 {
+	if m.Snapshot()[metrics.DropReasonRateLimited] == 0 {
 		t.Fatalf("expected rate_limited metric increment")
 	}
 

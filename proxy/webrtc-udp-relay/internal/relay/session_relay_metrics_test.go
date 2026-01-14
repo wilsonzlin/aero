@@ -27,10 +27,10 @@ func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 
 	r.HandleDataChannelMessage([]byte{0x00})
 
-	if got := m.Get(metrics.WebRTCUDPDatagramsIn); got != 1 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDatagramsIn]; got != 1 {
 		t.Fatalf("expected %s=1, got %d", metrics.WebRTCUDPDatagramsIn, got)
 	}
-	if got := m.Get(metrics.WebRTCUDPDroppedMalformed); got == 0 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDroppedMalformed]; got == 0 {
 		t.Fatalf("expected %s metric increment", metrics.WebRTCUDPDroppedMalformed)
 	}
 }
@@ -60,7 +60,7 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 
 	r.HandleDataChannelMessage(oversized[:v1HeaderLen+2])
 
-	if got := m.Get(metrics.WebRTCUDPDroppedOversized); got == 0 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDroppedOversized]; got == 0 {
 		t.Fatalf("expected %s metric increment", metrics.WebRTCUDPDroppedOversized)
 	}
 }
@@ -128,7 +128,7 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.WebRTCUDPDroppedBackpressure) > 0 {
+		if m.Snapshot()[metrics.WebRTCUDPDroppedBackpressure] > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -209,24 +209,24 @@ func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropp
 
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal) > 0 {
+		if m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal] > 0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 1 {
+	if got := m.Snapshot()[metrics.UDPRemoteAllowlistOverflowDropsTotal]; got != 1 {
 		t.Fatalf("expected %s=1, got %d", metrics.UDPRemoteAllowlistOverflowDropsTotal, got)
 	}
 
 	// The allowlist drop is tracked via UDPRemoteAllowlistOverflowDropsTotal; it
 	// should not be included in the per-transport WebRTCUDPDropped counters.
-	if got := m.Get(metrics.WebRTCUDPDropped); got != 0 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDropped]; got != 0 {
 		t.Fatalf("expected %s=0, got %d", metrics.WebRTCUDPDropped, got)
 	}
-	if got := m.Get(metrics.WebRTCUDPDroppedMalformed); got != 0 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDroppedMalformed]; got != 0 {
 		t.Fatalf("expected %s=0, got %d", metrics.WebRTCUDPDroppedMalformed, got)
 	}
-	if got := m.Get(metrics.WebRTCUDPDroppedOversized); got != 0 {
+	if got := m.Snapshot()[metrics.WebRTCUDPDroppedOversized]; got != 0 {
 		t.Fatalf("expected %s=0, got %d", metrics.WebRTCUDPDroppedOversized, got)
 	}
 }
