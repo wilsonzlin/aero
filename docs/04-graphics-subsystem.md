@@ -228,6 +228,14 @@ Code pointers:
   - does sRGB encoding in shader for deterministic output (WebGL default framebuffer sRGB behavior varies)
 - Playwright validation: `tests/e2e/web/gpu_color.spec.ts`
 
+Worker presented-output validation (post sRGB/alpha policy; canvas pixels):
+
+- Debug readback message: `screenshot_presented` in `web/src/ipc/gpu-protocol.ts`
+- Test card generator: `web/src/gpu/test-card.ts`
+- Playwright E2E:
+  - Color policy (gamma/alpha/origin): `tests/e2e/web/gpu_worker_presented_color_policy.spec.ts`
+  - Cursor blending (linear blend + sRGB encode): `tests/e2e/gpu_worker_presented_cursor_overlay.spec.ts`
+
 ## AeroGPU status (high level; protocol references)
 
 This doc does **not** define the AeroGPU PCI/MMIO integration work (owned elsewhere). It only links the current contracts and the code that exists today.
