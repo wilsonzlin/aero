@@ -3995,6 +3995,10 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
+                # The canonical aero_virtio_input.inf is SUBSYS-gated only (no generic fallback
+                # HWID), to avoid binding the driver to non-contract virtio-input devices.
+                # Opt-in fallback binding is provided via the legacy alias INF
+                # (virtio-input.inf{.disabled}).
                 require_fallback=False,
                 errors=errors,
             )
