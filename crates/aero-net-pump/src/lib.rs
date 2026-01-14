@@ -39,8 +39,11 @@
 
 use aero_net_backend::NetworkBackend;
 use aero_net_e1000::E1000Device;
+#[cfg(feature = "virtio-net")]
 use aero_virtio::devices::net::VirtioNet;
+#[cfg(feature = "virtio-net")]
 use aero_virtio::memory::GuestMemory as VirtioGuestMemory;
+#[cfg(feature = "virtio-net")]
 use aero_virtio::pci::VirtioPciDevice;
 use memory::MemoryBus;
 
@@ -367,6 +370,7 @@ impl NetworkBackend for VirtioNetBackendAdapter {
 ///
 /// This matches the "tick" style used by emulator main loops: the pump stores budgets and
 /// `tick()` is called once per emulation slice.
+#[cfg(feature = "virtio-net")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioNetTickPump {
     /// Upper bound on the number of descriptor chains consumed from **each** virtqueue's avail ring
@@ -379,6 +383,7 @@ pub struct VirtioNetTickPump {
     pub max_rx_frames_per_tick: usize,
 }
 
+#[cfg(feature = "virtio-net")]
 impl Default for VirtioNetTickPump {
     fn default() -> Self {
         Self {
@@ -388,6 +393,7 @@ impl Default for VirtioNetTickPump {
     }
 }
 
+#[cfg(feature = "virtio-net")]
 impl VirtioNetTickPump {
     pub fn new(max_chains_per_queue_per_tick: usize, max_rx_frames_per_tick: usize) -> Self {
         Self {
@@ -418,6 +424,7 @@ impl VirtioNetTickPump {
 /// Note: [`VirtioPciDevice`] itself gates guest-memory DMA on PCI COMMAND.BME (bus master enable).
 /// Callers are expected to keep the transport's PCI command register synchronized with their
 /// canonical PCI config space via [`VirtioPciDevice::set_pci_command`].
+#[cfg(feature = "virtio-net")]
 pub fn tick_virtio_net(
     virtio: &mut VirtioPciDevice,
     mem: &mut dyn VirtioGuestMemory,
@@ -1980,7 +1987,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "virtio-net"))]
 mod virtio_net_tick_tests {
     use super::*;
 

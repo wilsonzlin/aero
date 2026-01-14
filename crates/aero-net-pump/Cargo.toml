@@ -4,10 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = ["virtio-net"]
+virtio-net = ["dep:aero-virtio"]
+
 [dependencies]
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
-aero-virtio = { path = "../aero-virtio", default-features = false }
+aero-virtio = { path = "../aero-virtio", default-features = false, optional = true }
 memory = { path = "../memory" }
 
 [dev-dependencies]
