@@ -7528,21 +7528,17 @@ fn push_u16(out: &mut Vec<u8>, v: u16) {
 #[test]
 fn parses_isgn_signature_chunk() {
     // Minimal ISGN-like chunk with a single POSITION element.
-    let mut chunk = Vec::new();
-    push_u32(&mut chunk, 1); // element count
-    push_u32(&mut chunk, 8); // table offset
-
-    // Entry (24 bytes).
-    push_u32(&mut chunk, 32); // name offset
-    push_u32(&mut chunk, 0); // semantic index
-    push_u32(&mut chunk, 0); // system value type
-    push_u32(&mut chunk, 0); // component type
-    push_u32(&mut chunk, 0); // register
-    chunk.push(0xF); // mask
-    chunk.push(0xF); // rw mask
-    chunk.extend_from_slice(&[0, 0]); // padding
-
-    chunk.extend_from_slice(b"POSITION\0");
+    let chunk = dxbc_test_utils::build_signature_chunk_v0(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 0,
+        register: 0,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream: 0,
+        min_precision: 0,
+    }]);
 
     let sig = parse_signature_chunk(&chunk).unwrap();
     assert_eq!(sig.entries.len(), 1);
