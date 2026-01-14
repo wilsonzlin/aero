@@ -1068,7 +1068,7 @@ impl UsbHidPassthroughBridge {
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         // `UsbHidPassthroughHandle` no longer carries an error string for feature report failures,
         // but keep this JS-callable API stable.
-        drop(error);
+        drop(_error);
         Ok(self
             .device
             .fail_feature_report_request(request_id, report_id))
@@ -1208,7 +1208,7 @@ impl WebHidPassthroughBridge {
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         // `UsbHidPassthroughHandle` no longer carries an error string for feature report failures,
         // but keep this JS-callable API stable.
-        drop(error);
+        drop(_error);
         Ok(self
             .device
             .fail_feature_report_request(request_id, report_id))
