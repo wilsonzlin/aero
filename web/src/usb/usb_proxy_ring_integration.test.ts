@@ -97,6 +97,14 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+async function flushMicrotasks(iterations = 8): Promise<void> {
+  // `await Promise.resolve()` yields to the microtask queue. Loop a few times so nested async/await
+  // chains (like the broker's execute queue) have a chance to fully drain.
+  for (let i = 0; i < iterations; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
 
 afterEach(() => {
@@ -525,5 +533,91 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
 
     runtime.destroy();
     broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+  });
+
+  it("caps action ring drains per tick (record count)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const broker = new UsbBroker({
+        ringDrainIntervalMs: 1,
+        ringActionCapacityBytes: 8 * 1024,
+        // Force completions to fall back to postMessage so we can count them.
+        ringCompletionCapacityBytes: 4,
+      });
+      const { brokerPort } = createChannel();
+      broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+
+      const ringAttach = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach")?.msg as
+        | { actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+
+      const ring = new UsbProxyRing(ringAttach!.actionRing);
+      for (let i = 0; i < 300; i += 1) {
+        expect(ring.pushAction({ kind: "bulkIn", id: i + 1, endpoint: 0x81, length: 8 })).toBe(true);
+      }
+
+      brokerPort.sent.length = 0;
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+
+      const completionsTick1 = brokerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.completion");
+      expect(completionsTick1).toHaveLength(256);
+
+      brokerPort.sent.length = 0;
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+
+      const completionsTick2 = brokerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.completion");
+      expect(completionsTick2).toHaveLength(44);
+
+      broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps action ring drains per tick (payload bytes)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const broker = new UsbBroker({
+        ringDrainIntervalMs: 1,
+        // Large enough to store a couple of 1MiB bulkOut actions.
+        ringActionCapacityBytes: 3 * 1024 * 1024,
+        ringCompletionCapacityBytes: 4,
+      });
+      const { brokerPort } = createChannel();
+      broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+
+      const ringAttach = brokerPort.sent.find((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach")?.msg as
+        | { actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+
+      const ring = new UsbProxyRing(ringAttach!.actionRing);
+      const payload = new Uint8Array(1024 * 1024);
+      expect(ring.pushAction({ kind: "bulkOut", id: 1, endpoint: 1, data: payload })).toBe(true);
+      expect(ring.pushAction({ kind: "bulkOut", id: 2, endpoint: 1, data: payload })).toBe(true);
+
+      brokerPort.sent.length = 0;
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+
+      const completionsTick1 = brokerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.completion");
+      expect(completionsTick1).toHaveLength(1);
+
+      brokerPort.sent.length = 0;
+      await vi.advanceTimersByTimeAsync(1);
+      await flushMicrotasks();
+
+      const completionsTick2 = brokerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.completion");
+      expect(completionsTick2).toHaveLength(1);
+
+      broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

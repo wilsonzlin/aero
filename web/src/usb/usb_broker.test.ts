@@ -840,4 +840,74 @@ describe("usb/UsbBroker", () => {
 
     await expect(p1).resolves.toEqual({ kind: "bulkIn", id: 1, status: "error", message: "WebUSB device replaced." });
   });
+
+  it("rejects new actions when maxPendingActions is exceeded (queue backpressure)", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        execute(): Promise<BackendUsbHostCompletion> {
+          // Never resolve: simulate a stalled device transfer so the broker queue backs up.
+          return new Promise(() => undefined);
+        }
+      },
+    }));
+
+    const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsb(device);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker({ maxPendingActions: 2 });
+    await broker.requestDevice();
+
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 });
+    const p2 = broker.execute({ kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 });
+    const p3 = broker.execute({ kind: "bulkIn", id: 3, endpoint: 0x81, length: 8 });
+
+    await expect(p3).resolves.toEqual({
+      kind: "bulkIn",
+      id: 3,
+      status: "error",
+      message: "WebUSB broker queue full (too many pending actions).",
+    });
+
+    await broker.detachSelectedDevice("bye");
+    await expect(p1).resolves.toEqual({ kind: "bulkIn", id: 1, status: "error", message: "bye" });
+    await expect(p2).resolves.toEqual({ kind: "bulkIn", id: 2, status: "error", message: "bye" });
+  }, 15000);
+
+  it("rejects new actions when maxPendingActionBytes is exceeded (queue backpressure)", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        execute(): Promise<BackendUsbHostCompletion> {
+          return new Promise(() => undefined);
+        }
+      },
+    }));
+
+    const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsb(device);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker({ maxPendingActions: 10, maxPendingActionBytes: 10 });
+    await broker.requestDevice();
+
+    const payload = new Uint8Array(8);
+    const p1 = broker.execute({ kind: "bulkOut", id: 1, endpoint: 1, data: payload });
+    const p2 = broker.execute({ kind: "bulkOut", id: 2, endpoint: 1, data: payload });
+
+    await expect(p2).resolves.toEqual({
+      kind: "bulkOut",
+      id: 2,
+      status: "error",
+      message: "WebUSB broker queue full (too many pending actions).",
+    });
+
+    await broker.detachSelectedDevice("bye");
+    await expect(p1).resolves.toEqual({ kind: "bulkOut", id: 1, status: "error", message: "bye" });
+  }, 15000);
 });

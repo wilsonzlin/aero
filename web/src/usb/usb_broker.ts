@@ -27,6 +27,21 @@ import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
+// Keep the per-interval ring drains bounded so a busy or malicious worker can't
+// keep the main thread spinning (starving UI/rendering). Rings are an optional
+// fast-path: when we hit these caps we continue draining on the next interval.
+const MAX_USB_ACTION_RING_RECORDS_PER_DRAIN_TICK = 256;
+// Approximate byte budget for per-tick action-ring drains. This is primarily
+// meant to avoid draining many large bulkOut/controlOut payloads in a single
+// tick, which would allocate large temporary buffers on the main thread.
+const MAX_USB_ACTION_RING_BYTES_PER_DRAIN_TICK = 1024 * 1024;
+
+// WebUSB transfers are serialized via the broker queue to match Chromium's
+// WebUSB constraints. Keep this bounded so a stalled device/transfer cannot
+// cause unbounded memory growth if the guest spams actions.
+const DEFAULT_MAX_PENDING_USB_ACTIONS = 1024;
+const DEFAULT_MAX_PENDING_USB_ACTION_BYTES = 32 * 1024 * 1024;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -61,6 +76,7 @@ type QueueItem = {
   options?: UsbProxyActionOptions;
   resolve: (completion: UsbHostCompletion) => void;
   port: MessagePort | Worker | null;
+  payloadBytes: number;
 };
 
 type UsbForgettableDevice = USBDevice & { forget: () => Promise<void> };
@@ -77,6 +93,23 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
     resolve = r;
   });
   return { promise, resolve };
+}
+
+function assertPositiveSafeInteger(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`invalid ${name}: ${value}`);
+  }
+  return value;
+}
+
+function actionPayloadBytes(action: UsbHostAction): number {
+  switch (action.kind) {
+    case "controlOut":
+    case "bulkOut":
+      return action.data.byteLength >>> 0;
+    default:
+      return 0;
+  }
 }
 
 function wrapWithCause(message: string, cause: unknown): Error {
@@ -156,13 +189,34 @@ export class UsbBroker {
   private readonly ringCompletionCapacityBytes: number;
   private readonly ringDrainIntervalMs: number;
 
+  private readonly maxPendingActions: number;
+  private readonly maxPendingActionBytes: number;
+  private pendingActionBytes = 0;
+  private inFlightCount = 0;
+
   private readonly queue: QueueItem[] = [];
   private processing = false;
 
-  constructor(options: { ringActionCapacityBytes?: number; ringCompletionCapacityBytes?: number; ringDrainIntervalMs?: number } = {}) {
+  constructor(
+    options: {
+      ringActionCapacityBytes?: number;
+      ringCompletionCapacityBytes?: number;
+      ringDrainIntervalMs?: number;
+      maxPendingActions?: number;
+      maxPendingActionBytes?: number;
+    } = {},
+  ) {
     this.ringActionCapacityBytes = options.ringActionCapacityBytes ?? 256 * 1024;
     this.ringCompletionCapacityBytes = options.ringCompletionCapacityBytes ?? 256 * 1024;
     this.ringDrainIntervalMs = options.ringDrainIntervalMs ?? 8;
+    this.maxPendingActions =
+      options.maxPendingActions === undefined
+        ? DEFAULT_MAX_PENDING_USB_ACTIONS
+        : assertPositiveSafeInteger("maxPendingActions", options.maxPendingActions);
+    this.maxPendingActionBytes =
+      options.maxPendingActionBytes === undefined
+        ? DEFAULT_MAX_PENDING_USB_ACTION_BYTES
+        : assertPositiveSafeInteger("maxPendingActionBytes", options.maxPendingActionBytes);
 
     const usb = getNavigatorUsb();
     usb?.addEventListener?.("disconnect", (ev: Event) => {
@@ -576,7 +630,17 @@ export class UsbBroker {
     const actionRing = this.actionRings.get(port);
     if (!actionRing) return;
 
-    while (true) {
+    let remainingRecords = MAX_USB_ACTION_RING_RECORDS_PER_DRAIN_TICK;
+    let remainingBytes = MAX_USB_ACTION_RING_BYTES_PER_DRAIN_TICK;
+
+    while (remainingRecords > 0 && remainingBytes > 0) {
+      // If a real device is selected and the execute queue is already full, stop
+      // draining here to apply backpressure to the ring producer instead of
+      // pulling unbounded work onto the main thread.
+      if (this.device && !this.disconnectError && !this.hasQueueCapacity(0)) {
+        break;
+      }
+
       let record: { action: UsbHostAction; options?: UsbProxyActionOptions } | null = null;
       try {
         record = actionRing.popActionRecord();
@@ -586,6 +650,9 @@ export class UsbBroker {
       }
       if (!record) break;
       const { action, options } = record;
+
+      remainingRecords -= 1;
+      remainingBytes -= actionPayloadBytes(action);
 
       void this.executeForPort(port, action, options).then((completion) => {
         // The port may have been detached (or rings disabled) while the completion was in-flight.
@@ -670,14 +737,19 @@ export class UsbBroker {
     // Serializing actions here also matches the upstream UHCI "action queue" contract (one in-flight action at a time).
     while (this.queue.length) {
       const item = this.queue.shift()!;
+      this.inFlightCount = 1;
 
       if (this.disconnectError) {
+        this.pendingActionBytes -= item.payloadBytes;
+        this.inFlightCount = 0;
         item.resolve(usbErrorCompletion(item.action.kind, item.action.id, this.disconnectError));
         continue;
       }
 
       const backend = this.getBackendForPort(item.port);
       if (!backend || !this.device) {
+        this.pendingActionBytes -= item.payloadBytes;
+        this.inFlightCount = 0;
         item.resolve(usbErrorCompletion(item.action.kind, item.action.id, "WebUSB device not selected."));
         continue;
       }
@@ -697,6 +769,8 @@ export class UsbBroker {
         completion = usbErrorCompletion(item.action.kind, item.action.id, formatWebUsbError(err));
       }
 
+      this.pendingActionBytes -= item.payloadBytes;
+      this.inFlightCount = 0;
       item.resolve(completion);
 
       if (this.disconnectError) {
@@ -705,7 +779,15 @@ export class UsbBroker {
       }
     }
 
+    this.inFlightCount = 0;
     this.processing = false;
+  }
+
+  private hasQueueCapacity(nextPayloadBytes: number): boolean {
+    const pendingCount = this.queue.length + this.inFlightCount;
+    if (pendingCount >= this.maxPendingActions) return false;
+    if (this.pendingActionBytes + nextPayloadBytes > this.maxPendingActionBytes) return false;
+    return true;
   }
 
   private resetSelectedDevice(reason: string, options: { closeDevice?: boolean } = {}): void {
@@ -729,6 +811,7 @@ export class UsbBroker {
     // Fail any queued actions immediately.
     while (this.queue.length) {
       const item = this.queue.shift()!;
+      this.pendingActionBytes -= item.payloadBytes;
       item.resolve(usbErrorCompletion(item.action.kind, item.action.id, reason));
     }
   }
@@ -759,7 +842,13 @@ export class UsbBroker {
     if (!this.device) return usbErrorCompletion(action.kind, action.id, "WebUSB device not selected.");
 
     return await new Promise<UsbHostCompletion>((resolve) => {
-      this.queue.push({ action, options, resolve, port });
+      const payloadBytes = actionPayloadBytes(action);
+      if (!this.hasQueueCapacity(payloadBytes)) {
+        resolve(usbErrorCompletion(action.kind, action.id, "WebUSB broker queue full (too many pending actions)."));
+        return;
+      }
+      this.pendingActionBytes += payloadBytes;
+      this.queue.push({ action, options, resolve, port, payloadBytes });
       this.kickQueue();
     });
   }
