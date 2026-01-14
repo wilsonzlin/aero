@@ -279,9 +279,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   v[3].x = -0.7f; v[3].y = -0.1f; v[3].z = 0.5f; v[3].color = kWhite; v[3].u = 1.0f; v[3].v = 1.0f; // bottom-right
 
   const DWORD kClear = D3DCOLOR_XRGB(0, 0, 0);
-  const uint32_t expected = D3DCOLOR_XRGB(255, 255, 0); // yellow (bottom-right texel)
+  const uint32_t kExpectedYellow = D3DCOLOR_XRGB(255, 255, 0); // yellow (bottom-right texel)
 
-  auto DrawAndValidateCenterPixel = [&](const char* label, const wchar_t* dump_leaf) -> int {
+  auto DrawAndValidateCenterPixel =
+      [&](const char* label, const wchar_t* dump_leaf, uint32_t expected_center) -> int {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClear, 1.0f, 0);
     if (FAILED(hr)) {
       return reporter.FailHresult("IDirect3DDevice9Ex::Clear", hr);
@@ -345,7 +346,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
     const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
 
-    if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+    if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
       if (dump && dump_leaf) {
         std::string err;
         const std::wstring bmp_path =
@@ -365,7 +366,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
       return reporter.Fail("pixel mismatch (%s): center=0x%08lX expected 0x%08lX",
                            label ? label : "?",
                            (unsigned long)center,
-                           (unsigned long)expected);
+                           (unsigned long)expected_center);
     }
 
     if ((corner & 0x00FFFFFFu) != (kClear & 0x00FFFFFFu)) {
@@ -413,19 +414,47 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetVertexDeclaration", hr);
   }
-  int rc = DrawAndValidateCenterPixel("vertex_decl", L"d3d9_fixedfunc_textured_wvp_vdecl.bmp");
+  int rc = DrawAndValidateCenterPixel("vertex_decl",
+                                      L"d3d9_fixedfunc_textured_wvp_vdecl.bmp",
+                                      kExpectedYellow);
   if (rc != 0) {
     return rc;
   }
 
   // ---------------------------------------------------------------------------
-  // Path 2: SetFVF(XYZ|DIFFUSE|TEX1)
+  // Path 2: Same vertex decl path, but with identity transforms.
+  // This ensures the fixed-function WVP constants are refreshed when transforms
+  // change (the center pixel should return to the clear color).
+  // ---------------------------------------------------------------------------
+  D3DMATRIX identity;
+  ZeroMemory(&identity, sizeof(identity));
+  identity._11 = 1.0f;
+  identity._22 = 1.0f;
+  identity._33 = 1.0f;
+  identity._44 = 1.0f;
+  dev->SetTransform(D3DTS_WORLD, &identity);
+  dev->SetTransform(D3DTS_VIEW, &identity);
+  dev->SetTransform(D3DTS_PROJECTION, &identity);
+  rc = DrawAndValidateCenterPixel("vertex_decl_identity",
+                                  L"d3d9_fixedfunc_textured_wvp_vdecl_identity.bmp",
+                                  kClear);
+  if (rc != 0) {
+    return rc;
+  }
+
+  // Restore the WVP transform for the final phase.
+  dev->SetTransform(D3DTS_WORLD, &world);
+  dev->SetTransform(D3DTS_VIEW, &view);
+  dev->SetTransform(D3DTS_PROJECTION, &proj);
+
+  // ---------------------------------------------------------------------------
+  // Path 3: SetFVF(XYZ|DIFFUSE|TEX1)
   // ---------------------------------------------------------------------------
   hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
   }
-  rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp");
+  rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp", kExpectedYellow);
   if (rc != 0) {
     return rc;
   }
