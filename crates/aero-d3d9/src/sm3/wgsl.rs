@@ -1971,31 +1971,96 @@ fn emit_stmt(
             else_block,
         } => {
             // Apply the same uniform-control-flow workaround as predicate modifiers for the common
-            // pattern:
+            // patterns:
             //
             //   if (cond) { <single op>; }
+            //   if (cond) { <single op>; } else { <single op>; }
             //
-            // This avoids generating WGSL that places `dpdx`/`dpdy`/`textureSample` behind a
-            // potentially non-uniform branch.
-            if else_block.is_none() && then_block.stmts.len() == 1 {
-                if let Stmt::Op(op) = &then_block.stmts[0] {
-                    if op_modifiers(op).predicate.is_none() {
-                        let cond_e = cond_expr(cond, f32_defs)?;
-                        if let Some(line) = emit_branchless_predicated_op_line(
-                            op,
-                            &cond_e,
-                            stage,
-                            f32_defs,
-                            sampler_types,
-                        )? {
-                            let _ = writeln!(wgsl, "{pad}{line}");
-                            return Ok(());
+            // This avoids generating WGSL that places `dpdx`/`dpdy`/`textureSample`/`textureSampleBias`
+            // behind a potentially non-uniform branch.
+            let cond_e = cond_expr(cond, f32_defs)?;
+
+            if then_block.stmts.len() == 1 {
+                // Pattern 1: if (cond) { <single op>; }
+                if else_block.is_none() {
+                    if let Stmt::Op(op) = &then_block.stmts[0] {
+                        if op_modifiers(op).predicate.is_none() {
+                            if let Some(line) = emit_branchless_predicated_op_line(
+                                op,
+                                &cond_e,
+                                stage,
+                                f32_defs,
+                                sampler_types,
+                            )? {
+                                let _ = writeln!(wgsl, "{pad}{line}");
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
+                // Pattern 2: if (cond) { <single op>; } else { <single op>; }
+                if let Some(else_block) = else_block {
+                    if else_block.stmts.len() == 1 {
+                        if let (Stmt::Op(then_op), Stmt::Op(else_op)) =
+                            (&then_block.stmts[0], &else_block.stmts[0])
+                        {
+                            if op_modifiers(then_op).predicate.is_none()
+                                && op_modifiers(else_op).predicate.is_none()
+                            {
+                                let then_line = emit_branchless_predicated_op_line(
+                                    then_op,
+                                    &cond_e,
+                                    stage,
+                                    f32_defs,
+                                    sampler_types,
+                                )?;
+                                let not_cond_e = format!("!({cond_e})");
+                                let else_line = emit_branchless_predicated_op_line(
+                                    else_op,
+                                    &not_cond_e,
+                                    stage,
+                                    f32_defs,
+                                    sampler_types,
+                                )?;
+
+                                if then_line.is_some() || else_line.is_some() {
+                                    // Emit the branchless lines first.
+                                    if let Some(line) = &then_line {
+                                        let _ = writeln!(wgsl, "{pad}{line}");
+                                    }
+                                    if let Some(line) = &else_line {
+                                        let _ = writeln!(wgsl, "{pad}{line}");
+                                    }
+
+                                    // For the remaining branch, emit a real `if` since it doesn't
+                                    // contain a uniformity-sensitive op.
+                                    if then_line.is_none() {
+                                        let _ = writeln!(wgsl, "{pad}if ({cond_e}) {{");
+                                        let line =
+                                            emit_op_line(then_op, stage, f32_defs, sampler_types)?;
+                                        let inner_pad = "  ".repeat(indent + 1);
+                                        let _ = writeln!(wgsl, "{inner_pad}{line}");
+                                        let _ = writeln!(wgsl, "{pad}}}");
+                                    }
+                                    if else_line.is_none() {
+                                        let _ = writeln!(wgsl, "{pad}if ({not_cond_e}) {{");
+                                        let line =
+                                            emit_op_line(else_op, stage, f32_defs, sampler_types)?;
+                                        let inner_pad = "  ".repeat(indent + 1);
+                                        let _ = writeln!(wgsl, "{inner_pad}{line}");
+                                        let _ = writeln!(wgsl, "{pad}}}");
+                                    }
+
+                                    return Ok(());
+                                }
+                            }
                         }
                     }
                 }
             }
-            let cond = cond_expr(cond, f32_defs)?;
-            let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
+
+            let _ = writeln!(wgsl, "{pad}if ({cond_e}) {{");
             emit_block(
                 wgsl,
                 then_block,
@@ -2545,12 +2610,8 @@ pub fn generate_wgsl_with_options(
             wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
             if options.half_pixel_center {
-                wgsl.push_str(
-                    "  out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;\n",
-                );
-                wgsl.push_str(
-                    "  out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;\n",
-                );
+                wgsl.push_str("  out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;\n");
+                wgsl.push_str("  out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;\n");
             }
             for &(file, index) in vs_varying_locations.keys() {
                 let reg = RegRef {
