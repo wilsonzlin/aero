@@ -2922,6 +2922,11 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.irq_fence_delivered,
           (unsigned long long)q.irq_vblank_delivered,
           (unsigned long long)q.irq_spurious);
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(q.last_error_fence)) {
+    wprintf(L"  irq_error: count=%I64u last_fence=0x%I64x\n",
+            (unsigned long long)q.error_irq_count,
+            (unsigned long long)q.last_error_fence);
+  }
   if (haveError) {
     wprintf(L"  error: code=%lu (%s) fence=0x%I64x count=%lu\n",
             (unsigned long)qe.error_code,
@@ -2951,6 +2956,10 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   wprintf(L"  irq_fence_delivered=%I64u\n", (unsigned long long)q.irq_fence_delivered);
   wprintf(L"  irq_vblank_delivered=%I64u\n", (unsigned long long)q.irq_vblank_delivered);
   wprintf(L"  irq_spurious=%I64u\n", (unsigned long long)q.irq_spurious);
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(q.last_error_fence)) {
+    wprintf(L"  error_irq_count=%I64u\n", (unsigned long long)q.error_irq_count);
+    wprintf(L"  last_error_fence=%I64u\n", (unsigned long long)q.last_error_fence);
+  }
   wprintf(L"  reset_from_timeout_count=%I64u\n", (unsigned long long)q.reset_from_timeout_count);
   wprintf(L"  last_reset_time_100ns=%I64u\n", (unsigned long long)q.last_reset_time_100ns);
   wprintf(L"  vblank_seq=%I64u\n", (unsigned long long)q.vblank_seq);

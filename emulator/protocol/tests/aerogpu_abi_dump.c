@@ -540,6 +540,8 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, vblank_seq);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, vblank_period_ns);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, reserved0);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, error_irq_count);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_error_fence);
 
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vidpn_source_id);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, irq_enable);
@@ -606,10 +608,12 @@ int main(void) {
   PRINT_CONST(AEROGPU_MMIO_REG_IRQ_STATUS);
   PRINT_CONST(AEROGPU_MMIO_REG_IRQ_ENABLE);
   PRINT_CONST(AEROGPU_MMIO_REG_IRQ_ACK);
+
   PRINT_CONST(AEROGPU_MMIO_REG_ERROR_CODE);
   PRINT_CONST(AEROGPU_MMIO_REG_ERROR_FENCE_LO);
   PRINT_CONST(AEROGPU_MMIO_REG_ERROR_FENCE_HI);
   PRINT_CONST(AEROGPU_MMIO_REG_ERROR_COUNT);
+
   PRINT_CONST(AEROGPU_MMIO_REG_SCANOUT0_ENABLE);
   PRINT_CONST(AEROGPU_MMIO_REG_SCANOUT0_WIDTH);
   PRINT_CONST(AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);

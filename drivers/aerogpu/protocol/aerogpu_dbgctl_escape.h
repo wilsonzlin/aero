@@ -172,10 +172,19 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u32 vblank_period_ns;
 
   aerogpu_escape_u32 reserved0;
+
+  /*
+   * Sticky error IRQ diagnostics (mirrors QUERY_FENCE).
+   *
+   * `error_irq_count` is incremented when the device signals `AEROGPU_IRQ_ERROR`.
+   * `last_error_fence` records the most recent fence value associated with an error.
+   */
+  aerogpu_escape_u64 error_irq_count;
+  aerogpu_escape_u64 last_error_fence;
 } aerogpu_escape_query_perf_out;
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 144);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 160);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 32);
@@ -188,6 +197,8 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reset_from_
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_seq) == 120);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_period_ns) == 136);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reserved0) == 140);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, error_irq_count) == 144);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_error_fence) == 152);
 
 /*
  * Must remain stable across x86/x64.

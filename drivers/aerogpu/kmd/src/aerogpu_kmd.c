@@ -8362,15 +8362,22 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
     }
 
     if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_PERF) {
-        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_perf_out)) {
+        /*
+         * Backward-compatible: older dbgctl builds may send the original 144-byte
+         * `aerogpu_escape_query_perf_out`. This struct is extended by appending fields;
+         * only write fields that fit in the caller-provided buffer.
+         */
+        if (pEscape->PrivateDriverDataSize <
+            (offsetof(aerogpu_escape_query_perf_out, reserved0) + sizeof(aerogpu_escape_u32))) {
             return STATUS_BUFFER_TOO_SMALL;
         }
 
         aerogpu_escape_query_perf_out* out = (aerogpu_escape_query_perf_out*)pEscape->pPrivateDriverData;
-        RtlZeroMemory(out, sizeof(*out));
+        const SIZE_T outSize = min((SIZE_T)sizeof(*out), (SIZE_T)pEscape->PrivateDriverDataSize);
+        RtlZeroMemory(out, outSize);
         out->hdr.version = AEROGPU_ESCAPE_VERSION;
         out->hdr.op = AEROGPU_ESCAPE_OP_QUERY_PERF;
-        out->hdr.size = sizeof(*out);
+        out->hdr.size = (aerogpu_escape_u32)outSize;
         out->hdr.reserved0 = 0;
 
         ULONGLONG lastSubmittedFence = 0;
@@ -8437,6 +8444,15 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->last_vblank_time_ns = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
         out->vblank_period_ns = (uint32_t)adapter->VblankPeriodNs;
         out->reserved0 = 0;
+
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, error_irq_count) + sizeof(aerogpu_escape_u64))) {
+            out->error_irq_count = (uint64_t)AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(aerogpu_escape_u64))) {
+            out->last_error_fence = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+        }
 
         return STATUS_SUCCESS;
     }
