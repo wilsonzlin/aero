@@ -5,6 +5,7 @@ use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
 use aero_devices::pci::PciBarDefinition;
 use aero_devices::pci::PciBdf;
+use aero_devices::usb::xhci::XhciPciDevice;
 use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 
 #[test]
@@ -284,6 +285,11 @@ fn xhci_profile_class_code_and_bar0_definition() {
     assert_eq!(USB_XHCI_QEMU.bars.len(), 1);
     assert_eq!(USB_XHCI_QEMU.bars[0].index, 0);
     assert_eq!(USB_XHCI_QEMU.bars[0].size, XHCI_MMIO_BAR_SIZE);
+    assert_eq!(
+        u32::try_from(XHCI_MMIO_BAR_SIZE).expect("xHCI BAR size should fit in u32"),
+        XhciPciDevice::MMIO_BAR_SIZE,
+        "xHCI PCI profile BAR0 size must match XhciPciDevice::MMIO_BAR_SIZE"
+    );
 
     let cfg = USB_XHCI_QEMU.build_config_space();
     assert_eq!(

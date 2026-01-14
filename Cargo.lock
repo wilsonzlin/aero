@@ -1812,6 +1812,7 @@ dependencies = [
  "aero-devices-input",
  "aero-io-snapshot",
  "aero-platform",
+ "aero-protocol",
  "aero-snapshot",
  "memory",
  "serde_json",

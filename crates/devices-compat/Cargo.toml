@@ -16,6 +16,7 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-platform = { path = "../platform" }
+aero-protocol = { path = "../../emulator/protocol" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 memory = { path = "../memory" }
 serde_json = "1"
