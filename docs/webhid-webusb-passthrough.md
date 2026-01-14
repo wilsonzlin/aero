@@ -353,8 +353,9 @@ The guest-visible device is modeled as:
 
 - A guest-visible USB host controller:
   - **UHCI** (USB 1.1, default path), or
-  - **xHCI/EHCI** when the deployed WASM build exports the required controller bridge and passthrough
-    hooks.
+  - **xHCI** when the deployed WASM build exports the xHCI topology APIs and the I/O worker enables
+    the xHCI-backed topology manager (it prefers xHCI when available and falls back to UHCI
+    otherwise; see `web/src/workers/io_hid_topology_mux.ts`).
 - A **root hub** with one or more root ports (controller-dependent).
 - (optional) **external USB hub device** (USB class `0x09`) attached behind a root port to
   provide additional downstream ports
