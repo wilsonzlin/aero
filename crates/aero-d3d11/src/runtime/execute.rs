@@ -1447,14 +1447,13 @@ impl D3D11Runtime {
                 matches!(kind, BindingKind::StorageBuffer { read_only: false });
             let writable_storage_texture =
                 matches!(kind, BindingKind::StorageTexture2DWriteOnly { .. });
-            if writable_storage_buffer || writable_storage_texture {
-                if visibility.contains(wgpu::ShaderStages::VERTEX)
-                    && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
-                {
-                    bail!(
-                        "binding @binding({binding}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE"
-                    );
-                }
+            if (writable_storage_buffer || writable_storage_texture)
+                && visibility.contains(wgpu::ShaderStages::VERTEX)
+                && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
+            {
+                bail!(
+                    "binding @binding({binding}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE"
+                );
             }
             // WebGPU does not support writable storage buffers in fragment shaders.
             if writable_storage_buffer && visibility.contains(wgpu::ShaderStages::FRAGMENT) {

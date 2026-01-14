@@ -190,16 +190,15 @@ where
                 binding.kind,
                 crate::BindingKind::UavTexture2DWriteOnly { .. }
             );
-            if writable_storage_buffer || writable_storage_texture {
-                if binding.visibility.contains(wgpu::ShaderStages::VERTEX)
-                    && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
-                {
-                    bail!(
-                        "{shader_kind} binding @group({}) @binding({}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE",
-                        binding.group,
-                        binding.binding
-                    );
-                }
+            if (writable_storage_buffer || writable_storage_texture)
+                && binding.visibility.contains(wgpu::ShaderStages::VERTEX)
+                && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
+            {
+                bail!(
+                    "{shader_kind} binding @group({}) @binding({}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE",
+                    binding.group,
+                    binding.binding
+                );
             }
             // WebGPU does not support writable storage buffers in fragment shaders.
             if writable_storage_buffer && binding.visibility.contains(wgpu::ShaderStages::FRAGMENT)

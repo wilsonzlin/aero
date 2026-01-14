@@ -3324,7 +3324,7 @@ fn decodes_and_translates_float_cmp_mask_and_movc() {
     let module = decode_program(&program).expect("SM4 decode");
     assert!(
         matches!(
-            module.instructions.get(0),
+            module.instructions.first(),
             Some(Sm4Inst::Cmp {
                 ty: CmpType::F32,
                 op: CmpOp::Lt,
