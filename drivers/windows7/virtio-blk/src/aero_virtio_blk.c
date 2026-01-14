@@ -2276,6 +2276,21 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
   }
 
+#ifdef SRB_FUNCTION_RESET_LUN
+  /*
+   * Some StorPort stacks use RESET_LUN (SRB class) rather than RESET_LOGICAL_UNIT.
+   * Treat it as a device reset since this miniport only exposes one LUN.
+   */
+  case SRB_FUNCTION_RESET_LUN:
+    InterlockedIncrement(&devExt->ResetDeviceSrbCount);
+    if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return TRUE;
+    }
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
   case SRB_FUNCTION_RESET_BUS: {
     InterlockedIncrement(&devExt->ResetBusSrbCount);
     if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
