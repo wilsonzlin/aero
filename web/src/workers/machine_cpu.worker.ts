@@ -91,9 +91,7 @@ let vmSnapshotPaused = false;
 let machineBusy = false;
 const machineIdleWaiters: Array<() => void> = [];
 let runLoopWakeResolve: (() => void) | null = null;
-let runLoopWakePromise: Promise<void> = new Promise((resolve) => {
-  runLoopWakeResolve = resolve;
-});
+let runLoopWakePromise: Promise<void> | null = null;
 
 function setMachineBusy(busy: boolean): void {
   machineBusy = busy;
@@ -118,9 +116,17 @@ function wakeRunLoop(): void {
       // ignore
     }
   }
-  runLoopWakePromise = new Promise((next) => {
-    runLoopWakeResolve = next;
+  runLoopWakeResolve = null;
+  runLoopWakePromise = null;
+}
+
+function ensureRunLoopWakePromise(): Promise<void> {
+  const existing = runLoopWakePromise;
+  if (existing) return existing;
+  runLoopWakePromise = new Promise((resolve) => {
+    runLoopWakeResolve = resolve;
   });
+  return runLoopWakePromise;
 }
 
 // Boot disk selection (shared protocol with the legacy IO worker).
@@ -1106,6 +1112,7 @@ async function runLoop(): Promise<void> {
   if (!ring || !st) return;
 
   let nextHeartbeatMs = nowMs();
+  let ringWaitPromise: Promise<unknown> | null = null;
 
   try {
     while (Atomics.load(st, StatusIndex.StopRequested) !== 1) {
@@ -1212,7 +1219,12 @@ async function runLoop(): Promise<void> {
         // The run loop waits primarily on coordinator-issued commands (via the command ring),
         // but snapshot orchestration and input delivery arrive via `postMessage`. Race the ring
         // wait against a lightweight JS wakeup promise so we respond promptly to those messages.
-        await Promise.race([ring.waitForDataAsync(HEARTBEAT_INTERVAL_MS), runLoopWakePromise]);
+        if (!ringWaitPromise) {
+          ringWaitPromise = ring.waitForDataAsync(HEARTBEAT_INTERVAL_MS).finally(() => {
+            ringWaitPromise = null;
+          });
+        }
+        await Promise.race([ringWaitPromise, ensureRunLoopWakePromise()]);
         continue;
       }
 
