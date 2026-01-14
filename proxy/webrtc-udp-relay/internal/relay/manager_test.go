@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/hex"
 	"testing"
 
@@ -148,5 +150,70 @@ func TestSessionManager_CreateSessionWithKey_AllowsDifferentKeys(t *testing.T) {
 	}
 	if got := sm.ActiveSessions(); got != 2 {
 		t.Fatalf("ActiveSessions=%d, want 2", got)
+	}
+}
+
+func TestSessionManager_CreateSession_AvoidsIDCollisionWithKeyedSession(t *testing.T) {
+	oldReader := rand.Reader
+	defer func() { rand.Reader = oldReader }()
+
+	// Force a collision between a keyed session and the first attempt at creating
+	// a random session. The second attempt should succeed with a different ID.
+	buf := make([]byte, 0, 16*3)
+	buf = append(buf, bytes.Repeat([]byte{0x00}, 16)...)
+	buf = append(buf, bytes.Repeat([]byte{0x00}, 16)...)
+	buf = append(buf, bytes.Repeat([]byte{0x01}, 16)...)
+	rand.Reader = bytes.NewReader(buf)
+
+	m := metrics.New()
+	sm := NewSessionManager(config.Config{}, m, nil)
+
+	keyed, err := sm.CreateSessionWithKey("sid_test")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey: %v", err)
+	}
+	t.Cleanup(keyed.Close)
+
+	random, err := sm.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	t.Cleanup(random.Close)
+
+	if keyed.ID() == random.ID() {
+		t.Fatalf("expected unique session IDs; got %q", keyed.ID())
+	}
+}
+
+func TestSessionManager_CreateSessionWithKey_AvoidsIDCollisionWithRandomSession(t *testing.T) {
+	oldReader := rand.Reader
+	defer func() { rand.Reader = oldReader }()
+
+	// Force a collision between an existing random session and the first attempt
+	// at creating a keyed session. The second attempt should succeed with a
+	// different ID.
+	buf := make([]byte, 0, 16*3)
+	buf = append(buf, bytes.Repeat([]byte{0x00}, 16)...)
+	buf = append(buf, bytes.Repeat([]byte{0x00}, 16)...)
+	buf = append(buf, bytes.Repeat([]byte{0x01}, 16)...)
+	rand.Reader = bytes.NewReader(buf)
+
+	m := metrics.New()
+	sm := NewSessionManager(config.Config{}, m, nil)
+
+	random, err := sm.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	t.Cleanup(random.Close)
+
+	keyed, err := sm.CreateSessionWithKey("sid_test")
+	if err != nil {
+		t.Fatalf("CreateSessionWithKey: %v", err)
+	}
+	t.Cleanup(keyed.Close)
+
+	if keyed.ID() == random.ID() {
+		t.Fatalf("expected unique session IDs; got %q", keyed.ID())
 	}
 }

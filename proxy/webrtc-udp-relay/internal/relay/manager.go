@@ -26,6 +26,15 @@ const (
 func randomSessionMapKey(id string) string { return sessionMapKeyRandomPrefix + id }
 func sidSessionMapKey(sid string) string   { return sessionMapKeySIDPrefix + sid }
 
+func (sm *SessionManager) sessionIDInUseLocked(id string) bool {
+	for _, sess := range sm.sessions {
+		if sess.ID() == id {
+			return true
+		}
+	}
+	return false
+}
+
 func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock) *SessionManager {
 	if m == nil {
 		m = metrics.New()
@@ -68,7 +77,7 @@ func (sm *SessionManager) CreateSession() (*Session, error) {
 			sm.mu.Unlock()
 			return nil, ErrTooManySessions
 		}
-		if _, ok := sm.sessions[mapKey]; ok {
+		if sm.sessionIDInUseLocked(id) {
 			// Extremely unlikely (16 bytes of crypto-random entropy). Try again.
 			sm.mu.Unlock()
 			continue
@@ -106,26 +115,36 @@ func (sm *SessionManager) CreateSessionWithKey(key string) (*Session, error) {
 	}
 	mapKey := sidSessionMapKey(key)
 
-	// Allocate a public session identifier for observability/debugging.
-	id, err := newSessionID()
-	if err != nil {
-		return nil, err
+	for attempt := 0; attempt < 3; attempt++ {
+		// Allocate a public session identifier for observability/debugging.
+		id, err := newSessionID()
+		if err != nil {
+			return nil, err
+		}
+
+		sm.mu.Lock()
+		if _, ok := sm.sessions[mapKey]; ok {
+			sm.mu.Unlock()
+			return nil, ErrSessionAlreadyActive
+		}
+		if sm.cfg.MaxSessions > 0 && len(sm.sessions) >= sm.cfg.MaxSessions {
+			sm.metrics.Inc(metrics.DropReasonTooManySessions)
+			sm.mu.Unlock()
+			return nil, ErrTooManySessions
+		}
+		if sm.sessionIDInUseLocked(id) {
+			// Extremely unlikely (16 bytes of crypto-random entropy). Try again.
+			sm.mu.Unlock()
+			continue
+		}
+
+		session := newSession(id, sm.cfg, sm.metrics, sm.clock, func() {
+			sm.deleteSession(mapKey)
+		})
+		sm.sessions[mapKey] = session
+		sm.mu.Unlock()
+		return session, nil
 	}
 
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	if _, ok := sm.sessions[mapKey]; ok {
-		return nil, ErrSessionAlreadyActive
-	}
-	if sm.cfg.MaxSessions > 0 && len(sm.sessions) >= sm.cfg.MaxSessions {
-		sm.metrics.Inc(metrics.DropReasonTooManySessions)
-		return nil, ErrTooManySessions
-	}
-
-	session := newSession(id, sm.cfg, sm.metrics, sm.clock, func() {
-		sm.deleteSession(mapKey)
-	})
-	sm.sessions[mapKey] = session
-	return session, nil
+	return nil, errors.New("failed to allocate unique session id")
 }
