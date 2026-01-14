@@ -447,3 +447,40 @@ legacy compute packets; pixel shaders must use the legacy `shader_stage = PIXEL`
 See `drivers/aerogpu/protocol/aerogpu_cmd.h` for the authoritative definition and which packets
 carry a `reserved0(stage_ex)` field. See `docs/16-d3d10-11-translation.md` for motivation and
 examples.
+
+### 4.4 Append-only packet extensions (size\_bytes-gated)
+
+Some command packets may grow over time without breaking older parsers by using an **append-only**
+extension pattern:
+
+- The packet has a stable prefix layout (a packed C struct) that must never change.
+- New fields are appended **after** the prefix in newer ABI minor versions.
+- `aerogpu_cmd_hdr.size_bytes` indicates how many bytes are present for this packet.
+- Readers must:
+  - validate `size_bytes >= sizeof(prefix)` and that `size_bytes` is 4-byte aligned, and then
+  - decode only the fields they understand, ignoring any trailing bytes they do not.
+
+This is in addition to the “unknown opcode” forward-compat rule: even for a *known* opcode, the
+payload layout may be extended by appending fields.
+
+**Example: `AEROGPU_CMD_BIND_SHADERS`**
+
+The base `struct aerogpu_cmd_bind_shaders` is a stable 24-byte prefix:
+
+```
+hdr (8) + vs (4) + ps (4) + cs (4) + reserved0 (4) = 24 bytes
+```
+
+In newer streams, if `hdr.size_bytes >= 36`, the packet appends **three additional** `u32`
+shader handles:
+
+- `gs` (geometry shader)
+- `hs` (hull shader / tessellation control)
+- `ds` (domain shader / tessellation eval)
+
+For best-effort compatibility with legacy hosts that only understand the 24-byte packet, writers
+may also mirror `gs` into the legacy `reserved0` field, but when present the appended `{gs, hs, ds}`
+handles are authoritative.
+
+See the authoritative comment block above `struct aerogpu_cmd_bind_shaders` in
+`drivers/aerogpu/protocol/aerogpu_cmd.h`.
