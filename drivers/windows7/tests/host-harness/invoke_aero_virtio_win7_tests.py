@@ -1435,6 +1435,7 @@ def _qmp_deterministic_mouse_extra_button_events() -> list[dict[str, object]]:
 class _VirtioInputQmpInjectInfo:
     keyboard_device: Optional[str]
     mouse_device: Optional[str]
+    backend: str
 
 
 def _try_qmp_input_inject_virtio_input_events(
@@ -1577,7 +1578,11 @@ def _try_qmp_input_inject_virtio_input_events(
                     mouse_device = send(s, [evt], device=mouse_device)
                     time.sleep(0.05)
 
-            return _VirtioInputQmpInjectInfo(keyboard_device=kbd_device, mouse_device=mouse_device)
+            return _VirtioInputQmpInjectInfo(
+                keyboard_device=kbd_device,
+                mouse_device=mouse_device,
+                backend="qmp_input_send_event",
+            )
         except _QmpCommandError as e:
             # Backcompat: older QEMU builds lack `input-send-event`.
             if not _qmp_error_is_command_not_found(e, command="input-send-event"):
@@ -1608,13 +1613,18 @@ def _try_qmp_input_inject_virtio_input_events(
             _qmp_send_command(s, _qmp_human_monitor_command(command_line="mouse_button 0"))
 
             # Fallback paths are broadcast-only.
-            return _VirtioInputQmpInjectInfo(keyboard_device=None, mouse_device=None)
+            return _VirtioInputQmpInjectInfo(
+                keyboard_device=None,
+                mouse_device=None,
+                backend="hmp_fallback",
+            )
 
 
 @dataclass(frozen=True)
 class _VirtioInputMediaKeysQmpInjectInfo:
     keyboard_device: Optional[str]
     qcode: str
+    backend: str
 
 
 def _try_qmp_input_inject_virtio_input_media_keys(
@@ -1635,6 +1645,8 @@ def _try_qmp_input_inject_virtio_input_media_keys(
             _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=device))
             return device
         except Exception as e_with_device:
+            if _qmp_error_is_command_not_found(e_with_device, command="input-send-event"):
+                raise
             try:
                 _qmp_send_command(sock, _qmp_input_send_event_cmd(events, device=None))
             except Exception as e_without_device:
@@ -1648,20 +1660,51 @@ def _try_qmp_input_inject_virtio_input_media_keys(
             return None
 
     with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        backend = "qmp_input_send_event"
         kbd_device: Optional[str] = _VIRTIO_INPUT_QMP_KEYBOARD_ID
         ev = _qmp_deterministic_keyboard_events(qcode=qcode)
 
-        # Media key: press + release.
-        kbd_device = send(s, [ev[0]], device=kbd_device)
-        time.sleep(0.05)
-        kbd_device = send(s, [ev[1]], device=kbd_device)
+        try:
+            # Preferred path: QMP `input-send-event`.
+            # Media key: press + release.
+            kbd_device = send(s, [ev[0]], device=kbd_device)
+            time.sleep(0.05)
+            kbd_device = send(s, [ev[1]], device=kbd_device)
 
-        return _VirtioInputMediaKeysQmpInjectInfo(keyboard_device=kbd_device, qcode=qcode)
+            return _VirtioInputMediaKeysQmpInjectInfo(
+                keyboard_device=kbd_device,
+                qcode=qcode,
+                backend=backend,
+            )
+        except _QmpCommandError as e:
+            # Backcompat: older QEMU builds lack `input-send-event`.
+            if not _qmp_error_is_command_not_found(e, command="input-send-event"):
+                raise
+
+            backend = "hmp_fallback"
+
+            # Keyboard fallback:
+            # - Prefer QMP `send-key` (qcodes).
+            # - Fall back further to HMP `sendkey` via QMP `human-monitor-command`.
+            try:
+                _qmp_send_command(s, _qmp_send_key_command(qcodes=[qcode], hold_time_ms=50))
+            except _QmpCommandError as e_send_key:
+                if not _qmp_error_is_command_not_found(e_send_key, command="send-key"):
+                    raise
+                _qmp_send_command(s, _qmp_human_monitor_command(command_line=f"sendkey {qcode}"))
+
+            # Fallback paths are broadcast-only.
+            return _VirtioInputMediaKeysQmpInjectInfo(
+                keyboard_device=None,
+                qcode=qcode,
+                backend=backend,
+            )
 
 
 @dataclass(frozen=True)
 class _VirtioInputTabletQmpInjectInfo:
     tablet_device: Optional[str]
+    backend: str
 
 
 def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> _VirtioInputTabletQmpInjectInfo:
@@ -1711,7 +1754,10 @@ def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> 
             # Click up.
             tablet_device = send(s, [ev[5]], device=tablet_device)
 
-            return _VirtioInputTabletQmpInjectInfo(tablet_device=tablet_device)
+            return _VirtioInputTabletQmpInjectInfo(
+                tablet_device=tablet_device,
+                backend="qmp_input_send_event",
+            )
         except _QmpCommandError as e:
             if not _qmp_error_is_command_not_found(e, command="input-send-event"):
                 raise
@@ -5544,6 +5590,7 @@ def main() -> int:
                         _emit_virtio_input_events_inject_host_marker(
                             ok=True,
                             attempt=input_events_inject_attempts,
+                            backend=info.backend,
                             kbd_mode=kbd_mode,
                             mouse_mode=mouse_mode,
                         )
@@ -5579,6 +5626,7 @@ def main() -> int:
                         _emit_virtio_input_media_keys_inject_host_marker(
                             ok=True,
                             attempt=input_media_keys_inject_attempts,
+                            backend=info.backend,
                             kbd_mode=kbd_mode,
                         )
                     except Exception as e:
@@ -5613,6 +5661,7 @@ def main() -> int:
                         _emit_virtio_input_tablet_events_inject_host_marker(
                             ok=True,
                             attempt=input_tablet_events_inject_attempts,
+                            backend=info.backend,
                             tablet_mode=tablet_mode,
                         )
                     except Exception as e:
@@ -7220,15 +7269,16 @@ def _emit_virtio_input_events_inject_host_marker(
     *,
     ok: bool,
     attempt: int,
+    backend: Optional[str] = None,
     kbd_mode: Optional[str] = None,
     mouse_mode: Optional[str] = None,
     reason: Optional[str] = None,
 ) -> None:
     if ok:
-        assert kbd_mode is not None and mouse_mode is not None
+        assert backend is not None and kbd_mode is not None and mouse_mode is not None
         print(
             f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt={attempt}|"
-            f"kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
+            f"backend={backend}|kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
         )
         return
     reason_tok = _sanitize_marker_value(reason or "unknown")
@@ -7242,13 +7292,14 @@ def _emit_virtio_input_media_keys_inject_host_marker(
     *,
     ok: bool,
     attempt: int,
+    backend: Optional[str] = None,
     kbd_mode: Optional[str] = None,
     reason: Optional[str] = None,
 ) -> None:
     if ok:
-        assert kbd_mode is not None
+        assert backend is not None and kbd_mode is not None
         print(
-            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt={attempt}|kbd_mode={kbd_mode}"
+            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt={attempt}|backend={backend}|kbd_mode={kbd_mode}"
         )
         return
     reason_tok = _sanitize_marker_value(reason or "unknown")
@@ -7262,13 +7313,14 @@ def _emit_virtio_input_tablet_events_inject_host_marker(
     *,
     ok: bool,
     attempt: int,
+    backend: Optional[str] = None,
     tablet_mode: Optional[str] = None,
     reason: Optional[str] = None,
 ) -> None:
     if ok:
-        assert tablet_mode is not None
+        assert backend is not None and tablet_mode is not None
         print(
-            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt={attempt}|tablet_mode={tablet_mode}"
+            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt={attempt}|backend={backend}|tablet_mode={tablet_mode}"
         )
         return
     reason_tok = _sanitize_marker_value(reason or "unknown")

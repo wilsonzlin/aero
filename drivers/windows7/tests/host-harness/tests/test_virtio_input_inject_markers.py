@@ -33,11 +33,15 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             h._emit_virtio_input_events_inject_host_marker(
-                ok=True, attempt=3, kbd_mode="device", mouse_mode="broadcast"
+                ok=True,
+                attempt=3,
+                backend="qmp_input_send_event",
+                kbd_mode="device",
+                mouse_mode="broadcast",
             )
         self.assertEqual(
             buf.getvalue().strip(),
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=3|kbd_mode=device|mouse_mode=broadcast",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=3|backend=qmp_input_send_event|kbd_mode=device|mouse_mode=broadcast",
         )
 
     def test_events_inject_fail_sanitizes_reason(self) -> None:
@@ -54,11 +58,16 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
         h = self.harness
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            h._emit_virtio_input_media_keys_inject_host_marker(ok=True, attempt=2, kbd_mode="broadcast")
+            h._emit_virtio_input_media_keys_inject_host_marker(
+                ok=True,
+                attempt=2,
+                backend="qmp_input_send_event",
+                kbd_mode="broadcast",
+            )
         out = buf.getvalue().strip()
         self.assertEqual(
             out,
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=2|kbd_mode=broadcast",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=2|backend=qmp_input_send_event|kbd_mode=broadcast",
         )
         self.assertNotIn("qcode=", out, "media-keys inject marker should not include qcode fields")
 
@@ -76,10 +85,15 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
         h = self.harness
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            h._emit_virtio_input_tablet_events_inject_host_marker(ok=True, attempt=4, tablet_mode="device")
+            h._emit_virtio_input_tablet_events_inject_host_marker(
+                ok=True,
+                attempt=4,
+                backend="qmp_input_send_event",
+                tablet_mode="device",
+            )
         self.assertEqual(
             buf.getvalue().strip(),
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=4|tablet_mode=device",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=4|backend=qmp_input_send_event|tablet_mode=device",
         )
 
     def test_tablet_events_inject_fail_marker_format(self) -> None:
@@ -97,4 +111,3 @@ class VirtioInputInjectMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

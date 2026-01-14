@@ -4242,7 +4242,16 @@ function Invoke-AeroQmpHumanMonitorCommand {
       "command-line" = $CommandLine
     }
   }
-  $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
+  try {
+    $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
+  } catch {
+    $msg = ""
+    try { $msg = [string]$_.Exception.Message } catch { }
+    if (-not [string]::IsNullOrEmpty($msg) -and (Test-AeroQmpCommandNotFound -Message $msg -Command "human-monitor-command")) {
+      throw "FAIL: QMP_HMP_FALLBACK_UNSUPPORTED: QEMU QMP does not support human-monitor-command (required for HMP input fallback)"
+    }
+    throw
+  }
 }
 
 function Invoke-AeroQmpSendKey {
@@ -4299,6 +4308,7 @@ function Try-AeroQmpResizeVirtioBlk {
 
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
   $lastErr = ""
+  $backend = "qmp_input_send_event"
   while ([DateTime]::UtcNow -lt $deadline) {
     $client = $null
     try {
@@ -4536,6 +4546,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
           throw
         }
 
+        $backend = "hmp_fallback"
         $wantWheel = ([bool]$WithWheel) -or $Extended
         if ($wantWheel) {
           throw "QMP input-send-event is required for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra, but this QEMU build does not support it. Upgrade QEMU or omit those flags."
@@ -4607,7 +4618,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
 
       $kbdMode = if ([string]::IsNullOrEmpty($kbdDevice)) { "broadcast" } else { "device" }
       $mouseMode = if ([string]::IsNullOrEmpty($mouseDevice)) { "broadcast" } else { "device" }
-      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=$Attempt|kbd_mode=$kbdMode|mouse_mode=$mouseMode"
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=$Attempt|backend=$backend|kbd_mode=$kbdMode|mouse_mode=$mouseMode"
       return $true
     } catch {
       try { $lastErr = [string]$_.Exception.Message } catch { }
@@ -4629,7 +4640,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
   if (-not [string]::IsNullOrEmpty($lastErr)) {
     $reason = Sanitize-AeroMarkerValue $lastErr
   }
-  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=$Attempt|reason=$reason"
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=$Attempt|backend=$backend|reason=$reason"
   return $false
 }
 
@@ -4646,6 +4657,7 @@ function Try-AeroQmpInjectVirtioInputMediaKeys {
 
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
   $lastErr = ""
+  $backend = "qmp_input_send_event"
   while ([DateTime]::UtcNow -lt $deadline) {
     $client = $null
     try {
@@ -4666,19 +4678,48 @@ function Try-AeroQmpInjectVirtioInputMediaKeys {
 
       $kbdDevice = $script:VirtioInputKeyboardQmpId
 
-      # Media key: press + release.
-      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
-        @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = $Qcode } } }
-      )
+      try {
+        # Preferred path: QMP `input-send-event`.
+        # Media key: press + release.
+        $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+          @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = $Qcode } } }
+        )
 
-      Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 50
 
-      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
-        @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = $Qcode } } }
-      )
+        $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+          @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = $Qcode } } }
+        )
+      } catch {
+        # Backcompat: older QEMU builds lack `input-send-event`.
+        $msg = ""
+        try { $msg = [string]$_.Exception.Message } catch { }
+        if (-not (Test-AeroQmpCommandNotFound -Message $msg -Command "input-send-event")) {
+          throw
+        }
+
+        $backend = "hmp_fallback"
+
+        # Keyboard fallback:
+        # - Prefer QMP `send-key` (qcodes)
+        # - Otherwise HMP `sendkey` via `human-monitor-command`
+        try {
+          Invoke-AeroQmpSendKey -Writer $writer -Reader $reader -Qcodes @($Qcode) -HoldTimeMs 50
+        } catch {
+          $msg2 = ""
+          try { $msg2 = [string]$_.Exception.Message } catch { }
+          if (-not (Test-AeroQmpCommandNotFound -Message $msg2 -Command "send-key")) {
+            throw
+          }
+          Invoke-AeroQmpHumanMonitorCommand -Writer $writer -Reader $reader -CommandLine ("sendkey " + $Qcode)
+        }
+
+        # Legacy fallbacks are broadcast-only.
+        $kbdDevice = $null
+      }
 
       $kbdMode = if ([string]::IsNullOrEmpty($kbdDevice)) { "broadcast" } else { "device" }
-      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=$Attempt|kbd_mode=$kbdMode"
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=$Attempt|backend=$backend|kbd_mode=$kbdMode"
       return $true
     } catch {
       try { $lastErr = [string]$_.Exception.Message } catch { }
@@ -4693,7 +4734,7 @@ function Try-AeroQmpInjectVirtioInputMediaKeys {
   if (-not [string]::IsNullOrEmpty($lastErr)) {
     $reason = Sanitize-AeroMarkerValue $lastErr
   }
-  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=$Attempt|reason=$reason"
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=$Attempt|backend=$backend|reason=$reason"
   return $false
 }
 
@@ -4708,6 +4749,7 @@ function Try-AeroQmpInjectVirtioInputTabletEvents {
 
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
   $lastErr = ""
+  $backend = "qmp_input_send_event"
   while ([DateTime]::UtcNow -lt $deadline) {
     $client = $null
     try {
@@ -4728,38 +4770,58 @@ function Try-AeroQmpInjectVirtioInputTabletEvents {
 
       $tabletDevice = $script:VirtioInputTabletQmpId
 
-      # Deterministic absolute-pointer move + click sequence.
-      #
-      # This must match the guest selftest expectations in aero-virtio-selftest.exe.
-      # Reset move (0,0) to avoid "no-op" repeats.
-      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
-        @{ type = "abs"; data = @{ axis = "x"; value = 0 } },
-        @{ type = "abs"; data = @{ axis = "y"; value = 0 } }
-      )
+      if ($backend -eq "hmp_fallback") {
+        $lastErr = "FAIL: HMP_INPUT_UNSUPPORTED: HMP fallback does not support tablet/absolute-pointer injection (requires QMP input-send-event)"
+        $reason = Sanitize-AeroMarkerValue $lastErr
+        Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=$Attempt|backend=$backend|reason=$reason"
+        return $false
+      }
 
-      Start-Sleep -Milliseconds 50
+      try {
+        # Deterministic absolute-pointer move + click sequence.
+        #
+        # This must match the guest selftest expectations in aero-virtio-selftest.exe.
+        # Reset move (0,0) to avoid "no-op" repeats.
+        $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+          @{ type = "abs"; data = @{ axis = "x"; value = 0 } },
+          @{ type = "abs"; data = @{ axis = "y"; value = 0 } }
+        )
 
-      # Target move.
-      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
-        @{ type = "abs"; data = @{ axis = "x"; value = 10000 } },
-        @{ type = "abs"; data = @{ axis = "y"; value = 20000 } }
-      )
+        Start-Sleep -Milliseconds 50
 
-      Start-Sleep -Milliseconds 50
+        # Target move.
+        $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+          @{ type = "abs"; data = @{ axis = "x"; value = 10000 } },
+          @{ type = "abs"; data = @{ axis = "y"; value = 20000 } }
+        )
 
-      # Left click down/up.
-      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
-        @{ type = "btn"; data = @{ down = $true; button = "left" } }
-      )
+        Start-Sleep -Milliseconds 50
 
-      Start-Sleep -Milliseconds 50
+        # Left click down/up.
+        $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+          @{ type = "btn"; data = @{ down = $true; button = "left" } }
+        )
 
-      $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
-        @{ type = "btn"; data = @{ down = $false; button = "left" } }
-      )
+        Start-Sleep -Milliseconds 50
+
+        $tabletDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $tabletDevice -Events @(
+          @{ type = "btn"; data = @{ down = $false; button = "left" } }
+        )
+      } catch {
+        $msg = ""
+        try { $msg = [string]$_.Exception.Message } catch { }
+        if (Test-AeroQmpCommandNotFound -Message $msg -Command "input-send-event") {
+          $backend = "hmp_fallback"
+          $lastErr = "FAIL: HMP_INPUT_UNSUPPORTED: HMP fallback does not support tablet/absolute-pointer injection (requires QMP input-send-event)"
+          $reason = Sanitize-AeroMarkerValue $lastErr
+          Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=$Attempt|backend=$backend|reason=$reason"
+          return $false
+        }
+        throw
+      }
 
       $tabletMode = if ([string]::IsNullOrEmpty($tabletDevice)) { "broadcast" } else { "device" }
-      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=$Attempt|tablet_mode=$tabletMode"
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=$Attempt|backend=$backend|tablet_mode=$tabletMode"
       return $true
     } catch {
       try { $lastErr = [string]$_.Exception.Message } catch { }
@@ -4774,7 +4836,7 @@ function Try-AeroQmpInjectVirtioInputTabletEvents {
   if (-not [string]::IsNullOrEmpty($lastErr)) {
     $reason = Sanitize-AeroMarkerValue $lastErr
   }
-  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=$Attempt|reason=$reason"
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=$Attempt|backend=$backend|reason=$reason"
   return $false
 }
 
@@ -6518,7 +6580,7 @@ try {
       $scriptExitCode = 1
     }
     "QMP_MEDIA_KEYS_UNSUPPORTED" {
-      Write-Host "FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: failed to inject virtio-input media keys via QMP (ensure QMP is reachable and QEMU supports input-send-event + multimedia qcodes)"
+      Write-Host "FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: failed to inject virtio-input media keys via QMP (ensure QMP is reachable and QEMU supports input-send-event or send-key / human-monitor-command sendkey fallback)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
