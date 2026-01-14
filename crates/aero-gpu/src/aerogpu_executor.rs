@@ -48,6 +48,36 @@ fn align_up_u32(value: u32, alignment: u32) -> Result<u32, ExecutorError> {
         .ok_or_else(|| ExecutorError::Validation("alignment overflow".into()))
 }
 
+fn map_buffer_usage_flags(usage_flags: u32) -> wgpu::BufferUsages {
+    let mut wgpu_usage = wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+
+    // Buffers that can be bound as SRV/UAV/raw/structured are represented as `var<storage>` in WGSL.
+    // wgpu validates that any buffer used in a storage binding was created with
+    // `wgpu::BufferUsages::STORAGE`.
+    let mut needs_storage = (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_STORAGE) != 0;
+
+    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
+        wgpu_usage |= wgpu::BufferUsages::VERTEX;
+        needs_storage = true;
+    }
+    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
+        wgpu_usage |= wgpu::BufferUsages::INDEX;
+        needs_storage = true;
+    }
+
+    // IA buffers may be consumed by compute prepasses (vertex pulling / expansion). WebGPU requires
+    // them to be created with `STORAGE` in order to bind as `var<storage>`.
+    if needs_storage {
+        wgpu_usage |= wgpu::BufferUsages::STORAGE;
+    }
+
+    if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
+        wgpu_usage |= wgpu::BufferUsages::UNIFORM;
+    }
+
+    wgpu_usage
+}
+
 fn is_x8_format(format_raw: u32) -> bool {
     format_raw == pci::AerogpuFormat::B8G8R8X8Unorm as u32
         || format_raw == pci::AerogpuFormat::R8G8B8X8Unorm as u32
@@ -1657,24 +1687,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             })
         };
 
-        let mut wgpu_usage = wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
-        let mut needs_storage = false;
-        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
-            wgpu_usage |= wgpu::BufferUsages::VERTEX;
-            needs_storage = true;
-        }
-        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
-            wgpu_usage |= wgpu::BufferUsages::INDEX;
-            needs_storage = true;
-        }
-        // IA buffers may be consumed by compute prepasses (vertex pulling / expansion). WebGPU
-        // requires them to be created with `STORAGE` in order to bind as `var<storage>`.
-        if needs_storage {
-            wgpu_usage |= wgpu::BufferUsages::STORAGE;
-        }
-        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
-            wgpu_usage |= wgpu::BufferUsages::UNIFORM;
-        }
+        let wgpu_usage = map_buffer_usage_flags(usage_flags);
 
         if let Some(existing) = self.buffers.get_mut(&buffer_handle) {
             if existing.size_bytes != size_bytes || existing.usage_flags != usage_flags {
@@ -4418,6 +4431,16 @@ mod tests {
 
         assert!(!is_x8_format(pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32));
         assert!(!is_x8_format(pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32));
+    }
+
+    #[test]
+    fn map_buffer_usage_flags_includes_storage_for_uav_srv_buffers() {
+        // Raw/structured buffers are translated into `var<storage>` bindings on the host.
+        // wgpu requires buffers used in storage bindings to have STORAGE usage set at creation.
+        let usage = map_buffer_usage_flags(cmd::AEROGPU_RESOURCE_USAGE_STORAGE);
+        assert!(usage.contains(wgpu::BufferUsages::STORAGE));
+        assert!(usage.contains(wgpu::BufferUsages::COPY_DST));
+        assert!(usage.contains(wgpu::BufferUsages::COPY_SRC));
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
