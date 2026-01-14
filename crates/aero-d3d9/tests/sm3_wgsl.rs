@@ -3493,6 +3493,7 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     // - group(0): constants (VERTEX+FRAGMENT)
     // - group(1): VS samplers (VERTEX only)
     // - group(2): PS samplers (FRAGMENT only)
+    // - group(3): optional half-pixel-center adjustment uniform (VERTEX only)
     //
     // This catches regressions where SM3 WGSL sampler declarations drift back to group(0) or use
     // incorrect binding numbering.
@@ -3555,12 +3556,15 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     let vs_decoded = decode_u32_tokens(&vs_tokens).unwrap();
     let vs_ir = build_ir(&vs_decoded).unwrap();
     verify_ir(&vs_ir).unwrap();
-    let vs_out = generate_wgsl(&vs_ir).unwrap();
 
     let ps_decoded = decode_u32_tokens(&ps_tokens).unwrap();
     let ps_ir = build_ir(&ps_decoded).unwrap();
     verify_ir(&ps_ir).unwrap();
     let ps_out = generate_wgsl(&ps_ir).unwrap();
+    let ps_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sm3-wgsl-test.ps"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(ps_out.wgsl.clone())),
+    });
 
     let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sm3-wgsl-test.constants_bgl"),
@@ -3651,53 +3655,34 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         ],
     });
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("sm3-wgsl-test.pipeline_layout"),
-        bind_group_layouts: &[&constants_bgl, &samplers_vs_bgl, &samplers_ps_bgl],
-        push_constant_ranges: &[],
+    let half_pixel_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sm3-wgsl-test.half_pixel_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(16),
+            },
+            count: None,
+        }],
     });
-
-    let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sm3-wgsl-test.vs"),
-        source: wgpu::ShaderSource::Wgsl(Cow::Owned(vs_out.wgsl.clone())),
+    let half_pixel_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sm3-wgsl-test.half_pixel"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
-    let ps_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sm3-wgsl-test.ps"),
-        source: wgpu::ShaderSource::Wgsl(Cow::Owned(ps_out.wgsl.clone())),
+    queue.write_buffer(&half_pixel_buffer, 0, &[0u8; 16]);
+    let half_pixel_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sm3-wgsl-test.half_pixel_bg"),
+        layout: &half_pixel_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: half_pixel_buffer.as_entire_binding(),
+        }],
     });
-
-    // Pipeline creation must validate shader bind groups against the provided pipeline layout.
-    //
-    // Note: wgpu may return a dummy pipeline object and report validation errors via the device's
-    // error callback, so use an error scope to make failures visible to the test harness.
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sm3-wgsl-test.pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &vs_module,
-            entry_point: vs_out.entry_point,
-            buffers: &[],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &ps_module,
-            entry_point: ps_out.entry_point,
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-    });
-    device.poll(wgpu::Maintain::Poll);
-    let err = pollster::block_on(device.pop_error_scope());
-    assert!(err.is_none(), "wgpu validation error: {err:?}");
 
     // Also run a tiny draw that binds all expected bind groups. This catches cases where wgpu
     // defers certain binding/layout validation until draw/submit.
@@ -3829,35 +3814,108 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     });
     let render_view = render_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("sm3-wgsl-test.encoder"),
-    });
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("sm3-wgsl-test.pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &render_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
+    for half_pixel_center in [false, true] {
+        // Re-generate the VS WGSL per-case so we exercise both the default path and
+        // `WgslOptions::half_pixel_center` in the context of the executor's pipeline layout.
+        let vs_out = generate_wgsl_with_options(&vs_ir, WgslOptions { half_pixel_center }).unwrap();
+
+        let pipeline_layout = if half_pixel_center {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("sm3-wgsl-test.pipeline_layout"),
+                bind_group_layouts: &[
+                    &constants_bgl,
+                    &samplers_vs_bgl,
+                    &samplers_ps_bgl,
+                    &half_pixel_bgl,
+                ],
+                push_constant_ranges: &[],
+            })
+        } else {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("sm3-wgsl-test.pipeline_layout"),
+                bind_group_layouts: &[&constants_bgl, &samplers_vs_bgl, &samplers_ps_bgl],
+                push_constant_ranges: &[],
+            })
+        };
+
+        let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sm3-wgsl-test.vs"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(vs_out.wgsl.clone())),
         });
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &constants_bg, &[]);
-        pass.set_bind_group(1, &samplers_vs_bg, &[]);
-        pass.set_bind_group(2, &samplers_ps_bg, &[]);
-        pass.draw(0..3, 0..1);
+
+        // Pipeline creation must validate shader bind groups against the provided pipeline layout.
+        //
+        // Note: wgpu may return a dummy pipeline object and report validation errors via the
+        // device's error callback, so use an error scope to make failures visible to the test
+        // harness.
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sm3-wgsl-test.pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &vs_module,
+                entry_point: vs_out.entry_point,
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &ps_module,
+                entry_point: ps_out.entry_point,
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+        device.poll(wgpu::Maintain::Poll);
+        let err = pollster::block_on(device.pop_error_scope());
+        assert!(
+            err.is_none(),
+            "wgpu validation error (pipeline, half_pixel_center={half_pixel_center}): {err:?}"
+        );
+
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("sm3-wgsl-test.encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sm3-wgsl-test.pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &render_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &constants_bg, &[]);
+            pass.set_bind_group(1, &samplers_vs_bg, &[]);
+            pass.set_bind_group(2, &samplers_ps_bg, &[]);
+            if half_pixel_center {
+                pass.set_bind_group(3, &half_pixel_bg, &[]);
+            }
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit(Some(encoder.finish()));
+        device.poll(wgpu::Maintain::Poll);
+        let err = pollster::block_on(device.pop_error_scope());
+        assert!(
+            err.is_none(),
+            "wgpu validation error (draw, half_pixel_center={half_pixel_center}): {err:?}"
+        );
     }
-    queue.submit(Some(encoder.finish()));
-    device.poll(wgpu::Maintain::Poll);
-    let err = pollster::block_on(device.pop_error_scope());
-    assert!(err.is_none(), "wgpu validation error (draw): {err:?}");
 }
 
 #[test]
