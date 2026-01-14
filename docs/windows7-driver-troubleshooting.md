@@ -472,7 +472,13 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 4. Re-run `setup.cmd` as Administrator (so the virtio-input driver package is staged).
 5. Verify the virtio-input PCI device matches the Aero Win7 virtio contract v1 identity:
    - In Device Manager → the virtio-input PCI device → Properties → Details → **Hardware Ids**
-   - The list should include `PCI\VEN_1AF4&DEV_1052&REV_01` (and possibly `...&SUBSYS_...&REV_01`).
+   - The list should include a **SUBSYS-qualified** contract v1 ID (keyboard or mouse), for example:
+     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` *(keyboard)*, or
+     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` *(mouse)*
+   - Windows will also show less-specific variants such as `PCI\VEN_1AF4&DEV_1052&REV_01`.
+     - Note: the canonical in-tree keyboard/mouse INF (`aero_virtio_input.inf`) is **SUBSYS-gated only**.
+       If your device does not expose the Aero subsystem IDs, enable the optional legacy alias INF
+       (`virtio-input.inf.disabled` → `virtio-input.inf`) to provide the strict generic fallback match.
    - If the device reports `REV_00`, the in-tree Aero `aero_virtio_input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
