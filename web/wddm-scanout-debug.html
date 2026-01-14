@@ -73,7 +73,8 @@
         <p>
           Expected: quadrants are <strong>red</strong>/<strong>green</strong>/<strong>blue</strong>/<strong>white</strong>
           with a small marker square at top-left. When <em>Source=WDDM</em> and <em>X byte=0x00</em>, the output should
-          still be fully opaque (no checkered background bleeding through).
+          still be fully opaque. If the XRGB/BGRX alpha-forcing policy regresses, the checkered background will bleed
+          through (pixels become transparent).
         </p>
         <div id="controls">
           <label>
