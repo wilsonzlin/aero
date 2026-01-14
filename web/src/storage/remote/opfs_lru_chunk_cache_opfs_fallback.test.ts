@@ -8,12 +8,11 @@ let hadNavigatorStorage = false;
 
 afterEach(() => {
   // Restore `navigator.storage` after OPFS mock tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nav = globalThis.navigator as any;
+  const nav = globalThis.navigator as unknown as { storage?: unknown };
   if (hadNavigatorStorage) {
     nav.storage = realNavigatorStorage;
   } else {
-    delete nav.storage;
+    Reflect.deleteProperty(nav, "storage");
   }
   realNavigatorStorage = undefined;
   hadNavigatorStorage = false;
@@ -21,8 +20,7 @@ afterEach(() => {
 
 describe("OpfsLruChunkCache OPFS createWritable fallback", () => {
   it("truncates index.json when createWritable options are unsupported", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = globalThis.navigator as any;
+    const nav = globalThis.navigator as unknown as { storage?: unknown };
     realNavigatorStorage = nav.storage;
     hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
 
@@ -38,13 +36,12 @@ describe("OpfsLruChunkCache OPFS createWritable fallback", () => {
     const originalCreateWritable = MemFileSystemFileHandle.prototype.createWritable;
     (MemFileSystemFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = async function (
       this: MemFileSystemFileHandle,
-      ...args: any[]
+      ...args: Parameters<typeof originalCreateWritable>
     ) {
       if (this.name === "index.json" && args.length > 0) {
         throw new Error("synthetic createWritable options not supported");
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await (originalCreateWritable as any).call(this, ...args);
+      return await originalCreateWritable.call(this, ...args);
     };
 
     try {
@@ -60,4 +57,3 @@ describe("OpfsLruChunkCache OPFS createWritable fallback", () => {
     expect(parsed.chunks?.["1"]?.byteLength).toBe(4);
   });
 });
-

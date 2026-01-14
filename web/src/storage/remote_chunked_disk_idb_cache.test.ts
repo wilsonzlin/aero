@@ -62,17 +62,18 @@ function installQuotaExceededOnRemoteChunksPut(
           putCalls.count += 1;
 
           const req: { error: unknown; onerror: null | (() => void) } = { error: null, onerror: null };
-          (tx as any).requestStarted?.();
+          const txHooks = tx as unknown as { requestStarted?: () => void; requestFinished?: () => void; error?: unknown };
+          txHooks.requestStarted?.();
           queueMicrotask(() => {
             const err = new DOMException("quota exceeded", opts.errorName ?? "QuotaExceededError");
             req.error = err;
-            (tx as any).error = err;
+            txHooks.error = err;
             try {
               req.onerror?.();
             } finally {
               tx.onerror?.();
               tx.onabort?.();
-              (tx as any).requestFinished?.();
+              txHooks.requestFinished?.();
             }
           });
           return req;

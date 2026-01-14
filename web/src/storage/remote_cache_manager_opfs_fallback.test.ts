@@ -9,12 +9,11 @@ let hadNavigatorStorage = false;
 
 afterEach(() => {
   // Restore `navigator.storage` after OPFS mock tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nav = globalThis.navigator as any;
+  const nav = globalThis.navigator as unknown as { storage?: unknown };
   if (hadNavigatorStorage) {
     nav.storage = realNavigatorStorage;
   } else {
-    delete nav.storage;
+    Reflect.deleteProperty(nav, "storage");
   }
   realNavigatorStorage = undefined;
   hadNavigatorStorage = false;
@@ -22,8 +21,7 @@ afterEach(() => {
 
 describe("RemoteCacheManager OPFS createWritable fallback", () => {
   it("truncates meta.json when createWritable options are unsupported", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = globalThis.navigator as any;
+    const nav = globalThis.navigator as unknown as { storage?: unknown };
     realNavigatorStorage = nav.storage;
     hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
 
@@ -63,13 +61,12 @@ describe("RemoteCacheManager OPFS createWritable fallback", () => {
     const originalCreateWritable = MemFileSystemFileHandle.prototype.createWritable;
     (MemFileSystemFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = async function (
       this: MemFileSystemFileHandle,
-      ...args: any[]
+      ...args: Parameters<typeof originalCreateWritable>
     ) {
       if (this.name === "meta.json" && args.length > 0) {
         throw new Error("synthetic createWritable options not supported");
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await (originalCreateWritable as any).call(this, ...args);
+      return await originalCreateWritable.call(this, ...args);
     };
 
     try {
@@ -84,4 +81,3 @@ describe("RemoteCacheManager OPFS createWritable fallback", () => {
     expect(text).toBe(JSON.stringify(metaShort, null, 2));
   });
 });
-
