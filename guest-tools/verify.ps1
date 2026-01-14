@@ -1969,8 +1969,26 @@ try {
     $report.media_integrity = $mediaIntegrity
     Add-Check "guest_tools_manifest" "Guest Tools Media Integrity (manifest.json)" $mStatus $mSummary $mediaIntegrity $mDetails
 } catch {
+    # Best-effort: preserve the same manifest discovery behavior even when the integrity check throws.
+    $localManifest = Join-Path $scriptDir "manifest.json"
+    $parentRoot = $null
+    try { $parentRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..")) } catch { $parentRoot = $null }
+    $parentManifest = $null
+    if ($parentRoot) { $parentManifest = Join-Path $parentRoot "manifest.json" }
+
+    $manifestPath = $localManifest
+    $mediaRoot = $scriptDir
+    if (Test-Path $localManifest) {
+        $manifestPath = $localManifest
+        $mediaRoot = $scriptDir
+    } elseif ($parentManifest -and (Test-Path $parentManifest)) {
+        $manifestPath = $parentManifest
+        $mediaRoot = $parentRoot
+    }
+
     $report.media_integrity = @{
-        manifest_path = (Join-Path $scriptDir "manifest.json")
+        manifest_path = $manifestPath
+        media_root = $mediaRoot
         error = $_.Exception.Message
     }
     Add-Check "guest_tools_manifest" "Guest Tools Media Integrity (manifest.json)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
