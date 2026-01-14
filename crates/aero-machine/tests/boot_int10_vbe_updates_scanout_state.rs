@@ -409,13 +409,22 @@ fn boot_sector_int10_vbe_scanline_bytes_and_display_start_update_scanout_state()
     run_until_halt(&mut m);
 
     let snap = scanout_state.snapshot();
+    let bytes_per_pixel = 4u64;
+    // The BIOS rounds the requested scanline length up to whole pixels (4 bytes per pixel).
+    let effective_bytes_per_scan_line =
+        u64::from(bytes_per_scan_line).div_ceil(bytes_per_pixel) * bytes_per_pixel;
+    // Scanout pitch is clamped to at least the mode's natural pitch (1024*4) by the BIOS.
+    let expected_pitch = effective_bytes_per_scan_line.max(1024u64 * bytes_per_pixel);
+
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
     assert_eq!(
         snap.base_paddr(),
-        m.vbe_lfb_base() + u64::from(y_off) * u64::from(bytes_per_scan_line) + 4
+        m.vbe_lfb_base()
+            + u64::from(y_off) * expected_pitch
+            + u64::from(x_off) * bytes_per_pixel
     );
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);
-    assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap.pitch_bytes, expected_pitch as u32);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }

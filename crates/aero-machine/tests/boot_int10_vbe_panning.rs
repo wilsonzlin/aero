@@ -62,8 +62,9 @@ fn build_vbe_mode_118_with_stride_and_display_start_boot_sector(
 
 #[test]
 fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
-    // Pick an odd scanline length so `bytes_per_scan_line` is not representable as
-    // `virt_width * bytes_per_pixel` (Bochs VBE_DISPI only supports pixel-granular strides).
+    // Pick a scanline length that differs from the mode's default pitch (1024*4) so we can
+    // observe that the scanout path respects `INT 10h AX=4F06` rather than assuming a tightly
+    // packed `width * bytes_per_pixel` stride.
     let bytes_per_scan_line = 4101u16;
     let x_off = 1u16;
     let y_off = 4u16; // ensure stride mismatch changes base by >=4 bytes (no overlap between pixels)
@@ -94,15 +95,18 @@ fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     let bytes_per_pixel = 4u64;
     let base = m.vbe_lfb_base();
 
+    // The BIOS rounds the requested scanline length up to whole pixels (4 bytes per pixel).
+    let effective_bytes_per_scan_line =
+        u64::from(bytes_per_scan_line).div_ceil(bytes_per_pixel) * bytes_per_pixel;
+
     // Correct mapping per VBE contract:
     //   base = lfb_base + y_off * bytes_per_scan_line + x_off * bytes_per_pixel
-    let correct_off =
-        u64::from(y_off) * u64::from(bytes_per_scan_line) + u64::from(x_off) * bytes_per_pixel;
+    let correct_off = u64::from(y_off) * effective_bytes_per_scan_line
+        + u64::from(x_off) * bytes_per_pixel;
 
-    // Legacy/incorrect mapping if the scanout path uses `virt_width` (pixels) instead of the exact
-    // byte stride. The BIOS derives `logical_width_pixels = bytes / bytes_per_pixel` (floor).
-    let virt_width_pixels = u64::from(bytes_per_scan_line) / bytes_per_pixel;
-    let wrong_stride_bytes = virt_width_pixels * bytes_per_pixel;
+    // Incorrect mapping if the scanout path ignores the logical scanline override and assumes the
+    // mode's default pitch (1024*4).
+    let wrong_stride_bytes = 1024u64 * bytes_per_pixel;
     let wrong_off = u64::from(y_off) * wrong_stride_bytes + u64::from(x_off) * bytes_per_pixel;
 
     assert!(

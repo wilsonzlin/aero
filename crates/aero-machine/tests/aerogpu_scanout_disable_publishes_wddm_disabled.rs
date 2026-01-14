@@ -73,7 +73,8 @@ fn build_vbe_mode_118_with_stride_and_display_start_boot_sector(
 
 #[test]
 fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_and_stride() {
-    // Use an odd stride so it is not representable via Bochs VBE_DISPI `virt_width`.
+    // Use a scanline length that differs from the mode's default pitch (1024*4) so we can observe
+    // that the BIOS publishes a legacy scanout descriptor that reflects `INT 10h AX=4F06`.
     let bytes_per_scan_line = 4101u16;
     let x_off = 1u16;
     let y_off = 4u16;
@@ -102,13 +103,18 @@ fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_
 
     // The BIOS should have published a legacy VBE scanout descriptor that includes the display start
     // offsets and byte-granular pitch.
-    let expected_legacy_base =
-        m.vbe_lfb_base() + u64::from(y_off) * u64::from(bytes_per_scan_line) + u64::from(x_off) * 4;
+    let bytes_per_pixel = 4u64;
+    let effective_bytes_per_scan_line =
+        u64::from(bytes_per_scan_line).div_ceil(bytes_per_pixel) * bytes_per_pixel;
+    let expected_pitch = effective_bytes_per_scan_line.max(1024u64 * bytes_per_pixel);
+    let expected_legacy_base = m.vbe_lfb_base()
+        + u64::from(y_off) * expected_pitch
+        + u64::from(x_off) * bytes_per_pixel;
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);
-    assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap.pitch_bytes, expected_pitch as u32);
     assert_eq!(snap.base_paddr(), expected_legacy_base);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 
