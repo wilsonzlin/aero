@@ -60,6 +60,9 @@ Environment:
   AERO_REQUIRE_WEBGPU   If unset, defaults to 0 (to keep CI/dev behavior consistent).
   AERO_WASM_CRATE_DIR   Default wasm-pack crate directory (same as --wasm-crate-dir).
   AERO_NODE_DIR         Default Node workspace directory (same as --node-dir).
+  AERO_ISOLATE_CARGO_HOME
+                        If set, isolate Cargo state to `./.cargo-home` (or a custom dir) to avoid
+                        \"Blocking waiting for file lock on package cache\" on shared hosts.
 
 Examples:
   cargo xtask test-all
