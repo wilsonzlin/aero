@@ -27,13 +27,13 @@
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "Optional JSON Schema reference for editor tooling (example: \"../../ci/driver-package.schema.json\"). CI ignores this field. Update the relative path as needed if your driver directory is nested (for example, drivers/windows7/<driver>/...).",
+      "description": "Optional JSON Schema reference for editor tooling (example: \"../../ci/driver-package.schema.json\"). CI ignores this field (beyond validating it is a non-empty string). Update the relative path as needed if your driver directory is nested (for example, drivers/windows7/<driver>/...).",
       "minLength": 1,
       "pattern": "\\S"
     },
     "infFiles": {
       "type": "array",
-      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots) and must not contain '..' segments. CI additionally validates that each path exists and has a .inf extension. CI stages selected INFs into the package root by file name; ensure INF file names are unique within the driver.",
+      "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together. If present, the list must be non-empty. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots) and must not contain '..' segments. CI additionally validates that each path exists and has a .inf extension. CI trims whitespace and rejects duplicate entries case-insensitively (treating '/' and '\\\\' path separators as equivalent). CI stages selected INFs into the package root by file name; ensure INF file names are unique within the driver.",
       "minItems": 1,
       "items": {
         "allOf": [
@@ -45,7 +45,7 @@
     },
     "wow64Files": {
       "type": "array",
-      "description": "Optional list of WOW64 payload files to copy from the x86 build output into the x64 staged package directory *before* stamping INFs and running Inf2Cat. Entries must be .dll file names only (no path separators). Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs). Requires x86 build outputs to be present even when generating/staging x64 packages. WOW64 payloads are copied into the x64 package root; ensure file names do not collide with 64-bit build outputs (use distinct names such as a '_x64' suffix).",
+      "description": "Optional list of WOW64 payload files to copy from the x86 build output into the x64 staged package directory *before* stamping INFs and running Inf2Cat. Entries must be .dll file names only (no path separators). Intended for x64 driver packages that also need 32-bit user-mode components (WOW64 UMD DLLs). Requires x86 build outputs to be present even when generating/staging x64 packages. CI trims whitespace and rejects duplicate entries case-insensitively. WOW64 payloads are copied into the x64 package root; ensure file names do not collide with 64-bit build outputs (use distinct names such as a '_x64' suffix).",
       "items": {
         "type": "string",
         "minLength": 1,
@@ -55,7 +55,7 @@
     },
     "requiredBuildOutputFiles": {
       "type": "array",
-      "description": "Optional list of additional files (paths relative to the per-arch build output directory under out/drivers/<driver>/<arch>/) that must exist after building. CI will fail packaging if any listed path is missing. Intended for auxiliary build products that should ship alongside the driver (for example, in-guest debug utilities such as aerogpu_dbgctl.exe). Paths must be relative (no absolute paths / drive letters / UNC roots) and must not contain '..' segments.",
+      "description": "Optional list of additional files (paths relative to the per-arch build output directory under out/drivers/<driver>/<arch>/) that must exist after building. CI will fail packaging if any listed path is missing. Intended for auxiliary build products that should ship alongside the driver (for example, in-guest debug utilities such as aerogpu_dbgctl.exe). Paths must be relative (no absolute paths / drive letters / UNC roots) and must not contain '..' segments. CI trims whitespace and rejects duplicate entries case-insensitively (treating '/' and '\\\\' path separators as equivalent).",
       "items": {
         "$ref": "#/$defs/driverRelativePath"
       },
@@ -63,7 +63,7 @@
     },
     "additionalFiles": {
       "type": "array",
-      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab) and refuses likely secret/private key material (for example: .pfx, .pvk, .snk, .pem, .key). CI additionally validates that each path exists.",
+      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab); use toolFiles for .exe. CI also refuses likely secret/private key material (for example: .pfx, .pvk, .snk, .pem, .key). CI trims whitespace and rejects duplicate entries case-insensitively (treating '/' and '\\\\' path separators as equivalent). CI additionally validates that each path exists.",
       "items": {
         "allOf": [
           { "$ref": "#/$defs/driverRelativePath" },
@@ -85,7 +85,7 @@
     },
     "toolFiles": {
       "type": "array",
-      "description": "Optional list of user-mode helper tool binaries (paths relative to the driver directory) to include in the staged driver package. This is the explicit opt-in mechanism for shipping .exe tools alongside the driver package without relaxing the additionalFiles non-binary policy. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory.",
+      "description": "Optional list of user-mode helper tool binaries (paths relative to the driver directory) to include in the staged driver package. This is the explicit opt-in mechanism for shipping .exe tools alongside the driver package without relaxing the additionalFiles non-binary policy. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory. CI trims whitespace and rejects duplicate entries case-insensitively (treating '/' and '\\\\' path separators as equivalent). CI additionally validates that each path exists.",
       "items": {
         "allOf": [
           { "$ref": "#/$defs/driverRelativePath" },
