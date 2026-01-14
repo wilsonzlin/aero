@@ -445,3 +445,35 @@ fn uhci_qh_element_list_exact_budget_limit_nak_does_not_fault() {
     assert_eq!(sts & (regs::USBSTS_USBERRINT | regs::USBSTS_HSE), 0);
     assert!(!ctrl.irq_level());
 }
+
+#[test]
+fn uhci_schedule_link_exact_budget_limit_termination_does_not_fault() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x20000);
+
+    // This matches the internal `MAX_SCHEDULE_LINKS_PER_FRAME` constant in `uhci/schedule.rs`.
+    const SCHEDULE_LINK_BUDGET: usize = 4096;
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, QH_ADDR | LINK_PTR_Q);
+
+    for i in 0..(SCHEDULE_LINK_BUDGET as u32) {
+        let qh = QH_ADDR + i * 0x10;
+        let next = if i + 1 < SCHEDULE_LINK_BUDGET as u32 {
+            (QH_ADDR + (i + 1) * 0x10) | LINK_PTR_Q
+        } else {
+            LINK_PTR_T
+        };
+        mem.write_u32(qh, next);
+        mem.write_u32(qh + 4, LINK_PTR_T);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_eq!(sts & (regs::USBSTS_USBERRINT | regs::USBSTS_HSE), 0);
+    assert!(!ctrl.irq_level());
+}

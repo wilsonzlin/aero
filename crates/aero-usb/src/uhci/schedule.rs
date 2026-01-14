@@ -105,7 +105,11 @@ fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: 
     }
 
     // Schedule traversal budget exceeded.
-    *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+    // If the schedule naturally terminated exactly at the budget boundary, treat that as success;
+    // otherwise surface a schedule fault so `tick_1ms()` stays bounded.
+    if !link.terminated() {
+        *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+    }
 }
 
 #[cfg(test)]
