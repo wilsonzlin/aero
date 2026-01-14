@@ -9,6 +9,9 @@ Currently:
     - `WriteFile` (`IOCTL_HID_WRITE_REPORT`)
     - `HidD_SetOutputReport` (`IOCTL_HID_SET_OUTPUT_REPORT`)
     - `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` (explicit IOCTL path)
+  - In diagnostics (DBG) driver builds, can get/set the driver's DiagnosticsMask at runtime via:
+    - `DeviceIoControl(IOCTL_VIOINPUT_GET_LOG_MASK)` / `DeviceIoControl(IOCTL_VIOINPUT_SET_LOG_MASK)`
+    - `hidtest.exe --get-log-mask` / `hidtest.exe --set-log-mask 0x...`
   - Includes optional probes for `IOCTL_VIOINPUT_QUERY_COUNTERS` / `IOCTL_VIOINPUT_QUERY_STATE` using short output
     buffers (verifies that the driver returns `STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` for
     version negotiation).
