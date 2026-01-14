@@ -321,7 +321,7 @@ def main() -> int:
                 _require(
                     body,
                     "AeroGpuBuildAndAttachMeta cap check",
-                    r"AllocationCount\s*>\s*AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT",
+                    r"AllocationCount\s*>=?\s*AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT",
                 ),
                 _require(
                     body,
@@ -389,7 +389,7 @@ def main() -> int:
                 _require(
                     body,
                     "AeroGpuDdiSubmitCommand cap check",
-                    r"allocCount\s*>\s*AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT",
+                    r"allocCount\s*>=?\s*AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT",
                 ),
                 _require(
                     body,
@@ -419,7 +419,7 @@ def main() -> int:
                 _require(
                     body,
                     "AeroGpuBuildAllocTable cap check",
-                    r"Count\s*>\s*AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT",
+                    r"Count\s*>=?\s*AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT",
                 ),
                 _require(
                     body,
