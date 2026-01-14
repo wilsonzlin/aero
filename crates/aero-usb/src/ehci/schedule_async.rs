@@ -415,6 +415,11 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
                             }
                         }
                     }
+                    // If we exhausted our per-qTD packet budget, yield and leave the qTD active so
+                    // it can continue next tick.
+                    if remaining > 0 && packets >= MAX_PACKETS_PER_QTD && error_bits == 0 && !nak {
+                        nak = true;
+                    }
                 }
             }
             QTD_PID_IN => {
@@ -465,6 +470,16 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
                             }
                         }
                     }
+                    // If we exhausted our per-qTD packet budget without encountering a device NAK,
+                    // yield and leave the qTD active so it can continue next tick.
+                    if remaining > 0
+                        && packets >= MAX_PACKETS_PER_QTD
+                        && error_bits == 0
+                        && !nak
+                        && !short_packet
+                    {
+                        nak = true;
+                    }
                 }
             }
             _ => {
@@ -502,7 +517,7 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
         if nak {
             // Keep the qTD active (so the guest retries). The cursor and TotalBytes have already
             // been updated for any progress that occurred before the NAK.
-            write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token);
+            write_back_qh_overlay_token(ctx.mem, qh_addr, token);
             break;
         }
 
@@ -563,6 +578,10 @@ fn write_back_current_qtd_token<M: MemoryBus + ?Sized>(
     token: u32,
 ) {
     mem.write_u32(cur_qtd.wrapping_add(QTD_TOKEN) as u64, token);
+    write_back_qh_overlay_token(mem, qh_addr, token);
+}
+
+fn write_back_qh_overlay_token<M: MemoryBus + ?Sized>(mem: &mut M, qh_addr: u32, token: u32) {
     mem.write_u32(qh_addr.wrapping_add(QH_TOKEN) as u64, token);
 }
 

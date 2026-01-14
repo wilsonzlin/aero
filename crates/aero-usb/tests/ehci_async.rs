@@ -729,8 +729,15 @@ fn ehci_async_partial_progress_then_nak_updates_total_bytes_and_retries() {
     assert_ne!(tok & QTD_STS_ACTIVE, 0, "NAK should leave qTD active");
     assert_eq!(
         (tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
+        8,
+        "qTD token should not be written back while still active"
+    );
+    let overlay_tok = mem.read_u32(qh_addr + QH_TOKEN);
+    assert_ne!(overlay_tok & QTD_STS_ACTIVE, 0, "overlay should remain active");
+    assert_eq!(
+        (overlay_tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
         4,
-        "partial progress should update remaining bytes"
+        "partial progress should update remaining bytes in the QH overlay"
     );
 
     let mut got = [0u8; 4];
