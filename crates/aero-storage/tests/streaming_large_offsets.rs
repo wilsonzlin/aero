@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage::{StreamingCacheBackend, StreamingDisk, StreamingDiskConfig};
-use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, RANGE};
+use hyper::header::{ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, ETAG, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
@@ -126,6 +126,8 @@ async fn handle_request(
     let end_inclusive = end_exclusive - 1;
     let mut resp = Response::new(Body::from(buf));
     *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
+    resp.headers_mut()
+        .insert(CACHE_CONTROL, "no-transform".parse().unwrap());
     resp.headers_mut().insert(
         CONTENT_LENGTH,
         (end_exclusive - start).to_string().parse().unwrap(),
