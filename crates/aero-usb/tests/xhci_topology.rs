@@ -74,6 +74,70 @@ fn xhci_route_string_binds_device_behind_external_hub() {
 }
 
 #[test]
+fn xhci_route_string_binds_device_behind_nested_hubs() {
+    let mut ctrl = XhciController::new();
+    let mut mem = TestMemory::new(0x4000);
+
+    // Enable Slot requires DCBAAP to be configured.
+    ctrl.set_dcbaap(0x1000);
+
+    let keyboard = UsbHidKeyboardHandle::new();
+
+    // Build a 2-tier hub topology:
+    // root port 1 -> hub1 port 5 -> hub2 port 3 -> keyboard
+    let mut hub2 = UsbHubDevice::new();
+    hub2.attach(3, Box::new(keyboard.clone()));
+
+    // Default hubs only have 4 ports; allocate enough ports to use port 5.
+    let mut hub1 = UsbHubDevice::with_port_count(8);
+    hub1.attach(5, Box::new(hub2));
+    ctrl.attach_device(0, Box::new(hub1));
+
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+    let slot_id = completion.slot_id;
+    assert_ne!(slot_id, 0);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+
+    // Route String:
+    // - hub1 port = 5
+    // - hub2 port = 3
+    //
+    // Bits 3:0 are the port closest to the device, so the route encodes as hex digits "53"
+    // (root→device). Reference: xHCI 1.2 §6.2.2 "Slot Context" (Route String field).
+    slot_ctx.set_route_string(0x53);
+
+    let completion = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+
+    let dev = ctrl
+        .slot_device_mut(slot_id)
+        .expect("slot must be bound");
+
+    // Issue a control transfer (GET_DESCRIPTOR: Device) through EP0 and validate this is the
+    // keyboard (idProduct = 0x0001), not either hub (idProduct = 0x0002).
+    let setup = SetupPacket {
+        bm_request_type: 0x80, // DeviceToHost | Standard | Device
+        b_request: 0x06,       // GET_DESCRIPTOR
+        w_value: 0x0100,       // Device descriptor
+        w_index: 0,
+        w_length: 18,
+    };
+
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    let desc = match dev.handle_in(0, 64) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected device descriptor bytes, got {other:?}"),
+    };
+    assert_eq!(desc.len(), 18);
+    let id_product = u16::from_le_bytes([desc[10], desc[11]]);
+    assert_eq!(id_product, 0x0001);
+    assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
+}
+
+#[test]
 fn xhci_detach_clears_slot_device_binding() {
     let mut ctrl = XhciController::new();
     let mut mem = TestMemory::new(0x4000);
