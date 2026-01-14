@@ -36,7 +36,11 @@ class PowerShellHarnessQemuPciPreflightFlagTests(unittest.TestCase):
         # The harness should map PCI preflight failures into a stable result token for callers.
         self.assertIn("QEMU_PCI_PREFLIGHT_FAILED", self.text)
 
+    def test_qmp_is_forced_when_preflight_enabled(self) -> None:
+        # Enabling the PCI preflight must force QMP on, even if no other feature requires it.
+        # (The harness needs QMP to run `query-pci`.)
+        self.assertRegex(self.text, r"(?s)\$needQmp\s*=.*\[bool\]\$QemuPreflightPci")
+
 
 if __name__ == "__main__":
     unittest.main()
-
