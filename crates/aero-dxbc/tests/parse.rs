@@ -71,6 +71,32 @@ fn parse_minimal_dxbc_and_iterate_chunks() {
 }
 
 #[test]
+fn parse_allows_misaligned_chunk_offsets() {
+    // Some real-world DXBC containers (and fuzzed inputs) may not maintain strict
+    // 4-byte alignment for chunk starts. The parser should handle this safely.
+    let bytes = build_dxbc(&[
+        (FourCC(*b"SHDR"), &[1]),      // chunk 1 will start at an unaligned offset
+        (FourCC(*b"JUNK"), &[2, 3]),   // also make total_size non-4-aligned
+    ]);
+
+    // Sanity check: ensure we actually produced a misaligned offset for the
+    // second chunk.
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let second_off =
+        u32::from_le_bytes(bytes[offset_table_pos + 4..offset_table_pos + 8].try_into().unwrap())
+            as usize;
+    assert!(!second_off.is_multiple_of(4));
+
+    let file = DxbcFile::parse(&bytes).expect("parse should succeed");
+    let chunks: Vec<_> = file.chunks().collect();
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(chunks[0].fourcc, FourCC(*b"SHDR"));
+    assert_eq!(chunks[0].data, &[1]);
+    assert_eq!(chunks[1].fourcc, FourCC(*b"JUNK"));
+    assert_eq!(chunks[1].data, &[2, 3]);
+}
+
+#[test]
 fn malformed_bad_magic_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     bytes[0..4].copy_from_slice(b"NOPE");
