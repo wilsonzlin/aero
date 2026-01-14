@@ -1461,6 +1461,143 @@ fn decodes_udiv_and_idiv_with_two_dest_operands() {
 }
 
 #[test]
+fn decodes_integer_minmax_abs_neg_ops() {
+    let mut body = Vec::<u32>::new();
+
+    // imin r0, r1, r2
+    let mut imin = vec![opcode_token(OPCODE_IMIN, 1 + 2 + 2 + 2)];
+    imin.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    imin.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    imin.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&imin);
+
+    // imax r3, r4, r5
+    let mut imax = vec![opcode_token(OPCODE_IMAX, 1 + 2 + 2 + 2)];
+    imax.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    imax.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    imax.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[5],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&imax);
+
+    // umin r6, r7, r8
+    let mut umin = vec![opcode_token(OPCODE_UMIN, 1 + 2 + 2 + 2)];
+    umin.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    umin.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[7],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    umin.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[8],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&umin);
+
+    // umax r9, r10, r11
+    let mut umax = vec![opcode_token(OPCODE_UMAX, 1 + 2 + 2 + 2)];
+    umax.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    umax.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[10],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    umax.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[11],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&umax);
+
+    // iabs r12, r13
+    let mut iabs = vec![opcode_token(OPCODE_IABS, 1 + 2 + 2)];
+    iabs.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 12, WriteMask::XYZW));
+    iabs.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[13],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&iabs);
+
+    // ineg r14, r15
+    let mut ineg = vec![opcode_token(OPCODE_INEG, 1 + 2 + 2)];
+    ineg.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 14, WriteMask::XYZW));
+    ineg.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[15],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ineg);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions,
+        vec![
+            Sm4Inst::IMin {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 1),
+                b: src_reg(RegFile::Temp, 2),
+            },
+            Sm4Inst::IMax {
+                dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 4),
+                b: src_reg(RegFile::Temp, 5),
+            },
+            Sm4Inst::UMin {
+                dst: dst(RegFile::Temp, 6, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 7),
+                b: src_reg(RegFile::Temp, 8),
+            },
+            Sm4Inst::UMax {
+                dst: dst(RegFile::Temp, 9, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 10),
+                b: src_reg(RegFile::Temp, 11),
+            },
+            Sm4Inst::IAbs {
+                dst: dst(RegFile::Temp, 12, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 13),
+            },
+            Sm4Inst::INeg {
+                dst: dst(RegFile::Temp, 14, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 15),
+            },
+            Sm4Inst::Ret,
+        ]
+    );
+}
+
+#[test]
 fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
     // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
