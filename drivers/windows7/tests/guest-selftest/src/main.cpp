@@ -86,6 +86,9 @@ struct Options {
   bool disable_snd_capture = false;
   // If set, missing virtio-snd device causes the overall selftest to fail (instead of SKIP).
   bool require_snd = false;
+  // If set, require the virtio-snd driver to be using MSI-X (message-signaled interrupts).
+  // Without this flag the selftest still emits an informational virtio-snd-msix marker.
+  bool require_snd_msix = false;
   // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
   bool require_snd_capture = false;
   // If set, run a capture smoke test when a virtio-snd capture endpoint is present.
@@ -1753,18 +1756,20 @@ static std::string IrqFieldsForTestMarker(const std::vector<std::wstring>& hwid_
   return IrqFieldsForTestMarkerFromDevInst(matches.front().devinst);
 }
 
-static void EmitVirtioSndMsixMarker(Logger& log, DEVINST devinst) {
+static bool EmitVirtioSndMsixMarker(Logger& log, DEVINST devinst, bool require_snd_msix) {
   if (devinst == 0) {
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=device_missing");
-    return;
+    log.LogLine(require_snd_msix ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|FAIL|reason=device_missing"
+                                 : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=device_missing");
+    return !require_snd_msix;
   }
 
   DWORD err = ERROR_SUCCESS;
   const auto info_opt = QueryVirtioSndDiag(log, &err);
   if (!info_opt.has_value()) {
     const unsigned long e = static_cast<unsigned long>(err);
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=diag_unavailable|err=%lu", e);
-    return;
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|%s|reason=diag_unavailable|err=%lu",
+             require_snd_msix ? "FAIL" : "SKIP", e);
+    return !require_snd_msix;
   }
 
   const auto& info = *info_opt;
@@ -1782,16 +1787,19 @@ static void EmitVirtioSndMsixMarker(Logger& log, DEVINST devinst) {
     return std::to_string(static_cast<unsigned int>(v));
   };
 
+  const bool require_ok = !require_snd_msix || strcmp(mode, "msix") == 0;
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=%s|messages=%lu|config_vector=%s|queue0_vector=%s|"
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|%s|mode=%s|messages=%lu|config_vector=%s|queue0_vector=%s|"
       "queue1_vector=%s|queue2_vector=%s|queue3_vector=%s|interrupts=%lu|dpcs=%lu|drain0=%lu|drain1=%lu|drain2=%lu|"
       "drain3=%lu",
-      mode, static_cast<unsigned long>(info.MessageCount), vec_to_string(info.MsixConfigVector).c_str(),
+      require_ok ? "PASS" : "FAIL", mode, static_cast<unsigned long>(info.MessageCount),
+      vec_to_string(info.MsixConfigVector).c_str(),
       vec_to_string(info.QueueMsixVector[0]).c_str(), vec_to_string(info.QueueMsixVector[1]).c_str(),
       vec_to_string(info.QueueMsixVector[2]).c_str(), vec_to_string(info.QueueMsixVector[3]).c_str(),
       static_cast<unsigned long>(info.InterruptCount), static_cast<unsigned long>(info.DpcCount),
       static_cast<unsigned long>(info.QueueDrainCount[0]), static_cast<unsigned long>(info.QueueDrainCount[1]),
       static_cast<unsigned long>(info.QueueDrainCount[2]), static_cast<unsigned long>(info.QueueDrainCount[3]));
+  return require_ok;
 }
 
 struct VirtioSndPciIdInfo {
@@ -11081,6 +11089,8 @@ static void PrintUsage() {
       "  --disable-snd-capture     Skip virtio-snd capture test (emit SKIP)\n"
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --test-snd                Alias for --require-snd\n"
+      "  --require-snd-msix        Fail if virtio-snd is not using MSI-X interrupts\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1)\n"
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
       "  --test-input-leds         Run virtio-input keyboard LED/statusq output report smoke test (optional)\n"
@@ -11203,6 +11213,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.disable_snd_capture = true;
     } else if (arg == L"--require-snd" || arg == L"--test-snd") {
       opt.require_snd = true;
+    } else if (arg == L"--require-snd-msix") {
+      opt.require_snd_msix = true;
     } else if (arg == L"--test-input-events") {
       opt.test_input_events = true;
     } else if (arg == L"--test-input-leds") {
@@ -11326,6 +11338,9 @@ int wmain(int argc, wchar_t** argv) {
   if (!opt.require_input_msix && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX")) {
     opt.require_input_msix = true;
   }
+  if (!opt.require_snd_msix && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX")) {
+    opt.require_snd_msix = true;
+  }
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
     opt.expect_blk_msi = true;
@@ -11339,11 +11354,11 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (opt.disable_snd &&
-      (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.test_snd_buffer_limits ||
-       opt.require_non_silence)) {
+      (opt.require_snd || opt.require_snd_msix || opt.require_snd_capture || opt.test_snd_capture ||
+       opt.test_snd_buffer_limits || opt.require_non_silence)) {
     fprintf(stderr,
-            "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-capture, "
-            "--test-snd-capture, --test-snd-buffer-limits, or --require-non-silence\n");
+            "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-msix, "
+            "--require-snd-capture, --test-snd-capture, --test-snd-buffer-limits, or --require-non-silence\n");
     PrintUsage();
     return 2;
   }
@@ -11358,11 +11373,12 @@ int wmain(int argc, wchar_t** argv) {
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d|require_net_msix=%d|require_input_msix=%d|test_net_link_flap=%d",
+      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d|require_net_msix=%d|require_input_msix=%d|require_snd_msix=%d|test_net_link_flap=%d",
       WideToUtf8(opt.http_url).c_str(),
       WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(), static_cast<unsigned long>(opt.udp_port),
       WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(), opt.expect_blk_msi ? 1 : 0,
       opt.require_net_msix ? 1 : 0, opt.require_input_msix ? 1 : 0,
+      opt.require_snd_msix ? 1 : 0,
       opt.test_net_link_flap ? 1 : 0);
 
   bool all_ok = true;
@@ -12429,13 +12445,19 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!snd_pci.empty() && snd_pci.front().devinst != 0) {
     // Prefer driver-provided diag info (vector mapping + counters); fall back to resource inspection.
-    EmitVirtioSndMsixMarker(log, snd_pci.front().devinst);
+    if (!EmitVirtioSndMsixMarker(log, snd_pci.front().devinst, opt.require_snd_msix)) {
+      all_ok = false;
+    }
     EmitVirtioSndIrqMarker(log, snd_pci.front().devinst);
   } else if (opt.allow_virtio_snd_transitional) {
-    EmitVirtioSndMsixMarker(log, 0);
+    if (!EmitVirtioSndMsixMarker(log, 0, opt.require_snd_msix)) {
+      all_ok = false;
+    }
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"});
   } else {
-    EmitVirtioSndMsixMarker(log, 0);
+    if (!EmitVirtioSndMsixMarker(log, 0, opt.require_snd_msix)) {
+      all_ok = false;
+    }
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059"});
   }
 

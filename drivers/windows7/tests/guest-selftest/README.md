@@ -285,6 +285,9 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - By default, if a supported virtio-snd PCI function is detected, the selftest exercises playback automatically.
     - If no supported device is detected, virtio-snd is reported as **SKIP**.
     - Use `--require-snd` (alias: `--test-snd`) to make missing virtio-snd fail the overall selftest.
+    - Use `--require-snd-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`) to make the overall selftest
+      **FAIL** when virtio-snd is not using MSI-X (mode != `msix`) in the `virtio-snd-msix` diagnostic marker
+      (or when the optional diagnostics device is unavailable).
   - Playback failures cause the overall selftest to **FAIL**.
   - Also emits a separate `virtio-snd-capture` marker by attempting to detect a virtio-snd **capture** endpoint
     (MMDevice `eCapture`).
@@ -420,7 +423,9 @@ Notes:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
     - Newer virtio-net driver/selftest builds may append additional diagnostic fields (best-effort), for example:
       `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
+    (the marker is emitted as SKIP when the optional diagnostics interface is unavailable; `--require-snd-msix` makes
+    non-`mode=msix` and SKIP cases fail the overall selftest)
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|...`
     (the marker is always emitted; `--require-input-msix` makes non-`mode=msix` fail the overall selftest)
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits

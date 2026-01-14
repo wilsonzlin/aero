@@ -3424,6 +3424,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Require virtio-snd to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "
             "and also requires the guest marker: "
             "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|... "
+            "Tip: to make the guest fail-fast, provision the guest selftest with the guest flag --require-snd-msix "
+            "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1); when provisioning via "
+            "New-AeroWin7TestImage.ps1, use -RequireSndMsix. "
             "(this option requires --with-virtio-snd)."
         ),
     )

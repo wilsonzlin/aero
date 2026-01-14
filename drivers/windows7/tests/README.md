@@ -251,8 +251,8 @@ configuration.
     - Additional diagnostic fields may be appended by newer driver/selftest builds (best-effort), for example:
       `flags=0x...|intr0=...|dpc0=...|rx_drained=...|...`
   - virtio-snd:
-    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...`
-    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...`
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>|...`
   - virtio-input:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
@@ -284,6 +284,9 @@ To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
 - For virtio-net specifically, you can also make MSI-X a **guest-side** hard requirement:
   - Guest selftest: `--require-net-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
   - Provisioning: `New-AeroWin7TestImage.ps1 -RequireNetMsix` (alias: `-RequireVirtioNetMsix`)
+- For virtio-snd specifically, you can also make MSI-X a **guest-side** hard requirement:
+  - Guest selftest: `--require-snd-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`)
+  - Provisioning: `New-AeroWin7TestImage.ps1 -RequireSndMsix` (alias: `-RequireVirtioSndMsix`)
 
 ### virtio-net “offload-sensitive” large transfers
 

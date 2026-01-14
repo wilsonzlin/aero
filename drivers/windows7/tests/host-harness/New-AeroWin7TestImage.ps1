@@ -95,6 +95,19 @@ param(
   [Alias("RequireVirtioInputMsix")]
   [switch]$RequireInputMsix,
 
+  # If set, require virtio-snd to be operating with MSI-X (not INTx).
+  # This adds `--require-snd-msix` to the scheduled task.
+  #
+  # The guest selftest will then fail the overall selftest if virtio-snd is not using MSI-X
+  # (mode != msix) in its `virtio-snd-msix` diagnostic marker.
+  #
+  # This is the guest-side complement to the host harness requirement flag:
+  # - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioSndMsix`
+  # - Python: `invoke_aero_virtio_win7_tests.py --require-virtio-snd-msix`
+  [Parameter(Mandatory = $false)]
+  [Alias("RequireVirtioSndMsix")]
+  [switch]$RequireSndMsix,
+
   # If set, enable the guest selftest's end-to-end virtio-blk runtime resize test
   # (adds `--test-blk-resize` to the scheduled task).
   #
@@ -551,8 +564,16 @@ if ($RequireInputMsix) {
   $requireInputMsixArg = " --require-input-msix"
 }
 
+$requireSndMsixArg = ""
+if ($RequireSndMsix) {
+  $requireSndMsixArg = " --require-snd-msix"
+}
+
 if ($RequireSnd -and $DisableSnd) {
   throw "RequireSnd and DisableSnd cannot both be set."
+}
+if ($RequireSndMsix -and $DisableSnd) {
+  throw "RequireSndMsix and DisableSnd cannot both be set."
 }
 if ($DisableSnd -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence -or $TestSndBufferLimits)) {
   throw "DisableSnd cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence/TestSndBufferLimits."
@@ -711,7 +732,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$requireNetMsixArg$requireInputMsixArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedsArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$requireNetMsixArg$requireInputMsixArg$requireSndMsixArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedsArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -771,6 +792,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - To fail the virtio-input selftest when the driver is not using MSI-X (expected MSI-X), generate this media with
     `-RequireInputMsix` (adds `--require-input-msix` to the scheduled task). This is the guest-side complement to the host harness flag
     `-RequireVirtioInputMsix` / `--require-virtio-input-msix` (which validates the guest `virtio-input-msix` marker).
+  - To fail the virtio-snd selftest when the driver is not using MSI-X (expected MSI-X), generate this media with
+    `-RequireSndMsix` (adds `--require-snd-msix` to the scheduled task). This is the guest-side complement to the host harness flag
+    `-RequireVirtioSndMsix` / `--require-virtio-snd-msix` (which also performs a host-side MSI-X enable check via QMP).
   - The virtio-blk runtime resize test (`virtio-blk-resize`) is disabled by default (requires host-side QMP resize).
     - To enable it (required when running the host harness with `-WithBlkResize` / `--with-blk-resize`),
       generate this media with `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).

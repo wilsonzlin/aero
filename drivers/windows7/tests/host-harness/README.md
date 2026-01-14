@@ -357,6 +357,8 @@ Tip (guest-side fail-fast):
     - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireNetMsix`.
   - virtio-input: `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
     - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireInputMsix`.
+  - virtio-snd: `aero-virtio-selftest.exe --require-snd-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`)
+    - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireSndMsix`.
 
 Example (PowerShell):
 
@@ -527,11 +529,14 @@ The **PowerShell** harness does the same when `-RequireVirtioNetMsix` is set.
 
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-snd interrupt mode/vectors:
 
-- PASS (virtio-snd diag interface available):
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
-- SKIP (virtio-snd diag interface unavailable / device missing):
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=diag_unavailable|err=<n>`
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=device_missing`
+- PASS/FAIL (virtio-snd diag interface available):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
+- SKIP/FAIL (virtio-snd diag interface unavailable / device missing):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP/FAIL|reason=diag_unavailable|err=<n>`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP/FAIL|reason=device_missing`
+
+When the guest selftest is provisioned with `--require-snd-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`),
+it emits `FAIL` (instead of `SKIP`) when the diagnostics interface is unavailable, and emits `FAIL` when `mode!=msix`.
 
 When `--require-virtio-snd-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
 The **PowerShell** harness does the same when `-RequireVirtioSndMsix` is set.
@@ -1783,6 +1788,10 @@ env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`).
 To make virtio-input MSI-X a **guest-side** hard requirement (and fail the overall guest selftest when `virtio-input-msix`
 reports `mode!=msix`), generate the image with `-RequireInputMsix` (adds the guest selftest flag `--require-input-msix` /
 env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`).
+
+To make virtio-snd MSI-X a **guest-side** hard requirement (and fail the overall guest selftest when `virtio-snd-msix`
+reports `mode!=msix`), generate the image with `-RequireSndMsix` (adds the guest selftest flag `--require-snd-msix` /
+env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`).
 
 For MSI/MSI-X-specific CI, you can also ask the host harness to fail deterministically when the guest image was not
 provisioned with this expectation:

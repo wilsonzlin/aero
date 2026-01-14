@@ -264,6 +264,10 @@ param(
   #
   # For virtio-snd, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...
+  # Tip: to make the guest fail-fast, provision it with:
+  #   aero-virtio-selftest.exe --require-snd-msix
+  # (or env var AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1). When provisioning via New-AeroWin7TestImage.ps1,
+  # pass -RequireSndMsix.
   [Parameter(Mandatory = $false)]
   [Alias("RequireNetMsix")]
   [switch]$RequireVirtioNetMsix,

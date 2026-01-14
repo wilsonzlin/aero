@@ -145,6 +145,9 @@ How to validate (in-tree harness):
 - Inspect guest diagnostics (`virtio-snd-irq|INFO|mode=...`) and the mirrored host marker (`AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ_DIAG|...`).
   - When `-RequireVirtioSndMsix` / `--require-virtio-snd-msix` *(aliases: `-RequireSndMsix` / `--require-snd-msix`)* is enabled, the harness also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...` so the effective interrupt mode is validated end-to-end.
+  - To make the guest selftest fail-fast (emit `RESULT|FAIL`) when virtio-snd is not using MSI-X, provision it with:
+    - `aero-virtio-selftest.exe --require-snd-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`)
+    - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireSndMsix` (alias: `-RequireVirtioSndMsix`).
 
 ### Multi-format/device capability variance (non-contract)
 
