@@ -79,9 +79,8 @@ use super::shader_cache::{
 use super::strip_to_list::{StreamEvent, StripTopology};
 use super::tessellation::TessellationRuntime;
 use super::vertex_pulling::{
-    bind_empty_groups_before_vertex_pulling, VertexPullingDrawParams, VertexPullingLayout,
-    VertexPullingSlot, VERTEX_PULLING_GROUP, VERTEX_PULLING_UNIFORM_BINDING,
-    VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
+    VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
+    VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
@@ -233,6 +232,19 @@ fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
     }
     out.push(VERTEX_PULLING_UNIFORM_BINDING);
     out
+}
+
+fn bind_empty_groups_before_vertex_pulling_distinct<'a>(
+    pass: &mut wgpu::ComputePass<'a>,
+    empty_bind_groups: &'a [Arc<wgpu::BindGroup>],
+    start_group: u32,
+) {
+    for group_index in start_group..VERTEX_PULLING_GROUP {
+        let bg = empty_bind_groups
+            .get(group_index as usize)
+            .unwrap_or_else(|| panic!("missing empty bind group for group_index={group_index}"));
+        pass.set_bind_group(group_index, bg.as_ref(), &[]);
+    }
 }
 
 // Bindings for the placeholder geometry/tessellation compute prepass.
@@ -1611,6 +1623,13 @@ pub struct AerogpuD3d11Executor {
     /// `@group(VERTEX_PULLING_GROUP)`. This cached bind group avoids creating a new empty bind group
     /// for every dispatch.
     empty_bind_group: Arc<wgpu::BindGroup>,
+    /// Distinct empty bind groups for `@group(0..VERTEX_PULLING_GROUP)`.
+    ///
+    /// Some wgpu backends have historically been sensitive to binding the *same* bind group object
+    /// at multiple bind-group indices within a single pass (even when the layouts are identical).
+    /// Cache one empty bind group per group index so internal compute passes can bind placeholder
+    /// empty groups (`@group(0..=2)`) without reusing the same instance.
+    empty_bind_groups_before_vertex_pulling: Vec<Arc<wgpu::BindGroup>>,
     /// Dummy bind group for the expanded-draw passthrough VS internal binding
     /// (`@group(BIND_GROUP_INTERNAL_EMULATION) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)`).
     ///
@@ -1996,6 +2015,16 @@ impl AerogpuD3d11Executor {
         let empty_bg_entries: [BindGroupCacheEntry<'_>; 0] = [];
         let empty_bind_group =
             bind_group_cache.get_or_create(&device, &empty_bgl, &empty_bg_entries);
+        let empty_bind_groups_before_vertex_pulling: Vec<Arc<wgpu::BindGroup>> =
+            (0..VERTEX_PULLING_GROUP)
+                .map(|_| {
+                    Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("aerogpu_cmd empty bind group"),
+                        layout: empty_bgl.layout.as_ref(),
+                        entries: &[],
+                    }))
+                })
+                .collect();
 
         Self {
             caps,
@@ -2060,6 +2089,7 @@ impl AerogpuD3d11Executor {
             bind_group_cache,
             empty_bind_group_layout_hash,
             empty_bind_group,
+            empty_bind_groups_before_vertex_pulling,
             passthrough_vs_dummy_bind_group: None,
             passthrough_vs_dummy_bind_group_layout_hash: None,
             pipeline_layout_cache: PipelineLayoutCache::new(),
@@ -5034,7 +5064,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(fill_pipeline);
             pass.set_bind_group(0, &fill_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
             pass.dispatch_workgroups(primitive_count, instance_count, 1);
         }
@@ -5457,7 +5491,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(
                 ShaderStage::Geometry.as_bind_group_index(),
                 gs_group3_bg.as_ref(),
@@ -5472,7 +5510,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(
                 ShaderStage::Geometry.as_bind_group_index(),
                 gs_group3_bg.as_ref(),
@@ -6513,7 +6555,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(fill_pipeline);
             pass.set_bind_group(0, &fill_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
             pass.dispatch_workgroups(primitive_count, instance_count, 1);
         }
@@ -6878,7 +6924,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(
                 ShaderStage::Geometry.as_bind_group_index(),
                 gs_group3_bg.as_ref(),
@@ -6893,7 +6943,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(
                 ShaderStage::Geometry.as_bind_group_index(),
                 gs_group3_bg.as_ref(),
@@ -7832,7 +7886,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(fill_pipeline);
             pass.set_bind_group(0, &fill_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
             pass.dispatch_workgroups(fill_dispatch_x, 1, 1);
         }
@@ -8276,7 +8334,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(
                 ShaderStage::Geometry.as_bind_group_index(),
                 gs_group3_bg.as_ref(),
@@ -8291,7 +8353,11 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
-            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            bind_empty_groups_before_vertex_pulling_distinct(
+                &mut pass,
+                &self.empty_bind_groups_before_vertex_pulling,
+                1,
+            );
             pass.set_bind_group(
                 ShaderStage::Geometry.as_bind_group_index(),
                 gs_group3_bg.as_ref(),
@@ -11893,9 +11959,9 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 });
                 pass.set_pipeline(compute_pipeline);
                 pass.set_bind_group(0, &prepass_output_bind_group, &[]);
-                bind_empty_groups_before_vertex_pulling(
+                bind_empty_groups_before_vertex_pulling_distinct(
                     &mut pass,
-                    self.empty_bind_group.as_ref(),
+                    &self.empty_bind_groups_before_vertex_pulling,
                     1,
                 );
                 pass.set_bind_group(VERTEX_PULLING_GROUP, &prepass_group3_bind_group, &[]);
