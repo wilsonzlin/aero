@@ -1,11 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::io::Write;
-
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+#[cfg(feature = "shader-opcode-report")]
+use std::io::Write;
+
 #[test]
+#[cfg(feature = "shader-opcode-report")]
 fn reports_fixture_dxbc() {
     let fixture = format!(
         "{}/../crates/aero-d3d9/tests/fixtures/dxbc/ps_2_0_sample.dxbc",
@@ -22,6 +24,19 @@ fn reports_fixture_dxbc() {
 }
 
 #[test]
+#[cfg(not(feature = "shader-opcode-report"))]
+fn reports_fixture_dxbc_requires_feature() {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("shader-opcode-report")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "requires building `xtask` with the `shader-opcode-report` feature",
+        ));
+}
+
+#[test]
+#[cfg(feature = "shader-opcode-report")]
 fn deny_unsupported_exits_nonzero() {
     let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
 
@@ -38,4 +53,16 @@ fn deny_unsupported_exits_nonzero() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("unsupported opcodes found"));
+}
+
+#[test]
+#[cfg(not(feature = "shader-opcode-report"))]
+fn deny_unsupported_requires_feature() {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["shader-opcode-report", "--deny-unsupported"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "requires building `xtask` with the `shader-opcode-report` feature",
+        ));
 }
