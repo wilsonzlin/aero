@@ -390,6 +390,34 @@ If the guest selftest is too old (or otherwise misconfigured) and does not emit 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
+### 4.3.1 Optional: end-to-end mouse wheel + horizontal wheel (QMP injection + guest HID report read)
+
+The base `virtio-input-events` marker validates keyboard + relative mouse motion/click delivery.
+To also validate **mouse scrolling**, the guest selftest emits an additional marker:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS/FAIL/SKIP|...`
+
+Notes:
+
+- The wheel marker is emitted as part of the `--test-input-events` flow; the guest does not need a separate flag.
+- The host harness only requires `virtio-input-wheel|PASS` when the wheel injection flag is enabled.
+
+Host harness flags:
+
+- PowerShell: `-WithInputWheel`
+- Python: `--with-input-wheel`
+
+When enabled, the harness:
+
+1. Enables the base input-events injection (as if `-WithInputEvents` / `--with-input-events` were set)
+2. Injects a deterministic scroll sequence via QMP `input-send-event`:
+   - vertical wheel: `axis=wheel`, `value=+1`
+   - horizontal wheel: `axis=hscroll`, `value=-2` (with fallback `axis=hwheel` for older/alternate QEMU builds)
+3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
+
+If the running QEMU build rejects both `hscroll` and the fallback `hwheel` axis name, the harness fails with a clear
+error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel`).
+
 ### 4.4 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
 
 This is the tablet/absolute-pointer companion to `virtio-input-events` (keyboard + relative mouse).
