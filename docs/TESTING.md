@@ -121,6 +121,7 @@ If you're working on a specific subsystem, `xtask` also provides smaller suites:
 # USB + input (Rust + focused web unit tests; optional Playwright subset)
 cargo xtask input
 cargo xtask input --rust-only
+cargo xtask input --usb-all
 cargo xtask input --machine
 cargo xtask input --wasm --rust-only
 cargo xtask input --e2e

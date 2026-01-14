@@ -11,8 +11,9 @@ struct InputOpts {
     e2e: bool,
     machine: bool,
     wasm: bool,
-    rust_only: bool,
     with_wasm: bool,
+    usb_all: bool,
+    rust_only: bool,
     pw_extra_args: Vec<String>,
 }
 
@@ -40,11 +41,12 @@ pub fn print_help() {
 Run the USB/input-focused test suite (Rust + web) with one command.
 
 Usage:
-  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [--with-wasm] [-- <extra playwright args>]
+  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [--with-wasm] [--usb-all] [-- <extra playwright args>]
 
 Steps:
   1. cargo test -p aero-devices-input --locked
-  2. cargo test -p aero-usb --locked
+  2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test hid_builtin_snapshot
+     (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --test machine_input_backends --locked
@@ -58,12 +60,14 @@ Options:
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
   --with-wasm            Also run the `aero-wasm` input backend integration smoke test.
+  --usb-all             Run the full `aero-usb` test suite (all integration tests).
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
 Examples:
   cargo xtask input
   cargo xtask input --rust-only
+  cargo xtask input --usb-all
   cargo xtask input --machine
   cargo xtask input --wasm --rust-only
   cargo xtask input --with-wasm
@@ -92,7 +96,22 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.current_dir(&repo_root)
         .args(["test", "-p", "aero-usb", "--locked"]);
-    runner.run_step("Rust: cargo test -p aero-usb --locked", &mut cmd)?;
+    if opts.usb_all {
+        runner.run_step("Rust: cargo test -p aero-usb --locked (full)", &mut cmd)?;
+    } else {
+        cmd.args([
+            "--test",
+            "uhci",
+            "--test",
+            "uhci_external_hub",
+            "--test",
+            "hid_builtin_snapshot",
+        ]);
+        runner.run_step(
+            "Rust: cargo test -p aero-usb --locked (focused)",
+            &mut cmd,
+        )?;
+    }
 
     if opts.machine {
         let mut cmd = Command::new("cargo");
@@ -192,6 +211,7 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
             "--wasm" => opts.wasm = true,
             "--rust-only" => opts.rust_only = true,
             "--with-wasm" => opts.with_wasm = true,
+            "--usb-all" => opts.usb_all = true,
             "--" => {
                 opts.pw_extra_args = iter.collect();
                 break;
@@ -318,6 +338,14 @@ mod tests {
         assert!(opts.with_wasm);
         assert!(!opts.rust_only);
         assert!(!opts.e2e);
+    }
+
+    #[test]
+    fn parse_args_accepts_usb_all_flag() {
+        let opts = parse_args(vec!["--usb-all".into()])
+            .expect("parse_args should accept --usb-all")
+            .expect("expected Some(opts)");
+        assert!(opts.usb_all, "expected usb_all to be true");
     }
 
     #[test]
