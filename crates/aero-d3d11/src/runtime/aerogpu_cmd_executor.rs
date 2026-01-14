@@ -13329,7 +13329,7 @@ mod tests {
                 usage: wgpu::BufferUsages::VERTEX,
                 mapped_at_creation: false,
             });
-                exec.resources.buffers.insert(
+            exec.resources.buffers.insert(
                 VB,
                 BufferResource {
                     buffer: vb,

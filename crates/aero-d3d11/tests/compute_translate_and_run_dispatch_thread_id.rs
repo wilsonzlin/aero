@@ -458,3 +458,194 @@ fn compute_translate_and_run_group_id_and_group_index_write_linear_id() {
         assert_eq!(got, expected);
     });
 }
+
+#[test]
+fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
+    pollster::block_on(async {
+        const TEST_NAME: &str = concat!(
+            module_path!(),
+            "::compute_translate_and_run_group_thread_id_writes_linear_local_index"
+        );
+
+        let rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(TEST_NAME, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(TEST_NAME, "compute unsupported");
+            return;
+        }
+
+        // D3D10_SB_NAME_GROUP_THREAD_ID.
+        const D3D_NAME_GROUP_THREAD_ID: u32 = 23;
+
+        // One 2x2 workgroup = 4 invocations.
+        const ELEMENTS: u32 = 4;
+        let size_bytes = (ELEMENTS as u64) * 4;
+
+        // Compute `linear = id.x | (id.y << 1)` via `bfi`, then write it to u0[linear].
+        //
+        // This is sensitive to whether `SV_GroupThreadID` is lowered as raw integer bits in the
+        // internal `vec4<f32>` register model: numeric float conversion would yield float bit
+        // patterns and cause out-of-bounds UAV addressing.
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::ThreadGroupSize { x: 2, y: 2, z: 1 },
+                Sm4Decl::InputSiv {
+                    reg: 0,
+                    mask: WriteMask::XYZW,
+                    sys_value: D3D_NAME_GROUP_THREAD_ID,
+                },
+                Sm4Decl::UavBuffer {
+                    slot: 0,
+                    stride: 0,
+                    kind: BufferKind::Raw,
+                },
+            ],
+            instructions: vec![
+                // r0.x = id.x | (id.y << 1)
+                Sm4Inst::Bfi {
+                    dst: dst(RegFile::Temp, 0, WriteMask::X),
+                    width: src_imm_u32(31),
+                    offset: src_imm_u32(1),
+                    insert: src_reg(RegFile::Input, 0, Swizzle::YYYY),
+                    base: src_reg(RegFile::Input, 0, Swizzle::XXXX),
+                },
+                // r1.x = linear << 2 (byte address)
+                Sm4Inst::Bfi {
+                    dst: dst(RegFile::Temp, 1, WriteMask::X),
+                    width: src_imm_u32(30),
+                    offset: src_imm_u32(2),
+                    insert: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
+                    base: src_imm_u32(0),
+                },
+                // store_raw u0.x, r1.x, r0.x
+                Sm4Inst::StoreRaw {
+                    uav: UavRef { slot: 0 },
+                    addr: src_reg(RegFile::Temp, 1, Swizzle::XXXX),
+                    value: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
+                    mask: WriteMask::X,
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let dxbc_bytes = dummy_dxbc_bytes();
+        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC should parse");
+        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
+            .expect("compute translation should succeed");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(
+            translated.wgsl.contains("@builtin(local_invocation_id)"),
+            "expected local_invocation_id builtin in WGSL:\n{}",
+            translated.wgsl
+        );
+        let binding_u0 = BINDING_BASE_UAV + 0;
+        assert!(
+            translated.wgsl.contains("@group(2)"),
+            "translated compute WGSL must use @group(2):\n{}",
+            translated.wgsl
+        );
+
+        let device = rt.device();
+        let queue = rt.queue();
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id cs shader"),
+            source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
+        });
+
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id empty bgl"),
+            entries: &[],
+        });
+        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id group2 bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: binding_u0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id pipeline layout"),
+            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id compute pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "cs_main",
+            compilation_options: Default::default(),
+        });
+
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id out buffer"),
+            size: size_bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&out, 0, vec![0u8; size_bytes as usize].as_slice());
+
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id readback buffer"),
+            size: size_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id bind group 2"),
+            layout: &group2_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: binding_u0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &out,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("compute_translate_and_run_group_thread_id encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("compute_translate_and_run_group_thread_id compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(2, &bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
+        queue.submit([encoder.finish()]);
+
+        let data = read_mapped_buffer(device, &readback, size_bytes).await;
+
+        let mut got = Vec::<u32>::with_capacity(ELEMENTS as usize);
+        for i in 0..ELEMENTS as usize {
+            let at = i * 4;
+            got.push(u32::from_le_bytes(
+                data[at..at + 4].try_into().expect("read 4 bytes"),
+            ));
+        }
+        let expected: Vec<u32> = (0..ELEMENTS).collect();
+        assert_eq!(got, expected);
+    });
+}
