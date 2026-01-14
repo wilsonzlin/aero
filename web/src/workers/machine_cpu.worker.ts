@@ -23,6 +23,7 @@ import {
   restoreMachineSnapshotAndReattachDisks,
   restoreMachineSnapshotFromOpfsAndReattachDisks,
 } from "../runtime/machine_snapshot_disks";
+import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
 /**
  * Minimal "machine CPU" worker entrypoint.
@@ -44,6 +45,11 @@ let eventRing: RingBuffer | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+
+// Boot disk selection (shared protocol with the legacy IO worker).
+// The machine CPU worker does not yet use this to attach disks, but it accepts the
+// message so coordinators/harnesses can share a single schema.
+let pendingBootDisks: SetBootDisksMessage | null = null;
 
 type MachineSnapshotSerializedError = { name: string; message: string; stack?: string };
 type MachineSnapshotResultOk = { ok: true };
@@ -176,6 +182,17 @@ ctx.onmessage = (ev) => {
         postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
       }
     });
+    return;
+  }
+
+  if ((msg as Partial<SetBootDisksMessage>)?.type === "setBootDisks") {
+    const update = msg as Partial<SetBootDisksMessage>;
+    pendingBootDisks = {
+      type: "setBootDisks",
+      mounts: (update.mounts || {}) as SetBootDisksMessage["mounts"],
+      hdd: (update.hdd as SetBootDisksMessage["hdd"]) ?? null,
+      cd: (update.cd as SetBootDisksMessage["cd"]) ?? null,
+    };
     return;
   }
 
