@@ -387,6 +387,54 @@ func TestUDPRemoteAllowlistIdleTimeout_FlagOverride(t *testing.T) {
 	}
 }
 
+func TestMaxAllowedRemotesPerBinding_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                      "secret",
+		EnvMaxAllowedRemotesPerBinding: "42",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxAllowedRemotesPerBinding != 42 {
+		t.Fatalf("MaxAllowedRemotesPerBinding=%d, want %d", cfg.MaxAllowedRemotesPerBinding, 42)
+	}
+}
+
+func TestMaxAllowedRemotesPerBinding_Invalid(t *testing.T) {
+	t.Run("non_int", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                      "secret",
+			EnvMaxAllowedRemotesPerBinding: "nope",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+
+	t.Run("non_positive", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                      "secret",
+			EnvMaxAllowedRemotesPerBinding: "0",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+}
+
+func TestMaxAllowedRemotesPerBinding_FlagOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                      "secret",
+		EnvMaxAllowedRemotesPerBinding: "30",
+	}), []string{"--max-allowed-remotes-per-binding", "10"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxAllowedRemotesPerBinding != 10 {
+		t.Fatalf("MaxAllowedRemotesPerBinding=%d, want %d", cfg.MaxAllowedRemotesPerBinding, 10)
+	}
+}
+
 func TestWebRTCSCTPMaxReceiveBufferBytes_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey:                           "secret",
