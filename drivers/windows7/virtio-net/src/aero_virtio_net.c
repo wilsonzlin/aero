@@ -5149,7 +5149,7 @@ static NDIS_STATUS AerovNetMiniportOidRequest(_In_ NDIS_HANDLE MiniportAdapterCo
   }
 
   NdisAcquireSpinLock(&Adapter->Lock);
-  if (Adapter->State == AerovNetAdapterStopped) {
+  if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
     NdisReleaseSpinLock(&Adapter->Lock);
     return NDIS_STATUS_RESET_IN_PROGRESS;
   }
