@@ -1072,8 +1072,7 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_queued_before_eventq_buffer
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_speaker_jack_events_attach_then_detach_before_eventq_buffers_are_posted()
- {
+fn virtio_snd_pci_bridge_delivers_speaker_jack_events_attach_then_detach_before_eventq_buffers_are_posted() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -1200,8 +1199,7 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_events_attach_then_detach_before_
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_speaker_jack_events_one_buffer_at_a_time_after_events_are_queued()
-{
+fn virtio_snd_pci_bridge_delivers_speaker_jack_events_one_buffer_at_a_time_after_events_are_queued() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -1468,8 +1466,7 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_into_cached_eventq_buffer_o
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_eventq_buffers_on_poll()
-{
+fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_eventq_buffers_on_poll() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -2158,8 +2155,7 @@ fn virtio_snd_pci_bridge_delivers_microphone_jack_event_queued_before_eventq_buf
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_microphone_jack_events_attach_then_detach_before_eventq_buffers_are_posted()
- {
+fn virtio_snd_pci_bridge_delivers_microphone_jack_events_attach_then_detach_before_eventq_buffers_are_posted() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -2292,8 +2288,7 @@ fn virtio_snd_pci_bridge_delivers_microphone_jack_events_attach_then_detach_befo
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_microphone_jack_events_one_buffer_at_a_time_after_events_are_queued()
- {
+fn virtio_snd_pci_bridge_delivers_microphone_jack_events_one_buffer_at_a_time_after_events_are_queued() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -2443,8 +2438,7 @@ fn virtio_snd_pci_bridge_delivers_microphone_jack_events_one_buffer_at_a_time_af
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_multiple_microphone_jack_events_into_cached_eventq_buffers_on_poll()
- {
+fn virtio_snd_pci_bridge_delivers_multiple_microphone_jack_events_into_cached_eventq_buffers_on_poll() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -2850,8 +2844,7 @@ fn virtio_snd_pci_bridge_snapshot_roundtrip_rewinds_cached_eventq_buffers() {
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_snapshot_roundtrip_restores_sample_rates_and_worklet_ring_state_when_attached()
- {
+fn virtio_snd_pci_bridge_snapshot_roundtrip_restores_sample_rates_and_worklet_ring_state_when_attached() {
     let capacity_frames = 256;
     let channel_count = 2;
 
@@ -2907,8 +2900,7 @@ fn virtio_snd_pci_bridge_snapshot_roundtrip_restores_sample_rates_and_worklet_ri
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_deferred_worklet_ring_restore_is_applied_on_attach_and_handles_capacity_mismatch()
- {
+fn virtio_snd_pci_bridge_deferred_worklet_ring_restore_is_applied_on_attach_and_handles_capacity_mismatch() {
     let capacity_frames = 8;
     let channel_count = 2;
 
