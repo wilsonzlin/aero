@@ -307,7 +307,7 @@ The exact packing per entrypoint is defined where the DDI is instrumented:
 
 ## How to use this to drive implementation
 
-1. Run `d3d9ex_dwm_probe` (or `dwm.exe`) with `TRACE_MODE=unique`.
+1. Run `d3d9ex_dwm_probe` (or `dwm.exe`) with `AEROGPU_D3D9_TRACE_MODE=unique`.
 2. Dump the trace (present-trigger recommended).
 3. Treat the resulting call list as your **bring-up checklist**:
    - Any entrypoints that appear in the trace must be correct/stable for DWM.
