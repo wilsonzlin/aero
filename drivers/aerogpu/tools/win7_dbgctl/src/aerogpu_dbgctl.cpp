@@ -1128,7 +1128,7 @@ typedef struct EscapeThreadCtx {
 
 typedef struct EscapeWorker {
   HANDLE request_event;
-  volatile EscapeThreadCtx *ctx;
+  EscapeThreadCtx *volatile ctx;
   EscapeThreadCtx ctx_storage;
   void *buf_storage;
   UINT buf_storage_capacity;
@@ -1158,7 +1158,7 @@ static DWORD WINAPI EscapeWorkerThreadProc(LPVOID param) {
     }
 
     EscapeThreadCtx *ctx =
-        (EscapeThreadCtx *)InterlockedExchangePointer((PVOID *)&worker->ctx, NULL);
+        (EscapeThreadCtx *)InterlockedExchangePointer((PVOID volatile *)&worker->ctx, NULL);
     if (!ctx) {
       continue;
     }
@@ -1291,7 +1291,7 @@ static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapte
   worker->ctx_storage.bufSize = bufSize;
   worker->ctx_storage.status = 0;
 
-  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
+  if (InterlockedCompareExchangePointer((PVOID volatile *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
     // Unexpected: another escape is already in-flight on the worker. This should not happen
     // in normal dbgctl usage (single-threaded), but handle defensively.
     return STATUS_INVALID_DEVICE_STATE;
@@ -1484,7 +1484,7 @@ static DWORD WINAPI QueryAdapterInfoThreadProc(LPVOID param) {
 
 typedef struct QueryAdapterInfoWorker {
   HANDLE request_event;
-  volatile QueryAdapterInfoThreadCtx *ctx;
+  QueryAdapterInfoThreadCtx *volatile ctx;
   QueryAdapterInfoThreadCtx ctx_storage;
   void *buf_storage;
   UINT buf_storage_capacity;
@@ -1514,7 +1514,7 @@ static DWORD WINAPI QueryAdapterInfoWorkerThreadProc(LPVOID param) {
     }
 
     QueryAdapterInfoThreadCtx *ctx =
-        (QueryAdapterInfoThreadCtx *)InterlockedExchangePointer((PVOID *)&worker->ctx, NULL);
+        (QueryAdapterInfoThreadCtx *)InterlockedExchangePointer((PVOID volatile *)&worker->ctx, NULL);
     if (!ctx) {
       continue;
     }
@@ -1627,7 +1627,7 @@ static NTSTATUS QueryAdapterInfoWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE
   worker->ctx_storage.bufSize = bufSize;
   worker->ctx_storage.status = 0;
 
-  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
+  if (InterlockedCompareExchangePointer((PVOID volatile *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
     return STATUS_INVALID_DEVICE_STATE;
   }
   SetEvent(worker->request_event);
@@ -1797,7 +1797,7 @@ typedef struct GetScanLineThreadCtx {
 
 typedef struct GetScanLineWorker {
   HANDLE request_event;
-  volatile GetScanLineThreadCtx *ctx;
+  GetScanLineThreadCtx *volatile ctx;
   GetScanLineThreadCtx ctx_storage;
 } GetScanLineWorker;
 
@@ -1825,7 +1825,7 @@ static DWORD WINAPI GetScanLineWorkerThreadProc(LPVOID param) {
     }
 
     GetScanLineThreadCtx *ctx =
-        (GetScanLineThreadCtx *)InterlockedExchangePointer((PVOID *)&worker->ctx, NULL);
+        (GetScanLineThreadCtx *)InterlockedExchangePointer((PVOID volatile *)&worker->ctx, NULL);
     if (!ctx) {
       continue;
     }
@@ -1908,7 +1908,7 @@ static NTSTATUS GetScanLineWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_GETSCANLINE
   worker->ctx_storage.scan = *inout;
   worker->ctx_storage.status = 0;
 
-  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
+  if (InterlockedCompareExchangePointer((PVOID volatile *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
     return STATUS_INVALID_DEVICE_STATE;
   }
   SetEvent(worker->request_event);
