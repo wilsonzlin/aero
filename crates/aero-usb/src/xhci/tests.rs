@@ -31,6 +31,12 @@ impl TestMem {
         Trb::from_bytes(bytes)
     }
 
+    fn read_u64(&mut self, addr: u64) -> u64 {
+        let mut bytes = [0u8; 8];
+        self.read_physical(addr, &mut bytes);
+        u64::from_le_bytes(bytes)
+    }
+
     fn write_trb(&mut self, addr: u64, trb: Trb) {
         self.write_physical(addr, &trb.to_bytes());
     }
@@ -343,4 +349,70 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
 
     // Reset Endpoint should clear the halted condition (Running = 1).
     assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+}
+
+#[test]
+fn enable_slot_allocates_slot_ids_and_reports_exhaustion() {
+    let mut mem = TestMem::new(0x20_000);
+    let mem_size = mem.len() as u64;
+
+    let dcbaa = 0x1000u64;
+    let cmd_ring = 0x4000u64;
+    let event_ring = 0x5000u64;
+
+    // Seed DCBAA[1] with a garbage pointer to ensure Enable Slot clears it to 0.
+    mem.write_u64(dcbaa + 8, 0xdead_beef_cafe_f00d);
+
+    // Command ring:
+    //  - TRB0: Enable Slot
+    //  - TRB1: Enable Slot (should fail: only one slot supported)
+    //  - TRB2: Link back to cmd_ring base, toggle cycle state
+    {
+        let mut trb0 = Trb::new(0, 0, 0);
+        trb0.set_trb_type(TrbType::EnableSlotCommand);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+    {
+        let mut trb1 = Trb::new(0, 0, 0);
+        trb1.set_trb_type(TrbType::EnableSlotCommand);
+        trb1.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+    {
+        let mut link = Trb::new(cmd_ring & !0x0f, 0, 0);
+        link.set_trb_type(TrbType::Link);
+        link.set_link_toggle_cycle(true);
+        link.set_cycle(true);
+        mem.write_trb(cmd_ring + 2 * 16, link);
+    }
+
+    let mut processor = CommandRingProcessor::new(
+        mem_size,
+        1, // max_slots
+        dcbaa,
+        CommandRing {
+            dequeue_ptr: cmd_ring,
+            cycle_state: true,
+        },
+        EventRing::new(event_ring, 16),
+    );
+    processor.process(&mut mem, 16);
+    assert!(!processor.host_controller_error);
+
+    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.slot_id(), 1);
+
+    assert_eq!(
+        event_completion_code(ev1),
+        CompletionCode::NoSlotsAvailableError.as_u8()
+    );
+    assert_eq!(ev1.slot_id(), 0);
+
+    assert_eq!(mem.read_u64(dcbaa + 8), 0);
 }

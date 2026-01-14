@@ -26,6 +26,7 @@ pub enum CompletionCode {
     UsbTransactionError = 4,
     TrbError = 5,
     StallError = 6,
+    NoSlotsAvailableError = 9,
     SlotNotEnabledError = 11,
     ShortPacket = 13,
     ParameterError = 17,

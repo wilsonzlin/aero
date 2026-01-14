@@ -1,6 +1,8 @@
 use crate::MemoryBus;
 
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
+use alloc::vec;
+use alloc::vec::Vec;
 
 const CONTEXT_ALIGN: u64 = 64;
 const CONTEXT_SIZE: u64 = 32;
@@ -93,6 +95,11 @@ pub struct CommandRingProcessor {
     /// DCBAA base pointer (guest physical address).
     dcbaa_ptr: u64,
 
+    /// Slots enabled via Enable Slot Command.
+    ///
+    /// Index 0 is unused (slot IDs are 1-based).
+    slots_enabled: Vec<bool>,
+
     pub command_ring: CommandRing,
     pub event_ring: EventRing,
 
@@ -106,6 +113,7 @@ impl CommandRingProcessor {
             mem_size,
             max_slots,
             dcbaa_ptr,
+            slots_enabled: vec![false; usize::from(max_slots).saturating_add(1)],
             command_ring,
             event_ring,
             host_controller_error: false,
@@ -140,6 +148,23 @@ impl CommandRingProcessor {
             match trb.trb_type() {
                 TrbType::Link => {
                     if !self.handle_link_trb(mem, trb_addr, trb) {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
+                TrbType::EnableSlotCommand => {
+                    let (code, slot_id) = self.handle_enable_slot(mem);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
+                    if !self.advance_cmd_dequeue() {
+                        self.host_controller_error = true;
+                        return;
+                    }
+                }
+                TrbType::DisableSlotCommand => {
+                    let slot_id = trb.slot_id();
+                    let code = self.handle_disable_slot(mem, slot_id);
+                    self.emit_command_completion(mem, trb_addr, code, slot_id);
+                    if !self.advance_cmd_dequeue() {
                         self.host_controller_error = true;
                         return;
                     }
@@ -199,6 +224,74 @@ impl CommandRingProcessor {
                 }
             }
         }
+    }
+
+    fn handle_enable_slot(&mut self, mem: &mut dyn MemoryBus) -> (CompletionCode, u8) {
+        if self.dcbaa_ptr == 0 {
+            return (CompletionCode::ContextStateError, 0);
+        }
+        if (self.dcbaa_ptr & (CONTEXT_ALIGN - 1)) != 0 {
+            return (CompletionCode::ParameterError, 0);
+        }
+
+        let slot_id = match (1u8..=self.max_slots).find(|&id| {
+            self.slots_enabled
+                .get(usize::from(id))
+                .copied()
+                .unwrap_or(false)
+                == false
+        }) {
+            Some(id) => id,
+            None => return (CompletionCode::NoSlotsAvailableError, 0),
+        };
+
+        let dcbaa_entry_addr = match self
+            .dcbaa_ptr
+            .checked_add(u64::from(slot_id) * 8)
+        {
+            Some(addr) => addr,
+            None => return (CompletionCode::ParameterError, 0),
+        };
+        if !self.check_range(dcbaa_entry_addr, 8) {
+            return (CompletionCode::ParameterError, 0);
+        }
+
+        // Initialise the DCBAA entry to 0; software will install a Device Context pointer during
+        // Address Device.
+        mem.write_physical(dcbaa_entry_addr, &0u64.to_le_bytes());
+        if let Some(flag) = self.slots_enabled.get_mut(usize::from(slot_id)) {
+            *flag = true;
+        }
+
+        (CompletionCode::Success, slot_id)
+    }
+
+    fn handle_disable_slot(&mut self, mem: &mut dyn MemoryBus, slot_id: u8) -> CompletionCode {
+        if slot_id == 0 || slot_id > self.max_slots {
+            return CompletionCode::ParameterError;
+        }
+        let idx = usize::from(slot_id);
+        let enabled = self.slots_enabled.get(idx).copied().unwrap_or(false);
+        if !enabled {
+            return CompletionCode::SlotNotEnabledError;
+        }
+
+        let dcbaa_entry_addr = match self
+            .dcbaa_ptr
+            .checked_add(u64::from(slot_id) * 8)
+        {
+            Some(addr) => addr,
+            None => return CompletionCode::ParameterError,
+        };
+        if !self.check_range(dcbaa_entry_addr, 8) {
+            return CompletionCode::ParameterError;
+        }
+
+        mem.write_physical(dcbaa_entry_addr, &0u64.to_le_bytes());
+        if let Some(flag) = self.slots_enabled.get_mut(idx) {
+            *flag = false;
+        }
+        CompletionCode::Success
     }
 
     fn advance_cmd_dequeue(&mut self) -> bool {
