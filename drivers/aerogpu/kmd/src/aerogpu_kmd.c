@@ -10079,6 +10079,20 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 enableMask = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
             }
             const ULONG pending = irqStatus & enableMask;
+
+            /*
+             * Ack the full IRQ_STATUS word (not just enabled bits) to clear any stale latched status
+             * that may have accumulated while delivery was masked (for example vblank). This mirrors
+             * the v1 ISR behavior and prevents "stale" interrupts from firing immediately on a later
+             * re-enable.
+             *
+             * IRQ assertion is still defined by (IRQ_STATUS & IRQ_ENABLE) != 0, so we only *claim*
+             * the interrupt when `pending != 0` below.
+             */
+            if (irqStatus != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, irqStatus);
+            }
+
             if (pending != 0) {
                 const ULONG known = AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR;
                 const ULONG unknown = pending & ~known;
@@ -10086,16 +10100,16 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                     InterlockedIncrement64(&adapter->PerfIrqSpurious);
                     static LONG g_UnexpectedLegacyMmioIrqWarned = 0;
                     if (InterlockedExchange(&g_UnexpectedLegacyMmioIrqWarned, 1) == 0) {
-                        DbgPrintEx(DPFLTR_IHVVIDEO_ID,
-                                   DPFLTR_ERROR_LEVEL,
-                                   "aerogpu-kmd: unexpected legacy IRQ_STATUS bits (status=0x%08lx enabled=0x%08lx)\n",
-                                   irqStatus,
-                                   pending);
+                        DbgPrintEx(
+                            DPFLTR_IHVVIDEO_ID,
+                            DPFLTR_ERROR_LEVEL,
+                            "aerogpu-kmd: unexpected legacy IRQ_STATUS bits (status=0x%08lx pending=0x%08lx enable=0x%08lx)\n",
+                            irqStatus,
+                            pending,
+                            enableMask);
                     }
                 }
 
-                /* Ack enabled bits in the ISR to deassert the (level-triggered) interrupt line. */
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, pending);
                 any = TRUE;
 
                 if ((pending & AEROGPU_IRQ_ERROR) != 0) {
