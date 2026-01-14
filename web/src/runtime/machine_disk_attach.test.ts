@@ -63,7 +63,22 @@ describe("runtime/machine_disk_attach (metadata compatibility)", () => {
     );
   });
 
-  it("allows unknown ISO format with a warning for install media", () => {
+  it("rejects unknown HDD format metadata for machine runtime", () => {
+    const meta: DiskImageMetadata = {
+      source: "local",
+      id: "d3",
+      name: "disk",
+      backend: "opfs",
+      kind: "hdd",
+      format: "unknown",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    expect(() => planMachineBootDiskAttachment(meta, "hdd")).toThrow(/format metadata/i);
+  });
+
+  it("rejects unknown ISO format metadata for install media", () => {
     const meta: DiskImageMetadata = {
       source: "local",
       id: "cd1",
@@ -75,9 +90,7 @@ describe("runtime/machine_disk_attach (metadata compatibility)", () => {
       sizeBytes: 2048,
       createdAtMs: 0,
     };
-    const plan = planMachineBootDiskAttachment(meta, "cd");
-    expect(plan.format).toBe("iso");
-    expect(plan.warnings.length).toBeGreaterThan(0);
+    expect(() => planMachineBootDiskAttachment(meta, "cd")).toThrow(/ISO install media/i);
   });
 });
 

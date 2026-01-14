@@ -5,7 +5,11 @@ import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/pro
 import { RingBuffer } from "../ipc/ring_buffer";
 import { UART_COM1 } from "../io/devices/uart16550";
 import { InputEventType } from "../input/event_queue";
-import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import {
+  DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
+  normalizeSetBootDisksMessage,
+  type SetBootDisksMessage,
+} from "../runtime/boot_disks_protocol";
 import { planMachineBootDiskAttachment } from "../runtime/machine_disk_attach";
 import {
   type ConfigAckMessage,
@@ -537,9 +541,19 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
         .set_disk_aerospar_opfs_open_and_set_overlay_ref;
       const open = (m as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open;
       if (typeof openAndSetRef === "function") {
-        await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
+        try {
+          await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
+        }
       } else if (typeof open === "function") {
-        await maybeAwait((open as (path: string) => unknown).call(m, plan.opfsPath));
+        try {
+          await maybeAwait((open as (path: string) => unknown).call(m, plan.opfsPath));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
+        }
         // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
         try {
           const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
@@ -550,13 +564,18 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           // ignore
         }
       } else {
-        throw new Error("Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build.");
+        throw new Error(
+          `Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build (disk path=${plan.opfsPath}).`,
+        );
       }
       changed = true;
     } else {
       const cow = diskMetaToOpfsCowPaths(msg.hdd);
       if (!cow) {
-        throw new Error("setBootDisks: HDD is not OPFS-backed (cannot attach in machine_cpu.worker).");
+        throw new Error(
+          `setBootDisks: HDD is not OPFS-backed (cannot attach in machine_cpu.worker). ` +
+            `disk=${String((msg.hdd as { name?: unknown }).name ?? "")} id=${String((msg.hdd as { id?: unknown }).id ?? "")}`,
+        );
       }
 
       const setPrimary = (m as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow;
@@ -568,16 +587,24 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
         cow.overlayBlockSizeBytes ??
         (await tryReadAerosparseBlockSizeBytesFromOpfs(cow.overlayPath)) ??
         // Default for newly-created overlays when no metadata/header is available.
-        1024 * 1024;
+        DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
       // Always pass a non-zero block size hint. Older builds that accept only 2 args will ignore it.
-      await maybeAwait(
-        (setPrimary as (basePath: string, overlayPath: string, overlayBlockSizeBytes: number) => unknown).call(
-          m,
-          cow.basePath,
-          cow.overlayPath,
-          blockSizeBytes,
-        ),
-      );
+      try {
+        await maybeAwait(
+          (setPrimary as (basePath: string, overlayPath: string, overlayBlockSizeBytes: number) => unknown).call(
+            m,
+            cow.basePath,
+            cow.overlayPath,
+            blockSizeBytes,
+          ),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `setBootDisks: failed to attach primary HDD (disk_id=0) ` +
+            `base=${cow.basePath} overlay=${cow.overlayPath}: ${message}`,
+        );
+      }
       changed = true;
     }
   } else {
@@ -602,14 +629,15 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
   if (!msg.cd) {
     // Best-effort: allow detaching install media when the selection removes it.
-    try {
-      const eject = (m as unknown as { eject_install_media?: unknown }).eject_install_media;
-      if (typeof eject === "function") {
+    const eject = (m as unknown as { eject_install_media?: unknown }).eject_install_media;
+    if (typeof eject === "function") {
+      try {
         await maybeAwait((eject as () => unknown).call(m));
-        changed = true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`setBootDisks: failed to eject install media: ${message}`);
       }
-    } catch {
-      // ignore
+      changed = true;
     }
 
     // Best-effort: clear CD overlay refs when the slot is cleared.
@@ -652,7 +680,12 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       throw new Error("Machine install-media ISO OPFS attach export is unavailable in this WASM build.");
     }
 
-    await maybeAwait((attachIso as (path: string) => unknown).call(m, isoPath));
+    try {
+      await maybeAwait((attachIso as (path: string) => unknown).call(m, isoPath));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`setBootDisks: failed to attach install ISO (disk_id=1) path=${isoPath}: ${message}`);
+    }
 
     // Best-effort overlay ref: some attach APIs do not set DISKS refs; try to do it here when available.
     try {
@@ -668,26 +701,20 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   }
 
   if (changed) {
-    try {
-      const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
-      if (typeof setBootDrive === "function") {
-        (setBootDrive as (drive: number) => void).call(m, desiredBootDrive);
-      } else if (msg.cd) {
-        // Warn when an install ISO is present but we cannot select the CD boot drive.
-        pushEvent({
-          kind: "log",
-          level: "warn",
-          message: "[machine_cpu] CD boot requested but Machine.set_boot_drive is unavailable; BIOS will likely boot from HDD.",
-        });
+    const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
+    if (typeof setBootDrive !== "function") {
+      if (msg.cd) {
+        throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
       }
-    } catch {
-      // ignore
+    } else {
+      (setBootDrive as (drive: number) => void).call(m, desiredBootDrive);
     }
 
     try {
       m.reset();
-    } catch {
-      // ignore
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`setBootDisks: Machine.reset failed after disk attachment: ${message}`);
     }
   }
 }
@@ -921,7 +948,20 @@ async function runLoop(): Promise<void> {
           await applyBootDisks(msg);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          pushEvent({ kind: "log", level: "warn", message: `[machine_cpu] setBootDisks failed: ${message}` });
+          const hddId = msg.hdd ? String((msg.hdd as { id?: unknown }).id ?? "") : "";
+          const hddName = msg.hdd ? String((msg.hdd as { name?: unknown }).name ?? "") : "";
+          const cdId = msg.cd ? String((msg.cd as { id?: unknown }).id ?? "") : "";
+          const cdName = msg.cd ? String((msg.cd as { name?: unknown }).name ?? "") : "";
+          const contextParts: string[] = [];
+          if (msg.hdd) contextParts.push(`hdd=${hddName || "?"}#${hddId || "?"}`);
+          if (msg.cd) contextParts.push(`cd=${cdName || "?"}#${cdId || "?"}`);
+          const context = contextParts.length ? ` (${contextParts.join(", ")})` : "";
+          const fullMessage = `[machine_cpu] setBootDisks failed${context}: ${message}`;
+          pushEvent({ kind: "log", level: "error", message: fullMessage });
+          setReadyFlag(st, role, false);
+          post({ type: MessageType.ERROR, role, message: fullMessage } satisfies ProtocolMessage);
+          ctx.close();
+          return;
         } finally {
           setMachineBusy(false);
         }

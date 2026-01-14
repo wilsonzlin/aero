@@ -61,13 +61,15 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
     if (meta.kind !== "hdd") {
       throw new Error(`machine runtime expected an HDD disk, got kind=${meta.kind} (disk=${diskLabel(meta)})`);
     }
-    if (meta.format !== "raw" && meta.format !== "aerospar" && meta.format !== "unknown") {
+    if (meta.format === "unknown") {
+      throw new Error(
+        `machine runtime requires explicit HDD format metadata (disk=${diskLabel(meta)} format=unknown)`,
+      );
+    }
+    if (meta.format !== "raw" && meta.format !== "aerospar") {
       throw new Error(
         `machine runtime only supports raw/aerospar HDD images for now (disk=${diskLabel(meta)} format=${meta.format})`,
       );
-    }
-    if (meta.format === "unknown") {
-      warnings.push(`HDD disk format is unknown; assuming raw (${diskLabel(meta)})`);
     }
     return { opfsPath: opfsPathForDisk(meta), format: meta.format === "aerospar" ? "aerospar" : "raw", warnings };
   }
@@ -76,9 +78,7 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
     throw new Error(`machine runtime expected a CD disk, got kind=${meta.kind} (disk=${diskLabel(meta)})`);
   }
 
-  if (meta.format === "unknown") {
-    warnings.push(`CD disk format is unknown; assuming ISO (${diskLabel(meta)})`);
-  } else if (meta.format !== "iso") {
+  if (meta.format !== "iso") {
     throw new Error(
       `machine runtime only supports ISO install media for now (disk=${diskLabel(meta)} format=${meta.format})`,
     );
