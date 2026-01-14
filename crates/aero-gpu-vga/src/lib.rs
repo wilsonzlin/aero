@@ -2648,6 +2648,24 @@ mod tests {
         assert_eq!(dev.port_read(0x3B4, 2), 0x120E);
     }
 
+    #[test]
+    fn bochs_vbe_ports_are_true_16_bit() {
+        let mut dev = VgaDevice::new();
+
+        // Ensure the index port is a true 16-bit port: the full value should be latched, not just
+        // the low byte.
+        dev.port_write(0x01CE, 2, 0xBEEF);
+        assert_eq!(dev.vbe_index, 0xBEEF);
+        assert_eq!(dev.port_read(0x01CE, 2), 0xBEEF);
+
+        // Program a real VBE register (XRES) through the index+data ports and verify we can read
+        // it back via `inw` on the data port.
+        dev.port_write(0x01CE, 2, 0x0001);
+        dev.port_write(0x01CF, 2, 0x0123);
+        assert_eq!(dev.vbe.xres, 0x0123);
+        assert_eq!(dev.port_read(0x01CF, 2), 0x0123);
+    }
+
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     #[test]
     fn scanout_update_reports_legacy_text_in_text_mode() {
