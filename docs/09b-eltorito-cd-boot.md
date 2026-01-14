@@ -64,9 +64,6 @@ Descriptor** that advertises the El Torito boot catalog.
 2. If we hit the terminator without finding a valid El Torito Boot Record VD, the ISO is treated as
    **not BIOS-bootable via El Torito**.
 
-> Practical guardrail: cap the scan to a small max (e.g. 64 descriptors) to avoid pathological
-> images. Windows media has the Boot Record early.
-
 ---
 
 ## 2) Boot Record Volume Descriptor (El Torito pointer)
@@ -206,6 +203,13 @@ This is why the conversion step above matters.
 
 After loading, BIOS transfers control to the boot image at `CS:IP = load_segment:0000` (physical
 `dst`), with `DL` set to the BIOS drive number of the boot device (see below).
+
+In Aero, the real-mode register state at entry is:
+
+* `CS = load_segment`, `IP = 0x0000`
+* `DL = boot_drive` (typically `0xE0` for the first CD-ROM)
+* `DS = ES = SS = 0x0000`
+* `SP = 0x7C00`
 
 ---
 
