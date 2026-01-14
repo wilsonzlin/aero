@@ -59,7 +59,7 @@ bash ./scripts/safe-run.sh \
     --serial-out stdout
 ```
 
-Note: the CLI opens the disk image as a native file-backed disk (writes from the guest can modify the image). Use a copy if you want a read-only base.
+Note: the CLI opens the disk image as a native file-backed disk. By default it is **writable** (guest writes can modify the image). Use `--disk-ro` or a copy if you want a read-only base.
 
 Optional outputs:
 

@@ -36,6 +36,10 @@ mod native {
         #[arg(long)]
         disk: PathBuf,
 
+        /// Open the disk image read-only (guest writes will fail).
+        #[arg(long)]
+        disk_ro: bool,
+
         /// Guest RAM size in MiB.
         #[arg(long, default_value_t = 64)]
         ram: u64,
@@ -77,7 +81,7 @@ mod native {
         let mut machine = Machine::new(MachineConfig::win7_storage_defaults(ram_bytes))
             .map_err(|e| anyhow!("{e}"))?;
 
-        let disk_backend = open_disk_backend(&args.disk)?;
+        let disk_backend = open_disk_backend(&args.disk, args.disk_ro)?;
         machine
             .set_disk_backend(disk_backend)
             .map_err(|e| anyhow!("{e}"))?;
@@ -153,7 +157,7 @@ mod native {
         Ok(())
     }
 
-    fn open_disk_backend(path: &Path) -> Result<Box<dyn VirtualDisk + Send>> {
+    fn open_disk_backend(path: &Path, read_only: bool) -> Result<Box<dyn VirtualDisk + Send>> {
         let meta = std::fs::metadata(path)
             .with_context(|| format!("failed to stat disk image: {}", path.display()))?;
         let len = meta.len();
@@ -167,8 +171,12 @@ mod native {
                 SECTOR_SIZE
             );
         }
-        let backend = StdFileBackend::open_rw(path)
-            .map_err(|e| anyhow!("failed to open disk image {}: {e}", path.display()))?;
+        let backend = if read_only {
+            StdFileBackend::open_read_only(path)
+        } else {
+            StdFileBackend::open_rw(path)
+        }
+        .map_err(|e| anyhow!("failed to open disk image {}: {e}", path.display()))?;
         let disk = RawDisk::open(backend)
             .map_err(|e| anyhow!("failed to open raw disk backend {}: {e}", path.display()))?;
         Ok(Box::new(disk))

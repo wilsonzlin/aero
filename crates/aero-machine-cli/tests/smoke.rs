@@ -36,6 +36,7 @@ fn boots_fixture_and_prints_serial() {
         .args([
             "--disk",
             tmp_disk.to_str().expect("disk path should be UTF-8"),
+            "--disk-ro",
             "--ram",
             "64",
             "--max-insts",
