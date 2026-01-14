@@ -71,6 +71,7 @@ Warning: `X-Debug-User` is **not production auth**. Replace this with real authe
 - Sets `Accept-Ranges: bytes`, `Content-Length`, and a (strong) `ETag`.
 - Sets `Last-Modified` when filesystem metadata is available (omitted for pre-epoch mtimes).
 - Sets `Content-Type: application/octet-stream` and `X-Content-Type-Options: nosniff`.
+- Sets `Content-Encoding: identity` to make “no compression transforms” explicit.
 - Supports basic conditional requests:
   - `If-None-Match` → `304 Not Modified`
   - `If-Modified-Since` → `304 Not Modified` (when `If-None-Match` is absent)
