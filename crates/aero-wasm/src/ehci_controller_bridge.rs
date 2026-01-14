@@ -120,24 +120,6 @@ fn detach_device_at_path(ctrl: &mut EhciController, path: &[u8]) -> Result<(), J
     }
 }
 
-fn reset_webusb_host_state_for_restore(dev: &mut AttachedUsbDevice) {
-    // If this is a WebUSB passthrough device, clear host-side bookkeeping that cannot be resumed
-    // after a snapshot restore (the browser side uses JS Promises).
-    let model_any = dev.model() as &dyn core::any::Any;
-    if let Some(webusb) = model_any.downcast_ref::<UsbWebUsbPassthroughDevice>() {
-        webusb.reset_host_state_for_restore();
-    }
-
-    // Recurse into nested hubs so downstream WebUSB devices also get reset.
-    if let Some(hub) = dev.as_hub_mut() {
-        for port in 0..hub.num_ports() {
-            if let Some(child) = hub.downstream_device_mut(port) {
-                reset_webusb_host_state_for_restore(child);
-            }
-        }
-    }
-}
-
 fn find_webusb_passthrough_device(
     dev: &mut AttachedUsbDevice,
 ) -> Option<UsbWebUsbPassthroughDevice> {
@@ -473,14 +455,10 @@ impl EhciControllerBridge {
             .load_state(ctrl_bytes)
             .map_err(|e| js_error(format!("Invalid EHCI controller snapshot: {e}")))?;
 
-        // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
-        // snapshot. Reset any restored passthrough device state so guest retries re-emit actions.
-        let hub = self.ctrl.hub_mut();
-        for port in 0..hub.num_ports() {
-            if let Some(mut dev) = hub.port_device_mut(port) {
-                reset_webusb_host_state_for_restore(&mut dev);
-            }
-        }
+        // Some USB device models (e.g. WebUSB passthrough) maintain host-side state backed by
+        // asynchronous browser operations. That host state cannot be resumed after restoring a VM
+        // snapshot. Reset any restored devices so the guest will re-emit host actions.
+        self.ctrl.reset_host_state_for_restore();
 
         // Recover an owned handle to a restored WebUSB passthrough device so the bridge can continue
         // draining actions / pushing completions after snapshot restore.
