@@ -60,11 +60,13 @@ test('rate limiter rejects when the per-minute budget is exceeded', async () => 
   assert.equal(first.statusCode, 200);
   assert.equal(first.headers['access-control-allow-origin'], 'http://localhost');
   assert.equal(first.headers['access-control-allow-credentials'], 'true');
+  assert.ok(String(first.headers['access-control-expose-headers'] ?? '').toLowerCase().includes('content-length'));
 
   const second = await app.inject({ method: 'GET', url: '/version', headers: { origin: 'http://localhost' } });
   assert.equal(second.statusCode, 429);
   assert.equal(second.headers['access-control-allow-origin'], 'http://localhost');
   assert.equal(second.headers['access-control-allow-credentials'], 'true');
+  assert.ok(String(second.headers['access-control-expose-headers'] ?? '').toLowerCase().includes('content-length'));
 
   await app.close();
 });
@@ -82,6 +84,7 @@ test('rate limiter returns application/dns-message for /dns-query', async () => 
   assert.equal(limited.statusCode, 429);
   assert.ok(String(limited.headers['content-type'] ?? '').startsWith('application/dns-message'));
   assert.equal(String(limited.headers['cache-control'] ?? ''), 'no-store');
+  assert.ok(String(limited.headers['access-control-expose-headers'] ?? '').toLowerCase().includes('content-length'));
   const header = decodeDnsHeader(limited.rawPayload);
   assert.equal(header.id, 0);
   // RCODE=2 (SERVFAIL)
