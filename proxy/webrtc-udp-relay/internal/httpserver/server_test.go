@@ -77,7 +77,7 @@ func makeJWT(secret string) string {
 func TestHealthzReadyzVersion(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -138,7 +138,7 @@ func TestHealthzReadyzVersion(t *testing.T) {
 func TestICEEndpointSchema(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -196,7 +196,7 @@ func assertICENoStoreHeaders(t *testing.T, resp *http.Response) {
 func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -235,7 +235,7 @@ func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
 func TestICEEndpoint_NoStoreHeaders_HEAD(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -288,7 +288,7 @@ func TestICEEndpoint_NoStoreHeaders_Panic(t *testing.T) {
 func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -396,7 +396,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 func TestICEEndpoint_AuthJWT(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -586,7 +586,7 @@ func TestICEEndpoint_NoStoreOnInternalError(t *testing.T) {
 	// no-store headers for *any* error response.
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -613,7 +613,7 @@ func TestICEEndpoint_NoStoreOnInternalError(t *testing.T) {
 func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -646,7 +646,7 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -679,7 +679,7 @@ func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -712,7 +712,7 @@ func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
 func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -756,7 +756,7 @@ func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 func TestOriginMiddleware_Preflight(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -833,7 +833,7 @@ func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 func TestRequestIDMiddleware(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -898,7 +898,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 func TestRecoverMiddleware(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -934,7 +934,7 @@ func TestRecoverMiddleware(t *testing.T) {
 func TestRequestLoggerMiddleware_AllowsWebSocketHijack(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,

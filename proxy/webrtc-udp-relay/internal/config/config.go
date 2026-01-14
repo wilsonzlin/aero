@@ -187,11 +187,11 @@ const (
 	ModeProd Mode = "prod"
 )
 
-type LogFormat string
+type logFormat string
 
 const (
-	LogFormatText LogFormat = "text"
-	LogFormatJSON LogFormat = "json"
+	logFormatText logFormat = "text"
+	logFormatJSON logFormat = "json"
 )
 
 type AuthMode string
@@ -210,11 +210,11 @@ const (
 	L2BackendAuthForwardModeSubprotocol L2BackendAuthForwardMode = "subprotocol"
 )
 
-type NAT1To1IPCandidateType string
+type nat1To1IPCandidateType string
 
 const (
-	NAT1To1CandidateTypeHost  NAT1To1IPCandidateType = "host"
-	NAT1To1CandidateTypeSrflx NAT1To1IPCandidateType = "srflx"
+	nat1To1CandidateTypeHost  nat1To1IPCandidateType = "host"
+	nat1To1CandidateTypeSrflx nat1To1IPCandidateType = "srflx"
 )
 
 type UDPInboundFilterMode string
@@ -244,7 +244,7 @@ type Config struct {
 	ListenAddr          string
 	PublicBaseURL       string
 	AllowedOrigins      []string
-	LogFormat           LogFormat
+	LogFormat           logFormat
 	LogLevel            slog.Level
 	ShutdownTimeout     time.Duration
 	ICEGatheringTimeout time.Duration
@@ -297,7 +297,7 @@ type Config struct {
 
 	// WebRTCNAT1To1IPCandidateType configures whether the NAT 1:1 IPs are
 	// advertised as host or srflx ICE candidates.
-	WebRTCNAT1To1IPCandidateType NAT1To1IPCandidateType
+	WebRTCNAT1To1IPCandidateType nat1To1IPCandidateType
 
 	// WebRTCUDPListenIP restricts which local interface address ICE will bind UDP
 	// sockets to. 0.0.0.0 means "use library default" (typically all interfaces).
@@ -667,7 +667,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	webrtcUDPListenIPStr := envOrDefault(lookup, envVarWebRTCUDPListenIP, defaultWebRTCUDPListenIP)
 	webrtcNAT1To1IPsStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPs, "")
-	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPCandidateType, string(NAT1To1CandidateTypeHost))
+	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPCandidateType, string(nat1To1CandidateTypeHost))
 	fs := flag.NewFlagSet("aero-webrtc-udp-relay", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -1003,7 +1003,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	if strings.TrimSpace(webrtcNAT1To1CandidateTypeStr) == "" {
-		webrtcNAT1To1CandidateTypeStr = string(NAT1To1CandidateTypeHost)
+		webrtcNAT1To1CandidateTypeStr = string(nat1To1CandidateTypeHost)
 	}
 	webrtcNAT1To1CandidateType, err := parseCandidateType(webrtcNAT1To1CandidateTypeStr)
 	if err != nil {
@@ -1211,9 +1211,9 @@ func envIntOrDefault(lookup func(string) (string, bool), key string, fallback in
 func defaultLogFormatForMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case string(ModeProd), "production":
-		return string(LogFormatJSON)
+		return string(logFormatJSON)
 	default:
-		return string(LogFormatText)
+		return string(logFormatText)
 	}
 }
 
@@ -1237,12 +1237,12 @@ func parseMode(raw string) (Mode, error) {
 	}
 }
 
-func parseLogFormat(raw string) (LogFormat, error) {
+func parseLogFormat(raw string) (logFormat, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case string(LogFormatText):
-		return LogFormatText, nil
-	case string(LogFormatJSON):
-		return LogFormatJSON, nil
+	case string(logFormatText):
+		return logFormatText, nil
+	case string(logFormatJSON):
+		return logFormatJSON, nil
 	default:
 		return "", fmt.Errorf("invalid log format %q (expected text or json)", raw)
 	}
@@ -1394,12 +1394,12 @@ func parsePortUint(v uint) (uint16, error) {
 	return uint16(v), nil
 }
 
-func parseCandidateType(s string) (NAT1To1IPCandidateType, error) {
+func parseCandidateType(s string) (nat1To1IPCandidateType, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case string(NAT1To1CandidateTypeHost):
-		return NAT1To1CandidateTypeHost, nil
-	case string(NAT1To1CandidateTypeSrflx):
-		return NAT1To1CandidateTypeSrflx, nil
+	case string(nat1To1CandidateTypeHost):
+		return nat1To1CandidateTypeHost, nil
+	case string(nat1To1CandidateTypeSrflx):
+		return nat1To1CandidateTypeSrflx, nil
 	default:
 		return "", fmt.Errorf("unknown candidate type %q", s)
 	}

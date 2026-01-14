@@ -27,8 +27,8 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.Mode != ModeDev {
 		t.Fatalf("mode=%q, want %q", cfg.Mode, ModeDev)
 	}
-	if cfg.LogFormat != LogFormatText {
-		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, LogFormatText)
+	if cfg.LogFormat != logFormatText {
+		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, logFormatText)
 	}
 	if cfg.WebRTCSessionConnectTimeout != defaultWebRTCSessionConnectTimeout {
 		t.Fatalf("WebRTCSessionConnectTimeout=%v, want %v", cfg.WebRTCSessionConnectTimeout, defaultWebRTCSessionConnectTimeout)
@@ -39,8 +39,8 @@ func TestDefaultsDev(t *testing.T) {
 	if !cfg.WebRTCUDPListenIP.Equal(net.IPv4zero) {
 		t.Fatalf("WebRTCUDPListenIP=%v, want 0.0.0.0", cfg.WebRTCUDPListenIP)
 	}
-	if cfg.WebRTCNAT1To1IPCandidateType != NAT1To1CandidateTypeHost {
-		t.Fatalf("WebRTCNAT1To1IPCandidateType=%q, want %q", cfg.WebRTCNAT1To1IPCandidateType, NAT1To1CandidateTypeHost)
+	if cfg.WebRTCNAT1To1IPCandidateType != nat1To1CandidateTypeHost {
+		t.Fatalf("WebRTCNAT1To1IPCandidateType=%q, want %q", cfg.WebRTCNAT1To1IPCandidateType, nat1To1CandidateTypeHost)
 	}
 	if len(cfg.WebRTCNAT1To1IPs) != 0 {
 		t.Fatalf("expected WebRTCNAT1To1IPs empty, got %v", cfg.WebRTCNAT1To1IPs)
@@ -546,8 +546,8 @@ func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
 	if cfg.Mode != ModeProd {
 		t.Fatalf("mode=%q, want %q", cfg.Mode, ModeProd)
 	}
-	if cfg.LogFormat != LogFormatJSON {
-		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, LogFormatJSON)
+	if cfg.LogFormat != logFormatJSON {
+		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, logFormatJSON)
 	}
 }
 
@@ -558,8 +558,8 @@ func TestLogFormatExplicitOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.LogFormat != LogFormatText {
-		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, LogFormatText)
+	if cfg.LogFormat != logFormatText {
+		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, logFormatText)
 	}
 }
 
@@ -616,8 +616,8 @@ func TestWebRTCNAT1To1IPsAndCandidateType(t *testing.T) {
 	if got, want := len(cfg.WebRTCNAT1To1IPs), 2; got != want {
 		t.Fatalf("len(WebRTCNAT1To1IPs)=%d, want %d", got, want)
 	}
-	if cfg.WebRTCNAT1To1IPCandidateType != NAT1To1CandidateTypeSrflx {
-		t.Fatalf("WebRTCNAT1To1IPCandidateType=%q, want %q", cfg.WebRTCNAT1To1IPCandidateType, NAT1To1CandidateTypeSrflx)
+	if cfg.WebRTCNAT1To1IPCandidateType != nat1To1CandidateTypeSrflx {
+		t.Fatalf("WebRTCNAT1To1IPCandidateType=%q, want %q", cfg.WebRTCNAT1To1IPCandidateType, nat1To1CandidateTypeSrflx)
 	}
 }
 

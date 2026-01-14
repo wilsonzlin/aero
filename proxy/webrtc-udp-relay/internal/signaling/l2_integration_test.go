@@ -206,7 +206,7 @@ func startTestRelayServer(t *testing.T, relayCfg relay.Config, destPolicy *polic
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -248,7 +248,7 @@ func startTestRelayServerWithAuth(t *testing.T, relayCfg relay.Config, destPolic
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,

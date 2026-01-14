@@ -39,9 +39,9 @@ func applyNetworkSettings(se *webrtc.SettingEngine, cfg config.Config) error {
 	if len(cfg.WebRTCNAT1To1IPs) > 0 {
 		var candidateType webrtc.ICECandidateType
 		switch cfg.WebRTCNAT1To1IPCandidateType {
-		case config.NAT1To1CandidateTypeHost:
+		case "host":
 			candidateType = webrtc.ICECandidateTypeHost
-		case config.NAT1To1CandidateTypeSrflx:
+		case "srflx":
 			candidateType = webrtc.ICECandidateTypeSrflx
 		default:
 			return fmt.Errorf("invalid NAT 1:1 IP candidate type %q", cfg.WebRTCNAT1To1IPCandidateType)

@@ -182,9 +182,9 @@ func newLogger(cfg config.Config) (*slog.Logger, error) {
 
 	var handler slog.Handler
 	switch cfg.LogFormat {
-	case config.LogFormatText:
+	case "text":
 		handler = slog.NewTextHandler(os.Stdout, opts)
-	case config.LogFormatJSON:
+	case "json":
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	default:
 		return nil, fmt.Errorf("unsupported log format %q", cfg.LogFormat)

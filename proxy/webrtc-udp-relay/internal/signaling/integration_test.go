@@ -45,7 +45,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
@@ -230,7 +230,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
-		LogFormat:       config.LogFormatText,
+		LogFormat:       "text",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
