@@ -3,8 +3,8 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdBindShaders, AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdSetPrimitiveTopology, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdSetPrimitiveTopology,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
     AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
@@ -13,28 +13,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
-
-fn patch_first_bind_shaders_set_dummy_gs(bytes: &mut [u8], gs_handle: u32) {
-    let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
-    let mut patched = false;
-    while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
-        let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
-        let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size == 0 || cursor + size > bytes.len() {
-            break;
-        }
-
-        if opcode == AerogpuCmdOpcode::BindShaders as u32 {
-            let off = cursor + core::mem::offset_of!(AerogpuCmdBindShaders, reserved0);
-            bytes[off..off + 4].copy_from_slice(&gs_handle.to_le_bytes());
-            patched = true;
-            break;
-        }
-
-        cursor += size;
-    }
-    assert!(patched, "failed to patch BindShaders reserved0 as dummy GS");
-}
 
 fn patch_first_set_primitive_topology(bytes: &mut [u8], topology: u32) {
     let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
@@ -90,7 +68,9 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        writer.bind_shaders(VS, PS, 0);
+        // Bind a dummy GS handle in the legacy `BIND_SHADERS.reserved0` field to force the
+        // compute-prepass path (the executor interprets this field as `gs`).
+        writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
         // Emit a supported topology in the protocol stream, then patch it to a D3D11-only value
         // (patchlist) to ensure the compute-prepass path does not depend on WebGPU's topology
         // support.
@@ -98,9 +78,6 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
         writer.draw(3, 1, 0, 0);
 
         let mut stream = writer.finish();
-        // Treat the legacy `reserved0` field as a dummy GS handle to force the compute-prepass
-        // path (the executor interprets this field as `gs` for forward compatibility).
-        patch_first_bind_shaders_set_dummy_gs(&mut stream, 0xCAFE_BABE);
         // Patch to D3D11 `D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST` (33).
         patch_first_set_primitive_topology(&mut stream, 33);
 
