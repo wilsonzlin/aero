@@ -265,6 +265,9 @@ pub enum ShaderTranslateError {
         slot: u32,
         format: u32,
     },
+    UavSlotUsedAsBufferAndTexture {
+        slot: u32,
+    },
     PixelShaderMissingColorOutputs,
     UavMixedAtomicAndNonAtomicAccess {
         slot: u32,
@@ -385,6 +388,10 @@ impl fmt::Display for ShaderTranslateError {
             ShaderTranslateError::UnsupportedUavTextureFormat { slot, format } => write!(
                 f,
                 "typed UAV u{slot} uses unsupported DXGI format {format}; supported formats: rgba8unorm (28), rgba8snorm (31), rgba8uint (30), rgba8sint (32), rgba16float (10), rgba16uint (12), rgba16sint (14), rg32float (16), rg32uint (17), rg32sint (18), rgba32float (2), rgba32uint (3), rgba32sint (4), r32float (41), r32uint (42), r32sint (43)"
+            ),
+            ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot } => write!(
+                f,
+                "uav slot {slot} is used as both a UAV buffer and a typed UAV texture; u# slots must be used consistently"
             ),
             ShaderTranslateError::PixelShaderMissingColorOutputs => {
                 write!(
@@ -3734,13 +3741,17 @@ fn scan_resources(
                     }
                 }
                 // UAV buffer types (SM5):
-                // - D3D_SIT_UAV_RWTYPED
                 // - D3D_SIT_UAV_RWSTRUCTURED
                 // - D3D_SIT_UAV_RWBYTEADDRESS
                 // - D3D_SIT_UAV_APPEND_STRUCTURED
                 // - D3D_SIT_UAV_CONSUME_STRUCTURED
                 // - D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER
-                4 | 6 | 8 | 9 | 10 | 11 => {
+                //
+                // Note: `D3D_SIT_UAV_RWTYPED` (4) may refer to typed UAV textures (RWTexture*) as
+                // well as typed UAV buffers (RWBuffer*). Since this translator only models typed
+                // UAV *textures* via `dcl_uav_typed`, do not use RDEF input-type 4 to expand the
+                // `u#` UAV buffer slot set.
+                6 | 8 | 9 | 10 | 11 => {
                     if set_intersects_range(&uav_buffers, res.bind_point, res.bind_count) {
                         expand_set_range(
                             &mut uav_buffers,
@@ -3752,6 +3763,15 @@ fn scan_resources(
                 }
                 _ => {}
             }
+        }
+    }
+
+    // `u#` slots are a single namespace in D3D11: a slot is either a UAV buffer or a UAV texture.
+    // Reject shaders that try to use the same slot in both ways (this would otherwise result in
+    // conflicting WGSL declarations and invalid bind group layouts).
+    for &slot in &used_uav_texture_slots {
+        if uav_buffers.contains(&slot) {
+            return Err(ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot });
         }
     }
 
@@ -7822,4 +7842,37 @@ mod tests {
             "expected actionable unsupported format message, got: {msg}"
         );
     }
-}
+
+    #[test]
+    fn uav_slot_used_as_buffer_and_texture_triggers_error() {
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::UavTyped2D {
+                slot: 0,
+                // DXGI_FORMAT_R8G8B8A8_UNORM
+                format: 28,
+            }],
+            instructions: vec![
+                Sm4Inst::StoreRaw {
+                    uav: crate::sm4_ir::UavRef { slot: 0 },
+                    addr: dummy_coord(),
+                    value: dummy_coord(),
+                    mask: WriteMask::X,
+                },
+                Sm4Inst::StoreUavTyped {
+                    uav: crate::sm4_ir::UavRef { slot: 0 },
+                    coord: dummy_coord(),
+                    value: dummy_coord(),
+                    mask: WriteMask::XYZW,
+                },
+            ],
+        };
+
+        let err = scan_resources(&module, None).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot: 0 }
+        ));
+    }
+} 
