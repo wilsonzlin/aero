@@ -2782,6 +2782,9 @@ fn rust_layout_matches_c_headers() {
         40 + 4096,
         "sizeof(aerogpu_escape_read_gpa_inout)"
     );
+    assert_eq!(abi.size("aerogpu_escape_set_cursor_position_in"), 24);
+    assert_eq!(abi.size("aerogpu_escape_set_cursor_visibility_in"), 24);
+    assert_eq!(abi.size("aerogpu_escape_set_cursor_shape_in"), 49);
 
     assert_eq!(abi.offset("aerogpu_escape_header", "version"), 0);
     assert_eq!(abi.offset("aerogpu_escape_header", "op"), 4);
@@ -3289,6 +3292,41 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.offset("aerogpu_escape_read_gpa_inout", "data"), 40);
 
+    assert_eq!(abi.offset("aerogpu_escape_set_cursor_position_in", "x"), 16);
+    assert_eq!(abi.offset("aerogpu_escape_set_cursor_position_in", "y"), 20);
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_visibility_in", "visible"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "width"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "height"),
+        20
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "hot_x"),
+        24
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "hot_y"),
+        28
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "pitch_bytes"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "format"),
+        36
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_set_cursor_shape_in", "pixels"),
+        48
+    );
+
     assert_eq!(abi.offset("aerogpu_dbgctl_createallocation_desc", "seq"), 0);
     assert_eq!(
         abi.offset("aerogpu_dbgctl_createallocation_desc", "call_seq"),
@@ -3364,6 +3402,9 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE"), 15);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION"), 16);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY"), 17);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS"), 32);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS"), 32);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096);
