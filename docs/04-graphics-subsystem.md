@@ -114,6 +114,11 @@ Note: there is also a main-thread fallback presenter for the legacy shared frame
 - implementation: `web/src/display/shared_layout_presenter.ts` (`SharedLayoutPresenter`)
 - wired in the web UI/runtime: `web/src/main.ts` (`ensureVgaPresenter`)
 
+Shared-memory wiring note: in the canonical multi-worker runtime, the SharedArrayBuffers / `WebAssembly.Memory` handles are distributed to workers via a coordinator init message:
+
+- Message type: `WorkerInitMessage` (`kind: "init"`) in `web/src/runtime/protocol.ts` (includes `guestMemory`, optional `vram`, `scanoutState`, `cursorState`, `sharedFramebuffer`, and optional `frameStateSab`).
+- Segment construction: `web/src/runtime/shared_layout.ts` (allocates the shared framebuffer, scanout/cursor descriptors, and optional VRAM aperture).
+
 ## Frame pacing / “new frame” state (SharedArrayBuffer)
 
 In addition to the pixel/scanout structures, the browser runtime uses a small `SharedArrayBuffer` as a cross-thread “frame status” flag + metrics block.
