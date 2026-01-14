@@ -566,7 +566,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
 ) -> Result<String, GsTranslateError> {
     Ok(
         translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
-            module, "cs_main", varyings,
+            module,
+            "cs_main",
+            Some(varyings),
         )?
         .wgsl,
     )
@@ -588,8 +590,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {
-    let varyings = default_varyings_from_decls(module);
-    translate_gs_module_to_wgsl_compute_prepass_packed(module, &varyings)
+    Ok(translate_gs_module_to_wgsl_compute_prepass_with_entry_point(module, "cs_main")?.wgsl)
 }
 
 /// Variant of [`translate_gs_module_to_wgsl_compute_prepass`] that allows overriding the compute
@@ -599,23 +600,23 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     entry_point: &str,
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
     let varyings = default_varyings_from_decls(module);
-    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
-        module,
-        entry_point,
-        &varyings,
-    )
+    let varyings = (!varyings.is_empty()).then_some(varyings.as_slice());
+    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(module, entry_point, varyings)
 }
 
 fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     module: &Sm4Module,
     entry_point: &str,
-    varyings: &[u32],
+    varyings: Option<&[u32]>,
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
     if module.stage != ShaderStage::Geometry {
         return Err(GsTranslateError::NotGeometryStage(module.stage));
     }
 
-    if let Some(&loc) = varyings
+    let auto_varyings = varyings.is_none();
+    let explicit_varyings: &[u32] = varyings.unwrap_or(&[]);
+
+    if let Some(&loc) = explicit_varyings
         .iter()
         .find(|&&loc| loc == 0 || loc >= EXPANDED_VERTEX_MAX_VARYINGS)
     {
@@ -1605,7 +1606,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     // varying locations. This allows missing GS outputs to default to `vec4<f32>(0.0)` via the
     // zero-initialized output register file.
     max_output_reg = max_output_reg.max(0);
-    if let Some(max_varying) = varyings.iter().copied().max() {
+    if let Some(max_varying) = explicit_varyings.iter().copied().max() {
         max_output_reg = max_output_reg.max(max_varying as i32);
     }
 
@@ -1618,6 +1619,21 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             reg: output_reg_count.saturating_sub(1),
         });
     }
+
+    let mut auto_varyings_storage: Vec<u32> = Vec::new();
+    let varyings: &[u32] = if auto_varyings {
+        // Some real-world DXBC blobs omit explicit `dcl_output` declarations for GS outputs, which
+        // means `Sm4Decl::Output` is absent. When that happens, `default_varyings_from_decls`
+        // returns an empty list; fall back to exporting all non-position output registers present
+        // in the local output register file (`o1..o{N}`).
+        let max_varying = output_reg_count.saturating_sub(1);
+        for loc in 1..=max_varying {
+            auto_varyings_storage.push(loc);
+        }
+        &auto_varyings_storage
+    } else {
+        explicit_varyings
+    };
 
     let mut w = WgslWriter::new();
 
