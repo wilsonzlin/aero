@@ -4825,14 +4825,11 @@ def main() -> int:
 
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                         if args.require_expect_blk_msi:
-                            if expect_blk_msi_config is None:
-                                expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
-                            if expect_blk_msi_config != "1":
-                                print(
-                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
-                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
-                                    file=sys.stderr,
-                                )
+                            expect_blk_msi_config, msg = _require_expect_blk_msi_config(
+                                tail, expect_blk_msi_config=expect_blk_msi_config
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -5763,14 +5760,11 @@ def main() -> int:
                         break
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
                         if args.require_expect_blk_msi:
-                            if expect_blk_msi_config is None:
-                                expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
-                            if expect_blk_msi_config != "1":
-                                print(
-                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
-                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
-                                    file=sys.stderr,
-                                )
+                            expect_blk_msi_config, msg = _require_expect_blk_msi_config(
+                                tail, expect_blk_msi_config=expect_blk_msi_config
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -6452,15 +6446,15 @@ def main() -> int:
                         ):
                             saw_virtio_net_link_flap_skip = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
-                            if args.require_expect_blk_msi and expect_blk_msi_config != "1":
-                                print(
-                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
-                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
-                                    file=sys.stderr,
+                            if args.require_expect_blk_msi:
+                                expect_blk_msi_config, msg = _require_expect_blk_msi_config(
+                                    tail, expect_blk_msi_config=expect_blk_msi_config
                                 )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if not require_per_test_markers and getattr(
                                 args, "require_virtio_input_binding", False
                             ):
@@ -7218,15 +7212,15 @@ def main() -> int:
                             result_code = 0
                             break
                         if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
-                            if args.require_expect_blk_msi and expect_blk_msi_config != "1":
-                                print(
-                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
-                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
-                                    file=sys.stderr,
+                            if args.require_expect_blk_msi:
+                                expect_blk_msi_config, msg = _require_expect_blk_msi_config(
+                                    tail, expect_blk_msi_config=expect_blk_msi_config
                                 )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             msg = _try_virtio_snd_force_null_backend_failure_message(tail)
                             if msg is not None:
                                 print(msg)
@@ -8034,6 +8028,30 @@ def _try_get_selftest_config_expect_blk_msi(tail: bytes) -> Optional[str]:
     if cfg is None:
         return None
     return cfg.get("expect_blk_msi")
+
+
+def _require_expect_blk_msi_config(
+    tail: bytes, *, expect_blk_msi_config: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Enforce `--require-expect-blk-msi` against the guest selftest CONFIG marker.
+
+    Returns a tuple of:
+      - `expect_blk_msi_config` (possibly updated by parsing `tail`)
+      - `failure_message` (None when the requirement is satisfied)
+    """
+
+    if expect_blk_msi_config is None:
+        expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+
+    if expect_blk_msi_config != "1":
+        return (
+            expect_blk_msi_config,
+            "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
+            "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
+        )
+
+    return expect_blk_msi_config, None
 
 
 def _try_get_selftest_config_udp_port(tail: bytes) -> Optional[str]:
