@@ -170,4 +170,16 @@ out="$(
 timeout_val="$(extract_timeout "${out}")"
 assert_eq "playwright-test-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
 
+###############################################################################
+# Case 7: `npm exec playwright test` bumps timeout to AERO_PLAYWRIGHT_TIMEOUT when AERO_TIMEOUT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_MEM_LIMIT=unlimited \
+  AERO_PLAYWRIGHT_TIMEOUT=37 \
+  bash "${test_repo}/scripts/safe-run.sh" npm exec playwright test 2>&1 >/dev/null
+)"
+timeout_val="$(extract_timeout "${out}")"
+assert_eq "npm-exec-playwright-test-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
+
 echo "All safe-run Playwright timeout checks passed."

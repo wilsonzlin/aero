@@ -178,4 +178,16 @@ out="$(
 mem_val="$(extract_mem_limit "${out}")"
 assert_eq "playwright-test-uses-playwright-mem-limit-when-aero-mem-unset" "${mem_val}" "11G"
 
+###############################################################################
+# Case 7: `npm exec playwright test` uses AERO_PLAYWRIGHT_MEM_LIMIT when AERO_MEM_LIMIT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_TIMEOUT=600 \
+  AERO_PLAYWRIGHT_MEM_LIMIT=11G \
+  bash "${test_repo}/scripts/safe-run.sh" npm exec playwright test 2>&1 >/dev/null
+)"
+mem_val="$(extract_mem_limit "${out}")"
+assert_eq "npm-exec-playwright-test-uses-playwright-mem-limit-when-aero-mem-unset" "${mem_val}" "11G"
+
 echo "All safe-run Playwright memory-limit checks passed."
