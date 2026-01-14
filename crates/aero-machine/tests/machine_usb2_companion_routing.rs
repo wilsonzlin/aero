@@ -122,3 +122,107 @@ fn machine_usb2_companion_routing_moves_devices_between_uhci_and_ehci() {
         );
     }
 }
+
+#[test]
+fn machine_reset_restores_usb2_mux_routing_to_companion_controller() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_ehci: true,
+        // Keep the machine minimal/deterministic for this reset test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    let (uhci_io_base, ehci_mmio_base) = {
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+
+        let uhci_bar4_base = bus
+            .device_config(USB_UHCI_PIIX3.bdf)
+            .expect("UHCI PCI function should exist")
+            .bar_range(4)
+            .map(|range| range.base)
+            .unwrap_or(0);
+        let uhci_io_base = u16::try_from(uhci_bar4_base).expect("UHCI BAR4 base should fit in u16");
+
+        let ehci_mmio_base = bus
+            .device_config(USB_EHCI_ICH9.bdf)
+            .expect("EHCI PCI function should exist")
+            .bar_range(EhciPciDevice::MMIO_BAR_INDEX)
+            .map(|range| range.base)
+            .unwrap_or(0);
+
+        (uhci_io_base, ehci_mmio_base)
+    };
+    assert_ne!(ehci_mmio_base, 0, "EHCI BAR0 base should be programmed");
+
+    // Attach a USB HID keyboard to UHCI root port 0 (muxed when EHCI is enabled).
+    m.usb_attach_root(0, Box::new(UsbHidKeyboardHandle::new()))
+        .expect("attach should succeed");
+
+    // Reset/enable the UHCI view of the port.
+    const UHCI_PORTSC_PR: u32 = 1 << 9;
+    m.io_write(uhci_io_base + uhci_regs::REG_PORTSC1, 2, UHCI_PORTSC_PR);
+    for _ in 0..50 {
+        m.tick_platform(1_000_000);
+    }
+
+    // Route the port to EHCI via CONFIGFLAG and reset the EHCI view.
+    m.write_physical_u32(ehci_mmio_base + REG_CONFIGFLAG, CONFIGFLAG_CF);
+    m.write_physical_u32(ehci_mmio_base + reg_portsc(0), PORTSC_PR);
+    for _ in 0..50 {
+        m.tick_platform(1_000_000);
+    }
+
+    // Sanity: EHCI should own the port before reset (PORT_OWNER=0).
+    let portsc = m.read_physical_u32(ehci_mmio_base + reg_portsc(0));
+    assert_eq!(portsc & PORTSC_PO, 0, "expected EHCI to own the port");
+
+    // Machine reset should preserve attachment but restore default routing (CONFIGFLAG=0 ->
+    // companion ownership, PORT_OWNER=1).
+    m.reset();
+
+    // After reset the device should still be attached (topology preserved).
+    {
+        let uhci = m.uhci().expect("UHCI exists after reset");
+        assert!(
+            uhci.borrow().controller().hub().port_device(0).is_some(),
+            "expected muxed device to remain attached behind UHCI"
+        );
+    }
+    {
+        let ehci = m.ehci().expect("EHCI exists after reset");
+        assert!(
+            ehci.borrow().controller().hub().port_device(0).is_some(),
+            "expected muxed device to remain attached behind EHCI"
+        );
+    }
+
+    // EHCI should report the port as owned by the companion controller after reset.
+    //
+    // Avoid reading via the PCI/MMIO router here: `Machine::read_physical_u32` borrows the MMIO
+    // router, and holding a `pci_config_ports().borrow_mut()` at the same time can trigger `RefCell`
+    // double-borrow panics in the BAR router.
+    let portsc_after = {
+        let ehci = m.ehci().expect("EHCI exists after reset");
+        let v = ehci.borrow().controller().hub().read_portsc(0);
+        v
+    };
+    assert_ne!(
+        portsc_after & PORTSC_PO,
+        0,
+        "expected reset to route muxed port back to companion controller"
+    );
+}
