@@ -10368,7 +10368,7 @@ mod tests {
         let overlay = m
             .ide_secondary_master_atapi_overlay
             .as_ref()
-            .expect("overlay ref should be set after attach_install_media_iso");
+            .expect("overlay ref should be set after attach_install_media_iso_and_set_overlay_ref");
         assert_eq!(overlay.disk_id, Machine::DISK_ID_INSTALL_MEDIA);
         assert_eq!(overlay.base_image, "/state/win7.iso");
         assert_eq!(overlay.overlay_image, "");
