@@ -70,6 +70,17 @@ const MAX_RDEF_VARIABLES_PER_CBUFFER: usize = 512;
 const MAX_TRANSLATE_DECLS: usize = 4 * 1024;
 const MAX_TRANSLATE_INSTRUCTIONS: usize = 4 * 1024;
 
+// D3D10+ `D3D_NAME_*` system-value codes used in DXBC signature tables.
+//
+// These values are part of the D3D tokenized-program format (`d3d11tokenizedprogramformat.h`) and
+// are mirrored in the translator (`crates/aero-d3d11/src/shader_translate.rs`).
+const D3D_NAME_POSITION: u32 = 1;
+const D3D_NAME_VERTEX_ID: u32 = 6;
+const D3D_NAME_PRIMITIVE_ID: u32 = 7;
+const D3D_NAME_INSTANCE_ID: u32 = 8;
+const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+const D3D_NAME_TARGET: u32 = 64;
+
 #[derive(Clone, Copy)]
 struct SigParam<'a> {
     semantic_name: &'a [u8],
@@ -562,15 +573,39 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
             mask = 0xF;
         }
         // Keep semantics simple and ASCII; these are used by sys-value heuristics.
-        let semantic_name: &[u8] = if is_vertex {
-            &b"POSITION"[..]
+        //
+        // Prefer a realistic pixel input layout:
+        // - v0 = SV_Position (system value)
+        // - v1+ = varyings (TEXCOORD) or other supported system values (e.g. SV_PrimitiveID).
+        //
+        // This helps the fuzzer reach deeper translation paths: if we mark *every* pixel input as a
+        // system value (`SV_Position`), reads from `v1+` would be rejected as unsupported system
+        // values in `IoMaps::read_input_vec4`.
+        let (semantic_name, system_value_type): (&[u8], u32) = if is_vertex {
+            match reg {
+                0 => (&b"POSITION"[..], 0),
+                1 => match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+                    0 => (&b"TEXCOORD"[..], 0),
+                    1 => (&b"SV_VertexID"[..], D3D_NAME_VERTEX_ID),
+                    _ => (&b"SV_InstanceID"[..], D3D_NAME_INSTANCE_ID),
+                },
+                _ => (&b"TEXCOORD"[..], 0),
+            }
         } else {
-            &b"SV_Position"[..]
+            match reg {
+                0 => (&b"SV_Position"[..], D3D_NAME_POSITION),
+                1 => match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+                    0 => (&b"TEXCOORD"[..], 0),
+                    1 => (&b"SV_PrimitiveID"[..], D3D_NAME_PRIMITIVE_ID),
+                    _ => (&b"SV_IsFrontFace"[..], D3D_NAME_IS_FRONT_FACE),
+                },
+                _ => (&b"TEXCOORD"[..], 0),
+            }
         };
         sig_in.push(SigParam {
             semantic_name,
             semantic_index: reg as u32,
-            system_value_type: 0,
+            system_value_type,
             component_type: 0,
             register: reg as u32,
             mask,
@@ -585,7 +620,11 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
     } else {
         &b"SV_Target"[..]
     };
-    let out_sys_value = if is_vertex { 1u32 } else { 64u32 };
+    let out_sys_value = if is_vertex {
+        D3D_NAME_POSITION
+    } else {
+        D3D_NAME_TARGET
+    };
     sig_out.push(SigParam {
         semantic_name: out_semantic,
         semantic_index: 0,

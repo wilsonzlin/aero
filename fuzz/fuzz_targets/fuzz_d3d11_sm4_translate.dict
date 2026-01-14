@@ -16,6 +16,10 @@
 
 "SV_Position"
 "SV_Target"
+"SV_VertexID"
+"SV_InstanceID"
+"SV_PrimitiveID"
+"SV_IsFrontFace"
 "SV_TessFactor"
 "SV_InsideTessFactor"
 "POSITION"
