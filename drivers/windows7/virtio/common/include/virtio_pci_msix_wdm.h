@@ -34,6 +34,16 @@
 #define CM_RESOURCE_INTERRUPT_MESSAGE 0x0004
 #endif
 
+/*
+ * Some older WDK header sets omit CONNECT_MESSAGE_BASED even though
+ * IoConnectInterruptEx supports message-based interrupts on Vista+.
+ *
+ * The documented value is 2.
+ */
+#ifndef CONNECT_MESSAGE_BASED
+#define CONNECT_MESSAGE_BASED 0x2
+#endif
+
 /* Virtio spec sentinel for "no MSI-X vector assigned". */
 #ifndef VIRTIO_PCI_MSI_NO_VECTOR
 #define VIRTIO_PCI_MSI_NO_VECTOR ((USHORT)0xFFFF)
