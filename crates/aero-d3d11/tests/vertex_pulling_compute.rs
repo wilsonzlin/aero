@@ -1537,7 +1537,7 @@ fn compute_can_vertex_pull_f32_and_i32_formats() {
         vb.extend_from_slice(&[0u8; 4]);
         assert_eq!(vb.len(), 1 + 64 * 2);
 
-        while vb.len() % 4 != 0 {
+        while !vb.len().is_multiple_of(4) {
             vb.push(0);
         }
 
