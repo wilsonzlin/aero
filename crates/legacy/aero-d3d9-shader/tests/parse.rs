@@ -106,7 +106,9 @@ fn malformed_dxbc_shader_chunk_invalid_version_token_errors() {
 
 #[test]
 fn malformed_dxbc_truncated_header_errors() {
-    let err = D3d9Shader::parse(b"DXBC").unwrap_err();
+    // DXBC magic with no further header fields.
+    let dxbc = dxbc_test_utils::build_container(&[]);
+    let err = D3d9Shader::parse(&dxbc[..4]).unwrap_err();
     assert!(matches!(
         err,
         ShaderParseError::Dxbc(aero_dxbc::DxbcError::MalformedHeader { .. })
