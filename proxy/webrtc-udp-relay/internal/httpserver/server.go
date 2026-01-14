@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -178,7 +179,7 @@ func (s *server) registerRoutes() {
 		if iceServers == nil {
 			iceServers = []webrtc.ICEServer{}
 		}
-		if s.cfg.TURNREST.Enabled() {
+		if strings.TrimSpace(s.cfg.TURNREST.SharedSecret) != "" {
 			gen, err := newTURNRESTGenerator(
 				s.cfg.TURNREST.SharedSecret,
 				s.cfg.TURNREST.TTLSeconds,

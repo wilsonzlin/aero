@@ -591,12 +591,10 @@ func TestICEEndpoint_NoStoreOnInternalError(t *testing.T) {
 		ShutdownTimeout: 2 * time.Second,
 		Mode:            config.ModeDev,
 		AuthMode:        config.AuthModeNone,
-		TURNREST: config.TurnRESTConfig{
-			SharedSecret:   "shared-secret",
-			TTLSeconds:     0, // invalid: must be >0
-			UsernamePrefix: "aero",
-		},
 	}
+	cfg.TURNREST.SharedSecret = "shared-secret"
+	cfg.TURNREST.TTLSeconds = 0 // invalid: must be >0
+	cfg.TURNREST.UsernamePrefix = "aero"
 
 	baseURL := startTestServer(t, cfg, nil)
 

@@ -224,19 +224,19 @@ const (
 	UDPInboundFilterModeAddressAndPort UDPInboundFilterMode = "address_and_port"
 )
 
-type UDPPortRange struct {
+type udpPortRange struct {
 	Min uint16
 	Max uint16
 }
 
-type TurnRESTConfig struct {
+type turnRESTConfig struct {
 	SharedSecret   string
 	TTLSeconds     int64
 	UsernamePrefix string
 	Realm          string
 }
 
-func (c TurnRESTConfig) Enabled() bool {
+func (c turnRESTConfig) enabled() bool {
 	return strings.TrimSpace(c.SharedSecret) != ""
 }
 
@@ -289,7 +289,7 @@ type Config struct {
 
 	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
 	// its defaults (OS ephemeral port selection).
-	WebRTCUDPPortRange *UDPPortRange
+	WebRTCUDPPortRange *udpPortRange
 
 	// WebRTCNAT1To1IPs configures pion to advertise these public IPs for ICE when
 	// the relay is behind NAT. Values must be literal IPs (no hostnames).
@@ -337,7 +337,7 @@ type Config struct {
 	HardCloseAfterViolations        int
 	ViolationWindow                 time.Duration
 	ICEServers                      []webrtc.ICEServer
-	TURNREST                        TurnRESTConfig
+	TURNREST                        turnRESTConfig
 
 	iceConfigErr error
 }
@@ -962,7 +962,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		}
 	}
 
-	var webrtcUDPPortRange *UDPPortRange
+	var webrtcUDPPortRange *udpPortRange
 	if webrtcUDPPortMin != 0 || webrtcUDPPortMax != 0 {
 		if webrtcUDPPortMin == 0 || webrtcUDPPortMax == 0 {
 			return Config{}, fmt.Errorf("%s/%s and %s/%s must be set together (or both unset)",
@@ -985,7 +985,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		if size < recommendedWebRTCUDPPortRangeSize {
 			return Config{}, fmt.Errorf("WebRTC UDP port range is too small: %d ports (min %d recommended)", size, recommendedWebRTCUDPPortRangeSize)
 		}
-		webrtcUDPPortRange = &UDPPortRange{Min: min, Max: max}
+		webrtcUDPPortRange = &udpPortRange{Min: min, Max: max}
 	}
 
 	webrtcUDPListenIP := net.ParseIP(strings.TrimSpace(webrtcUDPListenIPStr))
@@ -1134,7 +1134,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		MaxDataChannelBpsPerSession:     maxDataChannelBpsPerSession,
 		HardCloseAfterViolations:        hardCloseAfterViolations,
 		ViolationWindow:                 violationWindow,
-		TURNREST: TurnRESTConfig{
+		TURNREST: turnRESTConfig{
 			SharedSecret:   turnRESTSharedSecret,
 			TTLSeconds:     turnRESTTTLSeconds,
 			UsernamePrefix: turnRESTUsernamePrefix,
@@ -1148,7 +1148,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		turnURLs,
 		turnUsername,
 		turnCredential,
-		cfg.TURNREST.Enabled(),
+		cfg.TURNREST.enabled(),
 	)
 	if err != nil {
 		cfg.iceConfigErr = err

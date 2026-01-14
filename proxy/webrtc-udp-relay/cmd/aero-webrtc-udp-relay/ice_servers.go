@@ -16,7 +16,7 @@ import (
 // Pion requires TURN credentials for server-side usage, so we filter out TURN
 // servers that don't have complete credentials.
 func peerConnectionICEServers(cfg config.Config) []webrtc.ICEServer {
-	if !cfg.TURNREST.Enabled() {
+	if strings.TrimSpace(cfg.TURNREST.SharedSecret) == "" {
 		return cfg.ICEServers
 	}
 
