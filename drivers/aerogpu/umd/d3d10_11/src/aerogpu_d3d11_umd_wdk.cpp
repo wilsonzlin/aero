@@ -9330,8 +9330,124 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
     break;
   }
 
+  if (dst->backing_alloc_id == 0) {
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, &count, sizeof(count));
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      return;
+    }
+    cmd->resource_handle = dst->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = off;
+    cmd->size_bytes = sizeof(count);
+    std::memcpy(dst->storage.data() + static_cast<size_t>(off), &count, sizeof(count));
+    return;
+  }
+
+  const auto* ddi = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  const auto* device_cb = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
+  const bool has_lock_unlock =
+      (ddi && ddi->pfnLockCb && ddi->pfnUnlockCb) || (device_cb && device_cb->pfnLockCb && device_cb->pfnUnlockCb);
+  if (!has_lock_unlock || !dev->runtime_device || dst->wddm_allocation_handle == 0) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  auto lock_for_write = [&](D3DDDICB_LOCK* lock_args) -> HRESULT {
+    if (!lock_args || !dev->runtime_device) {
+      return E_NOTIMPL;
+    }
+    if (ddi && ddi->pfnLockCb) {
+      return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    }
+    if (device_cb && device_cb->pfnLockCb) {
+      return CallCbMaybeHandle(device_cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+    }
+    return E_NOTIMPL;
+  };
+
+  auto unlock = [&](D3DDDICB_UNLOCK* unlock_args) -> HRESULT {
+    if (!unlock_args || !dev->runtime_device) {
+      return E_NOTIMPL;
+    }
+    if (ddi && ddi->pfnUnlockCb) {
+      return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), unlock_args);
+    }
+    if (device_cb && device_cb->pfnUnlockCb) {
+      return CallCbMaybeHandle(device_cb->pfnUnlockCb,
+                               MakeRtDeviceHandle(dev),
+                               MakeRtDeviceHandle10(dev),
+                               unlock_args);
+    }
+    return E_NOTIMPL;
+  };
+
+  D3DDDICB_LOCK lock_args = {};
+  lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(dst->wddm_allocation_handle);
+  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+    lock_args.SubresourceIndex = 0;
+  }
+  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+    lock_args.SubResourceIndex = 0;
+  }
+  InitLockForWrite(&lock_args);
+
+  HRESULT hr = lock_for_write(&lock_args);
+  if (FAILED(hr)) {
+    SetError(dev, hr);
+    return;
+  }
+  if (!lock_args.pData) {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = 0;
+    }
+    (void)unlock(&unlock_args);
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+  auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!dirty_cmd) {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = 0;
+    }
+    (void)unlock(&unlock_args);
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  dirty_cmd->resource_handle = dst->handle;
+  dirty_cmd->reserved0 = 0;
+  dirty_cmd->offset_bytes = off;
+  dirty_cmd->size_bytes = sizeof(count);
+
+  std::memcpy(static_cast<uint8_t*>(lock_args.pData) + static_cast<size_t>(off), &count, sizeof(count));
   std::memcpy(dst->storage.data() + static_cast<size_t>(off), &count, sizeof(count));
-  EmitUploadLocked(dev, dst, off, sizeof(count));
+
+  D3DDDICB_UNLOCK unlock_args = {};
+  unlock_args.hAllocation = lock_args.hAllocation;
+  __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+    unlock_args.SubresourceIndex = 0;
+  }
+  __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+    unlock_args.SubResourceIndex = 0;
+  }
+  hr = unlock(&unlock_args);
+  if (FAILED(hr)) {
+    SetError(dev, hr);
+    return;
+  }
 }
 
 void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -9382,12 +9498,218 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     const uint64_t bytes = std::min(std::min(requested, max_src), max_dst);
 
     if (bytes && dst->storage.size() >= dst_off + bytes && src->storage.size() >= src_left + bytes) {
-      std::memmove(dst->storage.data() + static_cast<size_t>(dst_off),
-                   src->storage.data() + static_cast<size_t>(src_left),
-                   static_cast<size_t>(bytes));
-    }
+      if (dst->backing_alloc_id == 0) {
+        // Host-owned buffers: upload the post-copy bytes (aligned to 4) before
+        // mutating the shadow copy, so an OOM during command emission doesn't
+        // desynchronize the UMD from the host.
+        const uint64_t end = dst_off + bytes;
+        const uint64_t upload_offset = dst_off & ~3ull;
+        const uint64_t upload_end = AlignUpU64(end, 4);
+        if (upload_end < upload_offset) {
+          SetError(dev, E_INVALIDARG);
+          return;
+        }
+        const uint64_t upload_size = upload_end - upload_offset;
+        if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+          SetError(dev, E_OUTOFMEMORY);
+          return;
+        }
+        const size_t upload_off = static_cast<size_t>(upload_offset);
+        const size_t upload_sz = static_cast<size_t>(upload_size);
+        if (upload_off > dst->storage.size() || upload_sz > dst->storage.size() - upload_off) {
+          return;
+        }
 
-    EmitUploadLocked(dev, dst, dst_off, bytes);
+        // Fast path: aligned transfer can upload directly from the source
+        // buffer bytes.
+        const bool is_aligned_upload = (upload_offset == dst_off) && (upload_size == bytes);
+        std::vector<uint8_t> upload_payload;
+        const void* upload_data = nullptr;
+        size_t upload_data_bytes = 0;
+        if (is_aligned_upload) {
+          upload_data = src->storage.data() + static_cast<size_t>(src_left);
+          upload_data_bytes = static_cast<size_t>(bytes);
+        } else {
+          try {
+            upload_payload.resize(upload_sz);
+          } catch (...) {
+            SetError(dev, E_OUTOFMEMORY);
+            return;
+          }
+          if (upload_sz) {
+            std::memcpy(upload_payload.data(), dst->storage.data() + upload_off, upload_sz);
+          }
+          std::memcpy(upload_payload.data() + static_cast<size_t>(dst_off - upload_offset),
+                      src->storage.data() + static_cast<size_t>(src_left),
+                      static_cast<size_t>(bytes));
+          upload_data = upload_payload.data();
+          upload_data_bytes = upload_payload.size();
+        }
+
+        auto* upload_cmd = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+            AEROGPU_CMD_UPLOAD_RESOURCE, upload_data, upload_data_bytes);
+        if (!upload_cmd) {
+          SetError(dev, E_OUTOFMEMORY);
+          return;
+        }
+        upload_cmd->resource_handle = dst->handle;
+        upload_cmd->reserved0 = 0;
+        upload_cmd->offset_bytes = upload_offset;
+        upload_cmd->size_bytes = upload_size;
+
+        std::memmove(dst->storage.data() + static_cast<size_t>(dst_off),
+                     src->storage.data() + static_cast<size_t>(src_left),
+                     static_cast<size_t>(bytes));
+      } else {
+        // Guest-backed buffers: append RESOURCE_DIRTY_RANGE before writing into
+        // the runtime allocation to avoid drift on OOM.
+        const uint64_t end = dst_off + bytes;
+        const uint64_t upload_offset = dst_off & ~3ull;
+        const uint64_t upload_end = AlignUpU64(end, 4);
+        if (upload_end < upload_offset) {
+          SetError(dev, E_INVALIDARG);
+          return;
+        }
+        const uint64_t upload_size = upload_end - upload_offset;
+        if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+          SetError(dev, E_OUTOFMEMORY);
+          return;
+        }
+        const size_t upload_off = static_cast<size_t>(upload_offset);
+        const size_t upload_sz = static_cast<size_t>(upload_size);
+        if (upload_off > dst->storage.size() || upload_sz > dst->storage.size() - upload_off) {
+          return;
+        }
+
+        const auto* ddi = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+        const auto* device_cb = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
+        const bool has_lock_unlock = (ddi && ddi->pfnLockCb && ddi->pfnUnlockCb) ||
+                                     (device_cb && device_cb->pfnLockCb && device_cb->pfnUnlockCb);
+        if (!has_lock_unlock || !dev->runtime_device || dst->wddm_allocation_handle == 0) {
+          SetError(dev, E_FAIL);
+          return;
+        }
+
+        auto lock_for_write = [&](D3DDDICB_LOCK* lock_args) -> HRESULT {
+          if (!lock_args || !dev->runtime_device) {
+            return E_NOTIMPL;
+          }
+          if (ddi && ddi->pfnLockCb) {
+            return CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+          }
+          if (device_cb && device_cb->pfnLockCb) {
+            return CallCbMaybeHandle(device_cb->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), lock_args);
+          }
+          return E_NOTIMPL;
+        };
+
+        auto unlock = [&](D3DDDICB_UNLOCK* unlock_args) -> HRESULT {
+          if (!unlock_args || !dev->runtime_device) {
+            return E_NOTIMPL;
+          }
+          if (ddi && ddi->pfnUnlockCb) {
+            return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), unlock_args);
+          }
+          if (device_cb && device_cb->pfnUnlockCb) {
+            return CallCbMaybeHandle(device_cb->pfnUnlockCb,
+                                     MakeRtDeviceHandle(dev),
+                                     MakeRtDeviceHandle10(dev),
+                                     unlock_args);
+          }
+          return E_NOTIMPL;
+        };
+
+        D3DDDICB_LOCK lock_args = {};
+        lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(dst->wddm_allocation_handle);
+        __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
+          lock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
+          lock_args.SubResourceIndex = 0;
+        }
+        InitLockForWrite(&lock_args);
+
+        HRESULT hr = lock_for_write(&lock_args);
+        if (FAILED(hr)) {
+          SetError(dev, hr);
+          return;
+        }
+        if (!lock_args.pData) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock(&unlock_args);
+          SetError(dev, E_FAIL);
+          return;
+        }
+
+        TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+        auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        if (!dirty_cmd) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock(&unlock_args);
+          SetError(dev, E_OUTOFMEMORY);
+          return;
+        }
+        dirty_cmd->resource_handle = dst->handle;
+        dirty_cmd->reserved0 = 0;
+        dirty_cmd->offset_bytes = upload_offset;
+        dirty_cmd->size_bytes = upload_size;
+
+        uint8_t* dst_bytes = static_cast<uint8_t*>(lock_args.pData);
+        const size_t pre = static_cast<size_t>(dst_off - upload_offset);
+        const size_t post = static_cast<size_t>(upload_end - end);
+        if (pre) {
+          std::memcpy(dst_bytes + static_cast<size_t>(upload_offset),
+                      dst->storage.data() + static_cast<size_t>(upload_offset),
+                      pre);
+        }
+        std::memcpy(dst_bytes + static_cast<size_t>(dst_off),
+                    src->storage.data() + static_cast<size_t>(src_left),
+                    static_cast<size_t>(bytes));
+        if (post) {
+          std::memcpy(dst_bytes + static_cast<size_t>(end),
+                      dst->storage.data() + static_cast<size_t>(end),
+                      post);
+        }
+
+        std::memmove(dst->storage.data() + static_cast<size_t>(dst_off),
+                     src->storage.data() + static_cast<size_t>(src_left),
+                     static_cast<size_t>(bytes));
+
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_args.SubResourceIndex = 0;
+        }
+        hr = unlock(&unlock_args);
+        if (FAILED(hr)) {
+          SetError(dev, hr);
+          return;
+        }
+      }
+    }
+    else {
+      // Internal invariant violated (storage doesn't match declared buffer size).
+      // Preserve old behavior: attempt an upload (may no-op due to bounds) but
+      // keep the shadow copy unchanged.
+      EmitUploadLocked(dev, dst, dst_off, bytes);
+    }
 
     const bool transfer_aligned = (((dst_off | src_left | bytes) & 3ull) == 0);
     const bool same_buffer = (dst->handle == src->handle);
