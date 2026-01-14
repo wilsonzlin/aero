@@ -348,6 +348,10 @@ The current implementation targets:
 
 - `ColorFill`, `UpdateSurface`, `UpdateTexture` and `StretchRect`-style copies (validated by `d3d9ex_stretchrect`).
 - `GetRenderTargetData` readback into `D3DPOOL_SYSTEMMEM` surfaces (used by most rendering tests).
+  - When the device exposes `AEROGPU_UMDPRIV_FEATURE_TRANSFER` (ABI minor `>= 1`), the UMD emits `AEROGPU_CMD_COPY_TEXTURE2D`
+    with `AEROGPU_COPY_FLAG_WRITEBACK_DST` so the host writes pixels into the destination surface's backing allocation.
+    This requires allocation-backed systemmem surfaces (`backing_alloc_id != 0`).
+  - Otherwise, the UMD falls back to a submit+wait and a CPU-side copy.
 - **EVENT queries (DWM):** `CreateQuery`/`IssueQuery`/`GetQueryData` are implemented for `D3DQUERYTYPE_EVENT` only; other query
   types return `D3DERR_NOTAVAILABLE` (see `device_create_query()` / `device_issue_query()` / `device_get_query_data()` in
   `src/aerogpu_d3d9_driver.cpp`; validated by `d3d9ex_query_latency` and `d3d9ex_event_query`).
@@ -471,6 +475,7 @@ See:
 
 Notes:
 
+- Tracing is disabled by default; enable it by setting `AEROGPU_D3D9_TRACE=1` in the target process environment.
 - On Windows, trace dumps are emitted via `OutputDebugStringA` by default (view with DebugView/WinDbg). If you want to capture trace output to a console/CI log, set `AEROGPU_D3D9_TRACE_STDERR=1` to also echo the output to `stderr`.
 - `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1` dumps once when the trace sees a call whose name is explicitly tagged with `(stub)`. Host tests use the trace-only `TraceTestStub` entrypoint to exercise this behavior without mislabeling real DDIs.
 
