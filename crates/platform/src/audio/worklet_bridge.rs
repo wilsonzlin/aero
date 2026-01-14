@@ -64,8 +64,8 @@ pub fn buffer_byte_len(capacity_frames: u32, channel_count: u32) -> usize {
     // Callers may treat capacity/channel_count as untrusted (e.g. from UI/config). Clamp to the
     // same caps enforced elsewhere in this module and use saturating arithmetic to avoid `usize`
     // overflow on 32-bit targets.
-    let capacity_frames = capacity_frames.min(MAX_RING_CAPACITY_FRAMES);
-    let channel_count = channel_count.min(MAX_RING_CHANNEL_COUNT);
+    let capacity_frames = capacity_frames.clamp(1, MAX_RING_CAPACITY_FRAMES);
+    let channel_count = channel_count.clamp(1, MAX_RING_CHANNEL_COUNT);
     let sample_capacity = (capacity_frames as usize).saturating_mul(channel_count as usize);
     let sample_bytes = sample_capacity.saturating_mul(core::mem::size_of::<f32>());
     HEADER_BYTES.saturating_add(sample_bytes)
@@ -359,6 +359,21 @@ mod tests {
             + (MAX_RING_CAPACITY_FRAMES as usize)
                 * (MAX_RING_CHANNEL_COUNT as usize)
                 * core::mem::size_of::<f32>();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_buffer_byte_len_clamps_zero_inputs() {
+        let got = buffer_byte_len(0, 0);
+        let expected = HEADER_BYTES + core::mem::size_of::<f32>();
+        assert_eq!(got, expected);
+
+        let got = buffer_byte_len(0, 2);
+        let expected = HEADER_BYTES + 2 * core::mem::size_of::<f32>();
+        assert_eq!(got, expected);
+
+        let got = buffer_byte_len(8, 0);
+        let expected = HEADER_BYTES + 8 * core::mem::size_of::<f32>();
         assert_eq!(got, expected);
     }
 
