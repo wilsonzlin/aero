@@ -199,6 +199,7 @@ Relay contract:
 
 - The relay service is implemented by [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/).
 - WebRTC signaling schema and v1/v2 datagram framing (used by both the WebRTC DataChannel and the `GET /udp` WebSocket fallback) are specified in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../../proxy/webrtc-udp-relay/PROTOCOL.md).
+- Inbound UDP filtering: by default the relay only forwards inbound UDP from remote address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). This is safer for public deployments. If you need full-cone behavior (accept inbound UDP from any remote), set `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
 - `GET /webrtc/ice` responses are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) because they may include sensitive TURN credentials (especially TURN REST ephemeral creds). Clients should not cache ICE responses beyond the lifetime of the returned credentials.
 
 #### Optional: refresh relay token (`POST /udp-relay/token`)
