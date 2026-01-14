@@ -244,6 +244,102 @@ fn sm3_nonuniform_conditional_call_to_derivative_subroutine_is_naga_valid() {
 }
 
 #[test]
+fn sm3_nonuniform_conditional_call_to_derivative_texkill_subroutine_is_naga_valid() {
+    // ps_3_0:
+    //   def c0, 0.0, 0.0, 0.0, 0.0
+    //   mov r0, c0
+    //   setp_ne p0, v0.x, c0.x
+    //   callnz (p0) l0, v0
+    //   mov oC0, r0
+    //   ret
+    //   label l0
+    //   dsx r0, v0
+    //   texkill r0
+    //   ret
+    //   end
+    //
+    // Like `dpdx`, `discard` can appear inside a subroutine. Ensure a non-uniform conditional call
+    // to a derivative-using subroutine that also discards still lowers to *uniform* control flow
+    // (i.e. the call is not guarded by `if (p0)`), and that discard is suppressed for lanes where
+    // the call is not taken.
+    let ps_tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // def c0, 0.0, 0.0, 0.0, 0.0
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        // mov r0, c0
+        opcode_token(1, 2),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        // setp_ne p0, v0.x, c0.x  (compare op 4 = ne)
+        opcode_token(94, 3) | (4u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // callnz (p0) l0, v0
+        opcode_token(26, 3) | 0x1000_0000, // predicated
+        src_token(18, 0, 0xE4, 0),
+        src_token(1, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // ret (end main)
+        opcode_token(28, 0),
+        // label l0
+        opcode_token(30, 1),
+        src_token(18, 0, 0xE4, 0),
+        // dsx r0, v0
+        opcode_token(86, 2),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // texkill r0
+        opcode_token(65, 1),
+        src_token(0, 0, 0xE4, 0),
+        // ret
+        opcode_token(28, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&ps_tokens).unwrap();
+    let ps = build_ir(&decoded).unwrap();
+    verify_ir(&ps).unwrap();
+
+    let wgsl = generate_wgsl(&ps).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("discard;"), "{wgsl}");
+    assert!(
+        wgsl.contains("var<private> _aero_call_guard: bool"),
+        "expected module-scope _aero_call_guard declaration; got:\n{wgsl}"
+    );
+    assert!(wgsl.contains("_aero_call_taken_"), "{wgsl}");
+    assert!(
+        wgsl.contains("_aero_call_guard = _aero_call_taken_"),
+        "expected speculative call to set _aero_call_guard; got:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("_aero_call_guard && any("),
+        "expected discard to be guarded by _aero_call_guard; got:\n{wgsl}"
+    );
+    // The call should not remain under a non-uniform `if`.
+    assert!(!wgsl.contains("if (p0.x)"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn sm3_nonuniform_if_prefix_ops_then_call_to_derivative_subroutine_is_naga_valid() {
     // ps_3_0:
     //   dcl_texcoord0 v0

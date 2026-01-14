@@ -1458,7 +1458,7 @@ fn emit_stmt_predicated(
                 .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
             if guard == "true" {
                 let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
-            } else if info.uses_derivatives && !info.may_discard {
+            } else if info.uses_derivatives {
                 emit_speculative_call_with_rollback(
                     wgsl,
                     indent,
@@ -2427,8 +2427,12 @@ fn emit_speculative_call_with_rollback(
         .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
 
     let pad = "  ".repeat(indent);
-    // If the subroutine does not write any registers, we can just execute it unconditionally.
-    if info.writes.is_empty() {
+    // If the subroutine does not write any registers and cannot discard, we can just execute it
+    // unconditionally.
+    //
+    // Note: when a subroutine may discard, we still need to guard discard so speculative execution
+    // does not terminate lanes that should not have taken the call.
+    if info.writes.is_empty() && !info.may_discard {
         let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
         return Ok(());
     }
@@ -2453,16 +2457,36 @@ fn emit_speculative_call_with_rollback(
         saved_vars.push((name, saved));
     }
 
+    // If the call is conditional and the callee can discard, suppress discard when the call should
+    // not have been taken.
+    //
+    // This uses a single module-scope guard variable shared by all speculative calls. We save and
+    // restore it so nested calls compose correctly.
+    let mut saved_guard_var = None::<String>;
+    if info.may_discard {
+        let saved = format!("_aero_saved_call_guard_{call_id}");
+        let _ = writeln!(wgsl, "{pad}let {saved}: bool = _aero_call_guard;");
+        let _ = writeln!(wgsl, "{pad}_aero_call_guard = {taken_var};");
+        saved_guard_var = Some(saved);
+    }
+
     // Execute the call on all lanes.
     let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
 
-    // Roll back side effects when the call should not have been taken.
-    let _ = writeln!(wgsl, "{pad}if (!({taken_var})) {{");
-    let inner_pad = "  ".repeat(indent + 1);
-    for (name, saved) in saved_vars {
-        let _ = writeln!(wgsl, "{inner_pad}{name} = {saved};");
+    // Restore discard guard.
+    if let Some(saved_guard) = saved_guard_var {
+        let _ = writeln!(wgsl, "{pad}_aero_call_guard = {saved_guard};");
     }
-    let _ = writeln!(wgsl, "{pad}}}");
+
+    // Roll back register writes when the call should not have been taken.
+    if !saved_vars.is_empty() {
+        let _ = writeln!(wgsl, "{pad}if (!({taken_var})) {{");
+        let inner_pad = "  ".repeat(indent + 1);
+        for (name, saved) in saved_vars {
+            let _ = writeln!(wgsl, "{inner_pad}{name} = {saved};");
+        }
+        let _ = writeln!(wgsl, "{pad}}}");
+    }
 
     Ok(())
 }
@@ -2653,7 +2677,7 @@ fn emit_stmt(
                         let sub_info = subroutine_infos.get(&label).ok_or_else(|| {
                             err(format!("call target label l{label} is not defined"))
                         })?;
-                        if sub_info.uses_derivatives && !sub_info.may_discard {
+                        if sub_info.uses_derivatives {
                             then_call = Some((call_cond, label));
                             then_skip = 1;
                         }
@@ -2695,7 +2719,7 @@ fn emit_stmt(
                             let sub_info = subroutine_infos.get(&label).ok_or_else(|| {
                                 err(format!("call target label l{label} is not defined"))
                             })?;
-                            if sub_info.uses_derivatives && !sub_info.may_discard {
+                            if sub_info.uses_derivatives {
                                 else_call = Some((call_cond, label));
                                 else_skip = 1;
                             }
@@ -3052,7 +3076,12 @@ fn emit_stmt(
                 return Err(err("texkill requires a float source"));
             }
 
-            let _ = writeln!(wgsl, "{pad}if (any(({src_e}) < vec4<f32>(0.0))) {{");
+            let cond = if stage == ShaderStage::Pixel && state.in_subroutine {
+                format!("(_aero_call_guard && any(({src_e}) < vec4<f32>(0.0)))")
+            } else {
+                format!("any(({src_e}) < vec4<f32>(0.0))")
+            };
+            let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
             let inner_pad = "  ".repeat(indent + 1);
             let _ = writeln!(wgsl, "{inner_pad}discard;");
             let _ = writeln!(wgsl, "{pad}}}");
@@ -3701,6 +3730,8 @@ pub fn generate_wgsl_with_options(
                 );
             }
             wgsl.push('\n');
+            // Guard used to suppress `discard` during speculative subroutine execution.
+            wgsl.push_str("var<private> _aero_call_guard: bool = true;\n\n");
 
             // SM3 subroutines (`label` targets).
             for (label, body) in &ir.subroutines {
