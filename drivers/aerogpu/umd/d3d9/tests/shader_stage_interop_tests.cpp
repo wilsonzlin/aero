@@ -938,6 +938,151 @@ bool TestVsOnlyUnsupportedStage0ArgStateSetShaderSucceedsDrawFails() {
   return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle");
 }
 
+bool TestVsOnlyUnsupportedStage1StateSetShaderSucceedsDrawFails() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Bind a stage0 texture so stage1 is actually evaluated by the fixed-function
+  // stage-state decoder (otherwise stage0 would short-circuit to passthrough).
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Enable stage1 with an unsupported op. This should not make shader binding
+  // (state setting) fail, but draws must fail with INVALIDCALL.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopAddSigned2x);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage1 COLOROP=ADDSIGNED2X) succeeds")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  auto* vs = reinterpret_cast<Shader*>(hVs.pDrvPrivate);
+  const aerogpu_handle_t vs_handle = vs ? vs->handle : 0;
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS) succeeds even when stage1 is unsupported")) {
+    return false;
+  }
+
+  // With stage1 unsupported, the VS-only interop path must fall back to a safe
+  // passthrough PS (no texld/mul).
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "VS-only: PS bound")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "VS-only: fallback PS does not contain texld")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "VS-only: fallback PS does not contain mul")) {
+      return false;
+    }
+  }
+
+  const size_t baseline = dev->cmd.bytes_used();
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFF0000FFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP(VS-only, unsupported stage1) returns INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(dev->cmd.bytes_used() == baseline, "unsupported draw emits no new commands")) {
+    return false;
+  }
+
+  // Disable stage1 to restore a supported stage chain (stage0 MODULATE with a
+  // bound texture).
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage1 COLOROP=DISABLE) succeeds (recover)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "VS-only: PS bound after recover")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "VS-only: recovered PS contains texld")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "VS-only: recovered PS contains mul")) {
+      return false;
+    }
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only, recovered stage1) succeeds")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only: stage1 unsupported then DISABLE)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 1, "exactly one DRAW opcode emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) == 0, "no DRAW_INDEXED opcodes emitted")) {
+    return false;
+  }
+  if (!Check(CheckNoNullShaderBinds(buf, len), "BIND_SHADERS must not bind null handles")) {
+    return false;
+  }
+
+  bool saw_user_vs_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (bind->vs == vs_handle) {
+        saw_user_vs_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle");
+}
+
 bool TestVsOnlyUnsupportedStage0DestroyShaderSucceedsAndRebinds() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -2149,6 +2294,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0ArgStateSetShaderSucceedsDrawFails()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyUnsupportedStage1StateSetShaderSucceedsDrawFails()) {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0DestroyShaderSucceedsAndRebinds()) {
