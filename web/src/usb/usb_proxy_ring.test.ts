@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
-import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+import { MAX_USB_PROXY_BYTES, type UsbHostAction, type UsbHostCompletion } from "./usb_proxy_protocol";
 
 describe("usb/UsbProxyRing", () => {
   it("validates createUsbProxyRingBuffer inputs", () => {
@@ -83,6 +83,23 @@ describe("usb/UsbProxyRing", () => {
 
     expect(ring.popActionInfo()).toEqual({ kind: "bulkOut", id: 1, options: undefined, payloadBytes: payload.byteLength });
     expect(ring.popAction()).toBeNull();
+  });
+
+  it("rejects bulkIn actions with lengths exceeding MAX_USB_PROXY_BYTES", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: MAX_USB_PROXY_BYTES + 1 })).toBe(false);
+    expect(ring.dropped()).toBe(1);
+  });
+
+  it("rejects bulkOut actions with payloads exceeding MAX_USB_PROXY_BYTES", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    const payload = new Uint8Array(MAX_USB_PROXY_BYTES + 1);
+    expect(ring.pushAction({ kind: "bulkOut", id: 1, endpoint: 0x02, data: payload })).toBe(false);
+    expect(ring.dropped()).toBe(1);
   });
 
   it("round-trips all UsbHostCompletion variants", () => {
@@ -211,6 +228,19 @@ describe("usb/UsbProxyRing", () => {
     expect(() => ring.popActionRecord()).toThrow(/exceeds available bytes/);
   });
 
+  it("throws when a bulkOut action record claims a payload larger than MAX_USB_PROXY_BYTES", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushAction({ kind: "bulkOut", id: 1, endpoint: 0x02, data: Uint8Array.of(1) })).toBe(true);
+
+    const view = new DataView(sab, USB_PROXY_RING_CTRL_BYTES);
+    // bulkOut dataLen lives at offset 8 (action header) + 4.
+    view.setUint32(8 + 4, MAX_USB_PROXY_BYTES + 1, true);
+
+    expect(() => ring.popActionRecord()).toThrow(/payload too large/i);
+  });
+
   it("throws when a completion record claims more bytes than are available (tail/head inconsistent)", () => {
     const sab = createUsbProxyRingBuffer(256);
     const ring = new UsbProxyRing(sab);
@@ -223,6 +253,19 @@ describe("usb/UsbProxyRing", () => {
     view.setUint32(8, 200, true);
 
     expect(() => ring.popCompletion()).toThrow(/exceeds available bytes/);
+  });
+
+  it("throws when a completion record claims a payload larger than MAX_USB_PROXY_BYTES", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushCompletion({ kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) })).toBe(true);
+
+    const view = new DataView(sab, USB_PROXY_RING_CTRL_BYTES);
+    // completion dataLen lives at offset 8 (completion header).
+    view.setUint32(8, MAX_USB_PROXY_BYTES + 1, true);
+
+    expect(() => ring.popCompletion()).toThrow(/payload too large/i);
   });
 
   it("rejects invalid bulkIn endpoint addresses (OUT endpoints)", () => {

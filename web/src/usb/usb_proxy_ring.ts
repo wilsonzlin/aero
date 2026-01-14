@@ -1,5 +1,5 @@
 import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
-import type { UsbProxyActionOptions } from "./usb_proxy_protocol";
+import { MAX_USB_PROXY_BYTES, type UsbProxyActionOptions } from "./usb_proxy_protocol";
 
 // SharedArrayBuffer-backed SPSC ring buffer for variable-length USB proxy records.
 //
@@ -250,6 +250,11 @@ export class UsbProxyRing {
           const total = alignUp(fixed, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (bulkIn record straddles wrap boundary).");
           if (total > used) throw new Error("USB proxy ring corrupted (bulkIn record exceeds available bytes).");
+          const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
+          const length = this.#view.getUint32(base + 4, true) >>> 0;
+          if (length > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (bulkIn length too large: ${length} bytes).`);
+          }
           return 0;
         }
         case "controlOut": {
@@ -274,6 +279,9 @@ export class UsbProxyRing {
           const fixed = USB_PROXY_ACTION_HEADER_BYTES + 8;
           if (fixed > remaining) throw new Error("USB proxy ring corrupted (bulkOut record straddles wrap boundary).");
           const dataLen = this.#view.getUint32(base + 4, true) >>> 0;
+          if (dataLen > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (bulkOut payload too large: ${dataLen} bytes).`);
+          }
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (bulkOut payload exceeds ring segment).");
@@ -298,6 +306,10 @@ export class UsbProxyRing {
         break;
       case "controlOut":
         payloadLen = action.data.byteLength >>> 0;
+        if (payloadLen > MAX_USB_PROXY_BYTES) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
         if (payloadLen !== (action.setup.wLength & 0xffff)) {
           Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
           return false;
@@ -309,11 +321,19 @@ export class UsbProxyRing {
           Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
           return false;
         }
+        if ((action.length >>> 0) > MAX_USB_PROXY_BYTES) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
         recordSize = USB_PROXY_ACTION_HEADER_BYTES + 8;
         break;
       case "bulkOut":
         payloadLen = action.data.byteLength >>> 0;
         if (!isUsbOutEndpointAddress(action.endpoint)) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
+        if (payloadLen > MAX_USB_PROXY_BYTES) {
           Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
           return false;
         }
@@ -468,6 +488,9 @@ export class UsbProxyRing {
           const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
           const endpoint = this.#view.getUint8(base + 0) >>> 0;
           const length = this.#view.getUint32(base + 4, true) >>> 0;
+          if (length > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (bulkIn length too large: ${length} bytes).`);
+          }
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
           return { action: { kind: "bulkIn", id, endpoint, length }, options };
         }
@@ -477,6 +500,9 @@ export class UsbProxyRing {
           if (fixed > remaining) throw new Error("USB proxy ring corrupted (bulkOut record straddles wrap boundary).");
           const endpoint = this.#view.getUint8(base + 0) >>> 0;
           const dataLen = this.#view.getUint32(base + 4, true) >>> 0;
+          if (dataLen > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (bulkOut payload too large: ${dataLen} bytes).`);
+          }
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (bulkOut payload exceeds ring segment).");
@@ -576,6 +602,11 @@ export class UsbProxyRing {
           const total = alignUp(fixed, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (bulkIn record straddles wrap boundary).");
           if (total > used) throw new Error("USB proxy ring corrupted (bulkIn record exceeds available bytes).");
+          const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
+          const length = this.#view.getUint32(base + 4, true) >>> 0;
+          if (length > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (bulkIn length too large: ${length} bytes).`);
+          }
           Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
           return { kind, id, options, payloadBytes: 0 };
         }
@@ -584,6 +615,9 @@ export class UsbProxyRing {
           const fixed = USB_PROXY_ACTION_HEADER_BYTES + 8;
           if (fixed > remaining) throw new Error("USB proxy ring corrupted (bulkOut record straddles wrap boundary).");
           const dataLen = this.#view.getUint32(base + 4, true) >>> 0;
+          if (dataLen > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (bulkOut payload too large: ${dataLen} bytes).`);
+          }
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (bulkOut payload exceeds ring segment).");
@@ -610,6 +644,10 @@ export class UsbProxyRing {
     if (completion.status === "success") {
       if (completion.kind === "controlIn" || completion.kind === "bulkIn") {
         payload = completion.data;
+        if ((payload.byteLength >>> 0) > MAX_USB_PROXY_BYTES) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
         recordSize += 4 + (payload.byteLength >>> 0);
       } else {
         recordSize += 4;
@@ -719,6 +757,9 @@ export class UsbProxyRing {
       if (status === "success") {
         if (kind === "controlIn" || kind === "bulkIn") {
           const dataLen = this.#view.getUint32(bodyIndex + 0, true) >>> 0;
+          if (dataLen > MAX_USB_PROXY_BYTES) {
+            throw new Error(`USB proxy ring corrupted (completion payload too large: ${dataLen} bytes).`);
+          }
           const end = fixed + dataLen;
           const total = alignUp(end, USB_PROXY_RING_ALIGN);
           if (total > remaining) throw new Error("USB proxy ring corrupted (completion payload exceeds ring segment).");
