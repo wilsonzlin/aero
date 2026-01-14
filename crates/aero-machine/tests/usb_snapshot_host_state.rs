@@ -39,7 +39,7 @@ fn snapshot_restore_clears_uhci_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_attach_root(0, Box::new(webusb.clone()))
+    vm.usb_attach_root(1, Box::new(webusb.clone()))
         .expect("attach WebUSB device behind UHCI");
 
     queue_webusb_control_in_action(&webusb);
@@ -77,7 +77,7 @@ fn snapshot_restore_clears_ehci_webusb_host_state() {
         let mut ehci = ehci.borrow_mut();
         ehci.controller_mut()
             .hub_mut()
-            .attach(0, Box::new(webusb.clone()));
+            .attach(1, Box::new(webusb.clone()));
     }
 
     queue_webusb_control_in_action(&webusb);
@@ -110,15 +110,15 @@ fn snapshot_restore_clears_muxed_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_attach_root(0, Box::new(webusb.clone()))
-        .expect("attach WebUSB device behind UHCI root port 0");
+    vm.usb_attach_root(1, Box::new(webusb.clone()))
+        .expect("attach WebUSB device behind UHCI root port 1");
 
     // When both UHCI and EHCI are enabled, root port 0 is backed by a shared USB2 mux, so the same
     // physical device should be visible from both controllers.
     {
         let ehci = vm.ehci().expect("ehci enabled");
         assert!(
-            ehci.borrow().controller().hub().port_device(0).is_some(),
+            ehci.borrow().controller().hub().port_device(1).is_some(),
             "expected EHCI to observe the UHCI-attached device via the shared USB2 mux"
         );
     }
