@@ -141,8 +141,11 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
-            .device_config(profile::AEROGPU.bdf)
+            .device_config_mut(profile::AEROGPU.bdf)
             .expect("AeroGPU device missing from PCI bus");
+        // The WDDM scanout path reads from guest RAM (device-initiated DMA), so it requires PCI Bus
+        // Master Enable (BME). BIOS POST intentionally leaves BME disabled by default.
+        cfg.set_command(cfg.command() | (1 << 2));
         (
             cfg.bar_range(0).expect("AeroGPU BAR0 must exist").base,
             cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base,
