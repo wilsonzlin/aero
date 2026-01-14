@@ -1118,7 +1118,7 @@ static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
  * Defined below; forward-declared here so early helpers (e.g. completed fence
  * reads) can use the shared abstraction.
  */
-static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ volatile ULONGLONG* Value);
+static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ const volatile ULONGLONG* Value);
 static __forceinline VOID AeroGpuAtomicWriteU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue);
 static __forceinline ULONGLONG AeroGpuAtomicExchangeU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue);
 static __forceinline ULONG AeroGpuAtomicReadU32(_In_ volatile ULONG* Value);
@@ -1167,7 +1167,7 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
         return 0;
     }
 
-    const ULONGLONG cachedLastCompleted = AeroGpuAtomicReadU64((volatile ULONGLONG*)&Adapter->LastCompletedFence);
+    const ULONGLONG cachedLastCompleted = AeroGpuAtomicReadU64(&Adapter->LastCompletedFence);
 
     /*
      * If a shared fence page is configured, prefer reading it. This is always a
@@ -1270,7 +1270,7 @@ static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _
  * Interlocked*64 requires 8-byte alignment for its target address; fence fields
  * are declared with DECLSPEC_ALIGN(8) in AEROGPU_ADAPTER.
  */
-static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ volatile ULONGLONG* Value)
+static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ const volatile ULONGLONG* Value)
 {
 #if DBG
     ASSERT(((ULONG_PTR)Value & 7u) == 0);
