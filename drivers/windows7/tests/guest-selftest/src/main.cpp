@@ -5032,67 +5032,6 @@ static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
   return out;
 }
 
-static std::optional<unsigned> QueryAllocatedMessageInterruptCount(Logger& log, DEVINST devinst) {
-  ULONG reg_type = 0;
-  ULONG size = 0;
-
-  CONFIGRET cr =
-      CM_Get_DevNode_Registry_PropertyW(devinst, CM_DRP_ALLOC_CONFIG, &reg_type, nullptr, &size, 0);
-  if (cr != CR_SUCCESS && cr != CR_BUFFER_SMALL) {
-    log.Logf("virtio-net: CM_Get_DevNode_Registry_Property(CM_DRP_ALLOC_CONFIG) failed cr=%lu",
-             static_cast<unsigned long>(cr));
-    return std::nullopt;
-  }
-  if (size == 0) return std::nullopt;
-
-  std::vector<BYTE> buf(size);
-  cr = CM_Get_DevNode_Registry_PropertyW(devinst, CM_DRP_ALLOC_CONFIG, &reg_type, buf.data(), &size, 0);
-  if (cr != CR_SUCCESS) {
-    log.Logf("virtio-net: CM_Get_DevNode_Registry_Property(CM_DRP_ALLOC_CONFIG) read failed cr=%lu",
-             static_cast<unsigned long>(cr));
-    return std::nullopt;
-  }
-  if (size < sizeof(CM_RESOURCE_LIST)) {
-    return std::nullopt;
-  }
-
-  const BYTE* p = buf.data();
-  const BYTE* end = buf.data() + size;
-
-  const auto* list = reinterpret_cast<const CM_RESOURCE_LIST*>(p);
-  ULONG full_count = list->Count;
-
-  const BYTE* cur = p + offsetof(CM_RESOURCE_LIST, List);
-  for (ULONG i = 0; i < full_count; i++) {
-    if (cur + offsetof(CM_FULL_RESOURCE_DESCRIPTOR, PartialResourceList.PartialDescriptors) > end) {
-      break;
-    }
-
-    const auto* full = reinterpret_cast<const CM_FULL_RESOURCE_DESCRIPTOR*>(cur);
-    const ULONG partial_count = full->PartialResourceList.Count;
-
-    const BYTE* pd_base = cur + offsetof(CM_FULL_RESOURCE_DESCRIPTOR, PartialResourceList.PartialDescriptors);
-    const size_t pd_bytes = static_cast<size_t>(partial_count) * sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR);
-    if (pd_base + pd_bytes > end) {
-      break;
-    }
-
-    for (ULONG j = 0; j < partial_count; j++) {
-      const auto* d = reinterpret_cast<const CM_PARTIAL_RESOURCE_DESCRIPTOR*>(
-          pd_base + (static_cast<size_t>(j) * sizeof(CM_PARTIAL_RESOURCE_DESCRIPTOR)));
-      if (d->Type != CmResourceTypeInterrupt) continue;
-
-      if ((d->Flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
-        return static_cast<unsigned>(d->u.MessageInterrupt.MessageCount);
-      }
-    }
-
-    cur = pd_base + pd_bytes;
-  }
-
-  return 0u;
-}
-
 static bool IsApipaV4(const IN_ADDR& addr) {
   const uint32_t host = ntohl(addr.S_un.S_addr);
   const uint8_t a = static_cast<uint8_t>((host >> 24) & 0xFF);
@@ -5803,10 +5742,10 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   // rejected due to binding/contract checks) so bring-up logs always include
   // feature negotiation state when available.
   {
-    const auto msg_count = QueryAllocatedMessageInterruptCount(log, chosen->devinst);
-    if (msg_count.has_value()) {
-      out.msi_messages = static_cast<int>(*msg_count);
-      log.Logf("virtio-net: interrupt mode=%s message_count=%d", (*msg_count > 0) ? "MSI" : "INTx",
+    const auto irq = QueryDevInstIrqModeWithParentFallback(chosen->devinst);
+    if (irq.ok) {
+      out.msi_messages = irq.info.is_msi ? static_cast<int>(irq.info.messages) : 0;
+      log.Logf("virtio-net: interrupt mode=%s message_count=%d", irq.info.is_msi ? "MSI" : "INTx",
                out.msi_messages);
     } else {
       log.LogLine("virtio-net: interrupt mode query failed");
@@ -9807,7 +9746,7 @@ int wmain(int argc, wchar_t** argv) {
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059"});
   }
 
-  const std::string net_irq_fields =
+  const std::string net_irq_fields_fallback =
       IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1041", L"PCI\\VEN_1AF4&DEV_1000"});
 
   // Network tests require Winsock initialized for getaddrinfo.
@@ -9816,11 +9755,13 @@ int wmain(int argc, wchar_t** argv) {
   const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &wsa);
   if (wsa_rc != 0) {
     log.Logf("virtio-net: WSAStartup failed rc=%d", wsa_rc);
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL%s", net_irq_fields.c_str());
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL%s", net_irq_fields_fallback.c_str());
     all_ok = false;
   } else {
     const auto net = VirtioNetTest(log, opt);
     net_devinst = net.devinst;
+    const std::string net_irq_fields =
+        (net_devinst != 0) ? IrqFieldsForTestMarkerFromDevInst(net_devinst) : net_irq_fields_fallback;
     log.Logf(
         "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
         "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d%s",

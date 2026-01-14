@@ -335,6 +335,10 @@ Notes:
 - The `virtio-net` marker also includes best-effort MSI/MSI-X allocation diagnostics:
   - `msi`: `1` when Windows assigned message-signaled interrupts; `0` for INTx; `-1` if the query failed
   - `msi_messages`: number of allocated messages (`0` for INTx; `-1` if the query failed)
+- The `virtio-net` marker also includes generic IRQ fields (used by the host harness to emit `VIRTIO_NET_IRQ`):
+  - `irq_mode`: `msi` / `intx` / `none`
+  - `irq_message_count`: number of message interrupts (`0` for INTx)
+  - `irq_reason`: optional (present when `irq_mode=none`)
 - The virtio-net section also emits an optional ctrl virtqueue diagnostic line (not parsed by the harness):
   - `virtio-net-ctrl-vq|INFO|...`
   - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.
