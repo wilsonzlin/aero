@@ -514,14 +514,13 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --locked
 bash ./scripts/safe-run.sh cargo test -p aero-snapshot --locked
 bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked
 
-# Boot tests (QEMU; requires qemu-system-x86_64, nasm, mtools, unzip)
+# Boot tests (QEMU; requires qemu-system-x86_64, mtools, unzip)
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
 # If you hit safe-run timeouts during compilation, bump the timeout via AERO_TIMEOUT.
 bash ./scripts/prepare-freedos.sh
-# CI also verifies that these NASM-built binaries match the checked-in blobs.
-bash ./scripts/build-bootsector.sh
-bash ./scripts/build-int-sanity-bootsector.sh
-git diff --exit-code -- tests/fixtures/bootsector.bin tests/fixtures/boot/int_sanity.bin
+# Ensure deterministic in-repo fixtures are present and up-to-date.
+# (CI enforces this via `cargo xtask fixtures --check`; no assembler toolchain required.)
+bash ./scripts/safe-run.sh cargo xtask fixtures --check
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --locked
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
 
