@@ -69,17 +69,13 @@ pub const OPCODE_IBFE: u32 = 0x69;
 // ---- Integer comparison opcodes (SM4/SM5) ----
 //
 // These produce a per-component predicate mask: 0xffffffff for true, 0x00000000 for false.
-//
-// NOTE: These values intentionally avoid overlapping the integer/bitwise opcode range
-// (`iadd/isub/imul/and/or/xor/not/ishl/ishr/ushr`). If/when we import a full opcode table from the
-// Windows SDK headers (`d3d11tokenizedprogramformat.h`), verify these numeric IDs against the
-// canonical `D3D10_SB_OPCODE_TYPE_*` constants.
-pub const OPCODE_IEQ: u32 = 0x70;
-pub const OPCODE_INE: u32 = 0x71;
-pub const OPCODE_ILT: u32 = 0x72;
-pub const OPCODE_IGE: u32 = 0x73;
-pub const OPCODE_ULT: u32 = 0x74;
-pub const OPCODE_UGE: u32 = 0x75;
+// The numeric values match `D3D10_SB_OPCODE_*` from `d3d11tokenizedprogramformat.h`.
+pub const OPCODE_IEQ: u32 = 0x20;
+pub const OPCODE_IGE: u32 = 0x21;
+pub const OPCODE_ILT: u32 = 0x22;
+pub const OPCODE_INE: u32 = 0x27;
+pub const OPCODE_ULT: u32 = 0x4f;
+pub const OPCODE_UGE: u32 = 0x50;
 
 /// Non-executable custom data / comment block.
 ///
@@ -94,18 +90,17 @@ pub const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 pub const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
 // Integer / bitwise ops (subset).
 //
-// NOTE: These numeric IDs match `D3D10_SB_OPCODE_TYPE` / `D3D11_SB_OPCODE_TYPE`
-// from the tokenized DXBC format.
+// Note: keep these distinct from the integer compare opcodes above.
 pub const OPCODE_IADD: u32 = 0x1d;
 pub const OPCODE_ISUB: u32 = 0x1e;
-pub const OPCODE_IMUL: u32 = 0x20;
-pub const OPCODE_AND: u32 = 0x21;
-pub const OPCODE_OR: u32 = 0x22;
+pub const OPCODE_IMUL: u32 = 0x70;
+pub const OPCODE_AND: u32 = 0x71;
+pub const OPCODE_OR: u32 = 0x72;
 pub const OPCODE_XOR: u32 = 0x23;
 pub const OPCODE_NOT: u32 = 0x24;
 pub const OPCODE_ISHL: u32 = 0x25;
 pub const OPCODE_ISHR: u32 = 0x26;
-pub const OPCODE_USHR: u32 = 0x27;
+pub const OPCODE_USHR: u32 = 0x73;
 
 // ---- Structured control flow ----
 
