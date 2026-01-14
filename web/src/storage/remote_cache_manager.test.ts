@@ -250,6 +250,41 @@ describe("RemoteCacheManager", () => {
     expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
   });
 
+  it("rejects meta.json files with non-numeric chunkLastAccess keys", () => {
+    const parsed = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      accessCounter: 0,
+      chunkLastAccess: { floppy: 1 },
+      cachedRanges: [],
+    };
+    expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
+  });
+
+  it("rejects meta.json files with out-of-range chunkLastAccess keys", () => {
+    const parsed = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      accessCounter: 0,
+      // sizeBytes=1024 and chunkSizeBytes=512 => chunk indices must be 0 or 1.
+      chunkLastAccess: { "2": 1 },
+      cachedRanges: [],
+    };
+    expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
+  });
+
   it("aborts meta.json writes on error", async () => {
     let aborted = false;
 

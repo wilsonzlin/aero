@@ -222,11 +222,17 @@ export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | 
     if (Array.isArray(obj.chunkLastAccess)) return null;
     const lastAccess = obj.chunkLastAccess as Record<string, unknown>;
     let entries = 0;
+    const maxChunkIndex = Math.ceil(sizeBytes / chunkSizeBytes);
     for (const key in lastAccess) {
       if (!Object.prototype.hasOwnProperty.call(lastAccess, key)) continue;
       entries += 1;
       // Defensive cap to avoid O(n) work on corrupt metadata.
       if (entries > 1_000_000) return null;
+      // Chunk indices are stored as base-10 integer strings ("0", "1", ...). Treat any other keys
+      // as corrupt so we can invalidate and rebuild the cache directory.
+      if (!/^\d+$/.test(key)) return null;
+      const idx = Number(key);
+      if (!Number.isSafeInteger(idx) || idx < 0 || idx >= maxChunkIndex) return null;
       const value = lastAccess[key];
       if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
     }
