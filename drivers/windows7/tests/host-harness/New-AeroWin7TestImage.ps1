@@ -161,6 +161,15 @@ param(
   [Alias("TestMediaKeys")]
   [switch]$TestInputMediaKeys,
 
+  # If set, enable the guest selftest's virtio-input keyboard LED/statusq smoke test
+  # (adds `--test-input-led` to the scheduled task).
+  #
+  # This is required when running the host harness with:
+  # - PowerShell: `-WithInputLed`
+  # - Python: `--with-input-led`
+  [Parameter(Mandatory = $false)]
+  [switch]$TestInputLed,
+
   # If set, enable the guest selftest's end-to-end virtio-input tablet (absolute pointer) event delivery test
   # (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
   #
@@ -553,6 +562,11 @@ if ($TestInputMediaKeys) {
   $testInputMediaKeysArg = " --test-input-media-keys"
 }
 
+$testInputLedArg = ""
+if ($TestInputLed) {
+  $testInputLedArg = " --test-input-led"
+}
+
 $testInputTabletEventsArg = ""
 if ($TestInputTabletEvents) {
   $testInputTabletEventsArg = " --test-input-tablet-events"
@@ -630,7 +644,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -701,6 +715,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
       `-TestInputEventsExtended` (alias: `-TestInputEventsExtra`) (adds `--test-input-events-extended` to the scheduled task, and implies `--test-input-events`).
     - To enable Consumer Control / media keys injection (required when running the host harness with `-WithInputMediaKeys` / `--with-input-media-keys`),
       generate this media with `-TestInputMediaKeys` (alias: `-TestMediaKeys`) (adds `--test-input-media-keys` to the scheduled task).
+    - To enable the keyboard LED/statusq smoke test (required when running the host harness with `-WithInputLed` / `--with-input-led`),
+      generate this media with `-TestInputLed` (adds `--test-input-led` to the scheduled task).
     - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `-WithTabletEvents` /
       `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
       (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).

@@ -140,6 +140,14 @@ param(
   [Alias("WithVirtioInputMediaKeys", "EnableVirtioInputMediaKeys")]
   [switch]$WithInputMediaKeys,
 
+  # If set, require the guest virtio-input-led marker (keyboard LED output -> statusq) to PASS.
+  #
+  # Note: The guest image must be provisioned with `--test-input-led` (or env var equivalent) so the
+  # guest selftest emits the marker.
+  [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioInputLed", "EnableVirtioInputLed")]
+  [switch]$WithInputLed,
+
   # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel/vscroll + hscroll/hwheel; with
   # best-effort axis name fallbacks) and
   # require the guest virtio-input-wheel marker to PASS.
@@ -835,6 +843,10 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputMediaKeys")]
     [bool]$RequireVirtioInputMediaKeysPass = $false,
+    # If true, require the optional virtio-input-led marker to PASS (keyboard LED output -> virtio statusq).
+    [Parameter(Mandatory = $false)]
+    [Alias("EnableVirtioInputLed")]
+    [bool]$RequireVirtioInputLedPass = $false,
     # If true, require the optional virtio-input-tablet-events marker to PASS (host will inject absolute-pointer events
     # via QMP).
     [Parameter(Mandatory = $false)]
@@ -923,6 +935,9 @@ function Wait-AeroSelftestResult {
   $sawVirtioInputMediaKeysPass = $false
   $sawVirtioInputMediaKeysFail = $false
   $sawVirtioInputMediaKeysSkip = $false
+  $sawVirtioInputLedPass = $false
+  $sawVirtioInputLedFail = $false
+  $sawVirtioInputLedSkip = $false
   $inputMediaKeysInjectAttempts = 0
   $nextInputMediaKeysInject = [DateTime]::UtcNow
   $sawVirtioInputTabletEventsReady = $false
@@ -1113,6 +1128,15 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioInputMediaKeysSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-media-keys\|SKIP") {
         $sawVirtioInputMediaKeysSkip = $true
       }
+      if (-not $sawVirtioInputLedPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-led\|PASS") {
+        $sawVirtioInputLedPass = $true
+      }
+      if (-not $sawVirtioInputLedFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-led\|FAIL") {
+        $sawVirtioInputLedFail = $true
+      }
+      if (-not $sawVirtioInputLedSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-led\|SKIP") {
+        $sawVirtioInputLedSkip = $true
+      }
       if (-not $sawVirtioInputWheelPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-wheel\|PASS") {
         $sawVirtioInputWheelPass = $true
       }
@@ -1172,6 +1196,10 @@ function Wait-AeroSelftestResult {
       if ($RequireVirtioInputMediaKeysPass) {
         if ($sawVirtioInputMediaKeysSkip) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED"; Tail = $tail } }
         if ($sawVirtioInputMediaKeysFail) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_FAILED"; Tail = $tail } }
+      }
+      if ($RequireVirtioInputLedPass) {
+        if ($sawVirtioInputLedSkip) { return @{ Result = "VIRTIO_INPUT_LED_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioInputLedFail) { return @{ Result = "VIRTIO_INPUT_LED_FAILED"; Tail = $tail } }
       }
       if ($RequireVirtioInputWheelPass) {
         if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
@@ -1431,6 +1459,13 @@ function Wait-AeroSelftestResult {
               return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
             }
           }
+          if ($RequireVirtioInputLedPass) {
+            if ($sawVirtioInputLedFail) { return @{ Result = "VIRTIO_INPUT_LED_FAILED"; Tail = $tail } }
+            if (-not $sawVirtioInputLedPass) {
+              if ($sawVirtioInputLedSkip) { return @{ Result = "VIRTIO_INPUT_LED_SKIPPED"; Tail = $tail } }
+              return @{ Result = "MISSING_VIRTIO_INPUT_LED"; Tail = $tail }
+            }
+          }
 
           if ($RequireVirtioBlkResetPass) {
             if ($sawVirtioBlkResetFail) {
@@ -1502,6 +1537,13 @@ function Wait-AeroSelftestResult {
                   if (-not $sawVirtioInputWheelPass) {
                     if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
                     return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
+                  }
+                }
+                if ($RequireVirtioInputLedPass) {
+                  if ($sawVirtioInputLedFail) { return @{ Result = "VIRTIO_INPUT_LED_FAILED"; Tail = $tail } }
+                  if (-not $sawVirtioInputLedPass) {
+                    if ($sawVirtioInputLedSkip) { return @{ Result = "VIRTIO_INPUT_LED_SKIPPED"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_INPUT_LED"; Tail = $tail }
                   }
                 }
                 if ($RequireVirtioBlkResetPass) {
@@ -1588,6 +1630,13 @@ function Wait-AeroSelftestResult {
             return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
           }
         }
+        if ($RequireVirtioInputLedPass) {
+          if ($sawVirtioInputLedFail) { return @{ Result = "VIRTIO_INPUT_LED_FAILED"; Tail = $tail } }
+          if (-not $sawVirtioInputLedPass) {
+            if ($sawVirtioInputLedSkip) { return @{ Result = "VIRTIO_INPUT_LED_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_INPUT_LED"; Tail = $tail }
+          }
+        }
         if ($RequireVirtioNetLinkFlapPass) {
           if ($sawVirtioNetLinkFlapFail) { return @{ Result = "VIRTIO_NET_LINK_FLAP_FAILED"; Tail = $tail } }
           if (-not $sawVirtioNetLinkFlapPass) {
@@ -1652,6 +1701,10 @@ function Wait-AeroSelftestResult {
     if ($RequireVirtioInputMediaKeysPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputMediaKeysReady) -and (-not $sawVirtioInputMediaKeysPass) -and (-not $sawVirtioInputMediaKeysFail) -and (-not $sawVirtioInputMediaKeysSkip)) {
       $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
       if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_MEDIA_KEYS"; Tail = $tail } }
+    }
+    if ($RequireVirtioInputLedPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputLedPass) -and (-not $sawVirtioInputLedFail) -and (-not $sawVirtioInputLedSkip)) {
+      $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
+      if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_LED"; Tail = $tail } }
     }
     if ($RequireVirtioInputTabletEventsPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputTabletEventsReady) -and (-not $sawVirtioInputTabletEventsPass) -and (-not $sawVirtioInputTabletEventsFail) -and (-not $sawVirtioInputTabletEventsSkip)) {
       $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
@@ -5507,6 +5560,7 @@ try {
   $needInputEventsExtended = [bool]$WithInputEventsExtended
   $needInputEvents = ([bool]$WithInputEvents) -or $needInputWheel -or $needInputEventsExtended
   $needInputMediaKeys = [bool]$WithInputMediaKeys
+  $needInputLed = [bool]$WithInputLed
   $needInputTabletEvents = [bool]$WithInputTabletEvents
   $needNetLinkFlap = [bool]$WithNetLinkFlap
   $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
@@ -5645,6 +5699,9 @@ try {
     }
     if ($needInputMediaKeys -and (-not $haveVirtioKbd)) {
       throw "QEMU does not advertise virtio-keyboard-pci but -WithInputMediaKeys was enabled. Upgrade QEMU or omit media key injection."
+    }
+    if ($needInputLed -and (-not $haveVirtioKbd)) {
+      throw "QEMU does not advertise virtio-keyboard-pci but -WithInputLed was enabled. Upgrade QEMU or omit LED/statusq testing."
     }
     if (-not ($haveVirtioKbd -and $haveVirtioMouse)) {
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
@@ -5907,6 +5964,7 @@ try {
         -VirtioBlkResizeDeltaMiB ([int]$BlkResizeDeltaMiB) `
         -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
         -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
+        -RequireVirtioInputLedPass ([bool]$needInputLed) `
         -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
         -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
         -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
@@ -6360,6 +6418,39 @@ try {
     }
     "VIRTIO_INPUT_MEDIA_KEYS_FAILED" {
       Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while -WithInputMediaKeys was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_INPUT_LED" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led marker (SKIP/PASS/FAIL) after virtio-input completed while -WithInputLed was enabled (guest selftest too old or missing --test-input-led)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_LED_SKIPPED" {
+      $reason = "unknown"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-led\\|SKIP\\|([^\\|\\r\\n]+)") {
+        $reason = $Matches[1]
+      }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but -WithInputLed was enabled (provision the guest with --test-input-led)"
+      } else {
+        Write-Host "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped ($reason) but -WithInputLed was enabled"
+      }
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_LED_FAILED" {
+      Write-Host "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while -WithInputLed was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

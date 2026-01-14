@@ -116,6 +116,10 @@ struct Options {
   // If set, run an end-to-end virtio-input media key test that reads Consumer Control HID reports.
   // This is intended to be paired with host-side QMP `input-send-event` injection of multimedia keys.
   bool test_input_media_keys = false;
+  // If set, run a virtio-input statusq LED smoke test (HID keyboard output reports -> virtio statusq).
+  // This is optional by default and is intended to be gated by the host harness when validating
+  // virtio-input statusq consumption/completions.
+  bool test_input_led = false;
 
   // If set, require the virtio-input driver to be using MSI-X (message-signaled interrupts).
   // Without this flag the selftest still emits an informational virtio-input-msix marker.
@@ -186,6 +190,9 @@ static bool LessInsensitive(const std::wstring& a, const std::wstring& b) {
 static constexpr DWORD IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO =
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS);
 
+static constexpr DWORD IOCTL_VIOINPUT_QUERY_COUNTERS = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS);
+static constexpr DWORD IOCTL_VIOINPUT_RESET_COUNTERS = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_WRITE_ACCESS);
+
 static constexpr USHORT VIOINPUT_INTERRUPT_VECTOR_NONE = 0xFFFFu;
 
 enum VIOINPUT_INTERRUPT_MODE : ULONG {
@@ -221,6 +228,68 @@ struct VIOINPUT_INTERRUPT_INFO {
   LONG Queue0InterruptCount;
   LONG Queue1InterruptCount;
 };
+
+// Userspace mirror of `drivers/windows7/virtio-input/src/log.h` VIOINPUT_COUNTERS.
+// This struct is queried via IOCTL_VIOINPUT_QUERY_COUNTERS and must match the kernel layout.
+struct VIOINPUT_COUNTERS {
+  ULONG Size;
+  ULONG Version;
+
+  LONG IoctlTotal;
+  LONG IoctlUnknown;
+
+  LONG IoctlHidGetDeviceDescriptor;
+  LONG IoctlHidGetReportDescriptor;
+  LONG IoctlHidGetDeviceAttributes;
+  LONG IoctlHidGetCollectionInformation;
+  LONG IoctlHidGetCollectionDescriptor;
+  LONG IoctlHidFlushQueue;
+  LONG IoctlHidGetString;
+  LONG IoctlHidGetIndexedString;
+  LONG IoctlHidGetFeature;
+  LONG IoctlHidSetFeature;
+  LONG IoctlHidGetInputReport;
+  LONG IoctlHidSetOutputReport;
+  LONG IoctlHidReadReport;
+  LONG IoctlHidWriteReport;
+
+  LONG ReadReportPended;
+  LONG ReadReportCompleted;
+  LONG ReadReportCancelled;
+
+  LONG ReadReportQueueDepth;
+  LONG ReadReportQueueMaxDepth;
+
+  LONG ReportRingDepth;
+  LONG ReportRingMaxDepth;
+  LONG ReportRingDrops;
+  LONG ReportRingOverruns;
+
+  LONG VirtioInterrupts;
+  LONG VirtioDpcs;
+  LONG VirtioEvents;
+  LONG VirtioEventDrops;
+  LONG VirtioEventOverruns;
+
+  LONG VirtioQueueDepth;
+  LONG VirtioQueueMaxDepth;
+
+  LONG VirtioStatusDrops;
+
+  LONG PendingRingDepth;
+  LONG PendingRingMaxDepth;
+  LONG PendingRingDrops;
+
+  LONG LedWritesRequested;
+  LONG LedWritesSubmitted;
+  LONG LedWritesDropped;
+
+  LONG StatusQSubmits;
+  LONG StatusQCompletions;
+  LONG StatusQFull;
+};
+
+static_assert(sizeof(VIOINPUT_COUNTERS) == 176, "VIOINPUT_COUNTERS layout");
 
 static std::wstring NormalizeGuidLikeString(std::wstring s) {
   s = ToLower(std::move(s));
@@ -5555,6 +5624,634 @@ static VirtioInputMediaKeysTestResult VirtioInputMediaKeysTest(Logger& log, cons
   return out;
 }
 
+struct VirtioInputLedTestResult {
+  bool ok = false;
+  int sent = 0;
+  std::string reason;
+  DWORD win32_error = 0;
+
+  std::string format;   // e.g. "with_report_id", "no_report_id", "report_id_0"
+  std::string led_name; // numlock/capslock/scrolllock
+  uint8_t report_id = 0;
+  uint32_t report_bytes = 0;
+
+  LONG statusq_submits_delta = 0;
+  LONG statusq_completions_delta = 0;
+  LONG statusq_full_delta = 0;
+  LONG statusq_drops_delta = 0;
+  LONG led_writes_requested_delta = 0;
+  LONG led_writes_submitted_delta = 0;
+  LONG led_writes_dropped_delta = 0;
+};
+
+static HANDLE OpenHidDeviceForWrite(const wchar_t* path) {
+  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  const DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
+  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_WRITE};
+  for (const DWORD access : desired_accesses) {
+    HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (h != INVALID_HANDLE_VALUE) return h;
+  }
+  return INVALID_HANDLE_VALUE;
+}
+
+static bool HidWriteWithTimeout(HANDLE h, const uint8_t* buf, DWORD len, DWORD timeout_ms, DWORD* err_out) {
+  if (err_out) *err_out = ERROR_SUCCESS;
+  if (!buf || len == 0 || h == INVALID_HANDLE_VALUE) {
+    if (err_out) *err_out = ERROR_INVALID_PARAMETER;
+    return false;
+  }
+
+  HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!ev) {
+    if (err_out) *err_out = GetLastError();
+    return false;
+  }
+
+  OVERLAPPED ov{};
+  ov.hEvent = ev;
+
+  DWORD bytes = 0;
+  BOOL ok = WriteFile(h, buf, len, nullptr, &ov);
+  DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+  if (!ok && err != ERROR_IO_PENDING) {
+    CloseHandle(ev);
+    if (err_out) *err_out = err;
+    return false;
+  }
+
+  const DWORD wait = WaitForSingleObject(ev, timeout_ms);
+  if (wait == WAIT_TIMEOUT) {
+    // Best-effort: cancel the outstanding write so CloseHandle doesn't hang.
+    CancelIo(h);
+    CloseHandle(ev);
+    if (err_out) *err_out = ERROR_TIMEOUT;
+    return false;
+  }
+  if (wait == WAIT_FAILED) {
+    err = GetLastError();
+    CancelIo(h);
+    CloseHandle(ev);
+    if (err_out) *err_out = err;
+    return false;
+  }
+
+  if (!GetOverlappedResult(h, &ov, &bytes, FALSE)) {
+    err = GetLastError();
+    CloseHandle(ev);
+    if (err_out) *err_out = err;
+    return false;
+  }
+  CloseHandle(ev);
+
+  if (bytes != len) {
+    if (err_out) *err_out = ERROR_WRITE_FAULT;
+    return false;
+  }
+  return true;
+}
+
+static bool SetHidBits(uint8_t* buf, size_t len, uint32_t bit_offset, uint32_t bit_size, uint32_t value) {
+  if (!buf || len == 0 || bit_size == 0) return false;
+  if (bit_size > 32) return false;
+  if (bit_offset + bit_size > len * 8) return false;
+  for (uint32_t i = 0; i < bit_size; i++) {
+    const uint32_t bit = bit_offset + i;
+    const uint32_t byte_idx = bit / 8;
+    const uint32_t bit_idx = bit % 8;
+    const uint8_t mask = static_cast<uint8_t>(1u << bit_idx);
+    if ((value >> i) & 1u) {
+      buf[byte_idx] |= mask;
+    } else {
+      buf[byte_idx] &= static_cast<uint8_t>(~mask);
+    }
+  }
+  return true;
+}
+
+struct KeyboardLedOutputLayout {
+  bool uses_report_ids = false;
+  uint8_t report_id = 0;
+  uint32_t bit_length = 0;
+  uint32_t byte_length = 0;
+  HidFieldInfo led_field{};
+  std::string led_name;
+};
+
+static std::optional<KeyboardLedOutputLayout> ParseKeyboardLedOutputLayout(const std::vector<uint8_t>& desc) {
+  struct GlobalState {
+    uint32_t usage_page = 0;
+    uint32_t report_size = 0;
+    uint32_t report_count = 0;
+    int32_t logical_min = 0;
+    int32_t logical_max = 0;
+    uint8_t report_id = 0;
+  };
+
+  GlobalState g{};
+  std::vector<GlobalState> g_stack;
+
+  std::vector<uint32_t> local_usages;
+  std::optional<uint32_t> local_usage_min;
+  std::optional<uint32_t> local_usage_max;
+  auto clear_locals = [&]() {
+    local_usages.clear();
+    local_usage_min.reset();
+    local_usage_max.reset();
+  };
+
+  bool uses_report_ids = false;
+  // Per-report current output bit offset (includes implicit report ID byte when used).
+  uint32_t out_bit_off[256];
+  for (auto& v : out_bit_off) v = 0xFFFFFFFFu;
+
+  struct PerReportLedFields {
+    bool have_num = false;
+    bool have_caps = false;
+    bool have_scroll = false;
+    HidFieldInfo num{};
+    HidFieldInfo caps{};
+    HidFieldInfo scroll{};
+  };
+  PerReportLedFields fields[256]{};
+
+  auto ensure_out_bit_off = [&](uint8_t rid) -> uint32_t& {
+    if (out_bit_off[rid] == 0xFFFFFFFFu) {
+      if (uses_report_ids && rid != 0) {
+        out_bit_off[rid] = 8; // report ID byte
+      } else {
+        out_bit_off[rid] = 0;
+      }
+    }
+    return out_bit_off[rid];
+  };
+
+  auto sign_extend_value = [&](uint32_t v, uint32_t bits) -> int32_t {
+    if (bits == 0) return 0;
+    if (bits >= 32) return static_cast<int32_t>(v);
+    return SignExtendHid(v, bits);
+  };
+
+  auto parse_u32 = [&](uint32_t v, uint32_t bits) -> uint32_t {
+    if (bits == 0) return 0;
+    if (bits >= 32) return v;
+    return v & ((1u << bits) - 1u);
+  };
+
+  size_t i = 0;
+  while (i < desc.size()) {
+    const uint8_t prefix = desc[i++];
+    if (prefix == 0xFE) {
+      if (i + 2 > desc.size()) break;
+      const uint8_t size = desc[i++];
+      i++; // long item tag
+      if (i + size > desc.size()) break;
+      i += size;
+      continue;
+    }
+
+    const uint8_t size_code = prefix & 0x3;
+    const uint8_t type = (prefix >> 2) & 0x3;
+    const uint8_t tag = (prefix >> 4) & 0xF;
+    const size_t data_size = (size_code == 3) ? 4 : size_code;
+    if (i + data_size > desc.size()) break;
+
+    uint32_t value_u = 0;
+    for (size_t j = 0; j < data_size; j++) {
+      value_u |= static_cast<uint32_t>(desc[i + j]) << (8u * j);
+    }
+    i += data_size;
+
+    switch (type) {
+      case 0: { // Main
+        if (tag == 0x9) { // Output
+          const uint8_t rid = g.report_id;
+          uint32_t& off_bits = ensure_out_bit_off(rid);
+
+          std::vector<uint32_t> usages = local_usages;
+          if (usages.empty() && local_usage_min.has_value() && local_usage_max.has_value() &&
+              *local_usage_max >= *local_usage_min) {
+            const uint32_t count = *local_usage_max - *local_usage_min + 1;
+            usages.reserve(count);
+            for (uint32_t u = *local_usage_min; u <= *local_usage_max; u++) usages.push_back(u);
+          }
+
+          const uint32_t rs = g.report_size;
+          const uint32_t rc = std::max<uint32_t>(1, g.report_count);
+
+          for (uint32_t idx = 0; idx < rc; idx++) {
+            uint32_t usage = 0;
+            if (!usages.empty()) {
+              usage = usages[std::min<size_t>(idx, usages.size() - 1)];
+            } else if (local_usage_min.has_value()) {
+              usage = *local_usage_min;
+            }
+
+            HidFieldInfo field{};
+            field.report_id = rid;
+            field.usage_page = g.usage_page;
+            field.usage = usage;
+            field.bit_offset = off_bits + idx * rs;
+            field.bit_size = rs;
+            field.logical_min = g.logical_min;
+            field.logical_max = g.logical_max;
+            field.relative = false;
+
+            if (field.usage_page == 0x08 && rs > 0) { // LEDs page
+              if (field.usage == 0x01) {
+                fields[rid].num = field;
+                fields[rid].have_num = true;
+              } else if (field.usage == 0x02) {
+                fields[rid].caps = field;
+                fields[rid].have_caps = true;
+              } else if (field.usage == 0x03) {
+                fields[rid].scroll = field;
+                fields[rid].have_scroll = true;
+              }
+            }
+          }
+
+          off_bits += rs * rc;
+        }
+        clear_locals();
+        break;
+      }
+      case 1: { // Global
+        const uint32_t bits = static_cast<uint32_t>(data_size * 8);
+        if (tag == 0x0) { // Usage Page
+          g.usage_page = value_u;
+        } else if (tag == 0x1) { // Logical Minimum
+          g.logical_min = sign_extend_value(value_u, bits);
+        } else if (tag == 0x2) { // Logical Maximum
+          g.logical_max = sign_extend_value(value_u, bits);
+        } else if (tag == 0x7) { // Report Size
+          g.report_size = parse_u32(value_u, bits);
+        } else if (tag == 0x8) { // Report ID
+          g.report_id = static_cast<uint8_t>(value_u & 0xFF);
+          uses_report_ids = true;
+          (void)ensure_out_bit_off(g.report_id);
+        } else if (tag == 0x9) { // Report Count
+          g.report_count = parse_u32(value_u, bits);
+        } else if (tag == 0xA) { // Push
+          g_stack.push_back(g);
+        } else if (tag == 0xB) { // Pop
+          if (!g_stack.empty()) {
+            g = g_stack.back();
+            g_stack.pop_back();
+          }
+        }
+        break;
+      }
+      case 2: { // Local
+        if (tag == 0x0) { // Usage
+          local_usages.push_back(value_u);
+        } else if (tag == 0x1) { // Usage Minimum
+          local_usage_min = value_u;
+        } else if (tag == 0x2) { // Usage Maximum
+          local_usage_max = value_u;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // Select a report ID with at least one of the required LED usages.
+  for (int rid = 0; rid < 256; rid++) {
+    if (out_bit_off[rid] == 0xFFFFFFFFu) continue;
+    const auto& f = fields[rid];
+    if (!f.have_num && !f.have_caps && !f.have_scroll) continue;
+
+    KeyboardLedOutputLayout out{};
+    out.uses_report_ids = uses_report_ids;
+    out.report_id = static_cast<uint8_t>(rid);
+    out.bit_length = out_bit_off[rid];
+    out.byte_length = (out.bit_length + 7) / 8;
+
+    if (f.have_caps) {
+      out.led_field = f.caps;
+      out.led_name = "capslock";
+    } else if (f.have_num) {
+      out.led_field = f.num;
+      out.led_name = "numlock";
+    } else {
+      out.led_field = f.scroll;
+      out.led_name = "scrolllock";
+    }
+
+    if (out.byte_length == 0) return std::nullopt;
+    return out;
+  }
+
+  return std::nullopt;
+}
+
+static std::optional<VIOINPUT_COUNTERS> QueryVirtioInputCounters(HANDLE h, DWORD* win32_error_out) {
+  if (win32_error_out) *win32_error_out = ERROR_SUCCESS;
+  if (h == INVALID_HANDLE_VALUE) {
+    if (win32_error_out) *win32_error_out = ERROR_INVALID_HANDLE;
+    return std::nullopt;
+  }
+
+  std::vector<uint8_t> buf(4096);
+  DWORD bytes = 0;
+  if (!DeviceIoControl(h, IOCTL_VIOINPUT_QUERY_COUNTERS, nullptr, 0, buf.data(), static_cast<DWORD>(buf.size()), &bytes,
+                       nullptr)) {
+    if (win32_error_out) *win32_error_out = GetLastError();
+    return std::nullopt;
+  }
+  if (bytes < sizeof(ULONG) * 2) {
+    if (win32_error_out) *win32_error_out = ERROR_INSUFFICIENT_BUFFER;
+    return std::nullopt;
+  }
+
+  VIOINPUT_COUNTERS out{};
+  memset(&out, 0, sizeof(out));
+  memcpy(&out, buf.data(), std::min<size_t>(bytes, sizeof(out)));
+
+  // Ensure we received the fields required by this test (statusq counters).
+  if (bytes < offsetof(VIOINPUT_COUNTERS, StatusQFull) + sizeof(out.StatusQFull)) {
+    if (win32_error_out) *win32_error_out = ERROR_INSUFFICIENT_BUFFER;
+    return std::nullopt;
+  }
+
+  return out;
+}
+
+static VirtioInputLedTestResult VirtioInputLedTest(Logger& log, const VirtioInputTestResult& input) {
+  VirtioInputLedTestResult out{};
+
+  std::wstring keyboard_path = input.keyboard_device_path;
+  if (keyboard_path.empty()) {
+    const auto paths = FindVirtioInputHidPaths(log);
+    if (!paths.reason.empty()) {
+      out.reason = paths.reason;
+      out.win32_error = paths.win32_error;
+      return out;
+    }
+    keyboard_path = paths.keyboard_path;
+  }
+
+  if (keyboard_path.empty()) {
+    out.reason = "missing_keyboard_device";
+    out.win32_error = ERROR_NOT_FOUND;
+    return out;
+  }
+
+  HANDLE h_ioctl = OpenHidDeviceForIoctl(keyboard_path.c_str());
+  if (h_ioctl == INVALID_HANDLE_VALUE) {
+    out.reason = "open_keyboard_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+
+  const auto report_desc = ReadHidReportDescriptor(log, h_ioctl);
+  if (!report_desc.has_value()) {
+    out.reason = "get_report_descriptor_failed";
+    out.win32_error = GetLastError();
+    CloseHandle(h_ioctl);
+    return out;
+  }
+
+  const auto layout_opt = ParseKeyboardLedOutputLayout(*report_desc);
+  if (!layout_opt.has_value()) {
+    out.reason = "unsupported_report_descriptor";
+    out.win32_error = ERROR_NOT_SUPPORTED;
+    CloseHandle(h_ioctl);
+    return out;
+  }
+  const KeyboardLedOutputLayout layout = *layout_opt;
+  out.report_id = layout.report_id;
+  out.report_bytes = layout.byte_length;
+  out.led_name = layout.led_name;
+
+  // Best-effort: reset the driver's counters so we can compute clean deltas. Not fatal if unavailable.
+  DWORD ignored = 0;
+  (void)DeviceIoControl(h_ioctl, IOCTL_VIOINPUT_RESET_COUNTERS, nullptr, 0, nullptr, 0, &ignored, nullptr);
+
+  DWORD err = ERROR_SUCCESS;
+  const auto before_opt = QueryVirtioInputCounters(h_ioctl, &err);
+  if (!before_opt.has_value()) {
+    out.reason = "query_counters_failed";
+    out.win32_error = err;
+    CloseHandle(h_ioctl);
+    return out;
+  }
+  const VIOINPUT_COUNTERS before = *before_opt;
+
+  struct CandidateFormat {
+    std::string name;
+    uint8_t report_id_byte = 0;
+    uint32_t report_bytes = 0;
+    uint32_t led_bit_offset = 0;
+    uint32_t led_bit_size = 0;
+  };
+
+  std::vector<CandidateFormat> formats;
+
+  const bool primary_has_report_id = layout.report_id != 0;
+  if (primary_has_report_id) {
+    formats.push_back(CandidateFormat{
+        "with_report_id",
+        layout.report_id,
+        layout.byte_length,
+        layout.led_field.bit_offset,
+        layout.led_field.bit_size,
+    });
+    if (layout.byte_length > 1 && layout.led_field.bit_offset >= 8) {
+      formats.push_back(CandidateFormat{
+          "no_report_id",
+          0,
+          layout.byte_length - 1,
+          layout.led_field.bit_offset - 8,
+          layout.led_field.bit_size,
+      });
+    }
+  } else {
+    formats.push_back(CandidateFormat{
+        "no_report_id",
+        0,
+        layout.byte_length,
+        layout.led_field.bit_offset,
+        layout.led_field.bit_size,
+    });
+    // Some HID stacks require an explicit ReportID=0 prefix even when the descriptor does not use report IDs.
+    formats.push_back(CandidateFormat{
+        "report_id_0",
+        0,
+        layout.byte_length + 1,
+        layout.led_field.bit_offset + 8,
+        layout.led_field.bit_size,
+    });
+  }
+
+  HANDLE h_write = OpenHidDeviceForWrite(keyboard_path.c_str());
+  if (h_write == INVALID_HANDLE_VALUE) {
+    out.reason = "open_keyboard_write_failed";
+    out.win32_error = GetLastError();
+    CloseHandle(h_ioctl);
+    return out;
+  }
+
+  // Pick a working write format by issuing a single "LED off" report and observing the driver's counters.
+  std::optional<CandidateFormat> chosen;
+  DWORD last_write_err = ERROR_SUCCESS;
+  for (const auto& fmt : formats) {
+    if (fmt.report_bytes == 0) continue;
+
+    std::vector<uint8_t> report(fmt.report_bytes, 0);
+    if (fmt.name != "no_report_id") {
+      // For with_report_id/report_id_0, the first byte carries the report ID value.
+      report[0] = fmt.report_id_byte;
+    } else if (primary_has_report_id == false && fmt.report_bytes == layout.byte_length + 1) {
+      // report_id_0 uses name != no_report_id, handled above.
+    } else if (primary_has_report_id && fmt.report_bytes == layout.byte_length) {
+      // with_report_id uses name != no_report_id, handled above.
+    }
+
+    if (!SetHidBits(report.data(), report.size(), fmt.led_bit_offset, fmt.led_bit_size, 0)) {
+      continue;
+    }
+
+    last_write_err = ERROR_SUCCESS;
+    if (!HidWriteWithTimeout(h_write, report.data(), static_cast<DWORD>(report.size()), 2000, &last_write_err)) {
+      continue;
+    }
+    out.sent++;
+
+    const auto after_opt = QueryVirtioInputCounters(h_ioctl, &err);
+    if (!after_opt.has_value()) {
+      out.reason = "query_counters_failed";
+      out.win32_error = err;
+      CloseHandle(h_write);
+      CloseHandle(h_ioctl);
+      return out;
+    }
+    const auto& after = *after_opt;
+
+    if (after.LedWritesRequested > before.LedWritesRequested) {
+      chosen = fmt;
+      out.format = fmt.name;
+      break;
+    }
+  }
+
+  if (!chosen.has_value()) {
+    out.reason = "write_not_processed";
+    out.win32_error = last_write_err ? last_write_err : ERROR_INVALID_DATA;
+    CloseHandle(h_write);
+    CloseHandle(h_ioctl);
+    return out;
+  }
+
+  // Record the final chosen report size for markers (may differ from the descriptor-derived default
+  // when we fall back to adding/removing an explicit report ID prefix).
+  out.report_bytes = chosen->report_bytes;
+
+  // Send additional toggles so we exercise multiple statusq buffers.
+  constexpr int kWriteCount = 32;
+  for (int i = 1; i < kWriteCount; i++) {
+    std::vector<uint8_t> report(chosen->report_bytes, 0);
+    if (chosen->name != "no_report_id") {
+      report[0] = chosen->report_id_byte;
+    }
+
+    const uint32_t value = (i & 1) ? 1u : 0u;
+    if (!SetHidBits(report.data(), report.size(), chosen->led_bit_offset, chosen->led_bit_size, value)) {
+      out.reason = "build_report_failed";
+      out.win32_error = ERROR_INVALID_DATA;
+      break;
+    }
+
+    err = ERROR_SUCCESS;
+    if (!HidWriteWithTimeout(h_write, report.data(), static_cast<DWORD>(report.size()), 2000, &err)) {
+      out.reason = (err == ERROR_TIMEOUT) ? "write_timeout" : "write_failed";
+      out.win32_error = err;
+      break;
+    }
+    out.sent++;
+  }
+
+  CloseHandle(h_write);
+
+  if (!out.reason.empty()) {
+    CloseHandle(h_ioctl);
+    return out;
+  }
+
+  // Snapshot counters immediately after writes so we can fail with a clearer reason when nothing was
+  // submitted to the statusq (e.g. statusq inactive or the write wasn't classified as a keyboard LED report).
+  const auto after_send_opt = QueryVirtioInputCounters(h_ioctl, &err);
+  if (!after_send_opt.has_value()) {
+    out.reason = "query_counters_failed";
+    out.win32_error = err;
+    CloseHandle(h_ioctl);
+    return out;
+  }
+  const VIOINPUT_COUNTERS after_send = *after_send_opt;
+  if (after_send.LedWritesRequested <= before.LedWritesRequested) {
+    out.reason = "no_led_writes_recorded";
+    out.win32_error = ERROR_INVALID_DATA;
+    CloseHandle(h_ioctl);
+    return out;
+  }
+  if (after_send.StatusQSubmits <= before.StatusQSubmits) {
+    out.reason = "no_statusq_submits";
+    out.win32_error = ERROR_INVALID_DATA;
+    CloseHandle(h_ioctl);
+    return out;
+  }
+
+  // Wait for all statusq submissions we triggered to complete.
+  const DWORD poll_deadline_ms = GetTickCount() + 5000;
+  VIOINPUT_COUNTERS last = after_send;
+  while (static_cast<int32_t>(GetTickCount() - poll_deadline_ms) < 0) {
+    const auto cur_opt = QueryVirtioInputCounters(h_ioctl, &err);
+    if (!cur_opt.has_value()) {
+      out.reason = "query_counters_failed";
+      out.win32_error = err;
+      break;
+    }
+    last = *cur_opt;
+
+    const LONG submits = last.StatusQSubmits - before.StatusQSubmits;
+    const LONG completions = last.StatusQCompletions - before.StatusQCompletions;
+
+    if (submits > 0 && completions >= submits) {
+      out.ok = true;
+      break;
+    }
+    Sleep(50);
+  }
+
+  CloseHandle(h_ioctl);
+
+  if (!out.ok && out.reason.empty()) {
+    out.reason = "timeout_waiting_statusq_completions";
+    out.win32_error = ERROR_TIMEOUT;
+  }
+
+  // Compute deltas for diagnostics.
+  out.statusq_submits_delta = last.StatusQSubmits - before.StatusQSubmits;
+  out.statusq_completions_delta = last.StatusQCompletions - before.StatusQCompletions;
+  out.statusq_full_delta = last.StatusQFull - before.StatusQFull;
+  out.statusq_drops_delta = last.VirtioStatusDrops - before.VirtioStatusDrops;
+  out.led_writes_requested_delta = last.LedWritesRequested - before.LedWritesRequested;
+  out.led_writes_submitted_delta = last.LedWritesSubmitted - before.LedWritesSubmitted;
+  out.led_writes_dropped_delta = last.LedWritesDropped - before.LedWritesDropped;
+
+  if (out.ok) {
+    if (out.statusq_completions_delta < out.statusq_submits_delta) {
+      out.ok = false;
+      out.reason = "incomplete_statusq_completions";
+      out.win32_error = ERROR_TIMEOUT;
+    }
+  }
+
+  return out;
+}
+
 struct VirtioNetAdapter {
   // NetCfg instance GUID (used by GetAdaptersAddresses).
   std::wstring instance_id;   // e.g. "{GUID}"
@@ -9799,6 +10496,8 @@ static void PrintUsage() {
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
       "  --test-input-media-keys   Run virtio-input Consumer Control (media keys) HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1)\n"
+      "  --test-input-led          Run virtio-input keyboard LED/statusq smoke test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1)\n"
       "  --test-net-link-flap      Run virtio-net link flap regression test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
@@ -9917,6 +10616,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.test_input_tablet_events = true;
     } else if (arg == L"--test-input-media-keys") {
       opt.test_input_media_keys = true;
+    } else if (arg == L"--test-input-led") {
+      opt.test_input_led = true;
     } else if (arg == L"--require-input-msix") {
       opt.require_input_msix = true;
     } else if (arg == L"--test-net-link-flap") {
@@ -10006,6 +10707,10 @@ int wmain(int argc, wchar_t** argv) {
   }
   if (!opt.test_net_link_flap && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP")) {
     opt.test_net_link_flap = true;
+  }
+
+  if (!opt.test_input_led && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_LED")) {
+    opt.test_input_led = true;
   }
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
@@ -10397,6 +11102,30 @@ int wmain(int argc, wchar_t** argv) {
       }
     }
   }
+
+  // virtio-input statusq / keyboard LED smoke test.
+  if (!opt.test_input_led) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set");
+  } else {
+    const auto led = VirtioInputLedTest(log, input);
+    if (led.ok) {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS|sent=%d|format=%s|led=%s|report_id=%u|report_bytes=%u|statusq_submits=%ld|statusq_completions=%ld|statusq_full=%ld|statusq_drops=%ld|led_writes_requested=%ld|led_writes_submitted=%ld|led_writes_dropped=%ld",
+          led.sent, led.format.empty() ? "-" : led.format.c_str(), led.led_name.empty() ? "-" : led.led_name.c_str(),
+          static_cast<unsigned>(led.report_id), static_cast<unsigned>(led.report_bytes),
+          static_cast<long>(led.statusq_submits_delta), static_cast<long>(led.statusq_completions_delta),
+          static_cast<long>(led.statusq_full_delta), static_cast<long>(led.statusq_drops_delta),
+          static_cast<long>(led.led_writes_requested_delta), static_cast<long>(led.led_writes_submitted_delta),
+          static_cast<long>(led.led_writes_dropped_delta));
+    } else {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|reason=%s|err=%lu|sent=%d|format=%s|led=%s",
+               led.reason.empty() ? "unknown" : led.reason.c_str(),
+               static_cast<unsigned long>(led.win32_error), led.sent, led.format.empty() ? "-" : led.format.c_str(),
+               led.led_name.empty() ? "-" : led.led_name.c_str());
+      all_ok = false;
+    }
+  }
+
   const bool want_input_modifiers = opt.test_input_events_modifiers;
   const bool want_input_buttons = opt.test_input_events_buttons;
   const bool want_input_wheel = opt.test_input_events_wheel;
