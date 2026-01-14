@@ -341,6 +341,20 @@ export class RemoteCacheManager {
     }
   }
 
+  /**
+   * Best-effort "touch" for an existing cache's meta.json to update `lastAccessedAtMs`.
+   *
+   * This intentionally does *not* create or delete any cache entries: it only updates metadata
+   * when a valid meta.json already exists. Callers should treat failures as non-fatal (e.g. OPFS
+   * quota errors, transient filesystem issues).
+   */
+  async touchMeta(cacheKey: string): Promise<void> {
+    const meta = await this.readMeta(cacheKey);
+    if (!meta) return;
+    meta.lastAccessedAtMs = this.now();
+    await this.writeMeta(cacheKey, meta);
+  }
+
   async writeMeta(cacheKey: string, meta: RemoteCacheMetaV1): Promise<void> {
     const dir = await this.getCacheDir(cacheKey, true);
     const handle = await dir.getFileHandle(META_FILE_NAME, { create: true });

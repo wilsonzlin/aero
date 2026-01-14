@@ -31,6 +31,13 @@ const MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES = 512 * 1024 * 1024; // 512 MiB
 // whole-block `Uint8Array`s, so higher concurrency can retain multiple multi-megabyte buffers.
 const REMOTE_READ_INTO_MAX_CONCURRENT_BLOCKS = 4;
 
+// Throttle for OPFS `meta.json` touch writes.
+//
+// OPFS writes can be expensive (and amplify quota pressure), so avoid updating
+// `lastAccessedAtMs` on every read. Minute-level granularity is sufficient for
+// pruning and avoids write amplification for workloads with frequent reads.
+const OPFS_REMOTE_CACHE_META_TOUCH_INTERVAL_MS = 60_000;
+
 function rangeLen(r: ByteRange): number {
   return r.end - r.start;
 }
@@ -448,6 +455,11 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private readonly cacheBackend: DiskBackend;
 
   private opfsCache: OpfsLruChunkCache | null = null;
+  // When OPFS caching is enabled, keep a handle to the RemoteCacheManager so we can periodically
+  // touch meta.json (best-effort) and keep `lastAccessedAtMs` representative of real usage.
+  private opfsCacheManager: RemoteCacheManager | null = null;
+  private opfsCacheKey: string | null = null;
+  private opfsCacheLastMetaTouchAtMs = 0;
 
   private rangeSet: RangeSet;
   private cachedBytes = 0;
@@ -494,6 +506,20 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
     this.rangeSet = new RangeSet();
     this.leaseRefresher = new DiskAccessLeaseRefresher(this.lease, { refreshMarginMs: this.leaseRefreshMarginMs });
+  }
+
+  private touchOpfsCacheMeta(): void {
+    if (this.cacheBackend !== "opfs") return;
+    if (!this.opfsCache || !this.opfsCacheManager || !this.opfsCacheKey) return;
+    if (this.cacheLimitBytes === 0 || this.opfsCacheDisabled) return;
+
+    const now = Date.now();
+    if (now - this.opfsCacheLastMetaTouchAtMs < OPFS_REMOTE_CACHE_META_TOUCH_INTERVAL_MS) return;
+    this.opfsCacheLastMetaTouchAtMs = now;
+
+    void this.opfsCacheManager.touchMeta(this.opfsCacheKey).catch(() => {
+      // best-effort: meta touches must never break reads
+    });
   }
 
   static async open(url: string, options: RemoteDiskOptions = {}): Promise<RemoteStreamingDisk> {
@@ -630,15 +656,20 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       const manager = await RemoteCacheManager.openOpfs();
       // Ensure the cache directory is bound to the current validators (ETag/Last-Modified/size).
       // If the remote image changed, this will clear any previously cached bytes.
-      await manager.openCache(parts, { chunkSizeBytes: resolved.blockSize, validators });
+      const opened = await manager.openCache(parts, { chunkSizeBytes: resolved.blockSize, validators });
 
       const opfsCache = await OpfsLruChunkCache.open({
-        cacheKey,
+        cacheKey: opened.cacheKey,
         chunkSize: resolved.blockSize,
         maxBytes: resolved.cacheLimitBytes,
       });
 
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved, opfsCache);
+      disk.opfsCacheManager = manager;
+      disk.opfsCacheKey = opened.cacheKey;
+      // `openCache()` already touched meta.json; treat that as our last touch so the first read
+      // doesn't immediately write again.
+      disk.opfsCacheLastMetaTouchAtMs = opened.meta.lastAccessedAtMs;
       disk.remoteEtag = probe.etag;
       disk.remoteLastModified = probe.lastModified;
       const indices = await opfsCache.getChunkIndices();
@@ -777,6 +808,10 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async readInto(offset: number, dest: Uint8Array, onLog?: (msg: string) => void): Promise<void> {
+    // Best-effort: keep OPFS cache meta.json reasonably fresh so pruning based on `lastAccessedAtMs`
+    // reflects real usage (including cache hits/offline reads).
+    this.touchOpfsCacheMeta();
+
     const length = dest.byteLength;
     if (length === 0) {
       this.lastReadEnd = offset;

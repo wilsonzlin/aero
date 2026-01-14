@@ -96,6 +96,13 @@ type RemoteRangeDiskCacheMeta = RemoteCacheMetaV1;
 
 const META_PERSIST_DEBOUNCE_MS = 50;
 
+// Throttle for updating `meta.lastAccessedAtMs` on cache hits.
+//
+// RemoteRangeDisk can serve very high read rates from the local sparse cache; persisting a metadata
+// write on every read would amplify OPFS writes. Minute-level granularity is sufficient for cache
+// pruning heuristics while keeping metadata fresh for long-lived sessions.
+const META_TOUCH_THROTTLE_MS = 60_000;
+
 /**
  * Remote Range disk sparse cache interface.
  *
@@ -652,6 +659,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
   private metaDirty = false;
+  private lastMetaTouchAtMs = 0;
   private metaPersistTimer: ReturnType<typeof setTimeout> | null = null;
   private cacheGeneration = 0;
 
@@ -1138,6 +1146,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     } else {
       await this.ensureOpen().readSectors(lba, buffer);
     }
+    this.touchMetaAfterRead(generation);
     this.scheduleReadAhead(offset, buffer.byteLength, endChunk);
   }
 
@@ -1703,7 +1712,24 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     this.rangeSet.insert(start, end);
     meta.cachedRanges = this.rangeSet.getRanges();
-    meta.lastAccessedAtMs = Date.now();
+    const now = Date.now();
+    meta.lastAccessedAtMs = now;
+    this.lastMetaTouchAtMs = now;
+    this.metaDirty = true;
+    this.scheduleMetaPersist(generation);
+  }
+
+  private touchMetaAfterRead(generation: number): void {
+    const meta = this.meta;
+    if (!meta) return;
+    if (generation !== this.cacheGeneration) return;
+    if (this.persistentCacheWritesDisabled) return;
+
+    const now = Date.now();
+    if (now - this.lastMetaTouchAtMs < META_TOUCH_THROTTLE_MS) return;
+    this.lastMetaTouchAtMs = now;
+
+    meta.lastAccessedAtMs = now;
     this.metaDirty = true;
     this.scheduleMetaPersist(generation);
   }

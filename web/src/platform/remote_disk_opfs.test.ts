@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RemoteStreamingDisk } from "./remote_disk";
+import { RemoteStreamingDisk, stableCacheKey } from "./remote_disk";
 import { remoteRangeDeliveryType, RemoteCacheManager } from "../storage/remote_cache_manager";
 import { getDir, installMemoryOpfs, MemoryDirectoryHandle, MemoryFileHandle } from "../test_utils/memory_opfs";
 
@@ -249,6 +249,63 @@ afterEach(async () => {
 });
 
 describe("RemoteStreamingDisk (OPFS chunk cache)", () => {
+  it("touches OPFS cache meta.json lastAccessedAtMs on cache-hit reads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const root = new MemoryDirectoryHandle("root");
+      restoreOpfs = installMemoryOpfs(root).restore;
+
+      const blockSize = 512;
+      const cacheLimitBytes = blockSize * 8;
+      const image = makeTestImage(blockSize * 2);
+      const mock = installMockRangeFetch(image, { etag: '"e1"' });
+      restoreFetch = mock.restore;
+
+      const url = "https://example.test/disk.img";
+      const common = {
+        blockSize,
+        cacheBackend: "opfs" as const,
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 0,
+        cacheImageId: "img-1",
+        cacheVersion: "v1",
+      };
+
+      const disk = await RemoteStreamingDisk.open(url, common);
+
+      // Prime the cache with one read (block 0).
+      await disk.read(0, 16);
+      expect(mock.stats.chunkRangeCalls).toBe(1);
+
+      const cacheKey = await stableCacheKey(url, common);
+      const manager = await RemoteCacheManager.openOpfs();
+      const meta1 = await manager.readMeta(cacheKey);
+      expect(meta1).not.toBeNull();
+
+      // Advance time beyond the disk's meta-touch throttle interval.
+      vi.advanceTimersByTime(61_000);
+
+      // Second read should be a cache hit (no extra Range fetch).
+      const before = mock.stats.chunkRangeCalls;
+      await disk.read(0, 16);
+      expect(mock.stats.chunkRangeCalls).toBe(before);
+
+      // Touch is fire-and-forget; wait for it to land before asserting.
+      let meta2 = await manager.readMeta(cacheKey);
+      for (let i = 0; i < 10 && meta2 && meta2.lastAccessedAtMs <= meta1!.lastAccessedAtMs; i++) {
+        await Promise.resolve();
+        meta2 = await manager.readMeta(cacheKey);
+      }
+      expect(meta2).not.toBeNull();
+      expect(meta2!.lastAccessedAtMs).toBeGreaterThan(meta1!.lastAccessedAtMs);
+
+      await disk.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("caches fetched blocks in OPFS and reuses them on subsequent reads", async () => {
     const root = new MemoryDirectoryHandle("root");
     restoreOpfs = installMemoryOpfs(root).restore;

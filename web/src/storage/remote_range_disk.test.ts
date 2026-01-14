@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE } from "./disk";
 import type { DiskAccessLease } from "./disk_access_lease";
@@ -10,7 +10,7 @@ import type {
   RemoteRangeDiskSparseCacheFactory,
 } from "./remote_range_disk";
 import { RemoteRangeDisk } from "./remote_range_disk";
-import { remoteRangeDeliveryType } from "./remote_cache_manager";
+import { RemoteCacheManager, remoteRangeDeliveryType } from "./remote_cache_manager";
 
 class MemorySparseDisk implements RemoteRangeDiskSparseCache {
   readonly sectorSize = SECTOR_SIZE;
@@ -383,6 +383,115 @@ describe("RemoteRangeDisk", () => {
       await disk.close();
     } finally {
       if (nav) nav.storage = prevStorage;
+    }
+  });
+
+  it("updates lastAccessedAtMs on fully cached reads (throttled)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const chunkSize = 512;
+      const data = makeTestData(2 * chunkSize);
+
+      let rangeGets = 0;
+      const fetchFn: typeof fetch = async (_input, init) => {
+        const method = String(init?.method ?? "GET").toUpperCase();
+        const headers = init?.headers;
+        const rangeHeader =
+          headers instanceof Headers
+            ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+            : typeof headers === "object" && headers
+              ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+              : undefined;
+
+        if (method === "HEAD") {
+          return new Response(null, {
+            status: 200,
+            headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+          });
+        }
+
+        if (method === "GET" && typeof rangeHeader === "string") {
+          rangeGets += 1;
+          const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+          if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+          const start = Number(m[1]);
+          const endInclusive = Number(m[2]);
+          const endExclusive = endInclusive + 1;
+          const body = data.slice(start, endExclusive);
+          return new Response(body, {
+            status: 206,
+            headers: {
+              "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+              ETag: "\"v1\"",
+            },
+          });
+        }
+
+        throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+      };
+
+      class TrackingMetadataStore implements RemoteRangeDiskMetadataStore {
+        private readonly map = new Map<string, any>();
+
+        async read(cacheId: string): Promise<any | null> {
+          const v = this.map.get(cacheId);
+          return v ? JSON.parse(JSON.stringify(v)) : null;
+        }
+
+        async write(cacheId: string, meta: any): Promise<void> {
+          this.map.set(cacheId, JSON.parse(JSON.stringify(meta)));
+        }
+
+        async delete(cacheId: string): Promise<void> {
+          this.map.delete(cacheId);
+        }
+      }
+
+      const metadataStore = new TrackingMetadataStore();
+      const cacheKeyParts = {
+        imageId: "touch-last-access",
+        version: "v1",
+        deliveryType: remoteRangeDeliveryType(chunkSize),
+      };
+      const cacheId = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
+
+      const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+        cacheKeyParts,
+        chunkSize,
+        readAheadChunks: 0,
+        metadataStore,
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+        fetchFn,
+      });
+
+      // Prime the cache (chunk 0).
+      vi.setSystemTime(1_000);
+      const firstBuf = new Uint8Array(chunkSize);
+      await disk.readSectors(0, firstBuf);
+      expect(firstBuf).toEqual(data.subarray(0, firstBuf.byteLength));
+      await disk.flush();
+
+      const meta1 = await metadataStore.read(cacheId);
+      if (!meta1) throw new Error("expected cache metadata after first read");
+
+      // Advance beyond the touch throttle interval.
+      vi.setSystemTime(meta1.lastAccessedAtMs + 61_000);
+      const beforeSecond = rangeGets;
+
+      // Cache hit: should not issue another Range GET.
+      const secondBuf = new Uint8Array(chunkSize);
+      await disk.readSectors(0, secondBuf);
+      expect(secondBuf).toEqual(data.subarray(0, secondBuf.byteLength));
+      expect(rangeGets).toBe(beforeSecond);
+
+      await disk.close();
+
+      const meta2 = await metadataStore.read(cacheId);
+      if (!meta2) throw new Error("expected cache metadata after close");
+      expect(meta2.lastAccessedAtMs).toBeGreaterThan(meta1.lastAccessedAtMs);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
