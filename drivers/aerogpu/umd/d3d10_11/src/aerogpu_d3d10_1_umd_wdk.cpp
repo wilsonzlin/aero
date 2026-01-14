@@ -6306,10 +6306,6 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
   if (buffer_count == 0) {
     return;
   }
-  if (!phBuffers) {
-    set_error(dev, E_INVALIDARG);
-    return;
-  }
   const uint64_t end_slot = static_cast<uint64_t>(start_slot) + static_cast<uint64_t>(buffer_count);
   if (start_slot >= kMaxConstantBufferSlots || end_slot > kMaxConstantBufferSlots) {
     set_error(dev, E_INVALIDARG);
