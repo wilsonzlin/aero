@@ -229,6 +229,25 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
         expect(assertDrainParity(`mouse wheel parity dz=${dz}`).length).toBeGreaterThan(0);
       }
 
+      // Enable IntelliMouse Explorer (5-button) mode (200,200,80) and verify side/extra button
+      // bit packing stays in parity.
+      const explorerEnableSeq = [0xf3, 200, 0xf3, 200, 0xf3, 80];
+      for (const b of explorerEnableSeq) {
+        writeToMouseTs(ts, b);
+        writeToMouseWasm(bridge, b);
+        expect(assertDrainParity(`mouse explorer-enable parity byte=0x${b.toString(16)}`)).toEqual([0xfa]);
+      }
+      // Query device ID (should now be 0x04).
+      writeToMouseTs(ts, 0xf2);
+      writeToMouseWasm(bridge, 0xf2);
+      expect(assertDrainParity("mouse device id parity (explorer enabled)")).toEqual([0xfa, 0x04]);
+
+      // Side+extra (back+forward) buttons are only encoded in the 4th byte in device-id 0x04 mode.
+      injectMouseButtons(ts, bridge, 0x18);
+      expect(assertDrainParity("mouse side/extra button parity (explorer mode)")).toHaveLength(4);
+      injectMouseButtons(ts, bridge, 0x00);
+      expect(assertDrainParity("mouse side/extra release parity (explorer mode)")).toHaveLength(4);
+
       // Disable Set-2 -> Set-1 translation (command byte bit 6) and ensure raw Set-2 output stays in parity.
       ts.portWrite(0x0064, 1, 0x60);
       ts.portWrite(0x0060, 1, 0x05);
@@ -243,6 +262,18 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       expect(assertDrainParity(`keyboard raw press parity for ${rawCode}`)).toEqual(rawPress.map((b) => b & 0xff));
       injectKeyboardScancodeBytes(ts, bridge, rawRelease);
       expect(assertDrainParity(`keyboard raw release parity for ${rawCode}`)).toEqual(rawRelease.map((b) => b & 0xff));
+
+      // If the guest reconfigures the keyboard to use a non-Set-2 scancode set, host-side
+      // injections (which are always Set-2 bytes) should be dropped by both implementations.
+      ts.portWrite(0x0060, 1, 0xf0); // get/set scancode set (next byte)
+      ts.portWrite(0x0060, 1, 0x01); // set 1
+      bridge.port_write(0x60, 0xf0);
+      bridge.port_write(0x60, 0x01);
+      expect(assertDrainParity("set keyboard scancode set=1 parity")).toEqual([0xfa, 0xfa]);
+
+      const dropped = ps2Set2BytesForKeyEvent("KeyA", true)!;
+      injectKeyboardScancodeBytes(ts, bridge, dropped);
+      expect(assertDrainParity("keyboard injection dropped when scancode set!=2")).toEqual([]);
     } finally {
       bridge.free();
     }
