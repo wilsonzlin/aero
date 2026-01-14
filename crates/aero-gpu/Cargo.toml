@@ -56,3 +56,7 @@ harness = false
 [[bench]]
 name = "cmd_stream"
 harness = false
+
+[[bench]]
+name = "bc_decompress"
+harness = false

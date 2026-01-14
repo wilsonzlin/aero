@@ -226,16 +226,25 @@ fn decompress_bc3_block(
     }
 }
 
-pub fn decompress_bc1_rgba8(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8> {
+/// Decompress BC1 texture data into an existing RGBA8 output buffer.
+///
+/// The caller must supply an output slice at least `width * height * 4` bytes long.
+/// Any additional bytes in `out` are left untouched.
+///
+/// This is useful for benchmarking and other hot paths where the output allocation is
+/// managed by the caller.
+pub fn decompress_bc1_rgba8_into(width: u32, height: u32, bc1_data: &[u8], out: &mut [u8]) {
     let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
-        return Vec::new();
+        return;
     };
-    // Output is zero-initialized so truncated input yields deterministic black texels.
-    let mut out = vec![0u8; out_len];
+    if out.len() < out_len {
+        return;
+    }
+    let out = &mut out[..out_len];
 
     let blocks_w = width.div_ceil(4);
     if blocks_w == 0 {
-        return out;
+        return;
     }
 
     // Only iterate the number of blocks actually present in the input buffer to avoid large
@@ -247,27 +256,47 @@ pub fn decompress_bc1_rgba8(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8>
 
     for block_index in 0..blocks_to_process {
         let start = block_index * 8;
-        let Ok(block) = bc1_data[start..start + 8].try_into() else {
+        let Some(block) = bc1_data
+            .get(start..start + 8)
+            .and_then(|slice| <&[u8; 8]>::try_from(slice).ok())
+        else {
             break;
         };
 
         let bx = (block_index % blocks_w as usize) as u32;
         let by = (block_index / blocks_w as usize) as u32;
-        decompress_bc1_block(&block, bx * 4, by * 4, width, height, &mut out);
+        decompress_bc1_block(block, bx * 4, by * 4, width, height, out);
     }
+}
+
+pub fn decompress_bc1_rgba8(width: u32, height: u32, bc1_data: &[u8]) -> Vec<u8> {
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return Vec::new();
+    };
+    // Output is zero-initialized so truncated input yields deterministic black texels.
+    let mut out = vec![0u8; out_len];
+
+    decompress_bc1_rgba8_into(width, height, bc1_data, &mut out);
 
     out
 }
 
-pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8> {
+/// Decompress BC3 texture data into an existing RGBA8 output buffer.
+///
+/// The caller must supply an output slice at least `width * height * 4` bytes long.
+/// Any additional bytes in `out` are left untouched.
+pub fn decompress_bc3_rgba8_into(width: u32, height: u32, bc3_data: &[u8], out: &mut [u8]) {
     let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
-        return Vec::new();
+        return;
     };
-    let mut out = vec![0u8; out_len];
+    if out.len() < out_len {
+        return;
+    }
+    let out = &mut out[..out_len];
 
     let blocks_w = width.div_ceil(4);
     if blocks_w == 0 {
-        return out;
+        return;
     }
 
     let expected_bytes = checked_expected_bc_bytes(width, height, 16);
@@ -277,27 +306,46 @@ pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8>
 
     for block_index in 0..blocks_to_process {
         let start = block_index * 16;
-        let Ok(block) = bc3_data[start..start + 16].try_into() else {
+        let Some(block) = bc3_data
+            .get(start..start + 16)
+            .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
+        else {
             break;
         };
 
         let bx = (block_index % blocks_w as usize) as u32;
         let by = (block_index / blocks_w as usize) as u32;
-        decompress_bc3_block(&block, bx * 4, by * 4, width, height, &mut out);
+        decompress_bc3_block(block, bx * 4, by * 4, width, height, out);
     }
-
-    out
 }
 
-pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8> {
+pub fn decompress_bc3_rgba8(width: u32, height: u32, bc3_data: &[u8]) -> Vec<u8> {
     let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
         return Vec::new();
     };
     let mut out = vec![0u8; out_len];
 
+    decompress_bc3_rgba8_into(width, height, bc3_data, &mut out);
+
+    out
+}
+
+/// Decompress BC2 texture data into an existing RGBA8 output buffer.
+///
+/// The caller must supply an output slice at least `width * height * 4` bytes long.
+/// Any additional bytes in `out` are left untouched.
+pub fn decompress_bc2_rgba8_into(width: u32, height: u32, bc2_data: &[u8], out: &mut [u8]) {
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return;
+    };
+    if out.len() < out_len {
+        return;
+    }
+    let out = &mut out[..out_len];
+
     let blocks_w = width.div_ceil(4);
     if blocks_w == 0 {
-        return out;
+        return;
     }
 
     let expected_bytes = checked_expected_bc_bytes(width, height, 16);
@@ -307,28 +355,47 @@ pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8>
 
     for block_index in 0..blocks_to_process {
         let start = block_index * 16;
-        let Ok(block) = bc2_data[start..start + 16].try_into() else {
+        let Some(block) = bc2_data
+            .get(start..start + 16)
+            .and_then(|slice| <&[u8; 16]>::try_from(slice).ok())
+        else {
             break;
         };
 
         let bx = (block_index % blocks_w as usize) as u32;
         let by = (block_index / blocks_w as usize) as u32;
-        decompress_bc2_block(&block, bx * 4, by * 4, width, height, &mut out);
+        decompress_bc2_block(block, bx * 4, by * 4, width, height, out);
     }
-
-    out
 }
 
-pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8> {
+pub fn decompress_bc2_rgba8(width: u32, height: u32, bc2_data: &[u8]) -> Vec<u8> {
     let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
         return Vec::new();
     };
     let mut out = vec![0u8; out_len];
+
+    decompress_bc2_rgba8_into(width, height, bc2_data, &mut out);
+
+    out
+}
+
+/// Decompress BC7 texture data into an existing RGBA8 output buffer.
+///
+/// The caller must supply an output slice at least `width * height * 4` bytes long.
+/// Any additional bytes in `out` are left untouched.
+pub fn decompress_bc7_rgba8_into(width: u32, height: u32, bc7_data: &[u8], out: &mut [u8]) {
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return;
+    };
+    if out.len() < out_len {
+        return;
+    }
+    let out = &mut out[..out_len];
     let mut decoded = [0u8; 4 * 4 * 4];
 
     let blocks_w = width.div_ceil(4);
     if blocks_w == 0 {
-        return out;
+        return;
     }
 
     let expected_bytes = checked_expected_bc_bytes(width, height, 16);
@@ -364,6 +431,15 @@ pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8>
             }
         }
     }
+}
+
+pub fn decompress_bc7_rgba8(width: u32, height: u32, bc7_data: &[u8]) -> Vec<u8> {
+    let Some(out_len) = checked_decompressed_len_rgba8(width, height) else {
+        return Vec::new();
+    };
+    let mut out = vec![0u8; out_len];
+
+    decompress_bc7_rgba8_into(width, height, bc7_data, &mut out);
 
     out
 }

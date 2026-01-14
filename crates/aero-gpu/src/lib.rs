@@ -66,7 +66,9 @@ pub use aerogpu_d3d9_executor::{
     AerogpuD3d9Error, AerogpuD3d9Executor, AerogpuD3d9ExecutorConfig, PresentedScanout,
 };
 pub use bc_decompress::{
-    decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
+    decompress_bc1_rgba8, decompress_bc1_rgba8_into, decompress_bc2_rgba8,
+    decompress_bc2_rgba8_into, decompress_bc3_rgba8, decompress_bc3_rgba8_into,
+    decompress_bc7_rgba8, decompress_bc7_rgba8_into,
 };
 pub use packed_16bit::{
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
