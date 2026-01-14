@@ -1208,10 +1208,12 @@ fn validate_virtio_input_device_desc_split(
     // INFs should bind both functions to the same install sections, but use distinct
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
-    // The virtio-input INF binds both the SUBSYS-qualified keyboard/mouse IDs and a strict
-    // (REV-qualified) generic fallback HWID (no SUBSYS) so binding remains stable even when
-    // subsystem IDs are not exposed/recognized. Tablet devices bind via `aero_virtio_tablet.inf`
-    // (more specific SUBSYS match) and will win over the generic fallback when that INF is installed.
+    // The virtio-input INF always binds the SUBSYS-qualified keyboard/mouse IDs. The optional legacy
+    // alias INF may additionally bind a strict (REV-qualified) generic fallback HWID (no SUBSYS) so
+    // Windows can bind in environments that do not expose the Aero subsystem IDs (e.g. stock QEMU).
+    //
+    // Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and will win
+    // over the generic fallback when that INF is installed.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1383,6 +1385,86 @@ fn validate_virtio_input_device_desc_split(
     }
 
     Ok(())
+}
+
+fn strip_inf_comments_for_alias_diff(line: &str) -> String {
+    // INF comments begin with ';' outside of quoted strings.
+    let mut out = String::with_capacity(line.len());
+    let mut in_quotes = false;
+    for ch in line.chars() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        }
+        if !in_quotes && ch == ';' {
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn normalized_inf_lines_for_alias_diff(inf_text: &str, ignore_models: bool) -> Result<Vec<String>> {
+    // Keep this intentionally lightweight and deterministic:
+    // - start at the first section header (or the first non-comment line if it appears before any header)
+    // - strip inline comments and empty lines
+    // - optionally drop the models sections entirely
+    let lines: Vec<&str> = inf_text.lines().collect();
+
+    let mut start: Option<usize> = None;
+    for (i, raw) in lines.iter().enumerate() {
+        let stripped = raw.trim_start_matches(|c| c == ' ' || c == '\t');
+        if stripped.starts_with('[') {
+            start = Some(i);
+            break;
+        }
+        if stripped.starts_with(';') || stripped.trim().is_empty() {
+            continue;
+        }
+        // Unexpected functional content before the first section header: keep it.
+        start = Some(i);
+        break;
+    }
+
+    let Some(start) = start else {
+        bail!("INF has no section headers (e.g. [Version])");
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    let mut skipping = false;
+    for raw in &lines[start..] {
+        let active = strip_inf_comments_for_alias_diff(raw).trim().to_string();
+        if active.is_empty() {
+            continue;
+        }
+        if active.starts_with('[') {
+            let Some(end) = active.find(']') else {
+                // Malformed header: treat as content so drift is detected.
+                if !skipping {
+                    out.push(active);
+                }
+                continue;
+            };
+            // INF section names are case-insensitive. Normalize them so we don't flag drift due to
+            // casing-only differences.
+            let sect = active[1..end].trim().to_ascii_lowercase();
+            skipping = ignore_models
+                && matches!(
+                    sect.as_str(),
+                    "aero.ntx86" | "aero.ntamd64"
+                );
+            if skipping {
+                continue;
+            }
+            out.push(format!("[{sect}]"));
+            continue;
+        }
+
+        if skipping {
+            continue;
+        }
+        out.push(active);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1822,15 +1904,19 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         &inf_text,
                         &base,
                         expected_rev,
-                        /* require_fallback */ true,
+                        // The canonical virtio-input INF is intentionally strict: SUBSYS-qualified
+                        // keyboard/mouse entries only (no generic fallback).
+                        /* require_fallback */ false,
                     )
                     .with_context(|| {
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
                     })?;
 
                     // Optional: validate the legacy alias INF (if present). This alias is kept for
-                    // compatibility with workflows that reference `virtio-input.inf` and should remain
-                    // functionally identical to the canonical INF.
+                    // compatibility with workflows that reference `virtio-input.inf`. It is allowed
+                    // to differ in the models sections to provide an opt-in strict generic fallback
+                    // HWID, but should stay in sync with the canonical INF outside of the models
+                    // sections.
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
@@ -1855,6 +1941,45 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                                 alias.display()
                             )
                         })?;
+
+                        let canonical_lines =
+                            normalized_inf_lines_for_alias_diff(&inf_text, /* ignore_models */ true)
+                                .with_context(|| {
+                                    format!(
+                                        "{name}: normalize virtio-input canonical INF for alias drift check"
+                                    )
+                                })?;
+                        let alias_lines =
+                            normalized_inf_lines_for_alias_diff(&alias_text, /* ignore_models */ true)
+                                .with_context(|| {
+                                    format!(
+                                        "{name}: normalize virtio-input alias INF for drift check: {}",
+                                        alias.display()
+                                    )
+                                })?;
+                        if canonical_lines != alias_lines {
+                            // Find the first mismatch to make the error actionable without needing a full diff dependency.
+                            let first_diff = canonical_lines
+                                .iter()
+                                .zip(alias_lines.iter())
+                                .position(|(a, b)| a != b)
+                                .unwrap_or_else(|| canonical_lines.len().min(alias_lines.len()));
+                            let canonical_line = canonical_lines.get(first_diff).cloned().unwrap_or_default();
+                            let alias_line = alias_lines.get(first_diff).cloned().unwrap_or_default();
+                            bail!(
+                                "{name}: virtio-input INF alias drift detected outside models sections.\n\
+                                 canonical: {}\n\
+                                 alias:     {}\n\
+                                 first mismatch at normalized line {}:\n\
+                                   canonical: {}\n\
+                                   alias:     {}",
+                                inf_path.display(),
+                                alias.display(),
+                                first_diff + 1,
+                                canonical_line,
+                                alias_line
+                            );
+                        }
                     }
                 }
             }
