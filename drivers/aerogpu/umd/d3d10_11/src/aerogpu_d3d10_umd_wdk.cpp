@@ -5864,31 +5864,36 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
 
   uint32_t most_detailed_mip = 0;
   uint32_t mip_levels = 0;
-  bool have_mip_range = false;
+  bool have_most_detailed_mip = false;
+  bool have_mip_levels = false;
   __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
     most_detailed_mip = static_cast<uint32_t>(pDesc->MostDetailedMip);
-    have_mip_range = true;
+    have_most_detailed_mip = true;
   }
   __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::MipLevels) {
     mip_levels = static_cast<uint32_t>(pDesc->MipLevels);
-    have_mip_range = true;
+    have_mip_levels = true;
   }
-  __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
+  if (!have_most_detailed_mip || !have_mip_levels) {
+    // Prefer reading from the dimension-specific union member when the top-level
+    // fields are not both available (WDK layout drift across versions).
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
       most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
       mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
-      have_mip_range = true;
+      have_most_detailed_mip = true;
+      have_mip_levels = true;
     }
     __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
       __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
         most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
         mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
-        have_mip_range = true;
+        have_most_detailed_mip = true;
+        have_mip_levels = true;
       }
     }
   }
 
-  if (have_mip_range) {
+  if (have_most_detailed_mip && have_mip_levels) {
     if (most_detailed_mip >= res->mip_levels) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MostDetailedMip=%u (res mips=%u)",
                            static_cast<unsigned>(most_detailed_mip),
