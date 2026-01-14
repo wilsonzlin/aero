@@ -1050,6 +1050,11 @@ To turn the guest IRQ mode diagnostics into a hard PASS/FAIL condition, enable o
 
 These flags are mutually exclusive. `-RequireMsi` / `--require-msi` accept both `mode=msi` and `mode=msix` (MSI-X is treated as part of the MSI family).
 
+Guest-side complement:
+
+- The guest selftest can also fail the virtio-blk test if it is still using INTx (expected MSI/MSI-X) via `--expect-blk-msi`.
+  - If provisioning via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.
+
 On mismatch (or when the guest does not emit a recognizable IRQ mode marker), the harness fails with a deterministic token, for example:
 
 `FAIL: IRQ_MODE_MISMATCH: virtio-net expected=intx got=msi`

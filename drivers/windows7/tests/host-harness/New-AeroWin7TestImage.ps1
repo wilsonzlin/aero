@@ -78,7 +78,6 @@ param(
   [Parameter(Mandatory = $false)]
   [Alias("TestVirtioBlkResize")]
   [switch]$TestBlkResize,
-
   # For unsigned/test-signed drivers on Windows 7 x64, test-signing mode must be enabled.
   # If set, the provisioning script will run: bcdedit /set testsigning on
   [Parameter(Mandatory = $false)]
@@ -651,7 +650,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
     consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
   - To fail the virtio-blk selftest when the driver is still using INTx (expected MSI/MSI-X), generate this media with
-    `-ExpectBlkMsi` (adds `--expect-blk-msi` to the scheduled task).
+    `-ExpectBlkMsi` (adds `--expect-blk-msi` to the scheduled task). This is the guest-side complement to the host harness flags
+    `-RequireMsi` / `--require-msi` (which enforce MSI/MSI-X based on virtio-*-irq markers).
   - The virtio-blk runtime resize test (`virtio-blk-resize`) is disabled by default (requires host-side QMP resize).
     - To enable it (required when running the host harness with `-WithBlkResize` / `--with-blk-resize`),
       generate this media with `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
