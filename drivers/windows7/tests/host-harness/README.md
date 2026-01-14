@@ -351,6 +351,8 @@ Tip (guest-side fail-fast):
 
 - To make the guest fail immediately (instead of waiting for the harness to parse the final marker), provision the guest
   selftest with:
+  - virtio-blk: `aero-virtio-selftest.exe --expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+    - When provisioning via `New-AeroWin7TestImage.ps1`, use `-ExpectBlkMsi`.
   - virtio-net: `aero-virtio-selftest.exe --require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
     - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireNetMsix`.
   - virtio-input: `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
