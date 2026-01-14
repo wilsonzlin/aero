@@ -1891,6 +1891,7 @@ static void print_usage(void)
     wprintf(L"  --led-ioctl-set-output 0xMASK\n");
     wprintf(L"                 Send keyboard LEDs using DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
+    wprintf(L"                 (cycles the 5 HID boot keyboard LED bits: Num/Caps/Scroll/Compose/Kana)\n");
     wprintf(L"  --led-spam N    Rapidly send N keyboard LED output reports (alternating 0 and 0x1F by default) to stress the write path\n");
     wprintf(L"                 The \"on\" value can be overridden by combining with --led/--led-hidd/--led-ioctl-set-output.\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");

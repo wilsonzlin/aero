@@ -373,6 +373,8 @@ Cycle LEDs (guaranteed visible changes):
 hidtest.exe --led-cycle
 ```
 
+This cycles the 5 HID boot keyboard LED bits (NumLock/CapsLock/ScrollLock/Compose/Kana), followed by `0x1F` (all 5 bits).
+
 ### Stress-testing StatusQ / LED writes
 
 The driver exposes an optional registry knob to change how the virtio **statusq**
