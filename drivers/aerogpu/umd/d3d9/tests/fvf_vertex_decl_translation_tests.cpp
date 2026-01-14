@@ -463,10 +463,196 @@ bool TestFvfVertexDeclTranslation() {
   return true;
 }
 
+bool TestSetFvfTexcoordSizeBits() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+  dev.cmd.reset();
+
+  // SetFVF should bind an internal vertex declaration matching the FVF's
+  // D3DFVF_TEXCOORDSIZE* encoding (input layout translation for user shaders).
+  //
+  // Note: the fixed-function fallback path itself is more restrictive (it
+  // requires default float2 TEXCOORD0 when TEX1 is present), but SetFVF is still
+  // expected to round-trip the FVF and produce a matching declaration.
+  const uint32_t kFvfA = kD3dFvfXyzRhw | kD3dFvfDiffuse | D3dFvfTexCoordSize3(0); // TEX0 unused; size bits ignored
+  const uint32_t kFvfB = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1 | D3dFvfTexCoordSize1(0); // TEX0=float1
+  const uint32_t kFvfC = kD3dFvfXyzRhw | kD3dFvfTex1 | D3dFvfTexCoordSize3(0);                  // TEX0=float3
+  const uint32_t kFvfD = kD3dFvfXyz | kD3dFvfTex1 | D3dFvfTexCoordSize4(0);                      // TEX0=float4
+
+  auto set_and_get_layout = [&](uint32_t fvf, aerogpu_handle_t* out_handle) -> bool {
+    if (!out_handle) {
+      return false;
+    }
+    *out_handle = 0;
+    HRESULT hr = aerogpu::device_set_fvf(hDevice, fvf);
+    if (!Check(hr == S_OK, "SetFVF returned S_OK")) {
+      return false;
+    }
+    std::lock_guard<std::mutex> lock(dev.mutex);
+    if (!dev.vertex_decl) {
+      return Check(false, "SetFVF must bind an internal vertex declaration");
+    }
+    *out_handle = dev.vertex_decl->handle;
+    return Check(*out_handle != 0, "SetFVF produced non-zero input-layout handle");
+  };
+
+  aerogpu_handle_t layout_a0 = 0;
+  aerogpu_handle_t layout_b0 = 0;
+  aerogpu_handle_t layout_c0 = 0;
+  aerogpu_handle_t layout_d0 = 0;
+  aerogpu_handle_t layout_a1 = 0;
+  aerogpu_handle_t layout_b1 = 0;
+  aerogpu_handle_t layout_c1 = 0;
+  aerogpu_handle_t layout_d1 = 0;
+
+  if (!set_and_get_layout(kFvfA, &layout_a0)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfB, &layout_b0)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfC, &layout_c0)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfD, &layout_d0)) {
+    return false;
+  }
+  // Repeat to validate caching (no new CREATE_INPUT_LAYOUT for the same FVF).
+  if (!set_and_get_layout(kFvfA, &layout_a1)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfB, &layout_b1)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfC, &layout_c1)) {
+    return false;
+  }
+  if (!set_and_get_layout(kFvfD, &layout_d1)) {
+    return false;
+  }
+
+  if (!Check(layout_a0 == layout_a1, "FVF A input layout handle is cached")) {
+    return false;
+  }
+  if (!Check(layout_b0 == layout_b1, "FVF B input layout handle is cached")) {
+    return false;
+  }
+  if (!Check(layout_c0 == layout_c1, "FVF C input layout handle is cached")) {
+    return false;
+  }
+  if (!Check(layout_d0 == layout_d1, "FVF D input layout handle is cached")) {
+    return false;
+  }
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream")) {
+    return false;
+  }
+
+  // Exactly one CREATE_INPUT_LAYOUT per distinct FVF.
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_INPUT_LAYOUT) == 4, "expected 4 CREATE_INPUT_LAYOUT packets")) {
+    return false;
+  }
+
+  const D3DVERTEXELEMENT9_COMPAT expected_a[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+  const D3DVERTEXELEMENT9_COMPAT expected_b[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat1, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+  const D3DVERTEXELEMENT9_COMPAT expected_c[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+  const D3DVERTEXELEMENT9_COMPAT expected_d[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  const uint8_t* blob = nullptr;
+  uint32_t blob_size = 0;
+  if (!Check(FindCreateInputLayoutBlob(buf, len, layout_a0, &blob, &blob_size), "found CREATE_INPUT_LAYOUT for FVF A")) {
+    return false;
+  }
+  if (!Check(BlobEqualsDecl(blob, blob_size, expected_a, std::size(expected_a)), "FVF A input-layout blob")) {
+    return false;
+  }
+
+  blob = nullptr;
+  blob_size = 0;
+  if (!Check(FindCreateInputLayoutBlob(buf, len, layout_b0, &blob, &blob_size), "found CREATE_INPUT_LAYOUT for FVF B")) {
+    return false;
+  }
+  if (!Check(BlobEqualsDecl(blob, blob_size, expected_b, std::size(expected_b)), "FVF B input-layout blob")) {
+    return false;
+  }
+
+  blob = nullptr;
+  blob_size = 0;
+  if (!Check(FindCreateInputLayoutBlob(buf, len, layout_c0, &blob, &blob_size), "found CREATE_INPUT_LAYOUT for FVF C")) {
+    return false;
+  }
+  if (!Check(BlobEqualsDecl(blob, blob_size, expected_c, std::size(expected_c)), "FVF C input-layout blob")) {
+    return false;
+  }
+
+  blob = nullptr;
+  blob_size = 0;
+  if (!Check(FindCreateInputLayoutBlob(buf, len, layout_d0, &blob, &blob_size), "found CREATE_INPUT_LAYOUT for FVF D")) {
+    return false;
+  }
+  if (!Check(BlobEqualsDecl(blob, blob_size, expected_d, std::size(expected_d)), "FVF D input-layout blob")) {
+    return false;
+  }
+
+  // Ensure SET_INPUT_LAYOUT binds the expected handles at least once.
+  auto saw_set = [&](aerogpu_handle_t handle) -> bool {
+    for (const aerogpu_cmd_hdr* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+      if (hdr->size_bytes < sizeof(aerogpu_cmd_set_input_layout)) {
+        continue;
+      }
+      const auto* s = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+      if (s->input_layout_handle == handle) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (!Check(saw_set(layout_a0), "SET_INPUT_LAYOUT binds FVF A handle")) {
+    return false;
+  }
+  if (!Check(saw_set(layout_b0), "SET_INPUT_LAYOUT binds FVF B handle")) {
+    return false;
+  }
+  if (!Check(saw_set(layout_c0), "SET_INPUT_LAYOUT binds FVF C handle")) {
+    return false;
+  }
+  if (!Check(saw_set(layout_d0), "SET_INPUT_LAYOUT binds FVF D handle")) {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 
 int main() {
   if (!TestFvfVertexDeclTranslation()) {
+    return 1;
+  }
+  if (!TestSetFvfTexcoordSizeBits()) {
     return 1;
   }
   return 0;
