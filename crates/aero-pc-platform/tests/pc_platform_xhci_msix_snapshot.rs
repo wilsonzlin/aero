@@ -400,7 +400,11 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_vector_mask_pending_bit_and_
 
     // Clear the interrupt condition before snapshot/unmask. Pending delivery should still occur
     // once the entry becomes unmasked (driven by the PBA pending bit rather than a new edge).
-    pc.xhci.as_ref().unwrap().borrow_mut().clear_event_interrupt();
+    pc.xhci
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .clear_event_interrupt();
     assert_ne!(
         pc.memory.read_u64(bar0_base + pba_offset) & 1,
         0,
@@ -441,7 +445,11 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_vector_mask_pending_bit_and_
     let msix_base2 = u16::from(msix_cap2);
     let table2 = pci_cfg_read_u32(&mut restored, bdf, msix_base2 + 0x04);
     let pba2 = pci_cfg_read_u32(&mut restored, bdf, msix_base2 + 0x08);
-    assert_eq!(table2 & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+    assert_eq!(
+        table2 & 0x7,
+        0,
+        "xHCI MSI-X table should live in BAR0 (BIR=0)"
+    );
     assert_eq!(pba2 & 0x7, 0, "xHCI MSI-X PBA should live in BAR0 (BIR=0)");
     let table_offset2 = u64::from(table2 & !0x7);
     let pba_offset2 = u64::from(pba2 & !0x7);
