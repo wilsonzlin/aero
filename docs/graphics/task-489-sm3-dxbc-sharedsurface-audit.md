@@ -150,6 +150,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 - `36c5e5f2` — `refactor(aero-gpu): use SharedSurfaceTable in command processor`
 - `d37c607a` — `refactor: reuse SharedSurfaceTable in D3D9 command processor`
 - `f75daac9` — `refactor(aero-gpu): use SharedSurfaceTable in D3D9 executor`
+- `527ac6db8` — `refactor(shared-surface): reuse aero-gpu table in D3D11 executor`
 
 **Tests:**
 - `crates/aero-gpu/src/shared_surface.rs` (unit tests for token retirement/idempotency/etc)
