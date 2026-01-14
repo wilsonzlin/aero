@@ -160,11 +160,10 @@ using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
+using aerogpu::d3d10_11::kHrWaitTimeout;
+using aerogpu::d3d10_11::kHrErrorTimeout;
 using aerogpu::d3d10_11::kHrNtStatusTimeout;
 using aerogpu::d3d10_11::kHrNtStatusGraphicsGpuBusy;
-
-constexpr HRESULT kHrWaitTimeout = static_cast<HRESULT>(0x80070102u); // HRESULT_FROM_WIN32(WAIT_TIMEOUT)
-constexpr HRESULT kHrErrorTimeout = static_cast<HRESULT>(0x800705B4u); // HRESULT_FROM_WIN32(ERROR_TIMEOUT)
 
 bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {

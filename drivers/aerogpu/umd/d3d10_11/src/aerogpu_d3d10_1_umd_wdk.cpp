@@ -72,6 +72,8 @@ using aerogpu::d3d10_11::kD3DMapFlagDoNotWait;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D301u;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
+using aerogpu::d3d10_11::kHrWaitTimeout;
+using aerogpu::d3d10_11::kHrErrorTimeout;
 using aerogpu::d3d10_11::kHrNtStatusTimeout;
 using aerogpu::d3d10_11::kHrNtStatusGraphicsGpuBusy;
 using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
@@ -4275,8 +4277,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
   if (hr == kDxgiErrorWasStillDrawing || hr == kHrNtStatusGraphicsGpuBusy ||
-      (do_not_wait && (hr == kHrPending || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-                       hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == kHrNtStatusTimeout)))) {
+      (do_not_wait && (hr == kHrPending || hr == kHrWaitTimeout || hr == kHrErrorTimeout || hr == kHrNtStatusTimeout)))) {
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {

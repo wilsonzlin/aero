@@ -9229,8 +9229,8 @@ static HRESULT MapLocked11(Device* dev,
   }
   const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
   if (lock_hr == kDxgiErrorWasStillDrawing ||
-      (do_not_wait && (lock_hr == kHrPending || lock_hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-                       lock_hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || lock_hr == kHrNtStatusTimeout ||
+      (do_not_wait && (lock_hr == kHrPending || lock_hr == kHrWaitTimeout || lock_hr == kHrErrorTimeout ||
+                       lock_hr == kHrNtStatusTimeout ||
                        lock_hr == kHrNtStatusGraphicsGpuBusy))) {
     if (allow_storage_map && !want_read) {
       return map_storage();
