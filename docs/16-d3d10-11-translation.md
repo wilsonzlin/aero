@@ -763,7 +763,42 @@ For patchlist topologies:
 
 Patchlist draws are invalid unless both HS and DS are bound.
 
-**Geometry shader instancing (`SV_GSInstanceID`)**
+#### 2.1.2) Tessellation sizing (P2a: tri domain, integer partitioning; conservative)
+
+Tessellation output sizes depend on **tess factors** produced by the HS patch-constant function, so
+the runtime must define a sizing policy that is both safe (no OOB) and practical.
+
+For initial bring-up (P2a), we use a conservative per-patch tess level `T` and generate a simple
+uniform tessellation pattern:
+
+- Clamp tess factors to the D3D11 max range:
+  - `tf = clamp(tf, 1.0, 64.0)`
+- Convert to integer segment counts:
+  - `seg = ceil(tf)` (as `u32`)
+- Choose a single tessellation level for the patch:
+  - `T = max(edge_seg[0..2], inside_seg[0])`
+
+This deliberately ignores per-edge variation and crack-free edge rules (P2d work). It is
+deterministic and implementable with minimal fixed-function emulation.
+
+For a tri-domain patch tessellated at level `T`:
+
+- Domain vertices per patch: `V_patch = (T + 1) * (T + 2) / 2`
+- Triangles per patch: `P_patch = T * T`
+- Indices per patch (triangle list): `I_patch = 3 * P_patch`
+
+Total sizes for a draw (pre-GS) are:
+
+- `V_total = patch_count * instance_count * V_patch`
+- `I_total = patch_count * instance_count * I_patch`
+
+The runtime may:
+
+- allocate buffers for the worst case (`T = 64`) and rely on overflow-detection to skip draws when
+  scratch runs out, or
+- allocate dynamically based on per-patch `T` (recommended; requires per-patch allocation state).
+
+#### 2.1.3) Geometry shader instancing (`SV_GSInstanceID`)
 
 SM5 geometry shaders may declare an **instance count** (`dcl_gs_instance_count` / HLSL
 `[instance(n)]`). This causes the GS to be invoked `n` times per input primitive, with
@@ -833,6 +868,8 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Usage (indices): `STORAGE | INDEX`
     - Index element type (baseline): `u32` (`wgpu::IndexFormat::Uint32`). A future optimization may
       choose `u16` when the expanded vertex count is known to fit.
+    - Capacity sizing: derived from tess factors. For P2a tri-domain integer tessellation, see
+      “Tessellation sizing” above (`V_total`, `I_total`).
 
 3. **GS-out (`gs_out_vertices`, `gs_out_indices`)**
     - Purpose: stores post-GS vertices + indices suitable for final rasterization.
