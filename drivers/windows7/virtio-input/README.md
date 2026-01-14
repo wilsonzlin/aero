@@ -22,12 +22,13 @@ Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../do
 > that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
 >
 > The alias INF is checked in disabled-by-default; rename it to `virtio-input.inf` to enable it.
-> The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is intentionally **SUBSYS-only**; the alias is an **opt-in**
-> that adds a strict revision-gated generic fallback model line (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not
-> expose the Aero subsystem IDs.
-> The alias is allowed to differ from `inf/aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`);
-> outside those sections it is expected to stay in sync from the first section header (`[Version]`) onward
-> (helper: `scripts/check-inf-alias.py`). CI enforces this via `scripts/ci/check-windows7-virtio-contract-consistency.py`.
+> It is a filename alias only: from the first section header (`[Version]`) onward, it is expected to stay **byte-for-byte
+> identical** to `inf/aero_virtio_input.inf` (only the banner/comments may differ; helper: `scripts/check-inf-alias.py`).
+> CI enforces this via `scripts/ci/check-windows7-virtio-contract-consistency.py`.
+>
+> The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) already includes the strict revision-gated generic fallback
+> HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) in addition to the subsystem-qualified keyboard/mouse IDs; enabling the alias is **not**
+> required to get fallback binding.
 >
 > Do not ship/install the alias alongside `aero_virtio_input.inf`: it is intended as a compatibility filename alias,
 > not a second distinct driver package. Ship/install **only one** of the two filenames (`aero_virtio_input.inf` *or*
