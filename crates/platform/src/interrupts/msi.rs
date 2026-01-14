@@ -96,10 +96,10 @@ impl MsiTrigger for PlatformInterrupts {
                 return;
             }
 
-            // `dest` is interpreted as an 8-bit mask where bit `n` targets APIC ID `n`.
-            for apic_id in 0u8..8 {
-                if (dest & (1u8 << apic_id)) != 0 {
-                    self.inject_fixed_for_apic(apic_id, vector);
+            for lapic in self.lapics_iter() {
+                let apic_id = lapic.apic_id();
+                if apic_id < 8 && (dest & (1u8 << apic_id)) != 0 {
+                    lapic.inject_fixed_interrupt(vector);
                 }
             }
             return;
