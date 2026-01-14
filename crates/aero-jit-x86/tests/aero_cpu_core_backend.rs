@@ -381,6 +381,84 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
 
 #[test]
 #[cfg(feature = "tier1-inline-tlb")]
+fn wasmtime_backend_disables_code_version_table_when_out_of_memory() {
+    fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
+        let bytes = [
+            backend.read_u8(addr),
+            backend.read_u8(addr + 1),
+            backend.read_u8(addr + 2),
+            backend.read_u8(addr + 3),
+        ];
+        u32::from_le_bytes(bytes)
+    }
+
+    // Construct a backend where the CPU/JIT context fits, but there is no room left for even the
+    // smallest page-version table allocation. In this case the backend should disable the table
+    // by writing `LEN=0` (and `PTR=0`) into the Tier-2 ABI slots.
+    let memory_pages = 2u32;
+    let byte_len = u64::from(memory_pages) * 65_536;
+    let reserved = u64::from(jit_ctx::TIER2_CTX_OFFSET + jit_ctx::TIER2_CTX_SIZE);
+    assert!(
+        reserved < byte_len,
+        "test invariant: CPU/JIT context must fit in the chosen memory size"
+    );
+    let cpu_ptr = (byte_len - reserved) as i32;
+
+    let entry = 0x1000u64;
+    let mut builder = IrBuilder::new(entry);
+    let addr = builder.const_int(Width::W64, 0x10);
+    let value = builder.const_int(Width::W32, 0x1122_3344);
+    builder.store(Width::W32, addr, value);
+    let loaded = builder.load(Width::W32, addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new_with_memory_pages(
+        memory_pages,
+        cpu_ptr,
+    );
+    let idx = backend.add_compiled_block(&wasm);
+
+    let cpu_ptr_u64 = cpu_ptr as u64;
+    let table_ptr = read_u32_le(
+        &backend,
+        cpu_ptr_u64 + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64,
+    );
+    let table_len = read_u32_le(
+        &backend,
+        cpu_ptr_u64 + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
+    );
+    assert_eq!(table_ptr, 0);
+    assert_eq!(table_len, 0);
+
+    // The block should still execute correctly; it just won't bump versions.
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    let exit = backend.execute(idx, &mut cpu);
+    assert_eq!(exit.next_rip, 0x2000);
+    assert!(!exit.exit_to_interpreter);
+    assert!(exit.committed);
+    assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344);
+}
+
+#[test]
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     let entry = 0x1000u64;
 
