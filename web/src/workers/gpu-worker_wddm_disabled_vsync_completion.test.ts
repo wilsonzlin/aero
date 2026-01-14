@@ -172,7 +172,7 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
     }
   }, 25_000);
 
-  it("still gates vsync submit_complete on tick for the WDDM placeholder descriptor (base_paddr=0 with non-zero geometry)", async () => {
+  it("does not block submit_complete on tick for the WDDM placeholder descriptor (base_paddr=0 with non-zero geometry)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
@@ -242,6 +242,14 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
       const cmdStream = buildVsyncPresentCmdStream();
 
       const requestId = 2;
+      const completePromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { type?: unknown }).type === "submit_complete" &&
+          (msg as { requestId?: unknown }).requestId === requestId,
+        5_000,
+      );
       worker.postMessage(
         {
           protocol: GPU_PROTOCOL_NAME,
@@ -255,27 +263,6 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
         [cmdStream],
       );
 
-      // Confirm it does *not* complete until we send a tick.
-      await expect(
-        waitForWorkerMessage(
-          worker,
-          (msg) =>
-            (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
-            (msg as { type?: unknown }).type === "submit_complete" &&
-            (msg as { requestId?: unknown }).requestId === requestId,
-          100,
-        ),
-      ).rejects.toThrow(/timed out/i);
-
-      const completePromise = waitForWorkerMessage(
-        worker,
-        (msg) =>
-          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
-          (msg as { type?: unknown }).type === "submit_complete" &&
-          (msg as { requestId?: unknown }).requestId === requestId,
-        5_000,
-      );
-      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
       const complete = (await completePromise) as { completedFence?: unknown };
       expect(complete.completedFence).toBe(2n);
     } finally {
@@ -283,4 +270,3 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
     }
   }, 25_000);
 });
-
