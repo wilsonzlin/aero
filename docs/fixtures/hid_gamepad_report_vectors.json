@@ -38,5 +38,55 @@
     "rx": 0,
     "ry": 0,
     "bytes": [255, 255, 0, 42, 214, 0, 0, 0]
+  },
+  {
+    "name": "hat_up_right",
+    "buttons": 0,
+    "hat": 1,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 1, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "hat_down_right",
+    "buttons": 0,
+    "hat": 3,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 3, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "hat_down",
+    "buttons": 0,
+    "hat": 4,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 4, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "hat_down_left",
+    "buttons": 0,
+    "hat": 5,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 5, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "hat_left",
+    "buttons": 0,
+    "hat": 6,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 6, 0, 0, 0, 0, 0]
   }
 ]
