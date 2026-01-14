@@ -15,8 +15,6 @@ struct DirtyBitmap {
 
 impl DirtyBitmap {
     fn new(mem_len: u64, page_size: u32) -> Self {
-        assert!(page_size != 0, "dirty tracking page_size must be non-zero");
-
         let page_size_usize = page_size as usize;
 
         let pages = usize::try_from(
@@ -135,7 +133,9 @@ pub struct DirtyTrackingMemory {
 }
 
 impl DirtyTrackingMemory {
+    #[track_caller]
     pub fn new(inner: Box<dyn GuestMemory>, page_size: u32) -> Self {
+        assert!(page_size != 0, "dirty tracking page_size must be non-zero");
         let bitmap = Arc::new(Mutex::new(DirtyBitmap::new(inner.size(), page_size)));
         Self {
             inner,
@@ -192,5 +192,25 @@ impl GuestMemory for DirtyTrackingMemory {
         let slice = self.inner.get_slice_mut(paddr, len)?;
         handle.mark_range(paddr, len);
         Some(slice)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DirtyTrackingMemory;
+    use crate::test_util::capture_panic_location;
+    use memory::DenseMemory;
+
+    #[test]
+    fn dirty_tracking_memory_new_panics_at_call_site_on_zero_page_size() {
+        let inner = Box::new(DenseMemory::new(0).expect("DenseMemory::new")) as Box<dyn memory::GuestMemory>;
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _mem = DirtyTrackingMemory::new(inner, 0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
