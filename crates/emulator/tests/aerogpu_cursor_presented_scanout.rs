@@ -190,7 +190,7 @@ fn presented_scanout_cursor_fb_gpa_updates_deferred_until_hi_written() {
 
     // 1x1 blue background.
     let blue = [0u8, 0, 255, 255];
-    let scanout_rgba = blue.repeat(1);
+    let scanout_rgba = blue.to_vec();
 
     let cfg = AeroGpuDeviceConfig {
         vram_size_bytes: 2 * 1024 * 1024,
