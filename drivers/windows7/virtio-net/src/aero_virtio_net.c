@@ -2305,7 +2305,7 @@ static NDIS_STATUS AerovNetAllocateRxResources(_Inout_ AEROVNET_ADAPTER* Adapter
   // This avoids large stack allocations in the DPC path.
   Adapter->RxChecksumScratch = NULL;
   Adapter->RxChecksumScratchBytes = 0;
-  if (Adapter->MaxFrameSize != 0) {
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_MRG_RXBUF) != 0 && (Adapter->GuestFeatures & VIRTIO_NET_F_GUEST_CSUM) != 0 && Adapter->MaxFrameSize != 0) {
     Adapter->RxChecksumScratchBytes = Adapter->MaxFrameSize;
     Adapter->RxChecksumScratch =
         (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, Adapter->RxChecksumScratchBytes, AEROVNET_TAG);

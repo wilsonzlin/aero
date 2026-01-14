@@ -294,7 +294,8 @@ typedef struct _AEROVNET_ADAPTER {
   // contiguous byte range for checksum header parsing (NdisGetDataBuffer fallback).
   // Allocated from nonpaged pool so it is usable at DISPATCH_LEVEL.
   // Best-effort: if allocation fails, checksum indication for multi-buffer
-  // receives is skipped.
+  // receives is skipped. Only allocated when mergeable RX buffers and guest
+  // checksum reporting are negotiated (VIRTIO_NET_F_MRG_RXBUF + VIRTIO_NET_F_GUEST_CSUM).
   PUCHAR RxChecksumScratch;
   ULONG RxChecksumScratchBytes;
 
