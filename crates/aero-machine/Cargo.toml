@@ -11,6 +11,7 @@ aero-devices-gpu = { path = "../aero-devices-gpu" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme" }
+aero-devices-gpu = { path = "../aero-devices-gpu" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-interrupts = { path = "../aero-interrupts" }
