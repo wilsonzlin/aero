@@ -50,6 +50,8 @@ The **contract v1** and **transitional/QEMU** virtio-snd INFs create per-device 
   - `0` (default): interrupt-driven (fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
   - `1`: allow polling-only mode when no usable interrupt can be discovered/connected
 
+These defaults are written with `FLG_ADDREG_NOCLOBBER` so explicit user overrides are preserved across reinstall/upgrade.
+
 Note: for backwards compatibility with older installs, the driver also checks the per-device driver registry key
 (`IoOpenDeviceRegistryKey(..., PLUGPLAY_REGKEY_DRIVER, ...)`) if the values are not present under `Device Parameters`.
 
