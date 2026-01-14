@@ -1716,3 +1716,59 @@ describe("workers/machine_cpu.worker (network API compat)", () => {
     }
   }, 20_000);
 });
+
+describe("workers/machine_cpu.worker (snapshot restore boot device reporting)", () => {
+  it("reports active boot device after a successful machine snapshot restore (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+      await dummyReady;
+
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const restoredPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "machine.snapshot.restored" && (msg as any).requestId === 1,
+        10_000,
+      ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
+      const activePromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" && (msg as any).bootDevice === "cdrom",
+        10_000,
+      ) as Promise<{ type: string; bootDevice: string }>;
+
+      worker.postMessage({ kind: "machine.snapshot.restoreFromOpfs", requestId: 1, path: "state/test.snap" });
+
+      const [restored, active] = await Promise.all([restoredPromise, activePromise]);
+      expect(restored.ok).toBe(true);
+      expect(active.bootDevice).toBe("cdrom");
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+});

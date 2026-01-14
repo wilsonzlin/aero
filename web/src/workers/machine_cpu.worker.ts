@@ -2310,6 +2310,9 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
           logPrefix: "machine_cpu.worker",
         });
       }
+      // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
+      // Publish the updated active boot device for debug/automation tooling.
+      maybePostActiveBootDevice(m);
       postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
       return;
     }
@@ -2331,11 +2334,17 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
           logPrefix: "machine_cpu.worker",
         });
       }
+      // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
+      // Publish the updated active boot device for debug/automation tooling.
+      maybePostActiveBootDevice(m);
       postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
       return;
     }
 
     await restoreMachineSnapshotAndReattachDisks({ api, machine: m, bytes: op.bytes, logPrefix: "machine_cpu.worker" });
+    // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
+    // Publish the updated active boot device for debug/automation tooling.
+    maybePostActiveBootDevice(m);
     postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
   } catch (err) {
     const error = serializeError(err);
@@ -2650,6 +2659,13 @@ ctx.onmessage = (ev) => {
     const enableNetworkSpy = payload.enableNetworkSpy === true;
 
     // Keep some minimal internal state so we can exercise boot-device reporting without loading WASM.
+    //
+    // Some integration tests also exercise snapshot restore plumbing. Under Node, WASM init is
+    // skipped entirely, so populate a minimal `wasmApi` shim so snapshot RPCs treat the dummy
+    // machine as a valid `api.Machine` instance.
+    if (!wasmApi) {
+      wasmApi = {} as unknown as WasmApi;
+    }
     let dummyBootDrive = BIOS_DRIVE_HDD0;
     let dummyBootFromCdIfPresent = false;
     let dummyCdBootDrive = BIOS_DRIVE_CD0;
@@ -2718,6 +2734,16 @@ ctx.onmessage = (ev) => {
       reset: () => {
         void dummyCdBootDrive; // keep lint quiet; drive number influences boot device only in real firmware.
         recomputeDummyActiveBootDevice();
+      },
+      restore_snapshot_from_opfs: async (_path: string) => {
+        // Simulate a snapshot restore that came from a CD-booted session.
+        dummyActiveBootDevice = 1;
+      },
+      restore_snapshot: (_bytes: Uint8Array) => {
+        dummyActiveBootDevice = 1;
+      },
+      reattach_restored_disks_from_opfs: async () => {
+        // No-op: dummy machine does not model disk backends.
       },
     };
     if (enableNetworkSpy) {
