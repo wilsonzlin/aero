@@ -212,6 +212,7 @@ type TestDummyAerogpuSubmission = {
   engineId?: number;
 };
 let testDummyAerogpuSubmissions: TestDummyAerogpuSubmission[] | null = null;
+let testDummyNextRunExitKind: number | null = null;
 
 function verifyWasmSharedStateLayout(
   m: InstanceType<WasmApi["Machine"]>,
@@ -2166,7 +2167,10 @@ function handleRunExit(exit: unknown): void {
     // Guest requested a reset (reboot). For install media use-cases, boot from the ISO once then
     // switch to HDD0 on the first guest reset so setup can reboot into the newly-installed OS while
     // keeping the ISO attached for later file access.
-    if (pendingBootDevice === "cdrom" && currentBootDisks?.hdd) {
+    const hasHdd =
+      !!currentBootDisks?.hdd ||
+      (typeof currentBootDisks?.mounts?.hddId === "string" && currentBootDisks.mounts.hddId.trim().length > 0);
+    if (pendingBootDevice === "cdrom" && hasHdd) {
       pendingBootDevice = "hdd";
       postBootDeviceSelected("hdd");
     }
@@ -2683,6 +2687,7 @@ ctx.onmessage = (ev) => {
     let dummyActiveBootDevice = 0; // MachineBootDevice::Hdd
 
     testDummyAerogpuSubmissions = [];
+    testDummyNextRunExitKind = null;
 
     const recomputeDummyActiveBootDevice = (): void => {
       const cdBoot =
@@ -2699,6 +2704,11 @@ ctx.onmessage = (ev) => {
         const runSliceCounterIndex = 63;
         if (st && runSliceCounterIndex < st.length) {
           Atomics.add(st, runSliceCounterIndex, 1);
+        }
+        const nextExitKind = testDummyNextRunExitKind;
+        if (typeof nextExitKind === "number") {
+          testDummyNextRunExitKind = null;
+          return { kind: nextExitKind };
         }
         return { kind: runExitKindMap.Halted };
       },
@@ -2815,6 +2825,25 @@ ctx.onmessage = (ev) => {
       ctx.postMessage({ kind: "__test.machine_cpu.dummyMachineEnabled" });
     } catch {
       void 0;
+    }
+    return;
+  }
+
+  // Test-only hook (Node worker_threads): ask the dummy machine's next `run_slice()` invocation to
+  // return a specific exit kind (e.g. ResetRequested) so tests can exercise coordinator/worker reset
+  // plumbing.
+  if (isNodeWorkerThreads() && (msg as { kind?: unknown }).kind === "__test.machine_cpu.setDummyNextRunExitKind") {
+    const payload = msg as Partial<{ exitKind?: unknown }>;
+    const raw = payload.exitKind;
+    if (typeof raw === "string") {
+      const kind = (runExitKindMap as unknown as Record<string, unknown>)[raw];
+      if (typeof kind === "number") {
+        testDummyNextRunExitKind = kind | 0;
+        wakeRunLoop();
+      }
+    } else if (typeof raw === "number" && Number.isFinite(raw)) {
+      testDummyNextRunExitKind = raw | 0;
+      wakeRunLoop();
     }
     return;
   }

@@ -1583,6 +1583,94 @@ describe("workers/machine_cpu.worker (CD-first boot policy)", () => {
   }, 20_000);
 });
 
+describe("workers/machine_cpu.worker (guest reset boot policy)", () => {
+  it("switches from CD to HDD when the guest requests a reset, even if HDD metadata is missing (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+      await dummyReady;
+
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      // Apply a boot disk selection that includes both mount IDs but omits HDD metadata (simulate
+      // transient metadata-unavailable scenarios). This should still count as "HDD present" when
+      // deciding whether to switch to HDD after the guest reboots.
+      const activePromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" && (msg as any).bootDevice === "cdrom",
+        10_000,
+      );
+
+      const cdMeta: any = {
+        source: "local",
+        id: "cd0",
+        name: "cd0",
+        backend: "opfs",
+        kind: "cd",
+        format: "iso",
+        fileName: "cd0.iso",
+        sizeBytes: 2048,
+        createdAtMs: 0,
+      };
+
+      worker.postMessage({
+        ...emptySetBootDisksMessage(),
+        mounts: { hddId: "hdd0", cdId: "cd0" },
+        hdd: null,
+        cd: cdMeta,
+        bootDevice: "cdrom",
+      } satisfies SetBootDisksMessage);
+      await activePromise;
+
+      // Ask the dummy machine to request a reset on its next `run_slice` call.
+      worker.postMessage({ kind: "__test.machine_cpu.setDummyNextRunExitKind", exitKind: "ResetRequested" });
+
+      const selectedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "hdd",
+        10_000,
+      );
+
+      // Start the run loop so it will call `run_slice` and observe the reset request.
+      const regions = ringRegionsForWorker("cpu");
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      if (!commandRing.tryPush(encodeCommand({ kind: "nop", seq: 1 }))) {
+        throw new Error("Failed to push nop command into command ring.");
+      }
+
+      const msg = (await selectedPromise) as { type: string; bootDevice: string };
+      expect(msg.bootDevice).toBe("hdd");
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+});
+
 describe("workers/machine_cpu.worker (boot drive API compat)", () => {
   it("uses camelCase setBootDrive when booting from CD (dummy machine)", async () => {
     const segments = allocateTestSegments();
