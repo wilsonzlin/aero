@@ -2597,11 +2597,37 @@ mod tests {
     }
 
     #[test]
+    fn outw_to_graphics_controller_index_port_writes_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3CE, 2, 0xAA05);
+
+        assert_eq!(dev.graphics_index, 0x05);
+        assert_eq!(dev.graphics[0x05], 0xAA);
+    }
+
+    #[test]
     fn inw_from_sequencer_index_port_returns_index_and_data() {
         let mut dev = VgaDevice::new();
 
         dev.port_write(0x3C4, 2, 0x0F02);
         assert_eq!(dev.port_read(0x3C4, 2), 0x0F02);
+    }
+
+    #[test]
+    fn inw_from_graphics_controller_index_port_returns_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3CE, 2, 0xAA05);
+        assert_eq!(dev.port_read(0x3CE, 2), 0xAA05);
+    }
+
+    #[test]
+    fn inw_from_crtc_index_port_returns_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3D4, 2, 0x120E);
+        assert_eq!(dev.port_read(0x3D4, 2), 0x120E);
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
