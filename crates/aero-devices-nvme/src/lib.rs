@@ -130,15 +130,9 @@ pub type DiskResult<T> = Result<T, DiskError>;
 ///
 /// NVMe LBAs are currently fixed at 512 bytes.
 ///
-/// wasm32 build: disk backends do not need to be `Send`.
-///
-/// Browser disk handles (OPFS, JS-backed sparse formats, etc.) are often `!Send` because they wrap
-/// JS objects. Keeping this trait object `!Send` allows the full-system wasm build to compile
-/// while still preventing accidental cross-thread use of non-`Send` backends in native builds.
-#[cfg(not(target_arch = "wasm32"))]
-pub type NvmeDisk = Box<dyn VirtualDisk + Send>;
-
-#[cfg(target_arch = "wasm32")]
+/// `VirtualDisk` is conditionally `Send` via `aero_storage::VirtualDiskSend`:
+/// - native: `dyn VirtualDisk` is `Send`
+/// - wasm32: `dyn VirtualDisk` may be `!Send` (OPFS/JS-backed handles, etc.)
 pub type NvmeDisk = Box<dyn VirtualDisk>;
 
 /// Compatibility helper (deprecated): validate a disk is usable by this NVMe model.
@@ -421,15 +415,6 @@ impl NvmeController {
 
     /// Like [`NvmeController::try_new_from_virtual_disk`], but accepts any concrete
     /// `aero_storage` disk type.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
-    where
-        D: aero_storage::VirtualDisk + Send + 'static,
-    {
-        Self::try_new_from_virtual_disk(Box::new(disk))
-    }
-
-    #[cfg(target_arch = "wasm32")]
     pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
     where
         D: aero_storage::VirtualDisk + 'static,
@@ -2170,15 +2155,6 @@ impl NvmePciDevice {
 
     /// Like [`NvmePciDevice::try_new_from_virtual_disk`], but accepts any concrete
     /// `aero_storage` disk type.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
-    where
-        D: aero_storage::VirtualDisk + Send + 'static,
-    {
-        Self::try_new_from_virtual_disk(Box::new(disk))
-    }
-
-    #[cfg(target_arch = "wasm32")]
     pub fn try_new_from_aero_storage<D>(disk: D) -> DiskResult<Self>
     where
         D: aero_storage::VirtualDisk + 'static,

@@ -5,12 +5,9 @@ use aero_storage::{DiskError, VirtualDisk};
 
 /// Underlying `VirtualDisk` trait object used by ISO/CD backends.
 ///
-/// On native targets we require `Send` so callers can safely move disk backends between threads.
-/// On `wasm32` we intentionally drop the `Send` bound so browser-only storage handles (e.g. OPFS)
-/// can be used even when they are not `Send`.
-#[cfg(not(target_arch = "wasm32"))]
-pub type IsoDisk = Box<dyn VirtualDisk + Send>;
-#[cfg(target_arch = "wasm32")]
+/// `VirtualDisk` is conditionally `Send` via `aero_storage::VirtualDiskSend`:
+/// - native: `dyn VirtualDisk` is `Send`
+/// - wasm32: `dyn VirtualDisk` may be `!Send` (OPFS/JS-backed handles, etc.)
 pub type IsoDisk = Box<dyn VirtualDisk>;
 
 /// Read-only ISO9660 (or raw CD) backing store.

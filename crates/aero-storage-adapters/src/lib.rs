@@ -61,11 +61,10 @@ use std::sync::Mutex;
 
 use aero_storage::{VirtualDisk, SECTOR_SIZE};
 
-#[cfg(target_arch = "wasm32")]
+// `VirtualDisk` is conditionally `Send` via `aero_storage::VirtualDiskSend`:
+// - native: `dyn VirtualDisk` is `Send`
+// - wasm32: `dyn VirtualDisk` may be `!Send` (OPFS/JS-backed handles, etc.)
 type NvmeDiskBackend = Box<dyn VirtualDisk>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type NvmeDiskBackend = Box<dyn VirtualDisk + Send>;
 
 /// Adapter wrapper for exposing an [`aero_storage::VirtualDisk`] through a sector-addressed disk
 /// backend interface.
@@ -99,6 +98,15 @@ impl AeroVirtualDiskAsNvmeBackend {
 
 impl From<NvmeDiskBackend> for AeroVirtualDiskAsNvmeBackend {
     fn from(disk: NvmeDiskBackend) -> Self {
+        Self::new(disk)
+    }
+}
+
+impl From<Box<dyn VirtualDisk + Send>> for AeroVirtualDiskAsNvmeBackend {
+    fn from(disk: Box<dyn VirtualDisk + Send>) -> Self {
+        // Drop the explicit `Send` auto-trait. On native, `dyn VirtualDisk` is already `Send`
+        // via `VirtualDiskSend`; on wasm32 the `Send` bound is intentionally omitted.
+        let disk: Box<dyn VirtualDisk> = disk;
         Self::new(disk)
     }
 }
