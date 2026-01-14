@@ -13141,6 +13141,193 @@ bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return true;
 }
 
+bool TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_decl = false;
+
+    ~Cleanup() {
+      if (has_decl && device_funcs.pfnDestroyVertexDecl) {
+        device_funcs.pfnDestroyVertexDecl(hDevice, hDecl);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "CreateVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "SetVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // Use a valid viewport so XYZRHW conversion doesn't divide by 0.
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1; // 0x144
+
+  // Create an explicit decl that implies kSupportedFvfXyzrhwDiffuseTex1, but is
+  // *not* byte-for-byte identical to the driver's internal FVF-derived decl.
+  //
+  // In particular, encode TEXCOORD0 as Usage=POSITION (0) so SetVertexDecl
+  // inference still sets dev->fvf=0x144 while leaving a mismatched input layout
+  // bound. A subsequent SetFVF(0x144) must override this and bind the internal
+  // decl.
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      create_dev.hDevice, elems, static_cast<uint32_t>(sizeof(elems)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZRHW|DIFFUSE|TEX1, tex Usage=POSITION)")) {
+    return false;
+  }
+  cleanup.hDecl = hDecl;
+  cleanup.has_decl = true;
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZRHW|DIFFUSE|TEX1, tex Usage=POSITION)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  auto* user_decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+  if (!Check(user_decl != nullptr, "vertex decl pointer")) {
+    return false;
+  }
+
+  if (!Check(dev->fvf == kSupportedFvfXyzrhwDiffuseTex1, "SetVertexDecl implies FVF=XYZRHW|DIFFUSE|TEX1")) {
+    return false;
+  }
+  if (!Check(dev->vertex_decl == user_decl, "SetVertexDecl binds the explicit decl")) {
+    return false;
+  }
+  if (!Check(dev->fvf_vertex_decl_tex1 == nullptr, "internal FVF decl not created by SetVertexDecl inference")) {
+    return false;
+  }
+
+  // Regression: even when fvf == dev->fvf, SetFVF must still bind the internal
+  // FVF-derived decl for supported XYZRHW FVFs.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kSupportedFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* internal_decl = dev->fvf_vertex_decl_tex1;
+  if (!Check(internal_decl != nullptr, "SetFVF created internal FVF-derived decl")) {
+    return false;
+  }
+  if (!Check(internal_decl != user_decl, "internal decl differs from explicit decl")) {
+    return false;
+  }
+  if (!Check(dev->vertex_decl == internal_decl, "SetFVF binds internal decl")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "draw emitted")) {
+    return false;
+  }
+
+  const CmdLoc set_layout = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted before draw")) {
+    return false;
+  }
+
+  const auto* set_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
+  if (!Check(set_cmd->input_layout_handle == internal_decl->handle, "draw uses internal input layout")) {
+    return false;
+  }
+  return true;
+}
+
 bool TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -25507,6 +25694,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants();
   failures += !aerogpu::TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants();
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFixedFuncPsSelectionNoTextureColorOpDisableUsesColorOnly();

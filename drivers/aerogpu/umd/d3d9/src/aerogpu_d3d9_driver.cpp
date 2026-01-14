@@ -12412,22 +12412,16 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  if (fvf == dev->fvf) {
-    VertexDecl* decl = dev->vertex_decl;
-    if (fvf == kSupportedFvfXyzrhwDiffuse && dev->fvf_vertex_decl) {
-      decl = dev->fvf_vertex_decl;
-    } else if (fvf == kSupportedFvfXyzrhwDiffuseTex1 && dev->fvf_vertex_decl_tex1) {
-      decl = dev->fvf_vertex_decl_tex1;
-    } else if (fvf == kSupportedFvfXyzrhwTex1 && dev->fvf_vertex_decl_tex1_nodiffuse) {
-      decl = dev->fvf_vertex_decl_tex1_nodiffuse;
-    } else if (fvf == kSupportedFvfXyzDiffuse && dev->fvf_vertex_decl_xyz_diffuse) {
-      decl = dev->fvf_vertex_decl_xyz_diffuse;
-    } else if (fvf == kSupportedFvfXyzDiffuseTex1 && dev->fvf_vertex_decl_xyz_diffuse_tex1) {
-      decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
-    } else if (fvf == kSupportedFvfXyzTex1 && dev->fvf_vertex_decl_xyz_tex1) {
-      decl = dev->fvf_vertex_decl_xyz_tex1;
-    }
-    stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
+  // Fast path: If the runtime sets the same FVF repeatedly, we can avoid all
+  // work. However, for supported fixed-function FVFs we must *still* ensure the
+  // matching internal FVF-derived vertex declaration is bound.
+  //
+  // This matters when the runtime previously set an explicit vertex declaration
+  // (and we inferred an implied FVF from it), then calls SetFVF with that same
+  // value: SetFVF must override the explicit decl and bind the internal one so
+  // fixed-function draws and state blocks observe consistent state.
+  if (fvf == dev->fvf && !fixedfunc_supported_fvf(fvf)) {
+    stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
     return trace.ret(S_OK);
   }
 
