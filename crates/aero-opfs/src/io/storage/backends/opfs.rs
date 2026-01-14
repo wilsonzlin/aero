@@ -744,10 +744,10 @@ mod wasm {
     thread_local! {
         /// Thread-local map of OPFS backends keyed by [`OpfsSendDisk`] id.
         ///
-        /// `FileSystemSyncAccessHandle` and other wasm-bindgen JS handles are thread-affine and are
-        /// not `Send` when wasm atomics/threads are enabled. By keeping the real [`OpfsBackend`]
-        /// instances in TLS, we can provide a small `Send` wrapper (`OpfsSendDisk`) that fails
-        /// deterministically if used from the wrong thread.
+        /// `FileSystemSyncAccessHandle` and other wasm-bindgen JS handles are thread-affine and
+        /// `!Send`. By keeping the real [`OpfsBackend`] instances in thread-local storage, we can
+        /// provide a small `Send` wrapper ([`OpfsSendDisk`]) that enforces thread affinity at
+        /// runtime (IO fails deterministically if used from the wrong thread).
         static OPFS_SEND_DISK_MAP: RefCell<HashMap<u32, OpfsBackend>> = RefCell::new(HashMap::new());
 
         #[cfg(not(target_feature = "atomics"))]
@@ -786,14 +786,15 @@ mod wasm {
         })
     }
 
-    /// `Send`-capable OPFS disk wrapper for threaded wasm builds.
+    /// `Send`-capable OPFS disk wrapper for APIs that require `VirtualDisk + Send`.
     ///
-    /// In wasm builds with `target-feature=+atomics`, `wasm-bindgen` JS handles are not `Send`, so
-    /// the underlying [`OpfsBackend`] cannot be moved across threads safely.
+    /// The underlying [`OpfsBackend`] contains wasm-bindgen JS handles and is `!Send`. This wrapper
+    /// stores only an integer id + cached capacity and keeps the real backend in a thread-local
+    /// map.
     ///
-    /// This type stores only an integer id and cached capacity, and keeps the real [`OpfsBackend`]
-    /// in a thread-local map. IO methods fail deterministically if the wrapper is used from a
-    /// different thread than the one that opened it.
+    /// In wasm builds with threads enabled (`target-feature=+atomics`), IO methods fail
+    /// deterministically if the wrapper is used from a different thread than the one that opened
+    /// it.
     #[derive(Debug)]
     pub struct OpfsSendDisk {
         id: u32,
