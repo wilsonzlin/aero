@@ -81,18 +81,13 @@ impl TextureArg {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextureResultTarget {
     /// Store stage output back into `CURRENT` (default D3D9 behavior).
+    #[default]
     Current,
     /// Store stage output into `TEMP` (`D3DTSS_RESULTARG = D3DTA_TEMP`).
     Temp,
-}
-
-impl Default for TextureResultTarget {
-    fn default() -> Self {
-        Self::Current
-    }
 }
 
 #[repr(u8)]
