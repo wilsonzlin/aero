@@ -305,6 +305,13 @@ def _validate_manifest(manifest: dict) -> list[dict]:
             errors.append(f"packages[{idx}]: missing/invalid 'arch' (package id={pkg_id!r})")
             continue
 
+        if pkg.get("required") is True:
+            inf = pkg.get("inf")
+            if not isinstance(inf, str) or not inf:
+                errors.append(
+                    f"packages[{idx}]: required package missing/invalid 'inf' (id={pkg_id!r}, arch={arch!r})"
+                )
+
         key = (pkg_id, arch)
         if key in seen:
             other = seen[key]
