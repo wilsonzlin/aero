@@ -1,8 +1,14 @@
-/// Minimal PCI interfaces required by the AHCI controller unit tests.
+/// Minimal PCI interfaces required by legacy emulator compatibility shims.
 ///
-/// This is *not* a complete PCI subsystem. It exists to model config-space
-/// behavior needed by operating systems (notably Windows) to bind the generic
-/// AHCI driver based on the SATA/AHCI class code and BAR layout.
+/// This is *not* a complete PCI subsystem, and it is **not** part of the canonical
+/// VM wiring stack.
+///
+/// Canonical PCI lives in `crates/devices` (`aero_devices::pci::*`) and is used by
+/// `crates/aero-machine` / `crates/aero-pc-platform`.
+///
+/// This module exists primarily to model config-space behavior needed by older
+/// controller wrappers and unit tests (notably Windows binding the generic AHCI
+/// driver based on the SATA/AHCI class code and BAR layout).
 pub trait PciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32;
     fn config_write(&mut self, offset: u16, size: usize, value: u32);
