@@ -47,6 +47,7 @@ Guest Tools media can optionally ship additional **guest-side utilities** (debug
 Note: the AeroGPU debug/control utility (`aerogpu_dbgctl.exe`) is shipped alongside the AeroGPU driver package under `drivers\...` (not under the optional top-level `tools\` directory). It is shipped as a single **x86** binary and copied into both the x86 and amd64 driver trees (on amd64 it runs via **WOW64**):
 
 - `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+- `drivers\<arch>\aerogpu\tools\win7_dbgctl\README.md` (tool documentation)
 
 Example (run directly from a mounted Guest Tools ISO/zip; if your mount letter differs from `X:`, replace it):
 
