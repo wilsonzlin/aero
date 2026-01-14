@@ -14,8 +14,11 @@ This repo supports input in two different (but related) integration styles:
   - Input is injected by calling `Machine.inject_*` methods directly.
 - **Browser worker runtime (production)**
   - A main-thread coordinator plus a **CPU worker** (executes guest CPU in WASM) and an **I/O worker** (owns device models + routing).
-  - Browser input is captured + batched in `web/src/input/*` and delivered to the I/O worker (`web/src/workers/io.worker.ts`) as `in:input-batch` messages.
-  - The I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind the guest-visible USB controller** (when enabled; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds).
+  - Browser input is captured + batched in `web/src/input/*` and delivered as `in:input-batch` messages to the worker that injects input:
+    - `vmRuntime=legacy`: I/O worker (`web/src/workers/io.worker.ts`)
+    - `vmRuntime=machine`: machine CPU worker (`web/src/workers/machine_cpu.worker.ts`)
+  - In `vmRuntime=legacy` the I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind the guest-visible USB controller** (when enabled; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds).
+  - In `vmRuntime=machine` the CPU worker injects input directly into the canonical `api.Machine` instance (currently PS/2 injection only; the legacy I/O-worker backend routing policy does not apply).
 
 When editing the browser runtime input pipeline, treat `web/src/input/*` + `web/src/workers/io.worker.ts` as canonical; the `aero-wasm::Machine` injection API is an ergonomic/testing surface.
 
@@ -738,7 +741,7 @@ The repository includes a concrete browser-side input capture implementation:
 
 - `web/src/input/input_capture.ts` — attaches listeners to the emulator canvas, manages focus/blur, and requests Pointer Lock on click.
 - `web/src/input/pointer_lock.ts` — minimal Pointer Lock state machine.
-- `web/src/input/event_queue.ts` — allocation-free event queue and batching transport to the I/O worker.
+- `web/src/input/event_queue.ts` — allocation-free event queue and batching transport to the input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.worker.ts` in `vmRuntime=machine`).
 - `web/src/input/scancodes.ts` — auto-generated `KeyboardEvent.code` → PS/2 Set 2 scancode mapping (including multi-byte sequences like PrintScreen/Pause).
 - `web/src/input/scancode.ts` — small helpers (allocation-free lookup + browser `preventDefault` policy).
   - The default policy prevents browser/UI actions while the VM is focused (e.g. function keys like **F5** refresh, **Alt** menu/address-bar focus, browser keys like **BrowserBack**/**BrowserSearch**).
@@ -754,13 +757,13 @@ The repository includes a concrete browser-side input capture implementation:
 The primary interactive UI is the **Workers panel** VM canvas:
 
 - The VGA canvas element is created/rendered by `web/src/main.ts::renderWorkersPanel`.
-- That canvas is wired through `web/src/input/input_capture.ts` (`InputCapture`), and flushed to the I/O worker (`web/src/workers/io.worker.ts`).
+- That canvas is wired through `web/src/input/input_capture.ts` (`InputCapture`), and flushed to the active input injector worker (I/O worker in `vmRuntime=legacy`, CPU worker in `vmRuntime=machine`).
 
 Expected user interaction:
 
 - **Click the VM canvas** to focus it and request pointer lock.
   - Pointer lock is required for relative mouse deltas (`movementX`/`movementY`) and to prevent the cursor from leaving the canvas.
-- While capture is active, **keyboard / mouse / gamepad** input is batched and forwarded to the I/O worker.
+- While capture is active, **keyboard / mouse / gamepad** input is batched and forwarded to the active input injector worker.
 - To **exit pointer lock**, press **Escape** (browser default).
   - Optionally, hosts can configure a *host-only* pointer-lock release chord via `InputCaptureOptions.releasePointerLockChord`.
     - When set, the chord is swallowed (not forwarded to the guest) and the matching keyup is also suppressed.
@@ -773,14 +776,18 @@ Expected user interaction:
 
 #### Worker Transport / Wire Format
 
-Input batches are delivered to the I/O worker via `postMessage` with:
+Input batches are delivered to the **input injector worker** via `postMessage` with:
 
 ```ts
 { type: 'in:input-batch', buffer: ArrayBuffer, recycle?: true }
 ```
 
-On the receiving side, batches are handled by `web/src/workers/io.worker.ts` (see the `"in:input-batch"` message
-case and `handleInputBatch(...)`).
+On the receiving side, batches are handled by:
+
+- `web/src/workers/io.worker.ts` in `vmRuntime=legacy`
+- `web/src/workers/machine_cpu.worker.ts` in `vmRuntime=machine`
+
+(see the `"in:input-batch"` message case and `handleInputBatch(...)` in each worker).
 
 `buffer` contains a small `Int32Array`-compatible payload:
 
@@ -824,13 +831,15 @@ See `web/src/input/input_capture.ts` for the exact event listeners and gating co
   - USB HID keyboard usages (`InputEventType.KeyHidUsage`), and
   - additional HID usages on other pages (`InputEventType.HidUsage16`, e.g. Consumer Control / media keys),
   then enqueued into `InputEventQueue`.
-  - The I/O worker decides which events to consume based on the active backend (PS/2 vs USB vs virtio), to avoid duplicates.
+  - In `vmRuntime=legacy`, the I/O worker decides which events to consume based on the active backend (PS/2 vs USB vs virtio), to avoid duplicates.
 - `mousemove` events are listened on `document` (capture phase) while pointer lock is active and forwarded as relative deltas (`MouseMove`).
   - Y is inverted once in `InputCapture` so `MouseMove` is already in PS/2 coordinate space (positive is up).
 - `wheel` events are forwarded as `MouseWheel` with both vertical (`dz`) and horizontal (`dx`) scroll components.
 - On blur / hidden-page, `InputCapture` emits a release-all snapshot and flushes immediately (see above).
 
-#### Consumption + routing in the I/O worker
+#### Consumption + routing in the worker runtime
+
+##### Legacy runtime (`vmRuntime=legacy`, I/O worker injects input)
 
 Input batches are consumed in the I/O worker (`web/src/workers/io.worker.ts`) by handling `message` events with `type: "in:input-batch"`.
 
@@ -839,6 +848,12 @@ The worker decodes the `InputEventType` stream and routes each event into the cu
 - **PS/2 fallback**: i8042 + PS/2 keyboard/mouse (`crates/aero-devices-input` is the canonical model; the browser runtime uses an equivalent bridge/model).
 - **virtio-input fast path**: routed to the virtio-input PCI functions (once the guest sets `DRIVER_OK`).
 - **USB HID**: routed to synthetic USB HID devices behind the external hub on root port 0 (or to passthrough devices when enabled).
+
+##### Machine runtime (`vmRuntime=machine`, CPU worker injects input)
+
+In machine runtime, input batches are consumed by the machine CPU worker (`web/src/workers/machine_cpu.worker.ts`) and injected into the canonical `api.Machine` instance.
+
+> Note: the legacy I/O-worker backend selection and routing policy described above does not currently apply to machine runtime.
 
 #### Scancode Translation
 
@@ -910,13 +925,16 @@ Yes, when `MachineConfig.enable_synthetic_usb_hid = true` (or when constructing 
 synthetic USB HID causes the canonical machine to attach the external hub on UHCI root port 0 and
 attach the synthetic HID devices on hub ports 1..=4, matching the reserved port layout above.
 
-In the browser runtime, the I/O worker (and the worker-side UHCI runtime) attaches the external hub + synthetic devices
+In the legacy browser runtime (`vmRuntime=legacy`), the I/O worker (and the worker-side UHCI runtime) attaches the external hub + synthetic devices
 according to the reserved port layout above.
 
 ### Browser runtime wiring (current implementation)
 
-In the web runtime, browser keyboard/mouse/gamepad events can be exposed to the guest as
-**guest-visible USB HID devices** (inbox drivers on Windows 7).
+This section describes the legacy browser worker runtime (`vmRuntime=legacy`), where the guest USB stack is owned by the I/O worker.
+In `vmRuntime=machine`, the I/O worker runs in a host-only stub mode (no guest USB stack), so this path is not yet available.
+
+In the legacy web runtime, browser keyboard/mouse/gamepad events can be exposed to the guest as **guest-visible USB HID devices**
+(inbox drivers on Windows 7).
 
 Current implementation details:
 
