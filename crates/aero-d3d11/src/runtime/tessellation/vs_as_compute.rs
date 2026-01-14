@@ -621,6 +621,7 @@ mod tests {
     use super::*;
     use crate::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
     use std::collections::BTreeMap;
+    use crate::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
 
     #[test]
     fn vs_as_compute_vertex_pulling_binding_numbers_match_vertex_pulling_layout() {

@@ -1191,6 +1191,85 @@ fn decodes_and_translates_uaddc_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_and_translates_iaddc_shader_from_dxbc() {
+    let mut body = Vec::<u32>::new();
+
+    // iaddc r0, r1, r2, r3
+    body.push(opcode_token(OPCODE_IADDC, 1 + 2 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[3], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(module.instructions.len(), 2);
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::IAddC {
+            dst_sum: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            dst_carry: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            a: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 2
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            b: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 3
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("let iaddc_carry_0"),
+        "expected iaddc carry logic in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_isubc_shader_from_dxbc() {
     let mut body = Vec::<u32>::new();
 
@@ -1265,6 +1344,85 @@ fn decodes_and_translates_isubc_shader_from_dxbc() {
     assert!(
         translated.wgsl.contains("let isubc_carry_0"),
         "expected isubc carry logic in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_usubb_shader_from_dxbc() {
+    let mut body = Vec::<u32>::new();
+
+    // usubb r0, r1, r2, r3
+    body.push(opcode_token(OPCODE_USUBB, 1 + 2 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[3], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(module.instructions.len(), 2);
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::USubB {
+            dst_diff: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            dst_borrow: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            a: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 2
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            b: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 3
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("let usubb_borrow_0"),
+        "expected usubb borrow logic in WGSL:\n{}",
         translated.wgsl
     );
 }
