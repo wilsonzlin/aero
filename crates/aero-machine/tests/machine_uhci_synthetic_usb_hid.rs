@@ -91,6 +91,17 @@ fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
     consumer.model_mut().handle_interrupt_in(0x81)
 }
 
+fn expect_consumer_control_report(result: UsbInResult, usage: u16, context: &str) {
+    let expected = usage.to_le_bytes().to_vec();
+    match result {
+        UsbInResult::Data(data) => assert_eq!(
+            data, expected,
+            "{context}: expected consumer-control report {expected:?}, got {data:?}"
+        ),
+        other => panic!("{context}: expected consumer-control report data, got {other:?}"),
+    }
+}
+
 fn synthetic_usb_hid_cfg() -> MachineConfig {
     MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
@@ -187,9 +198,10 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         .expect("synthetic consumer-control handle should be present");
     configure_consumer_for_reports(&mut consumer);
     m.inject_usb_hid_consumer_usage(0x00b5, true); // Scan Next Track
-    assert!(
-        matches!(poll_consumer_interrupt_in(&mut m), UsbInResult::Data(_)),
-        "expected consumer-control interrupt IN to return data after injection"
+    expect_consumer_control_report(
+        poll_consumer_interrupt_in(&mut m),
+        0x00b5,
+        "after injection",
     );
 
     m.reset();
@@ -211,10 +223,7 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         .expect("synthetic consumer-control handle should persist across reset");
     configure_consumer_for_reports(&mut consumer);
     m.inject_usb_hid_consumer_usage(0x00b6, true); // Scan Previous Track
-    assert!(
-        matches!(poll_consumer_interrupt_in(&mut m), UsbInResult::Data(_)),
-        "expected consumer-control interrupt IN to return data after reset"
-    );
+    expect_consumer_control_report(poll_consumer_interrupt_in(&mut m), 0x00b6, "after reset");
 
     let snap = m.take_snapshot_full().unwrap();
     let mut restored = Machine::new(cfg).unwrap();
@@ -239,12 +248,10 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         .expect("synthetic consumer-control handle should persist across snapshot restore");
     configure_consumer_for_reports(&mut consumer);
     restored.inject_usb_hid_consumer_usage(0x00cd, true); // Play/Pause
-    assert!(
-        matches!(
-            poll_consumer_interrupt_in(&mut restored),
-            UsbInResult::Data(_)
-        ),
-        "expected consumer-control interrupt IN to return data after snapshot restore"
+    expect_consumer_control_report(
+        poll_consumer_interrupt_in(&mut restored),
+        0x00cd,
+        "after snapshot restore",
     );
 }
 
