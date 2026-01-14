@@ -308,6 +308,15 @@ mod tests {
         // use custom numbering.
         assert_eq!(AerogpuFormat::Invalid as u32, 0);
         assert_eq!(SCANOUT_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
+        assert_eq!(SCANOUT_FORMAT_B8G8R8A8, AerogpuFormat::B8G8R8A8Unorm as u32);
+        assert_eq!(
+            SCANOUT_FORMAT_B8G8R8X8_SRGB,
+            AerogpuFormat::B8G8R8X8UnormSrgb as u32
+        );
+        assert_eq!(
+            SCANOUT_FORMAT_B8G8R8A8_SRGB,
+            AerogpuFormat::B8G8R8A8UnormSrgb as u32
+        );
     }
 
     #[test]
