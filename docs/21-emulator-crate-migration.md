@@ -163,6 +163,11 @@ USB selection is governed by [ADR 0015](./adr/0015-canonical-usb-stack.md).
 - EHCI PCI device wrapper (canonical PCI stack): `crates/devices/src/usb/ehci.rs` ([`ehci.rs`](../crates/devices/src/usb/ehci.rs))
 - xHCI PCI device wrapper (canonical PCI stack): `crates/devices/src/usb/xhci.rs` ([`xhci.rs`](../crates/devices/src/usb/xhci.rs))
 
+See also controller contracts:
+
+- EHCI (USB 2.0): [`docs/usb-ehci.md`](./usb-ehci.md)
+- xHCI (USB 3.x): [`docs/usb-xhci.md`](./usb-xhci.md)
+
 **Deprecation/deletion targets (in `crates/emulator`)**
 
 - Any *standalone* UHCI PCI wrapper / port I/O wiring that duplicates `aero-devices`:
