@@ -152,6 +152,8 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::Utof { .. } => "utof",
         Sm4Inst::Ftoi { .. } => "ftoi",
         Sm4Inst::Ftou { .. } => "ftou",
+        Sm4Inst::F32ToF16 { .. } => "f32tof16",
+        Sm4Inst::F16ToF32 { .. } => "f16tof32",
         Sm4Inst::And { .. } => "and",
         Sm4Inst::Add { .. } => "add",
         Sm4Inst::IAddC { .. } => "iaddc",
@@ -474,7 +476,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             Sm4Inst::Itof { dst, src }
             | Sm4Inst::Utof { dst, src }
             | Sm4Inst::Ftoi { dst, src }
-            | Sm4Inst::Ftou { dst, src } => {
+            | Sm4Inst::Ftou { dst, src }
+            | Sm4Inst::F32ToF16 { dst, src }
+            | Sm4Inst::F16ToF32 { dst, src } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
                 scan_src_operand(
                     src,
@@ -1129,6 +1133,37 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 let src_f = emit_src_vec4(inst_index, "ftou", src, &input_sivs)?;
                 let rhs = format!("bitcast<vec4<f32>>(vec4<u32>({src_f}))");
                 emit_write_masked(&mut w, inst_index, "ftou", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::F32ToF16 { dst, src } => {
+                let src_f = emit_src_vec4(inst_index, "f32tof16", src, &input_sivs)?;
+                let src_f = maybe_saturate(dst.saturate, src_f);
+
+                let pack_lane = |c: char| {
+                    format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)")
+                };
+                let ux = pack_lane('x');
+                let uy = pack_lane('y');
+                let uz = pack_lane('z');
+                let uw = pack_lane('w');
+
+                let rhs_u = format!("vec4<u32>({ux}, {uy}, {uz}, {uw})");
+                let rhs = format!("bitcast<vec4<f32>>({rhs_u})");
+                emit_write_masked(&mut w, inst_index, "f32tof16", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::F16ToF32 { dst, src } => {
+                // Preserve the raw half-float bit-pattern by ignoring operand modifiers.
+                let mut src_bits = src.clone();
+                src_bits.modifier = OperandModifier::None;
+                let src_u = emit_src_vec4_u32(inst_index, "f16tof32", &src_bits, &input_sivs)?;
+
+                let unpack_lane = |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
+                let x = unpack_lane('x');
+                let y = unpack_lane('y');
+                let z = unpack_lane('z');
+                let w_lane = unpack_lane('w');
+
+                let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({x}, {y}, {z}, {w_lane})"));
+                emit_write_masked(&mut w, inst_index, "f16tof32", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(inst_index, "add", a, &input_sivs)?;
@@ -1994,6 +2029,98 @@ mod tests {
         assert!(
             wgsl.contains("bitcast<vec4<f32>>(vec4<i32>(r1))"),
             "expected ftoi to lower via numeric cast to i32 then bitcast back to f32 bits:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn gs_translate_emits_half_float_conversions() {
+        // Ensure GS prepass translation supports the SM4/SM5 half-float conversion ops
+        // `f32tof16`/`f16tof32` using WGSL pack/unpack builtins (no `f16` types required).
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![
+                // r0 = [1.0, 2.0, 3.0, 4.0]
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([
+                            1.0f32.to_bits(),
+                            2.0f32.to_bits(),
+                            3.0f32.to_bits(),
+                            4.0f32.to_bits(),
+                        ]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                // r1 = f32tof16(r0) (half bits in low 16 bits of each lane)
+                Sm4Inst::F32ToF16 {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                // r2 = f16tof32(r1)
+                Sm4Inst::F16ToF32 {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 2,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
+        assert!(
+            wgsl.contains("pack2x16float"),
+            "expected f32tof16 lowering to use pack2x16float:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("unpack2x16float"),
+            "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
         );
     }
 }
