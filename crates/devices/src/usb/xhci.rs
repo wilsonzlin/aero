@@ -300,7 +300,8 @@ impl XhciPciDevice {
 
         if dma_enabled {
             let mut adapter = TickMemoryBus::Dma(mem);
-            self.controller.tick_1ms(&mut adapter);
+            self.controller
+                .tick_1ms_and_service_event_ring(&mut adapter);
         } else {
             self.controller.tick_1ms_no_dma();
         }
