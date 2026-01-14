@@ -115,7 +115,8 @@ impl A20Gate for PlatformBiosBus<'_> {
 
 /// PCI-capable PC machine: CPU + [`PcPlatform`] + BIOS + optional E1000 + network backend.
 ///
-/// Note: this integration currently models only a single CPU core (no SMP).
+/// Note: `PcMachine` currently executes only the bootstrap processor (CPU0). Additional vCPU state
+/// is initialized so firmware can publish an SMP topology via [`PcMachineConfig::cpu_count`].
 pub struct PcMachine {
     cfg: PcMachineConfig,
 
