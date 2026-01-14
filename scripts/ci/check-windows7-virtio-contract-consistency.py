@@ -174,9 +174,21 @@ def read_text(path: Path) -> str:
 
 
 def strip_inf_comment_lines(text: str) -> str:
-    """Remove full-line INF comments (`; ...`) from `text`."""
+    """
+    Remove INF comments from `text`.
 
-    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";"))
+    - Drops full-line comments (optional whitespace then ';').
+    - Strips inline comments using the same quote-aware rules as the other INF
+      helpers in this script (semicolons inside quoted strings are data).
+    """
+
+    out: list[str] = []
+    for raw in text.splitlines():
+        line = _strip_inf_inline_comment(raw).strip()
+        if not line:
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def inf_functional_bytes(path: Path) -> bytes:
