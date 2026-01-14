@@ -914,6 +914,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G; for 'cargo fuzz run' safe-run defaults to 'unlimited' due to ASAN shadow memory)" >&2
     echo "  AERO_NODE_TEST_MEM_LIMIT=32G  Fallback memory limit for WASM-heavy Node test runners when AERO_MEM_LIMIT is unset (helps under RLIMIT_AS; applies to node --test, npm/vitest, wasm-pack --node)" >&2
+    echo "  AERO_PLAYWRIGHT_MEM_LIMIT=256G  Fallback memory limit for Playwright/browser E2E runs when AERO_MEM_LIMIT is unset (browsers reserve huge virtual memory; too-low RLIMIT_AS can crash Chromium or break WebAssembly.Memory)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1|<path>  Isolate Cargo state to ./.cargo-home (or a custom dir) to avoid registry lock contention on shared hosts" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
@@ -987,29 +988,59 @@ if [[ "${cmd0_basename}" == "node" || "${cmd0_basename}" == "node.exe" ]]; then
     unset wants_test has_concurrency injected new_args 2>/dev/null || true
 fi
 
-# Node+WASM can also be invoked indirectly via wrapper tools (npm/pnpm/yarn/npx/wasm-pack). Since
-# `RLIMIT_AS` is inherited by child processes, keep enough virtual address space headroom for these
-# common entrypoints too when they appear to be running tests.
+# Node+WASM and browser-based E2E tests can reserve large amounts of virtual address space.
+# Under `RLIMIT_AS` the default `AERO_MEM_LIMIT=12G` can be too small:
+# - Node + WASM heavy unit tests (via `node --test`, `vitest`, `wasm-pack --node`, ...)
+# - Playwright/browser E2E runs, where Chromium + WASM (SharedArrayBuffer + threads) can require a
+#   very large virtual address space and may otherwise crash or fail `WebAssembly.Memory()`.
+#
+# Since `RLIMIT_AS` is inherited by child processes, bump the default headroom for common wrapper
+# entrypoints that run tests (`npm`/`pnpm`/`yarn`/`npx`/`wasm-pack`) and for `cargo xtask ... --e2e`.
 if [[ -z "${AERO_MEM_LIMIT:-}" ]]; then
     case "${cmd0_basename}" in
         npm|npm.exe|pnpm|pnpm.exe|yarn|yarn.exe|npx|npx.exe|wasm-pack|wasm-pack.exe)
             wants_node_wasm_mem=false
+            wants_playwright_mem=false
             for arg in "${@:2}"; do
                 case "${arg}" in
-                    test|test:*|test-*)
-                        wants_node_wasm_mem=true
+                    # Playwright/browser-based tests.
+                    playwright|playwright:*|test:e2e|test:e2e:*|test:webgpu|test:gpu|test:coi|test:security-headers)
+                        wants_playwright_mem=true
                         break
                         ;;
-                    vitest|vitest:*|playwright|playwright:*)
+                    # Node-based test runners that may load large WASM bundles.
+                    test|test:*|test-*|vitest|vitest:*)
                         wants_node_wasm_mem=true
-                        break
                         ;;
                 esac
             done
-            if [[ "${wants_node_wasm_mem}" == "true" ]]; then
+            if [[ "${wants_playwright_mem}" == "true" ]]; then
+                MEM_LIMIT="${AERO_PLAYWRIGHT_MEM_LIMIT:-256G}"
+            elif [[ "${wants_node_wasm_mem}" == "true" ]]; then
                 MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-32G}"
             fi
-            unset wants_node_wasm_mem arg 2>/dev/null || true
+            unset wants_node_wasm_mem wants_playwright_mem arg 2>/dev/null || true
+            ;;
+        playwright|playwright.exe)
+            MEM_LIMIT="${AERO_PLAYWRIGHT_MEM_LIMIT:-256G}"
+            ;;
+        cargo|cargo.exe)
+            # `cargo xtask ... --e2e` (via the repo's Cargo alias) runs Playwright.
+            aero_args=("$@")
+            # Skip optional toolchain selector: `cargo +nightly ...`
+            idx=1
+            if [[ ${#aero_args[@]} -gt 1 && "${aero_args[1]}" == +* ]]; then
+                idx=2
+            fi
+            if [[ ${#aero_args[@]} -gt $idx && "${aero_args[$idx]}" == "xtask" ]]; then
+                for arg in "${aero_args[@]:$((idx + 1))}"; do
+                    if [[ "${arg}" == "--e2e" ]]; then
+                        MEM_LIMIT="${AERO_PLAYWRIGHT_MEM_LIMIT:-256G}"
+                        break
+                    fi
+                done
+            fi
+            unset aero_args idx arg 2>/dev/null || true
             ;;
     esac
 fi
