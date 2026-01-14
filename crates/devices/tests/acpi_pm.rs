@@ -46,8 +46,7 @@ fn pm1_status_write_one_to_clear_and_sci_level() {
 
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log.clone())),
-        request_sleep: None,
-        request_power_off: None,
+        ..Default::default()
     };
 
     let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
@@ -354,8 +353,7 @@ fn wak_sts_does_not_assert_sci_by_itself() {
     let irq = TestIrqLevel::new();
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(irq.clone()),
-        request_sleep: None,
-        request_power_off: None,
+        ..Default::default()
     };
 
     let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
