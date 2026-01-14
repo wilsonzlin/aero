@@ -4625,6 +4625,16 @@ pub struct Machine {
     // - 1: synthetic USB HID keyboard (KeyHidUsage)
     // - 2: virtio-input keyboard (KeyHidUsage -> Linux KEY_*)
     input_batch_keyboard_backend: u8,
+    // Current mouse button mask tracked from `InputEventType::MouseButtons` events in
+    // `Machine::inject_input_batch`. Used to prevent backend switches while a button is held.
+    input_batch_mouse_buttons_mask: u8,
+    // Cached mouse backend selection used by `Machine::inject_input_batch`.
+    //
+    // Encoding:
+    // - 0: PS/2 i8042 mouse
+    // - 1: synthetic USB HID mouse
+    // - 2: virtio-input mouse
+    input_batch_mouse_backend: u8,
 
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
@@ -4843,6 +4853,8 @@ impl Machine {
             input_batch_pressed_keyboard_usages: [0u8; 256],
             input_batch_pressed_keyboard_usage_count: 0,
             input_batch_keyboard_backend: 0,
+            input_batch_mouse_buttons_mask: 0,
+            input_batch_mouse_backend: 0,
             next_snapshot_id: 1,
             last_snapshot_id: None,
             guest_time: GuestTime::default(),
@@ -9015,7 +9027,7 @@ impl Machine {
         let ps2_available = self.i8042.is_some();
 
         let virtio_keyboard_driver_ok = self.virtio_input_keyboard_driver_ok();
-        let use_virtio_mouse = self.virtio_input_mouse_driver_ok();
+        let virtio_mouse_driver_ok = self.virtio_input_mouse_driver_ok();
 
         let usb_keyboard_present = self.usb_hid_keyboard.is_some();
         let usb_keyboard_ready = self
@@ -9053,13 +9065,26 @@ impl Machine {
         let use_usb_keyboard = self.input_batch_keyboard_backend == 1 && usb_keyboard_present;
         let use_ps2_keyboard = self.input_batch_keyboard_backend == 0 && ps2_available;
 
-        let use_usb_mouse = !use_virtio_mouse
-            && if ps2_available {
-                usb_mouse_ready
+        // Mouse backend selection: keep the backend stable while any button is held down to avoid
+        // leaving the previous backend in a latched state (stuck drag).
+        let usb_mouse_ok = if ps2_available {
+            usb_mouse_ready
+        } else {
+            usb_mouse_present
+        };
+        let mouse_buttons_held = self.input_batch_mouse_buttons_mask != 0;
+        if !mouse_buttons_held {
+            self.input_batch_mouse_backend = if virtio_mouse_driver_ok {
+                2
+            } else if usb_mouse_ok {
+                1
             } else {
-                usb_mouse_present
+                0
             };
-        let use_ps2_mouse = !use_virtio_mouse && !use_usb_mouse && ps2_available;
+        }
+        let use_virtio_mouse = self.input_batch_mouse_backend == 2 && virtio_mouse_driver_ok;
+        let use_usb_mouse = self.input_batch_mouse_backend == 1 && usb_mouse_present;
+        let use_ps2_mouse = self.input_batch_mouse_backend == 0 && ps2_available;
         let mut virtio_input_dirty = false;
 
         fn hid_usage_to_linux_key(usage: u8) -> Option<u16> {
@@ -9412,6 +9437,7 @@ impl Machine {
                 }
                 TYPE_MOUSE_BUTTONS => {
                     let next = (a as u8) & 0x1f;
+                    self.input_batch_mouse_buttons_mask = next;
                     if use_ps2_mouse {
                         // Payload:
                         //   a = buttons bitmask (low 5 bits match DOM `MouseEvent.buttons`)
@@ -9515,6 +9541,18 @@ impl Machine {
             };
         }
 
+        // Re-evaluate mouse backend selection after processing the batch: button-up events can make
+        // it safe to switch away from PS/2 or USB injection.
+        if self.input_batch_mouse_buttons_mask == 0 {
+            self.input_batch_mouse_backend = if virtio_mouse_driver_ok {
+                2
+            } else if usb_mouse_ok {
+                1
+            } else {
+                0
+            };
+        }
+
         if virtio_input_dirty {
             // Poll once to forward any newly enqueued input events into guest virtqueues.
             self.process_virtio_input();
@@ -9605,6 +9643,8 @@ impl Machine {
         self.input_batch_pressed_keyboard_usages.fill(0);
         self.input_batch_pressed_keyboard_usage_count = 0;
         self.input_batch_keyboard_backend = 0;
+        self.input_batch_mouse_buttons_mask = 0;
+        self.input_batch_mouse_backend = 0;
         self.guest_time.reset();
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
@@ -14636,6 +14676,8 @@ impl snapshot::SnapshotTarget for Machine {
         self.input_batch_pressed_keyboard_usages.fill(0);
         self.input_batch_pressed_keyboard_usage_count = 0;
         self.input_batch_keyboard_backend = 0;
+        self.input_batch_mouse_buttons_mask = 0;
+        self.input_batch_mouse_backend = 0;
         self.reset_latch.clear();
         self.assist = AssistContext::default();
         self.display_fb.clear();
