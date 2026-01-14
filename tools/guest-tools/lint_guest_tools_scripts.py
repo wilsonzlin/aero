@@ -307,19 +307,55 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         ),
         Invariant(
             description="Supports /testsigning flag (x64 test driver signing)",
-            expected_hint="/testsigning",
-            predicate=_contains("/testsigning"),
+            expected_hint='Parses "/testsigning" (or alias) into ARG_FORCE_TESTSIGN=1',
+            predicate=_any_regex(
+                [
+                    r'(?i)/testsigning"\s+set\s+"?ARG_FORCE_TESTSIGN=1"?',
+                    r'(?i)/forcetestsigning"\s+set\s+"?ARG_FORCE_TESTSIGN=1"?',
+                    r'(?i)/force-testsigning"\s+set\s+"?ARG_FORCE_TESTSIGN=1"?',
+                ]
+            ),
         ),
         Invariant(
             description="Supports /nointegritychecks flag (signature enforcement off; not recommended)",
-            expected_hint="/nointegritychecks",
-            predicate=_contains("/nointegritychecks"),
+            expected_hint='Parses "/nointegritychecks" (or alias) into ARG_FORCE_NOINTEGRITY=1',
+            predicate=_any_regex(
+                [
+                    r'(?i)/nointegritychecks"\s+set\s+"?ARG_FORCE_NOINTEGRITY=1"?',
+                    r'(?i)/forcenointegritychecks"\s+set\s+"?ARG_FORCE_NOINTEGRITY=1"?',
+                    r'(?i)/no-integrity-checks"\s+set\s+"?ARG_FORCE_NOINTEGRITY=1"?',
+                ]
+            ),
         ),
         Invariant(
             description="Supports /forcesigningpolicy:none|test|production flag",
             expected_hint="/forcesigningpolicy:none, /forcesigningpolicy:test, /forcesigningpolicy:production",
-            predicate=_all_contains(
-                ["/forcesigningpolicy:none", "/forcesigningpolicy:test", "/forcesigningpolicy:production"]
+            predicate=_all_regex(
+                [
+                    r'(?i)/forcesigningpolicy:none"\s+set\s+"?ARG_FORCE_SIGNING_POLICY=none"?',
+                    r'(?i)/forcesigningpolicy:test"\s+set\s+"?ARG_FORCE_SIGNING_POLICY=test"?',
+                    r'(?i)/forcesigningpolicy:production"\s+set\s+"?ARG_FORCE_SIGNING_POLICY=production"?',
+                ]
+            ),
+        ),
+        Invariant(
+            description="Supports /notestsigning flag (suppresses Test Signing changes)",
+            expected_hint='Parses "/notestsigning" (or /no-testsigning) into ARG_SKIP_TESTSIGN=1',
+            predicate=_any_regex(
+                [
+                    r'(?i)/notestsigning"\s+set\s+"?ARG_SKIP_TESTSIGN=1"?',
+                    r'(?i)/no-testsigning"\s+set\s+"?ARG_SKIP_TESTSIGN=1"?',
+                ]
+            ),
+        ),
+        Invariant(
+            description="Supports /installcerts override flag (force cert install for production/none; advanced)",
+            expected_hint='Parses "/installcerts" (or /install-certs) into ARG_INSTALL_CERTS=1',
+            predicate=_any_regex(
+                [
+                    r'(?i)/installcerts"\s+set\s+"?ARG_INSTALL_CERTS=1"?',
+                    r'(?i)/install-certs"\s+set\s+"?ARG_INSTALL_CERTS=1"?',
+                ]
             ),
         ),
         Invariant(

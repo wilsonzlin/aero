@@ -60,9 +60,13 @@ def _synthetic_setup_text(
             'if /i "%SIGNING_POLICY%"=="test" echo ok',
             'if /i "%SIGNING_POLICY%"=="production" echo ok',
             'if /i "%SIGNING_POLICY%"=="none" echo ok',
-            "/testsigning",
-            "/nointegritychecks",
-            "/forcesigningpolicy:none /forcesigningpolicy:test /forcesigningpolicy:production",
+            r'if /i "%%~A"=="/testsigning" set "ARG_FORCE_TESTSIGN=1"',
+            r'if /i "%%~A"=="/nointegritychecks" set "ARG_FORCE_NOINTEGRITY=1"',
+            r'if /i "%%~A"=="/forcesigningpolicy:none" set "ARG_FORCE_SIGNING_POLICY=none"',
+            r'if /i "%%~A"=="/forcesigningpolicy:test" set "ARG_FORCE_SIGNING_POLICY=test"',
+            r'if /i "%%~A"=="/forcesigningpolicy:production" set "ARG_FORCE_SIGNING_POLICY=production"',
+            r'if /i "%%~A"=="/notestsigning" set "ARG_SKIP_TESTSIGN=1"',
+            r'if /i "%%~A"=="/installcerts" set "ARG_INSTALL_CERTS=1"',
         ]
     )
 
@@ -153,9 +157,6 @@ def _synthetic_setup_text(
 
     if include_cert_policy_gating:
         lines.append('if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"')
-
-    if include_cert_install_skip_policy:
-        lines.append("/installcerts")
 
     # Certificate policy gating lives in :install_certs in the real setup.cmd.
     lines.append(":install_certs")
