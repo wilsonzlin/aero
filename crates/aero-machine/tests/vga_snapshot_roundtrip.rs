@@ -1,4 +1,4 @@
-use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT, VBE_FRAMEBUFFER_OFFSET};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -59,6 +59,83 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     // Write a few pixels (packed 32bpp BGRX).
     let base = u64::from(lfb_base);
     assert_eq!(vm.vbe_lfb_base(), base);
+    vm.write_physical_u32(base, 0x00FF_0000); // (0,0) red
+    vm.write_physical_u32(base + 4, 0x0000_FF00); // (1,0) green
+    vm.write_physical_u32(base + 8, 0x0000_00FF); // (2,0) blue
+    vm.write_physical_u32(base + 12, 0x00FF_FFFF); // (3,0) white
+
+    vm.display_present();
+    let (width, height) = vm.display_resolution();
+    let hash_before = framebuffer_hash_rgba8888(vm.display_framebuffer());
+
+    let snap = vm.take_snapshot_full().unwrap();
+
+    let mut vm2 = Machine::new(cfg).unwrap();
+    vm2.reset();
+    vm2.restore_snapshot_bytes(&snap).unwrap();
+
+    vm2.display_present();
+    assert_eq!(vm2.display_resolution(), (width, height));
+    let hash_after = framebuffer_hash_rgba8888(vm2.display_framebuffer());
+    assert_eq!(hash_after, hash_before);
+}
+
+#[test]
+fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer_with_derived_lfb_base() {
+    // Exercise the optional VRAM layout knobs even through snapshot/restore:
+    //   lfb_base = vga_vram_bar_base + vga_lfb_offset
+    //
+    // Use a derived base outside the BIOS PCI BAR allocator default window
+    // (`0xE000_0000..0xF000_0000`) to ensure snapshot restore does not rely on that sub-window.
+    //
+    // Deliberately choose an unaligned derived base so the machine must apply BAR-size alignment
+    // masking.
+    let lfb_offset: u32 = VBE_FRAMEBUFFER_OFFSET as u32;
+    let vram_bar_base: u32 = 0xCFFC_1000;
+    let derived_lfb_base: u32 = vram_bar_base.wrapping_add(lfb_offset);
+    assert_eq!(derived_lfb_base, 0xD000_1000);
+
+    let cfg = MachineConfig {
+        ram_size_bytes: 64 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_aerogpu: false,
+        vga_lfb_base: None,
+        vga_vram_bar_base: Some(vram_bar_base),
+        vga_lfb_offset: Some(lfb_offset),
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut vm = Machine::new(cfg.clone()).unwrap();
+
+    // Program Bochs VBE_DISPI to 64x64x32 with LFB enabled.
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
+
+    let vga = vm.vga().expect("VGA enabled");
+    let bar_size_bytes: u32 = vga
+        .borrow()
+        .vram_size()
+        .try_into()
+        .expect("VRAM size fits in u32");
+    assert!(bar_size_bytes.is_power_of_two());
+    let expected_aligned_base = derived_lfb_base & !(bar_size_bytes - 1);
+
+    let base = u64::from(expected_aligned_base);
+    assert_eq!(vm.vbe_lfb_base(), base);
+
+    // Write a few pixels (packed 32bpp BGRX).
     vm.write_physical_u32(base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(base + 8, 0x0000_00FF); // (2,0) blue
