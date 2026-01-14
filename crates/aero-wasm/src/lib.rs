@@ -3292,6 +3292,91 @@ where
     aero_storage::AeroCowDisk::open(base, overlay_backend)
 }
 
+#[cfg(test)]
+mod cow_base_format_tests {
+    use super::open_or_create_cow_disk;
+
+    use aero_storage::StorageBackend;
+    use aero_storage::VirtualDisk;
+    use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskFormat, DiskImage, MemBackend};
+
+    fn sample_pattern(len: usize) -> Vec<u8> {
+        // Deterministic non-trivial data so a failure to consult the base disk is obvious.
+        (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(7)).collect()
+    }
+
+    #[test]
+    fn cow_reads_from_raw_base_when_overlay_blocks_unallocated() {
+        const BASE_SIZE: u64 = 8192;
+        const OVERLAY_BLOCK_SIZE: u32 = 4096;
+        let pattern = sample_pattern(6000);
+
+        // Base: raw bytes.
+        let mut base_backend = MemBackend::with_len(BASE_SIZE).expect("MemBackend::with_len");
+        base_backend
+            .write_at(0, &pattern)
+            .expect("write pattern to raw base backend");
+
+        let base = DiskImage::open_auto(base_backend).expect("DiskImage::open_auto(raw)");
+        assert_eq!(base.format(), DiskFormat::Raw);
+
+        // Overlay: empty -> created by `open_or_create_cow_disk`.
+        let overlay_backend = MemBackend::new();
+        let mut cow =
+            open_or_create_cow_disk(base, overlay_backend, OVERLAY_BLOCK_SIZE).expect("open COW");
+
+        // Sanity: overlay should start with no allocated data blocks.
+        assert!(!cow.overlay().is_block_allocated(0));
+        assert!(!cow.overlay().is_block_allocated(1));
+
+        let mut buf = vec![0u8; pattern.len()];
+        cow.read_at(0, &mut buf)
+            .expect("read from COW falls back to base");
+        assert_eq!(buf, pattern);
+    }
+
+    #[test]
+    fn cow_reads_from_aerosparse_base_when_overlay_blocks_unallocated() {
+        const BASE_SIZE: u64 = 8192;
+        const BASE_BLOCK_SIZE: u32 = 4096;
+        const OVERLAY_BLOCK_SIZE: u32 = 4096;
+        let pattern = sample_pattern(6000);
+
+        // Base: aerosparse image stored in a MemBackend.
+        let base_backend = MemBackend::new();
+        let mut base_sparse = AeroSparseDisk::create(
+            base_backend,
+            AeroSparseConfig {
+                disk_size_bytes: BASE_SIZE,
+                block_size_bytes: BASE_BLOCK_SIZE,
+            },
+        )
+        .expect("create aerosparse base");
+
+        base_sparse
+            .write_at(0, &pattern)
+            .expect("write pattern to aerosparse base");
+        base_sparse.flush().expect("flush aerosparse base");
+
+        // Re-open via format detection to match the wasm OPFS code path.
+        let base_backend = base_sparse.into_backend();
+        let base = DiskImage::open_auto(base_backend).expect("DiskImage::open_auto(aerosparse)");
+        assert_eq!(base.format(), DiskFormat::AeroSparse);
+
+        let overlay_backend = MemBackend::new();
+        let mut cow =
+            open_or_create_cow_disk(base, overlay_backend, OVERLAY_BLOCK_SIZE).expect("open COW");
+
+        assert!(!cow.overlay().is_block_allocated(0));
+        assert!(!cow.overlay().is_block_allocated(1));
+
+        let mut buf = vec![0u8; pattern.len()];
+        cow.read_at(0, &mut buf)
+            .expect("read from COW falls back to base");
+        assert_eq!(buf, pattern);
+    }
+}
+
 /// Canonical machine BIOS boot device selection.
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4604,7 +4689,7 @@ impl Machine {
 
     /// Attach the canonical primary HDD (`disk_id=0`, AHCI port 0) as a copy-on-write disk built
     /// from:
-    /// - a raw base image (OPFS), plus
+    /// - a base image (OPFS; raw or AeroSparse), plus
     /// - an `aerosparse` overlay (OPFS) that stores all guest writes.
     ///
     /// This allows the VM to boot from a persistent base disk image without mutating it, while
@@ -4629,7 +4714,7 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_cow(base)", &paths, e)
             })?;
 
-        let base_disk = aero_storage::RawDisk::open(base_storage).map_err(|e| {
+        let base_disk = aero_storage::DiskImage::open_auto(base_storage).map_err(|e| {
             opfs_context_error_to_js("Machine.set_primary_hdd_opfs_cow(base)", &paths, e)
         })?;
 
