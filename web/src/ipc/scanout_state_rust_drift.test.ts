@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  SCANOUT_FORMAT_B8G8R8A8,
+  SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_FORMAT_B8G8R8X8_SRGB,
   SCANOUT_SOURCE_LEGACY_TEXT,
   SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_SOURCE_WDDM,
@@ -139,6 +142,15 @@ describe("ScanoutState layout matches Rust source of truth", () => {
     // Scanout format enum values.
     expect(SCANOUT_FORMAT_B8G8R8X8, "SCANOUT_FORMAT_B8G8R8X8 mismatch (Rust <-> TS)").toBe(
       parseRustConstNumber(rust, "SCANOUT_FORMAT_B8G8R8X8"),
+    );
+    expect(SCANOUT_FORMAT_B8G8R8A8, "SCANOUT_FORMAT_B8G8R8A8 mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "SCANOUT_FORMAT_B8G8R8A8"),
+    );
+    expect(SCANOUT_FORMAT_B8G8R8X8_SRGB, "SCANOUT_FORMAT_B8G8R8X8_SRGB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "SCANOUT_FORMAT_B8G8R8X8_SRGB"),
+    );
+    expect(SCANOUT_FORMAT_B8G8R8A8_SRGB, "SCANOUT_FORMAT_B8G8R8A8_SRGB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "SCANOUT_FORMAT_B8G8R8A8_SRGB"),
     );
 
     // Header indices / layout offsets.
