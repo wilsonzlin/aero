@@ -839,7 +839,7 @@ fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
         },
     )
     .unwrap();
-    let backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
+    let backend: Box<dyn VirtualDisk> = Box::new(disk);
     let blk = VirtioBlk::new(backend);
     let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
     let (mut dev, caps, mut mem) = setup_pci_device(dev);

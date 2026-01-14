@@ -304,7 +304,7 @@ mod native {
         Ok(disk)
     }
 
-    fn open_disk_backend(path: &Path, read_only: bool) -> Result<Box<dyn VirtualDisk + Send>> {
+    fn open_disk_backend(path: &Path, read_only: bool) -> Result<Box<dyn VirtualDisk>> {
         let disk = open_disk_image(path, read_only)?;
         Ok(Box::new(disk))
     }
@@ -313,7 +313,7 @@ mod native {
         base_path: &Path,
         overlay_path: &Path,
         create_block_size: u32,
-    ) -> Result<Box<dyn VirtualDisk + Send>> {
+    ) -> Result<Box<dyn VirtualDisk>> {
         let base = open_disk_image(base_path, true)?;
 
         let overlay_exists = overlay_path.exists();

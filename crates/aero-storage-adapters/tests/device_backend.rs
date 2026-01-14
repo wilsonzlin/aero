@@ -1,11 +1,10 @@
-use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
 
 #[test]
 fn device_backend_enforces_sector_alignment() {
     let disk = RawDisk::create(MemBackend::with_len(4096).unwrap(), 4096).unwrap();
-    let backend =
-        AeroVirtualDiskAsDeviceBackend::new(Box::new(disk) as Box<dyn VirtualDisk + Send>);
+    let backend = AeroVirtualDiskAsDeviceBackend::new(Box::new(disk));
 
     let mut buf = vec![0u8; SECTOR_SIZE];
 
@@ -20,8 +19,7 @@ fn device_backend_enforces_sector_alignment() {
 #[test]
 fn device_backend_reports_out_of_bounds_as_unexpected_eof() {
     let disk = RawDisk::create(MemBackend::with_len(1024).unwrap(), 1024).unwrap();
-    let backend =
-        AeroVirtualDiskAsDeviceBackend::new(Box::new(disk) as Box<dyn VirtualDisk + Send>);
+    let backend = AeroVirtualDiskAsDeviceBackend::new(Box::new(disk));
 
     let mut buf = vec![0u8; SECTOR_SIZE];
     let err = backend.read_at_aligned(1024, &mut buf).unwrap_err();
@@ -31,8 +29,7 @@ fn device_backend_reports_out_of_bounds_as_unexpected_eof() {
 #[test]
 fn device_backend_read_write_roundtrip() {
     let disk = RawDisk::create(MemBackend::with_len(1024).unwrap(), 1024).unwrap();
-    let backend =
-        AeroVirtualDiskAsDeviceBackend::new(Box::new(disk) as Box<dyn VirtualDisk + Send>);
+    let backend = AeroVirtualDiskAsDeviceBackend::new(Box::new(disk));
 
     let data = vec![0xA5u8; SECTOR_SIZE];
     backend.write_at_aligned(0, &data).unwrap();
