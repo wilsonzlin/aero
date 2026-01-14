@@ -1317,10 +1317,16 @@ impl XhciController {
     /// guest-configured event ring.
     ///
     /// This is a convenience wrapper for integrations that want "one call per millisecond frame"
-    /// behaviour. Note that event ring delivery performs DMA into guest memory and should therefore
-    /// be gated on PCI Bus Master Enable by the caller.
+    /// behaviour:
+    /// - advances port timers,
+    /// - executes any pending transfer ring work, and
+    /// - delivers queued events into the guest event ring.
+    ///
+    /// Note that both transfer execution and event ring delivery perform DMA into guest memory and
+    /// should therefore be gated on PCI Bus Master Enable by the caller.
     pub fn tick_1ms_and_service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
         self.tick_1ms();
+        self.tick(mem);
         self.service_event_ring(mem);
     }
 

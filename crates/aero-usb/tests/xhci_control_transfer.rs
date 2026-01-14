@@ -115,8 +115,7 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     let doorbell_offset =
         u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
-    xhci.tick(&mut mem);
-    xhci.service_event_ring(&mut mem);
+    xhci.tick_1ms_and_service_event_ring(&mut mem);
 
     // Verify the device descriptor bytes landed in guest memory.
     let mut got = vec![0u8; expected.len()];

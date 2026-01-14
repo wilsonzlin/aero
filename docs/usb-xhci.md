@@ -23,9 +23,10 @@ Status:
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
 - The web runtime currently exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge`
   (wrapping `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO
-  registers, USB2 root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, snapshot/restore),
-  but it does **not** yet execute command/transfer rings (no doorbell array), so treat it as a
-  bring-up/placeholder surface for now.
+  registers, USB2 root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery,
+  snapshot/restore), but it does not yet execute the full command/transfer rings (command ring
+  processing and non-control transfers are still missing; the WASM bridge does not yet drive the
+  transfer scheduler), so treat it as a bring-up/placeholder surface for now.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -179,9 +180,12 @@ used by tests and harnesses).
       - USB Legacy Support (BIOS owned cleared, OS owned set), and
       - Supported Protocol (USB 2.0 + speed IDs) sized to `port_count`.
     - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
-  - DBOFF/RTSOFF report realistic offsets. The doorbell array is not implemented yet, but the
-    runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
-    Rust tests and by the web/WASM bridge via `poll()`).
+  - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
+    - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
+      executor (Setup/Data/Status TRBs)
+    - command ring doorbell (doorbell 0) is not modeled yet.
+    - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
+      Rust tests and by the web/WASM bridge via `poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT + interrupter
     pending), used to validate **INTx disable gating**.
@@ -199,8 +203,8 @@ used by tests and harnesses).
   - `irq_asserted()` reflects `XhciController::irq_level()` (USBSTS.EINT / interrupter pending).
   - Deterministic snapshot/restore of the controller state + tick counter.
 
-These are **not** full xHCI implementations. In particular, the guest-visible doorbell array and
-full command ring integration are not implemented yet.
+These are **not** full xHCI implementations. In particular, full command ring integration and
+guest-visible transfer execution for non-control endpoints are not implemented yet.
 
 #### TRB + ring building blocks
 
@@ -258,8 +262,9 @@ guest transfer ring:
 - `NAK` leaves the TD pending and retries on the next `tick_1ms` (no busy loops).
 - Emits Transfer Event TRBs into a simple contiguous event ring (used by unit tests).
 
-This engine is currently a standalone transfer-plane component; it is not yet wired into the
-guest-visible `XhciController` MMIO/doorbell model.
+This engine is currently a standalone transfer-plane component used by tests; `XhciController` has
+its own minimal doorbell-driven endpoint-0 executor, so `Ep0TransferEngine` is not wired into the
+guest-visible MMIO model.
 
 ### Device model layer
 
@@ -289,17 +294,13 @@ Dedicated EP0 unit tests also exist:
 ### Still MVP-relevant but not implemented yet
 
 - Full root hub model (USB3 ports, additional link states, full port register/event coverage).
-- Automatic event ring servicing as part of the main controller tick/PCI wrapper (today, some
-  integrations must call `service_event_ring()`/`tick_1ms_and_service_event_ring()` explicitly; in the
-  web runtime this is done via the WASM bridge `poll()` hook).
-- Doorbell array and doorbell-driven execution of the command ring and transfer rings.
-- Transfer-ring execution and transfer completion event generation/delivery (beyond the existing
-  building blocks/tests).
-- Full command ring + event ring integration (today, command-ring processing exists as staged
-  helpers/tests, but the controller does not yet expose a complete driver-friendly model).
-- Endpoint 0 control transfer engine wired into the controller (doorbells + endpoint contexts), beyond the standalone `Ep0TransferEngine`.
-- Wiring xHCI into the canonical machine/topology (native). (PCI identity is already aligned across
-  web + native via the QEMU-style `1b36:000d` profile.)
+- Delivery of command completion events via the guest event ring/interrupter (Port Status Change +
+  endpoint-0 Transfer Events exist today).
+- Command ring doorbell (doorbell 0) and full command ring processing.
+- Full command ring + event ring integration (today, command-ring processing exists as standalone
+  helpers/tests, but the controller MMIO surface does not yet expose the full model).
+- Bulk/interrupt transfer engine (Normal TRBs) wired into the controller (beyond the test harness).
+- Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
 
 ---
 
@@ -308,12 +309,13 @@ Dedicated EP0 unit tests also exist:
 xHCI is a large spec. The MVP intentionally leaves out many features that guests and/or real hardware may use:
 
 - **Root hub / port model** beyond the current USB2-only PORTSC subset + reset timer scaffolding (no USB3 ports/link states yet).
-- **Doorbell array** (DB registers) and doorbell-driven command/transfer execution.
+- **Doorbell-driven command ring + non-control transfer execution** (the doorbell array is partially
+  implemented, but command ring processing and non-control transfers are still missing).
 - **Full command ring/event ring integration** and the full xHCI slot/endpoint context state machines
   (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). Some command/endpoint-management
   helpers exist for tests, but they are not yet exposed as a guest-visible controller.
-- **Controller-integrated endpoint 0 transfers** (a standalone `Ep0TransferEngine` exists for tests,
-  but `XhciController` does not yet expose doorbell-driven transfer-ring processing).
+- **Non-control transfer execution via Normal TRBs** (bulk/interrupt endpoints) integrated into the
+  guest-visible controller.
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI-X** interrupt delivery. (MSI support is platform-dependent; the web runtime uses INTx only today.)
