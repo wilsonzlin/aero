@@ -528,6 +528,39 @@ fn int10_vbe_get_maximum_scanline_length_reports_max_scan_lines_in_dx() {
 }
 
 #[test]
+fn int10_vbe_set_scanline_length_in_bytes_rounds_to_whole_pixels() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Enter a 32bpp VBE mode first.
+    cpu.set_ax(0x4F02);
+    cpu.set_bx(0x112 | 0x4000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+
+    // 4F06 BL=2: set scanline length in bytes. Use an odd byte count so the BIOS must round up
+    // to a whole number of pixels (4 bytes per pixel).
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0002);
+    cpu.set_cx(4101);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.bx(), 4104);
+    assert_eq!(cpu.cx(), 4104 / 4);
+
+    // 4F06 BL=1: get should reflect the updated values.
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0001);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+    assert_eq!(cpu.bx(), 4104);
+    assert_eq!(cpu.cx(), 4104 / 4);
+}
+
+#[test]
 fn int10_vbe_misc_services() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));

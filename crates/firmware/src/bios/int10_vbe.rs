@@ -123,9 +123,30 @@ impl Bios {
                             .and_then(|m| self.video.vbe.find_mode(m))
                         {
                             let bpp = mode.bytes_per_pixel();
-                            let pixels = if bpp == 0 { 0 } else { bytes / bpp };
+                            // VBE reports scanline length in bytes, but scanout is in packed pixels.
+                            // Round up to a whole number of pixels so each row begins on a pixel
+                            // boundary.
+                            //
+                            // This keeps `(logical_width_pixels * bytes_per_pixel) ==
+                            // bytes_per_scan_line` for packed-pixel modes and avoids publishing
+                            // scanout descriptors with unaligned pitch.
+                            let bytes_aligned = if bpp == 0 {
+                                0
+                            } else {
+                                // Align up to a whole pixel count.
+                                let bpp_u32 = u32::from(bpp);
+                                let bytes_u32 = u32::from(bytes);
+                                let aligned = bytes_u32.div_ceil(bpp_u32).saturating_mul(bpp_u32);
+                                aligned.min(u32::from(u16::MAX)) as u16
+                            };
                             self.video.vbe.bytes_per_scan_line =
-                                bytes.max(mode.bytes_per_scan_line());
+                                bytes_aligned.max(mode.bytes_per_scan_line());
+
+                            let pixels = if bpp == 0 {
+                                0
+                            } else {
+                                self.video.vbe.bytes_per_scan_line / bpp
+                            };
                             self.video.vbe.logical_width_pixels = pixels.max(mode.width);
                             cpu.set_bx(self.video.vbe.bytes_per_scan_line);
                             cpu.set_cx(self.video.vbe.logical_width_pixels);

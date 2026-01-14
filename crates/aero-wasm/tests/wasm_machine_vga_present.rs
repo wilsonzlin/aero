@@ -549,8 +549,9 @@ fn boot_sector_vbe_bios_640x480x32_scanline_override_red_pixel() -> [u8; 512] {
     // - set a standard VBE mode (0x112 = 640x480x32bpp)
     // - override the logical scanline length in *bytes* via AX=4F06 BL=0x02
     //
-    // This exercises the BIOS "scanline override" path, which can set a pitch that is not
-    // representable as `virt_width * bytes_per_pixel` (e.g. 4101 bytes for 32bpp).
+    // This exercises the BIOS "scanline override" path. We intentionally request an odd byte
+    // length (4101) so the BIOS must round it up to a whole number of pixels (=> 4104 bytes for
+    // 32bpp).
 
     // xor ax, ax
     sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
@@ -580,7 +581,7 @@ fn boot_sector_vbe_bios_640x480x32_scanline_override_red_pixel() -> [u8; 512] {
     i += 2;
 
     // VBE Set/Get Logical Scan Line Length (AX=4F06), subfunction "set in bytes" (BL=0x02).
-    // Choose an odd pitch (4101) to ensure it cannot be derived as `virt_width * 4`.
+    // Choose an odd pitch (4101) so the BIOS must round it up to a whole number of pixels.
     // mov ax, 0x4F06
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x06, 0x4F]);
     i += 3;
@@ -976,7 +977,8 @@ fn wasm_machine_vbe_scanline_override_is_reflected_in_scanout_state_pitch() {
         assert_eq!(snap.base_paddr, u64::from(machine.vbe_lfb_base()));
         assert_eq!(snap.width, 640);
         assert_eq!(snap.height, 480);
-        assert_eq!(snap.pitch_bytes, 4101);
+        // The BIOS rounds scanline length up to a whole number of pixels (4 bytes per pixel).
+        assert_eq!(snap.pitch_bytes, 4104);
         assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
     }
 
