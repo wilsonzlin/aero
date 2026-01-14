@@ -903,17 +903,22 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// some firmware/OS implementations use to discover a VGA-compatible controller and map the Bochs
 /// VBE linear framebuffer (LFB) via PCI BAR0.
 ///
-/// Note: The canonical `aero_machine::Machine` no longer exposes this device, but the identity is
-/// kept here as a reserved contract for compatibility tests and alternate machine integrations.
+/// Note: The canonical `aero_machine::Machine` exposes this device only when the standalone legacy
+/// VGA/VBE boot display path is enabled (`MachineConfig::enable_vga=true`, `enable_aerogpu=false`)
+/// and the PC platform is enabled (`enable_pc_platform=true`). In that configuration, the VBE LFB
+/// is routed through the stub's BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST /
+/// the PCI allocator).
+///
+/// This stub is intentionally absent when AeroGPU is enabled to avoid exposing two VGA-class PCI
+/// display controllers to the guest (which can confuse Windows driver binding).
 ///
 /// It is *not* AeroGPU. The canonical AeroGPU contract is [`AEROGPU`].
 pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
     name: "vga-transitional-stub",
     // Historical fixed BDF used by Aero's deprecated transitional VGA PCI stub (`00:0c.0`).
     //
-    // The canonical `aero_machine::Machine` no longer exposes this PCI function (it routes the VBE
-    // LFB directly inside the PCI MMIO window), but we keep the identity here as a reserved
-    // contract for compatibility tests and alternate machine integrations.
+    // The canonical `aero_machine::Machine` exposes this PCI function only in `enable_vga=true` +
+    // `enable_pc_platform=true` mode (see above). When `enable_aerogpu=true`, the stub is absent.
     bdf: PciBdf::new(0, 0x0c, 0),
     // Bochs/QEMU "Standard VGA" IDs.
     vendor_id: 0x1234,
@@ -945,7 +950,12 @@ pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
 /// Boot display in the canonical machine can still be provided by the standalone `aero_gpu_vga`
 /// VGA/VBE device model when `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`).
 /// The VBE linear framebuffer (LFB) is exposed at the configured LFB base (historically defaulting
-/// to `aero_gpu_vga::SVGA_LFB_BASE` / `0xE000_0000`) without requiring a dedicated PCI VGA stub.
+/// to `aero_gpu_vga::SVGA_LFB_BASE` / `0xE000_0000`).
+///
+/// When `enable_pc_platform=true`, the canonical machine exposes the Bochs/QEMU-compatible
+/// “Standard VGA” PCI stub [`VGA_TRANSITIONAL_STUB`] and routes the LFB through its BAR0 inside the
+/// PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator). When `enable_pc_platform=false`,
+/// the LFB is mapped directly as a fixed MMIO window at the configured physical address.
 pub const AEROGPU: PciDeviceProfile = PciDeviceProfile {
     name: "aerogpu",
     bdf: PciBdf::new(0, 7, 0),

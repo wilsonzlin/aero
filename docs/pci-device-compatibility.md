@@ -27,8 +27,13 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
     - scanout0 register storage + vblank counters/IRQ semantics for `WaitForVerticalBlankEvent`
       pacing (see `drivers/aerogpu/protocol/vblank.md`).
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation
-  (`aero_gpu_vga`) for BIOS/bootloader VGA/VBE compatibility (without exposing a dedicated PCI VGA
-  function). This path is not part of the long-term Windows paravirtual device contract.
+  (`aero_gpu_vga`) for BIOS/bootloader VGA/VBE compatibility.
+  - When `enable_pc_platform=false`, the machine maps the VBE LFB MMIO aperture directly at the
+    configured LFB base (historically defaulting to `0xE000_0000` / `aero_gpu_vga::SVGA_LFB_BASE`).
+  - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
+    PCI function at `00:0c.0` (`1234:1111`) and routes the VBE LFB through its BAR0 inside the PCI
+    MMIO window (BAR base assigned by BIOS POST / the PCI allocator).
+  This path is not part of the long-term Windows paravirtual device contract.
 
 ## Canonical PCI layout (bus/dev/fn)
 
@@ -50,7 +55,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input keyboard (Aero Win7 contract v1: `SUBSYS_00101AF4`, `REV_01`, `header_type=0x80` for multi-function discovery) |
 | 00:0A.1  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input mouse (Aero Win7 contract v1: `SUBSYS_00111AF4`, `REV_01`) |
 | 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`) |
-| 00:0c.0  | (reserved) | 1234:1111 | 03/00/00 | - | Historical Bochs/QEMU “Standard VGA” PCI stub identity (see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`). The canonical `aero_machine::Machine` keeps this BDF empty, but the identity is reserved for compatibility tests and alternate integrations. |
+| 00:0c.0  | VGA (stub) | 1234:1111 | 03/00/00 | - | Bochs/QEMU “Standard VGA” PCI stub identity (see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`). The canonical `aero_machine::Machine` exposes this only when `enable_vga=true` + `enable_pc_platform=true` (to route the VBE LFB through PCI BAR0). It is intentionally absent when `enable_aerogpu=true`. |
 | 00:0d.0  | USB3   | 1B36:000D     | 0C/03/30                 | INTA     | xHCI (USB 3.x) controller (QEMU xHCI identity). Wired in the web runtime when the WASM build exports `XhciControllerBridge` (optional/experimental; Windows 7 has no in-box xHCI driver). See [`docs/usb-xhci.md`](./usb-xhci.md). |
 | 00:12.0  | USB2   | 8086:293A     | 0C/03/20                 | INTA     | EHCI (USB 2.0) controller (ICH9-family identity; Windows 7 in-box `usbehci.sys`). See [`docs/usb-ehci.md`](./usb-ehci.md). |
 
@@ -65,8 +70,11 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
   (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
 - With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), boot display is provided by
   the standalone `aero_gpu_vga` VGA/VBE device model. Firmware reports the configured VBE LFB base
-  address (historically defaulting to `0xE000_0000`), and the machine maps the LFB MMIO aperture
-  directly at that physical address.
+  address (historically defaulting to `0xE000_0000`).
+  - When `enable_pc_platform=true`, this base is the BAR0 base of the “Standard VGA” PCI stub
+    (`00:0c.0`), assigned by BIOS POST / the PCI allocator.
+  - When `enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly at the
+    configured physical address.
 - This `enable_vga` VGA/VBE path is a stepping stone and does **not** implement the full AeroGPU
   WDDM MMIO/ring protocol described by
   [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md).
