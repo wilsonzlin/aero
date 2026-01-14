@@ -81,6 +81,9 @@ Windows shows `DEV_1018` you must configure the hypervisor to expose a modern-on
 - **Streams (fixed-format):**
   - Stream `0`: render/playback, stereo (2ch), 48kHz, S16_LE
   - Stream `1`: capture/input, mono (1ch), 48kHz, S16_LE
+- *(Optional/non-contract, Win7 driver behavior)*: if a virtio-snd implementation advertises additional formats/rates/channel
+  counts in `PCM_INFO`, the in-tree Windows 7 driver can optionally expose additional formats to the Windows audio stack
+  via dynamic WaveRT pin data ranges (while still requiring and preferring the contract-v1 baseline).
 
 ### Event queue (eventq)
 
@@ -265,7 +268,7 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
   - Enumerates as a standard Windows audio endpoint.
   - Uses the Aero **virtio-pci modern** transport (PCI vendor capabilities + BAR0 MMIO) and split virtqueues to:
     - Query stream capabilities (`PCM_INFO`)
-    - Negotiate fixed params (`PCM_SET_PARAMS`)
+    - Negotiate params (`PCM_SET_PARAMS`)
     - Start/stop streams and submit PCM buffers via the TX queue (playback) and RX queue (capture).
   - Works with PCI **INTx** (contract v1 baseline requires INTx; ISR status is read-to-ack to deassert the line).
   - Supports **MSI/MSI-X** (message-signaled interrupts). The in-tree Windows 7 driver package opts in via INF
@@ -293,7 +296,8 @@ See also:
 
 If an existing virtio-win `viosnd` driver supports Windows 7 and the project license is compatible, it could be reused to avoid writing a custom audio miniport.
 
-This option requires a licensing review (see `docs/13-legal-considerations.md`) and validation that the driver supports the subset implemented here (fixed-format playback + capture streams, S16_LE @ 48kHz).
+This option requires a licensing review (see `docs/13-legal-considerations.md`) and validation that the driver supports at
+minimum the subset implemented here (fixed-format playback + capture streams, S16_LE @ 48kHz).
 
 ## Browser Smoke Test (AudioWorklet)
 
