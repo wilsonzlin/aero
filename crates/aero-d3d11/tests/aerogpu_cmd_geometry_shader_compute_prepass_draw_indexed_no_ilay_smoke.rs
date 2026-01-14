@@ -70,8 +70,12 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_no_ilay_smoke() {
 
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("execute_cmd_stream should succeed");
+        if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
+                return;
+            }
+            panic!("execute_cmd_stream failed: {err:#}");
+        }
         exec.poll_wait();
 
         let pixels = exec
