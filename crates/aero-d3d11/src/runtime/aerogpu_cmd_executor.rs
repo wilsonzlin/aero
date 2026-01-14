@@ -13633,15 +13633,16 @@ impl AerogpuD3d11Executor {
                 // to translate yet.
                 (
                     format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
-                    {
-                        let module = crate::sm4::decode_program(&program)
-                            .context("decode SM4/5 token stream")?;
-                        let bindings = crate::shader_translate::reflect_resource_bindings(&module)
-                            .map_err(|e| anyhow!("reflect DXBC resource bindings: {e}"))?;
-                        ShaderReflection {
-                            bindings,
-                            ..Default::default()
-                        }
+                    ShaderReflection {
+                        // Best-effort reflection: HS/DS shaders are accepted but not executed yet,
+                        // so a reflection failure should not prevent shader creation.
+                        bindings: crate::sm4::decode_program(&program)
+                            .ok()
+                            .and_then(|module| {
+                                crate::shader_translate::reflect_resource_bindings(&module).ok()
+                            })
+                            .unwrap_or_default(),
+                        ..Default::default()
                     },
                 )
             }
