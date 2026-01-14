@@ -669,8 +669,8 @@ maps to distinct bind groups:
 
 `AEROGPU_CMD_BIND_SHADERS` is extended by appending `gs/hs/ds` handles after the existing payload.
 
-Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. In the
-canonical ABI this field is repurposed as the **geometry shader (GS) handle**:
+Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. Some older
+streams/hosts repurpose this field as the **geometry shader (GS) handle**:
 
 - `reserved0 == 0` → GS unbound
 - `reserved0 != 0` → GS is bound to handle `reserved0`

@@ -82,7 +82,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Geometry shaders (GS):
   - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream.
     - Legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`.
-    - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0`.
+    - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0` (should match the appended `gs`).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
     - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host uses these bindings for the GS compute-emulation path (supported subset).
