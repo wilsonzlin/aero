@@ -1891,12 +1891,13 @@ async function runTieredVm(iterations: number, threshold: number) {
     // Wait for the JIT worker to reach the barrier (sets the slot to `id`).
     Atomics.wait(sync, 0, 0, 5_000);
     const seen = Atomics.load(sync, 0);
-      if (seen === staleJob.id) {
-        // Mutate one byte of guest code and bump the page-version tracker.
-        const u8 = new Uint8Array(memory.buffer);
-        u8[guest_base + STALE_RIP] ^= 0x01;
-        bumpOrNotifyGuestWrite(BigInt(STALE_RIP), 1);
-      }
+    if (seen === staleJob.id) {
+      // Mutate one byte of guest code and bump the page-version tracker.
+      const u8 = new Uint8Array(memory.buffer);
+      const immOff = STALE_RIP + 3;
+      u8[guest_base + immOff] ^= 0x01;
+      bumpOrNotifyGuestWrite(BigInt(immOff), 1);
+    }
 
     // Release the JIT worker to respond.
     Atomics.store(sync, 0, -staleJob.id);
