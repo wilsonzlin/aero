@@ -355,8 +355,15 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     );
 
     {
+        let mut guest = vec![0u8; guest_size];
         // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
-        let guest = unsafe { core::slice::from_raw_parts(guest_base as *const u8, guest_size) };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                guest_base as *const u8,
+                guest.as_mut_ptr(),
+                guest.len(),
+            );
+        }
         for (i, &b) in guest.iter().enumerate() {
             assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
         }

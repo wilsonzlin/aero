@@ -28,6 +28,24 @@ struct ScanoutSnapshot {
     format: u32,
 }
 
+fn copy_linear_bytes(ptr: u32, len: u32) -> Vec<u8> {
+    let mut out = vec![0u8; len as usize];
+    // Safety: callers ensure ptr/len refer to a valid range in wasm linear memory.
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr as *const u8, out.as_mut_ptr(), out.len());
+    }
+    out
+}
+
+fn read_linear_prefix<const N: usize>(ptr: u32) -> [u8; N] {
+    let mut out = [0u8; N];
+    // Safety: callers ensure ptr points to at least N bytes in wasm linear memory.
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr as *const u8, out.as_mut_ptr(), N);
+    }
+    out
+}
+
 unsafe fn snapshot_scanout_state(ptr: u32) -> ScanoutSnapshot {
     // Implements the same seqlock-style protocol as `aero_shared::scanout_state::ScanoutState::snapshot`,
     // but without depending on the optional `aero-shared` crate when running wasm-bindgen tests.
@@ -457,9 +475,8 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
     assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
     assert!(len != 0, "expected non-zero vga_framebuffer_len_bytes");
 
-    // Safety: ptr/len is a view into the module's own linear memory.
-    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    let hash = fnv1a(fb);
+    let fb = copy_linear_bytes(ptr, len);
+    let hash = fnv1a(&fb);
     let blank = fnv1a_blank_rgba8(len as usize);
     assert_ne!(
         hash, blank,
@@ -482,9 +499,8 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
         "expected non-zero display_framebuffer_len_bytes"
     );
 
-    // Safety: ptr/len is a view into the module's own linear memory.
-    let disp_fb = unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
-    let disp_hash = fnv1a(disp_fb);
+    let disp_fb = copy_linear_bytes(disp_ptr, disp_len);
+    let disp_hash = fnv1a(&disp_fb);
     let disp_blank = fnv1a_blank_rgba8(disp_len as usize);
     assert_ne!(
         disp_hash, disp_blank,
@@ -562,9 +578,8 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
     assert_eq!(len, 64 * 64 * 4);
 
-    // Safety: ptr/len is a view into the module's own linear memory.
-    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    assert_eq!(&fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+    let pixel = read_linear_prefix::<4>(ptr);
+    assert_eq!(&pixel, &[0xFF, 0x00, 0x00, 0xFF]);
 
     // Unified display API should surface the same scanout.
     machine.display_present();
@@ -576,8 +591,8 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     let disp_len = machine.display_framebuffer_len_bytes();
     assert!(disp_ptr != 0, "expected non-zero display_framebuffer_ptr");
     assert_eq!(disp_len, 64 * 64 * 4);
-    let disp_fb = unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
-    assert_eq!(&disp_fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+    let disp_pixel = read_linear_prefix::<4>(disp_ptr);
+    assert_eq!(&disp_pixel, &[0xFF, 0x00, 0x00, 0xFF]);
 }
 
 #[wasm_bindgen_test]
@@ -630,9 +645,8 @@ fn wasm_machine_vbe_8bpp_mode_falls_back_to_legacy_text_scanout_state() {
     assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
     assert_eq!(len, 64 * 64 * 4);
 
-    // Safety: ptr/len is a view into the module's own linear memory.
-    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    assert_eq!(&fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+    let pixel = read_linear_prefix::<4>(ptr);
+    assert_eq!(&pixel, &[0xFF, 0x00, 0x00, 0xFF]);
 }
 
 #[wasm_bindgen_test]
@@ -693,9 +707,8 @@ fn wasm_machine_aerogpu_config_disables_vga_by_default_and_displays_text_mode() 
     assert!(ptr != 0, "expected non-zero display_framebuffer_ptr");
     assert!(len != 0, "expected non-zero display_framebuffer_len_bytes");
 
-    // Safety: ptr/len is a view into the module's own linear memory.
-    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    let hash = fnv1a(fb);
+    let fb = copy_linear_bytes(ptr, len);
+    let hash = fnv1a(&fb);
     let blank = fnv1a_blank_rgba8(len as usize);
     assert_ne!(
         hash, blank,

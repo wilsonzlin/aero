@@ -44,7 +44,10 @@ fn wasm_machine_display_present_exposes_framebuffer_cache() {
     let ptr = machine.display_framebuffer_ptr();
     assert!(ptr != 0, "expected non-zero display_framebuffer_ptr");
 
+    let mut fb = vec![0u8; len as usize];
     // Safety: ptr/len is a view into the module's own linear memory.
-    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    assert_eq!(copied.as_slice(), fb);
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr as *const u8, fb.as_mut_ptr(), fb.len());
+    }
+    assert_eq!(copied, fb);
 }
