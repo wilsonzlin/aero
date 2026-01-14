@@ -237,15 +237,18 @@ The list will also include more specific forms, e.g.:
 The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
 - Keyboard/mouse: `aero_virtio_input.inf`
-  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names
-  - includes a strict generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no SUBSYS)
+  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**SUBSYS-only**)
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
-- Optional legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+- Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
   - legacy filename alias for workflows/tools that still reference `virtio-input.inf`
-  - from `[Version]` onward, byte-for-byte identical to `aero_virtio_input.inf`
+  - adds an opt-in revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no SUBSYS) for environments where the Aero
+    subsystem IDs are not exposed
+  - outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), expected to stay in sync with `aero_virtio_input.inf`
+    (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`)
   - do **not** ship/install it alongside `aero_virtio_input.inf` (overlapping INF binding can be confusing)
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can still bind via the strict generic fallback
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will not bind the canonical keyboard/mouse INF.
+In that case, enable the legacy alias INF (`virtio-input.inf.disabled` → `virtio-input.inf`) to opt into the generic fallback
 entry (it will appear with the generic **Aero VirtIO Input Device** name). Tablet devices without the Aero tablet subsystem ID
 may also bind via the fallback entry if `aero_virtio_tablet.inf` does not match.
 
