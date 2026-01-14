@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import { createGpuColorTestCardRgba8Linear, srgbEncodeChannel } from "./test-card";
 
 function getPixelRgba(rgba: Uint8Array, width: number, x: number, y: number): [number, number, number, number] {
   const i = (y * width + x) * 4;
   return [rgba[i + 0]!, rgba[i + 1]!, rgba[i + 2]!, rgba[i + 3]!];
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 describe("gpu/test-card", () => {
@@ -47,6 +52,9 @@ describe("gpu/test-card", () => {
       const rgba = createGpuColorTestCardRgba8Linear(width, height);
 
       expect(rgba.length).toBe(width * height * 4);
+      // Full-buffer hash to ensure the generator remains deterministic even if individual spot
+      // checks above/below miss something.
+      expect(sha256Hex(rgba)).toBe("0a8c8fdfa78c3d894b85409177f8a7870f8cac9c9964476de0f5239e4c531381");
 
       // Left half: grayscale ramp, full alpha.
       expect(getPixelRgba(rgba, width, 0, 1)).toEqual([0, 0, 0, 255]);
