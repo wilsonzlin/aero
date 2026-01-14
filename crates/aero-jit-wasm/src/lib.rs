@@ -3,7 +3,9 @@
 //! This module is meant to run in a browser worker and compile a single x86 basic block into a
 //! standalone WASM module (returned as bytes).
 
-// Note: The threaded WASM build must compile on stable Rust; avoid unstable features here.
+// Note: This crate is built for both the single-threaded WASM variant (pinned stable toolchain)
+// and the threaded/shared-memory variant (pinned nightly toolchain for `-Z build-std`). Keep the
+// Rust code free of unstable language features so both builds remain viable.
 
 #[cfg(target_arch = "wasm32")]
 use core::cell::Cell;

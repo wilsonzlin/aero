@@ -40,8 +40,8 @@ pub trait IsoBackend {
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()>;
 }
 
-// Compile-time guard that we can implement ISO backends using !Send JS/DOM handles in the browser
-// build (e.g. OPFS backends when `wasm32` + atomics).
+// Compile-time guard that we can implement ISO backends using !Send JS/DOM handles in wasm builds
+// (e.g. OPFS-backed images in the browser/worker runtime).
 #[cfg(target_arch = "wasm32")]
 #[allow(dead_code)]
 mod wasm_send_bounds_check {

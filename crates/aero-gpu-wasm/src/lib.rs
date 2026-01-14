@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
-// Note: The threaded WASM build must compile on stable Rust; avoid unstable features here.
+// Note: This crate is built for both the single-threaded WASM variant (pinned stable toolchain)
+// and the threaded/shared-memory variant (pinned nightly toolchain for `-Z build-std`). Keep the
+// Rust code free of unstable language features so both builds remain viable.
 
 #[allow(dead_code)]
 mod drain_queue;
