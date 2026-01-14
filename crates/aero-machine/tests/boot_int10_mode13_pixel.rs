@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource};
 use pretty_assertions::assert_eq;
 
@@ -72,13 +71,9 @@ fn boot_sector_int10_mode13h_write_pixel_is_visible() {
     run_until_halt(&mut m);
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyVga);
 
-    let vga = m.vga().expect("machine should have a VGA device");
-    let pixel = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        assert_eq!(vga.get_resolution(), (320, 200));
-        vga.get_framebuffer()[(y as usize) * 320 + (x as usize)]
-    };
+    m.display_present();
+    assert_eq!(m.display_resolution(), (320, 200));
+    let pixel = m.display_framebuffer()[(y as usize) * 320 + (x as usize)];
 
     // Default VGA palette entry 4 is EGA red (0xAA,0x00,0x00).
     assert_eq!(pixel, 0xFF00_00AA);
