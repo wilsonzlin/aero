@@ -682,6 +682,26 @@ fn exec_shift_rotate<B: CpuBus>(
     let bits = op_bits(state, instr, 0)?;
     let dst = read_op_sized(state, bus, instr, 0, bits, next_ip)?;
     let count = read_shift_count(state, bus, instr, next_ip)? as u32;
+    // Shifts/rotates treat the count as masked (5 bits for <=32-bit operands, 6 bits for 64-bit).
+    // If the effective count is 0, the operation is a no-op and flags are unchanged. However,
+    // instructions with a 32-bit register destination still perform a write to the register, which
+    // triggers the x86-64 "zero-extend to 64 bits" semantics (e.g. `rcr eax, cl` with `cl=0` clears
+    // the upper 32 bits of RAX on real hardware).
+    let count_mask = if bits == 64 { 0x3F } else { 0x1F };
+    let mut eff_count = count & count_mask;
+    match instr.mnemonic() {
+        Mnemonic::Rol | Mnemonic::Ror => {
+            if eff_count != 0 {
+                eff_count %= bits;
+            }
+        }
+        Mnemonic::Rcl | Mnemonic::Rcr => {
+            if eff_count != 0 {
+                eff_count %= bits + 1;
+            }
+        }
+        _ => {}
+    }
     let (res, flags_opt) = match instr.mnemonic() {
         Mnemonic::Shl => shl(dst, count, bits, state.rflags()),
         Mnemonic::Shr => shr(dst, count, bits, state.rflags()),
@@ -695,8 +715,17 @@ fn exec_shift_rotate<B: CpuBus>(
     if let Some(f) = flags_opt {
         state.set_rflags(f);
     }
-    if count != 0 {
-        write_op_sized(state, bus, instr, 0, res, bits, next_ip)?;
+    match instr.op_kind(0) {
+        OpKind::Register => {
+            // Always write back for register destinations so that 32-bit ops zero-extend.
+            write_op_sized(state, bus, instr, 0, res, bits, next_ip)?;
+        }
+        OpKind::Memory => {
+            if eff_count != 0 {
+                write_op_sized(state, bus, instr, 0, res, bits, next_ip)?;
+            }
+        }
+        _ => return Err(Exception::InvalidOpcode),
     }
     Ok(ExecOutcome::Continue)
 }
@@ -895,6 +924,11 @@ fn exec_shift_double<B: CpuBus>(
     let count = read_shift_count(state, bus, instr, next_ip)? as u32;
     let c = count & if bits == 64 { 0x3F } else { 0x1F };
     if c == 0 {
+        // See note in `exec_shift_rotate`: 32-bit register destinations still perform a write
+        // (zero-extending the full 64-bit GPR) even when the shift count is 0.
+        if instr.op_kind(0) == OpKind::Register {
+            write_op_sized(state, bus, instr, 0, dst, bits, next_ip)?;
+        }
         return Ok(ExecOutcome::Continue);
     }
     if c > bits {

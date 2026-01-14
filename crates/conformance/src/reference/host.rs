@@ -4,6 +4,7 @@ use core::arch::global_asm;
 use std::io::Read;
 use std::mem::size_of;
 use std::os::unix::io::{FromRawFd, RawFd};
+use std::time::Duration;
 
 pub struct HostReferenceBackend {
     code: ExecutablePage,
@@ -76,7 +77,29 @@ impl HostReferenceBackend {
             self.code.write(case.template.bytes);
         }
 
-        let pid = unsafe { libc::fork() };
+        // Fork can transiently fail in shared/contended agent sandboxes (EAGAIN/ENOMEM). Retrying
+        // with a short backoff makes large conformance runs (thousands of cases) much more reliable
+        // without changing the "isolation on by default" behavior.
+        let pid = {
+            const MAX_ATTEMPTS: usize = 8;
+            let mut attempt = 0usize;
+            loop {
+                let pid = unsafe { libc::fork() };
+                if pid >= 0 {
+                    break pid;
+                }
+                attempt += 1;
+                let err = std::io::Error::last_os_error();
+                let raw = err.raw_os_error();
+                let retryable = matches!(raw, Some(libc::EAGAIN) | Some(libc::ENOMEM));
+                if attempt >= MAX_ATTEMPTS || !retryable {
+                    break -1;
+                }
+                // Exponential backoff (1ms, 2ms, 4ms, ...).
+                let delay_ms = 1u64 << attempt.min(6);
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+        };
         if pid < 0 {
             unsafe {
                 libc::close(pipe_fds[0]);
