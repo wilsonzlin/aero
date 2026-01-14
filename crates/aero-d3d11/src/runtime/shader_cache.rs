@@ -78,6 +78,7 @@ impl PersistedShaderStage {
         match stage {
             ShaderStage::Vertex => Self::Vertex,
             ShaderStage::Pixel => Self::Pixel,
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => Self::Ignored,
             ShaderStage::Compute => Self::Compute,
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => Self::Ignored,
         }

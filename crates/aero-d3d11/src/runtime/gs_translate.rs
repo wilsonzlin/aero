@@ -623,6 +623,13 @@ fn scan_src_operand(
                         msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
                     });
                 }
+                other => {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: format!("unsupported source register file {other:?}"),
+                    });
+                }
             }
         }
         SrcKind::GsInput { reg, vertex } => {
@@ -658,6 +665,13 @@ fn emit_write_masked(
     let dst_expr = match dst.file {
         RegFile::Temp => format!("r{}", dst.index),
         RegFile::Output => format!("o{}", dst.index),
+        RegFile::OutputDepth => {
+            return Err(GsTranslateError::UnsupportedOperand {
+                inst_index,
+                opcode,
+                msg: "unsupported destination register file RegFile::OutputDepth".to_owned(),
+            })
+        }
         other => {
             return Err(GsTranslateError::UnsupportedOperand {
                 inst_index,
