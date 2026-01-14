@@ -107,15 +107,16 @@ const AERO_HS_CONTROL_POINTS_PER_PATCH: u32 = 3u;
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let patch_id = id.x;
     let local_vertex = id.y;
-    let meta = aero_patch_meta[patch_id];
-    if (local_vertex >= meta.vertex_count) {{
+    // NOTE: `meta` is a reserved keyword in WGSL (wgpu 0.20 / naga), so avoid it as an identifier.
+    let patch_meta = aero_patch_meta[patch_id];
+    if (local_vertex >= patch_meta.vertex_count) {{
         return;
     }}
-
-    let domain = tri_vertex_domain_location(meta.tess_level, local_vertex);
+ 
+    let domain = tri_vertex_domain_location(patch_meta.tess_level, local_vertex);
     let out = ds_eval(patch_id, domain, local_vertex);
-
-    let out_base = (meta.vertex_base + local_vertex) * AERO_DS_OUT_REG_COUNT;
+ 
+    let out_base = (patch_meta.vertex_base + local_vertex) * AERO_DS_OUT_REG_COUNT;
 {store_out_regs}
 }}
 "#,
