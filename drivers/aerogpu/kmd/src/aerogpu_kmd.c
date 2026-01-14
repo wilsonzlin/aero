@@ -8460,7 +8460,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         }
 
         format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
-    } else if (flags.Color || flags.MaskedColor) {
+    } else if (flags.Color) {
         const ULONG srcPitch = pShape->Pitch;
         if (srcPitch == 0 || srcPitch < dstPitchBytes) {
             if (poweredOn) {
@@ -8509,6 +8509,184 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         }
 
         format = anyAlphaNonZero ? AEROGPU_FORMAT_B8G8R8A8_UNORM : AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    } else if (flags.MaskedColor) {
+        /*
+         * Masked-color cursor: color bitmap + 1bpp AND mask.
+         *
+         * WDDM contracts vary across Windows versions/paths. In practice, we've observed two
+         * plausible layouts:
+         * 1) `Pitch` is the color pitch (>= width*4) and the AND mask is stored immediately after
+         *    the color bitmap.
+         * 2) `Pitch` is the AND-mask pitch (< width*4) and the color bitmap is stored after the
+         *    mask.
+         *
+         * We conservatively handle both by inferring the layout from `Pitch`.
+         */
+        const ULONG srcPitch = pShape->Pitch;
+        if (srcPitch == 0) {
+            if (poweredOn) {
+                AeroGpuCursorDisable(adapter);
+            }
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const UCHAR* pixels = (const UCHAR*)pShape->pPixels;
+        const ULONG minMaskPitch = (width + 7u) / 8u;
+
+        ULONG maskPitch = 0;
+        if (!AeroGpuSafeAlignUpU32(minMaskPitch, 4u, &maskPitch) || maskPitch == 0) {
+            if (poweredOn) {
+                AeroGpuCursorDisable(adapter);
+            }
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const UCHAR* colorBase = NULL;
+        const UCHAR* maskBase = NULL;
+        ULONG colorPitch = 0;
+
+        SIZE_T colorPlaneBytes = 0;
+        SIZE_T maskPlaneBytes = 0;
+
+        if (srcPitch >= dstPitchBytes) {
+            /* Layout A: [color][mask]. `Pitch` is the color pitch. */
+            colorPitch = srcPitch;
+
+            const ULONGLONG colorBytes64 = (ULONGLONG)colorPitch * (ULONGLONG)height;
+            if (colorPitch != 0 && (colorBytes64 / colorPitch) != height || colorBytes64 > (ULONGLONG)(SIZE_T)~0ULL) {
+                if (poweredOn) {
+                    AeroGpuCursorDisable(adapter);
+                }
+                {
+                    KIRQL cursorIrql;
+                    KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                    adapter->CursorShapeValid = FALSE;
+                    KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+                }
+                return STATUS_INVALID_PARAMETER;
+            }
+            colorPlaneBytes = (SIZE_T)colorBytes64;
+
+            const ULONGLONG maskBytes64 = (ULONGLONG)maskPitch * (ULONGLONG)height;
+            if (maskPitch != 0 && (maskBytes64 / maskPitch) != height || maskBytes64 > (ULONGLONG)(SIZE_T)~0ULL) {
+                if (poweredOn) {
+                    AeroGpuCursorDisable(adapter);
+                }
+                {
+                    KIRQL cursorIrql;
+                    KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                    adapter->CursorShapeValid = FALSE;
+                    KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+                }
+                return STATUS_INVALID_PARAMETER;
+            }
+            maskPlaneBytes = (SIZE_T)maskBytes64;
+
+            colorBase = pixels;
+            maskBase = pixels + colorPlaneBytes;
+        } else {
+            /* Layout B: [mask][color]. `Pitch` is the mask pitch (use it directly). */
+            if (srcPitch < minMaskPitch) {
+                if (poweredOn) {
+                    AeroGpuCursorDisable(adapter);
+                }
+                {
+                    KIRQL cursorIrql;
+                    KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                    adapter->CursorShapeValid = FALSE;
+                    KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+                }
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            maskPitch = srcPitch;
+            colorPitch = dstPitchBytes;
+
+            const ULONGLONG maskBytes64 = (ULONGLONG)maskPitch * (ULONGLONG)height;
+            if (maskPitch != 0 && (maskBytes64 / maskPitch) != height || maskBytes64 > (ULONGLONG)(SIZE_T)~0ULL) {
+                if (poweredOn) {
+                    AeroGpuCursorDisable(adapter);
+                }
+                {
+                    KIRQL cursorIrql;
+                    KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                    adapter->CursorShapeValid = FALSE;
+                    KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+                }
+                return STATUS_INVALID_PARAMETER;
+            }
+            maskPlaneBytes = (SIZE_T)maskBytes64;
+
+            const ULONGLONG colorBytes64 = (ULONGLONG)colorPitch * (ULONGLONG)height;
+            if (colorPitch != 0 && (colorBytes64 / colorPitch) != height || colorBytes64 > (ULONGLONG)(SIZE_T)~0ULL) {
+                if (poweredOn) {
+                    AeroGpuCursorDisable(adapter);
+                }
+                {
+                    KIRQL cursorIrql;
+                    KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                    adapter->CursorShapeValid = FALSE;
+                    KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+                }
+                return STATUS_INVALID_PARAMETER;
+            }
+            colorPlaneBytes = (SIZE_T)colorBytes64;
+
+            maskBase = pixels;
+            colorBase = pixels + maskPlaneBytes;
+        }
+
+        UCHAR* dst = (UCHAR*)cursorFbVa;
+
+        /* Detect whether the source color bitmap has meaningful alpha (A8R8G8B8 vs X8R8G8B8). */
+        BOOLEAN anyAlphaNonZero = FALSE;
+        for (ULONG y = 0; y < height && !anyAlphaNonZero; ++y) {
+            const UCHAR* srcRow = colorBase + (SIZE_T)y * (SIZE_T)colorPitch;
+            for (ULONG x = 0; x < width; ++x) {
+                const UCHAR a = srcRow[(SIZE_T)x * 4u + 3u];
+                if (a != 0) {
+                    anyAlphaNonZero = TRUE;
+                    break;
+                }
+            }
+        }
+
+        for (ULONG y = 0; y < height; ++y) {
+            const UCHAR* srcRow = colorBase + (SIZE_T)y * (SIZE_T)colorPitch;
+            const UCHAR* maskRow = maskBase + (SIZE_T)y * (SIZE_T)maskPitch;
+            UCHAR* dstRow = dst + (SIZE_T)y * (SIZE_T)dstPitchBytes;
+
+            /* Copy the color pixels (ignore any source padding). */
+            RtlCopyMemory(dstRow, srcRow, (SIZE_T)dstPitchBytes);
+
+            /* Apply the 1bpp AND mask to alpha: bit=1 => transparent. */
+            for (ULONG x = 0; x < width; ++x) {
+                const ULONG byteIndex = x >> 3;
+                const UCHAR bit = (UCHAR)(0x80u >> (x & 7u));
+                const BOOLEAN transparent = (maskRow[byteIndex] & bit) ? TRUE : FALSE;
+                UCHAR* px = dstRow + (SIZE_T)x * 4u;
+                if (transparent) {
+                    px[3] = 0;
+                } else if (!anyAlphaNonZero && px[3] == 0) {
+                    /* XRGB sources typically have alpha=0; force opaque for visible pixels. */
+                    px[3] = 0xFF;
+                }
+            }
+        }
+
+        format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
     } else {
         if (poweredOn) {
             AeroGpuCursorDisable(adapter);
