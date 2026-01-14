@@ -151,7 +151,7 @@ export class XhciHidTopologyManager {
   }
 
   setHubConfig(path: GuestUsbPath, portCount?: number): void {
-    const rootPort = path[0] ?? 0;
+    const rootPort = path[0] ?? EXTERNAL_HUB_ROOT_PORT;
     const count = clampHubPortCount(portCount ?? this.#defaultHubPortCount);
     this.#hubPortCountByRoot.set(rootPort, count);
     const resized = this.#maybeAttachHub(rootPort);
@@ -235,7 +235,7 @@ export class XhciHidTopologyManager {
     const xhci = this.#xhci;
     if (!rec || !xhci) return;
 
-    const rootPort = rec.path[0] ?? 0;
+    const rootPort = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
     if (rec.path.length > 1) {
       const resized = this.#maybeAttachHub(rootPort);
       if (resized) {
@@ -268,7 +268,7 @@ export class XhciHidTopologyManager {
   #requiredHubPortCount(rootPort: number): number {
     let required = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
     for (const rec of this.#devices.values()) {
-      const root = rec.path[0] ?? 0;
+      const root = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
       if (root !== rootPort) continue;
       if (rec.path.length <= 1) continue;
       const port = rec.path[1] ?? 0;
@@ -281,7 +281,7 @@ export class XhciHidTopologyManager {
 
   #reattachDevicesBehindRoot(rootPort: number): void {
     for (const [deviceId, rec] of this.#devices) {
-      const root = rec.path[0] ?? 0;
+      const root = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
       if (root !== rootPort) continue;
       if (rec.path.length <= 1) continue;
       this.#maybeAttachDevice(deviceId);

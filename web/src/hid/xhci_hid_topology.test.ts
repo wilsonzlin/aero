@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { XhciHidTopologyManager, type XhciTopologyBridge } from "./xhci_hid_topology";
+import {
+  EXTERNAL_HUB_ROOT_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
+  remapLegacyRootPortToExternalHubPort,
+} from "../usb/uhci_external_hub";
 
 function createFakeXhci(): XhciTopologyBridge & {
   attach_hub: ReturnType<typeof vi.fn>;
@@ -22,11 +27,11 @@ describe("hid/xhci_hid_topology", () => {
     const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 15 });
     const xhci = createFakeXhci();
 
-    mgr.setHubConfig([0], 8);
+    mgr.setHubConfig([EXTERNAL_HUB_ROOT_PORT], 8);
     mgr.setXhciBridge(xhci);
 
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(xhci.attach_hub).toHaveBeenCalledWith(0, 8);
+    expect(xhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 8);
   });
 
   it("attaches hubs lazily as devices demand them", () => {
@@ -35,12 +40,12 @@ describe("hid/xhci_hid_topology", () => {
     const dev = { kind: "device" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [0, 1], "webhid", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 1], "webhid", dev);
 
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(xhci.attach_hub).toHaveBeenCalledWith(0, 8);
-    expect(xhci.detach_at_path).toHaveBeenCalledWith([0, 1]);
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev);
+    expect(xhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 8);
+    expect(xhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1]);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1], dev);
   });
 
   it("re-attaches downstream devices when a hub is resized", () => {
@@ -50,23 +55,23 @@ describe("hid/xhci_hid_topology", () => {
     const dev2 = { kind: "device-2" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 1], "webhid", dev1);
 
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(xhci.attach_hub).toHaveBeenCalledWith(0, 8);
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+    expect(xhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 8);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1], dev1);
 
     // Attach a device on a higher port; the manager should replace the hub and then
     // reattach the existing device behind it.
-    mgr.attachDevice(2, [0, 12], "webhid", dev2);
+    mgr.attachDevice(2, [EXTERNAL_HUB_ROOT_PORT, 12], "webhid", dev2);
 
     expect(xhci.attach_hub).toHaveBeenCalledTimes(2);
-    expect(xhci.attach_hub).toHaveBeenNthCalledWith(2, 0, 12);
-    expect(xhci.detach_at_path).toHaveBeenCalledWith([0]);
+    expect(xhci.attach_hub).toHaveBeenNthCalledWith(2, EXTERNAL_HUB_ROOT_PORT, 12);
+    expect(xhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT]);
 
     const dev1Calls = xhci.attach_webhid_device.mock.calls.filter(([, dev]) => dev === dev1);
     expect(dev1Calls).toHaveLength(2);
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 12], dev2);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 12], dev2);
   });
 
   it("detachDevice is idempotent", () => {
@@ -75,15 +80,15 @@ describe("hid/xhci_hid_topology", () => {
     const dev = { kind: "device" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [0, 1], "usb-hid-passthrough", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 1], "usb-hid-passthrough", dev);
 
     mgr.detachDevice(1);
     mgr.detachDevice(1);
 
     // One detach for clearing on attach, one for explicit detach; subsequent detaches are no-ops.
     expect(xhci.detach_at_path).toHaveBeenCalledTimes(2);
-    expect(xhci.detach_at_path).toHaveBeenLastCalledWith([0, 1]);
-    expect(xhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, 1], dev);
+    expect(xhci.detach_at_path).toHaveBeenLastCalledWith([EXTERNAL_HUB_ROOT_PORT, 1]);
+    expect(xhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1], dev);
   });
 
   it("ignores device attachments with invalid downstream port numbers (>15)", () => {
@@ -93,15 +98,15 @@ describe("hid/xhci_hid_topology", () => {
     const dev2 = { kind: "device-2" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 1], "webhid", dev1);
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
 
-    mgr.attachDevice(2, [0, 20], "webhid", dev2);
+    mgr.attachDevice(2, [EXTERNAL_HUB_ROOT_PORT, 20], "webhid", dev2);
 
     // The invalid port should not cause the hub to be resized or the device to be attached.
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
     expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1], dev1);
   });
 
   it("ignores device attachments with too-deep paths (>5 downstream hub tiers)", () => {
@@ -111,15 +116,15 @@ describe("hid/xhci_hid_topology", () => {
     const dev2 = { kind: "device-2" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 1], "webhid", dev1);
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
 
     // Route String is 20 bits (5 nibbles), so only 5 downstream ports are representable.
-    mgr.attachDevice(2, [0, 1, 1, 1, 1, 1, 1], "webhid", dev2);
+    mgr.attachDevice(2, [EXTERNAL_HUB_ROOT_PORT, 1, 1, 1, 1, 1, 1], "webhid", dev2);
 
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
     expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 1], dev1);
   });
 
   it("remaps legacy root-port-only paths ([0] and [1]) onto the external hub behind root port 0", () => {
@@ -129,14 +134,20 @@ describe("hid/xhci_hid_topology", () => {
     const dev1 = { kind: "device-root-1" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [0], "webhid", dev0);
-    mgr.attachDevice(2, [1], "webhid", dev1);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT], "webhid", dev0);
+    mgr.attachDevice(2, [WEBUSB_GUEST_ROOT_PORT], "webhid", dev1);
 
     expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(xhci.attach_hub).toHaveBeenCalledWith(0, 8);
+    expect(xhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 8);
 
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 5], dev0);
-    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 6], dev1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(EXTERNAL_HUB_ROOT_PORT)],
+      dev0,
+    );
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(WEBUSB_GUEST_ROOT_PORT)],
+      dev1,
+    );
   });
 
   it("rejects attaching devices behind reserved WebUSB root port 1", () => {
@@ -145,7 +156,7 @@ describe("hid/xhci_hid_topology", () => {
     const dev = { kind: "device" };
 
     mgr.setXhciBridge(xhci);
-    mgr.attachDevice(1, [1, 2], "webhid", dev);
+    mgr.attachDevice(1, [WEBUSB_GUEST_ROOT_PORT, 2], "webhid", dev);
 
     expect(xhci.attach_hub).not.toHaveBeenCalled();
     expect(xhci.detach_at_path).not.toHaveBeenCalled();
