@@ -468,6 +468,8 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_UTOF => Some("utof"),
         OPCODE_FTOI => Some("ftoi"),
         OPCODE_FTOU => Some("ftou"),
+        OPCODE_F32TOF16 => Some("f32tof16"),
+        OPCODE_F16TOF32 => Some("f16tof32"),
         OPCODE_DP3 => Some("dp3"),
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
@@ -507,8 +509,6 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_IMAD => Some("imad"),
         OPCODE_UDIV => Some("udiv"),
         OPCODE_IDIV => Some("idiv"),
-        OPCODE_F32TOF16 => Some("f32tof16"),
-        OPCODE_F16TOF32 => Some("f16tof32"),
         OPCODE_BFI => Some("bfi"),
         OPCODE_UBFE => Some("ubfe"),
         OPCODE_IBFE => Some("ibfe"),
@@ -647,6 +647,8 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_UTOF), Some("utof"));
         assert_eq!(opcode_name(OPCODE_FTOI), Some("ftoi"));
         assert_eq!(opcode_name(OPCODE_FTOU), Some("ftou"));
+        assert_eq!(opcode_name(OPCODE_F32TOF16), Some("f32tof16"));
+        assert_eq!(opcode_name(OPCODE_F16TOF32), Some("f16tof32"));
     }
 
     #[test]

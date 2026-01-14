@@ -183,6 +183,64 @@ fn assert_wgsl_validates(wgsl: &str) {
 }
 
 #[test]
+fn decodes_and_translates_f32tof16_and_f16tof32() {
+    let mut body = Vec::<u32>::new();
+
+    // f32tof16 r0.xy, v0
+    body.push(opcode_token(OPCODE_F32TOF16, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask(0b0011)));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XYZW));
+
+    // f16tof32 r1, r0
+    body.push(opcode_token(OPCODE_F16TOF32, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // mov o0, r1
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(module.instructions.get(0), Some(Sm4Inst::F32ToF16 { .. })));
+    assert!(matches!(module.instructions.get(1), Some(Sm4Inst::F16ToF32 { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("pack2x16float"),
+        "expected WGSL to contain pack2x16float, got:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected WGSL to contain unpack2x16float, got:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_signature_driven_vs_with_empty_input_signature_without_empty_struct() {
     // WGSL forbids empty structs. DXBC vertex shaders can have an empty input signature (e.g. when
     // generating positions procedurally), so ensure we emit `fn vs_main()` rather than

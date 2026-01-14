@@ -5484,6 +5484,34 @@ fn emit_instructions(
                 let expr = format!("bitcast<vec4<f32>>(vec4<u32>({src_f}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ftou", ctx)?;
             }
+            Sm4Inst::F32ToF16 { dst, src } => {
+                // DXBC half-float packing layout:
+                // - pack src.xy into dst.x (u32 bits)
+                // - pack src.zw into dst.y (u32 bits)
+                //
+                // WGSL `pack2x16float` returns a `u32`, but DXBC registers are untyped 32-bit
+                // lanes. Preserve the raw bits by storing `u32` into our internal `vec4<f32>`
+                // register file via `bitcast`.
+                let src = emit_src_vec4(src, inst_index, "f32tof16", ctx)?;
+                let pack_xy = format!("pack2x16float(vec2<f32>(({src}).x, ({src}).y))");
+                let pack_zw = format!("pack2x16float(vec2<f32>(({src}).z, ({src}).w))");
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>({pack_xy}, {pack_zw}, 0u, 0u))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "f32tof16", ctx)?;
+            }
+            Sm4Inst::F16ToF32 { dst, src } => {
+                // DXBC half-float unpacking layout (inverse of `f32tof16` above):
+                // - unpack src.x (u32 bits) into dst.xy
+                // - unpack src.y (u32 bits) into dst.zw
+                //
+                // DXBC register files are untyped. Interpret the source lanes as raw bits via
+                // `bitcast<u32>` before calling WGSL `unpack2x16float`.
+                let src_u = emit_src_vec4_u32(src, inst_index, "f16tof32", ctx)?;
+                let expr = format!(
+                    "vec4<f32>(unpack2x16float(({src_u}).x), unpack2x16float(({src_u}).y))"
+                );
+                let expr = maybe_saturate(dst, expr);
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "f16tof32", ctx)?;
+            }
             Sm4Inst::Bfi {
                 dst,
                 width,
@@ -5619,44 +5647,6 @@ fn emit_instructions(
                 w.line("discard;");
                 w.dedent();
                 w.line("}");
-            }
-            Sm4Inst::F32ToF16 { dst, src } => {
-                // `f32tof16` produces integer bits (binary16) in the low 16 bits of each lane.
-                // Our register model stores everything as `vec4<f32>`, so preserve those integer
-                // bits by bitcasting through `u32`.
-                let src_f = emit_src_vec4(src, inst_index, "f32tof16", ctx)?;
-                let src_f = if dst.saturate {
-                    format!("clamp(({src_f}), vec4<f32>(0.0), vec4<f32>(1.0))")
-                } else {
-                    src_f
-                };
-
-                let pack_lane =
-                    |c: char| format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)");
-                let ux = pack_lane('x');
-                let uy = pack_lane('y');
-                let uz = pack_lane('z');
-                let uw = pack_lane('w');
-
-                let rhs_u = format!("vec4<u32>({ux}, {uy}, {uz}, {uw})");
-                let rhs = format!("bitcast<vec4<f32>>({rhs_u})");
-                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "f32tof16", ctx)?;
-            }
-            Sm4Inst::F16ToF32 { dst, src } => {
-                // `f16tof32` consumes raw binary16 bits in the low 16 bits of each lane.
-                // Operand modifiers are defined for numeric operands; ignore them here so the half
-                // bit-pattern is preserved.
-                let mut src_bits = src.clone();
-                src_bits.modifier = OperandModifier::None;
-                let src_u = emit_src_vec4_u32(&src_bits, inst_index, "f16tof32", ctx)?;
-                let unpack_lane = |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
-                let x = unpack_lane('x');
-                let y = unpack_lane('y');
-                let z = unpack_lane('z');
-                let w_lane = unpack_lane('w');
-                let rhs = format!("vec4<f32>({x}, {y}, {z}, {w_lane})");
-                let rhs = maybe_saturate(dst, rhs);
-                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "f16tof32", ctx)?;
             }
             Sm4Inst::Sample {
                 dst,

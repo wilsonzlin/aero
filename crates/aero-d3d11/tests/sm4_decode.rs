@@ -2550,6 +2550,8 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_FTOU, 0x19);
     assert_eq!(OPCODE_ITOF, 0x1a);
     assert_eq!(OPCODE_UTOF, 0x1b);
+    assert_eq!(OPCODE_F32TOF16, 0x5d);
+    assert_eq!(OPCODE_F16TOF32, 0x5e);
     // Structured control flow opcodes.
     assert_eq!(OPCODE_BREAK, 0x2d);
     assert_eq!(OPCODE_BREAKC, 0x2e);
