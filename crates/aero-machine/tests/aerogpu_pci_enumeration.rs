@@ -97,9 +97,32 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
         window_end
     );
 
-    // Probe that BAR1 is wired into the MMIO router by performing a small write/read roundtrip.
-    let probe_addr = bar1.base + 0x1000;
-    let orig = m.read_physical_u32(probe_addr);
-    m.write_physical_u32(probe_addr, orig ^ 0xA5A5_5A5A);
-    assert_eq!(m.read_physical_u32(probe_addr), orig ^ 0xA5A5_5A5A);
+    assert!(
+        bar0.end_exclusive() <= bar1.base || bar1.end_exclusive() <= bar0.base,
+        "AeroGPU BARs must not overlap (BAR0: 0x{:x}..0x{:x}, BAR1: 0x{:x}..0x{:x})",
+        bar0.base,
+        bar0.end_exclusive(),
+        bar1.base,
+        bar1.end_exclusive()
+    );
+
+    // Probe that BAR1 is wired into the MMIO router by performing a small write/read roundtrip at
+    // two offsets:
+    // - in the VBE LFB region (after the reserved VGA planar storage),
+    // - near the end of the BAR, to catch partial routing bugs.
+    let mut probe_roundtrip = |addr: u64| {
+        let orig = m.read_physical_u32(addr);
+        let value = orig ^ 0xA5A5_5A5A;
+        m.write_physical_u32(addr, value);
+        assert_eq!(m.read_physical_u32(addr), value);
+    };
+    probe_roundtrip(bar1.base + u64::from(pci::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES));
+    // WASM builds cap the BAR1 VRAM backing store at 32MiB to avoid ballooning the browser heap.
+    // The guest-visible BAR size is still 64MiB (device contract), but reads/writes beyond the
+    // allocation are treated as zero/ignored.
+    #[cfg(target_arch = "wasm32")]
+    let max_vram_backing_bytes = bar1.size.min(32 * 1024 * 1024u64);
+    #[cfg(not(target_arch = "wasm32"))]
+    let max_vram_backing_bytes = bar1.size;
+    probe_roundtrip(bar1.base + max_vram_backing_bytes - 0x1000);
 }
