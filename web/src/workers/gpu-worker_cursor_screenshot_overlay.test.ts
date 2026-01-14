@@ -3,6 +3,14 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { VRAM_BASE_PADDR } from "../arch/guest_phys";
+import {
+  computeSharedFramebufferLayout,
+  FramebufferFormat,
+  SharedFramebufferHeaderIndex,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+} from "../ipc/shared-layout";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
@@ -329,6 +337,85 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       const shotWithCursor = await requestScreenshot(worker, 2, true);
       expect(shotWithCursor.width).toBe(1);
       expect(shotWithCursor.height).toBe(1);
+      expect(firstPixelU32(shotWithCursor.rgba8)).toBe(0xff010203);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
+  it("syncs hardware cursor state for screenshots even when no tick is forced", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    // Provide a tiny shared framebuffer (1x1) so the headless screenshot path doesn't
+    // need to copy the full demo framebuffer.
+    const layout = computeSharedFramebufferLayout(1, 1, 4, FramebufferFormat.RGBA8, 0);
+    const sharedFramebuffer = new SharedArrayBuffer(layout.totalBytes);
+    const header = new Int32Array(sharedFramebuffer, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+    Atomics.store(header, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+    Atomics.store(header, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+    Atomics.store(header, SharedFramebufferHeaderIndex.WIDTH, layout.width);
+    Atomics.store(header, SharedFramebufferHeaderIndex.HEIGHT, layout.height);
+    Atomics.store(header, SharedFramebufferHeaderIndex.STRIDE_BYTES, layout.strideBytes);
+    Atomics.store(header, SharedFramebufferHeaderIndex.FORMAT, layout.format);
+    Atomics.store(header, SharedFramebufferHeaderIndex.TILE_SIZE, layout.tileSize);
+    Atomics.store(header, SharedFramebufferHeaderIndex.TILES_X, layout.tilesX);
+    Atomics.store(header, SharedFramebufferHeaderIndex.TILES_Y, layout.tilesY);
+    Atomics.store(header, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, layout.dirtyWordsPerBuffer);
+    Atomics.store(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+    Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);
+    Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+    Atomics.store(header, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 1);
+    Atomics.store(header, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+    Atomics.store(header, SharedFramebufferHeaderIndex.FLAGS, 0);
+
+    const slot0 = new Uint8Array(sharedFramebuffer, layout.framebufferOffsets[0], layout.strideBytes * layout.height);
+    // Background pixel: RGBA [0x30, 0x20, 0x10, 0xff] => 0xff102030.
+    slot0.set([0x30, 0x20, 0x10, 0xff]);
+
+    const cursorPaddr = 0x1000;
+    // Cursor pixel: BGRX with X=0 (would be treated as transparent if misinterpreted as alpha).
+    views.guestU8.set([0x01, 0x02, 0x03, 0x00], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      // Runtime init (wire up CursorState) but omit scanoutState so screenshot does not force a tick.
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer,
+        sharedFramebufferOffsetBytes: 0,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shotNoCursor = await requestScreenshot(worker, 1, false);
+      expect(firstPixelU32(shotNoCursor.rgba8)).toBe(0xff102030);
+
+      const shotWithCursor = await requestScreenshot(worker, 2, true);
+      // Cursor pixel: BGRX [01 02 03 00] -> RGBA [03 02 01 ff] => 0xff010203.
       expect(firstPixelU32(shotWithCursor.rgba8)).toBe(0xff010203);
     } finally {
       await worker.terminate();

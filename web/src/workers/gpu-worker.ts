@@ -4206,6 +4206,18 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             }
           }
 
+          if (includeCursor) {
+            // `cursorEnabled/cursorImage` are normally kept in sync with the shared CursorState
+            // descriptor during `handleTick()`. However, screenshot requests can arrive while the
+            // frame scheduler is idle (no ticks/presents), so we must explicitly sync the hardware
+            // cursor state here to ensure software cursor composition is up to date.
+            //
+            // This is bounded (uses `trySnapshotCursorState`) and should not block indefinitely.
+            if (!presenting) {
+              syncHardwareCursorFromState();
+            }
+          }
+
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
             const tryPostWddmScanoutScreenshot = (): boolean => {
