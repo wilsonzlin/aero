@@ -1585,14 +1585,28 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
      * Do this outside the scratch-cache lock so concurrent submissions can still
      * update their allocations even if they contend on the cached scratch buffer.
      */
+    BOOLEAN anyAllocId = FALSE;
     for (UINT i = 0; i < Count; ++i) {
         AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
         if (!alloc) {
+            AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has null hAllocation", i);
             continue;
         }
         ExAcquireFastMutex(&alloc->CpuMapMutex);
         alloc->LastKnownPa.QuadPart = List[i].PhysicalAddress.QuadPart;
         ExReleaseFastMutex(&alloc->CpuMapMutex);
+        if (alloc->AllocationId != 0) {
+            anyAllocId = TRUE;
+        }
+    }
+
+    /*
+     * If no allocations in this submission have a non-zero alloc_id, omit the table entirely
+     * (alloc_table_gpa/size will be 0). This avoids taking the scratch-cache lock
+     * and touching large scratch arrays on submissions that never reference guest-backed memory.
+     */
+    if (!anyAllocId) {
+        return STATUS_SUCCESS;
     }
 
     const UINT cap = AeroGpuAllocTableComputeHashCap(Count);
