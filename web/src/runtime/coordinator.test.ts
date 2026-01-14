@@ -1483,17 +1483,17 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
 
-    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu as { instanceId: number; worker: MockWorker };
     const cpuWorker = cpuInfo.worker;
     cpuWorker.posted.length = 0;
 
     const total = 300;
     for (let i = 1; i <= total; i += 1) {
-      (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
         kind: "aerogpu.submit",
         contextId: 0,
         signalFence: BigInt(i),
@@ -1501,7 +1501,7 @@ describe("runtime/coordinator", () => {
       });
     }
 
-    const pending = (coordinator as any).pendingAerogpuSubmissions as unknown[];
+    const pending = (coordinator as unknown as CoordinatorTestHarness).pendingAerogpuSubmissions as unknown[];
     const pendingLen = pending.length;
     expect(pendingLen).toBeGreaterThan(0);
     expect(pendingLen).toBeLessThanOrEqual(total);

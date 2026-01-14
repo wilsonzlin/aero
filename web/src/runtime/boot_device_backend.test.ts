@@ -4,13 +4,12 @@ import { installBootDeviceBackendOnAeroGlobal } from "./boot_device_backend";
 
 describe("runtime/boot_device_backend", () => {
   it("installs boot device helpers under window.aero.debug", () => {
-    const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
-    const prevWindow = (globalThis as unknown as { window?: unknown }).window;
+    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
 
     try {
       // Minimal window shim.
       const win: any = { aero: { debug: { existing: true } } };
-      (globalThis as any).window = win;
+      Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
 
       const coordinator: any = {
         getBootDisks: () => ({ type: "setBootDisks", mounts: { hddId: "hdd0", cdId: "cd0" }, hdd: null, cd: null, bootDevice: "hdd" }),
@@ -26,11 +25,11 @@ describe("runtime/boot_device_backend", () => {
       expect(win.aero.debug.getBootDisks()).toEqual({ mounts: { hddId: "hdd0", cdId: "cd0" }, bootDevice: "hdd" });
       expect(win.aero.debug.getMachineCpuActiveBootDevice()).toBe("cdrom");
     } finally {
-      if (hadWindow) {
-        (globalThis as any).window = prevWindow;
+      if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
       } else {
         // Ensure we restore the pre-test global shape for other unit tests.
-        delete (globalThis as any).window;
+        Reflect.deleteProperty(globalThis, "window");
       }
     }
   });

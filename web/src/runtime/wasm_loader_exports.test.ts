@@ -92,8 +92,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const create_machine_win7_shared_guest_memory = (_guestBase: number, _guestSize: number) => ({});
     const create_machine_shared_guest_memory_win7 = (_guestBase: number, _guestSize: number) => ({});
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -122,8 +121,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const createMachineWin7SharedGuestMemory = (_guestBase: number, _guestSize: number) => ({});
     const createMachineSharedGuestMemoryWin7 = (_guestBase: number, _guestSize: number) => ({});
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -223,8 +221,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
 
     const openRingByKind = (_buffer: SharedArrayBuffer, _kind: number, _nth: number) => new FakeSharedRingBuffer(_buffer, 0);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -250,8 +247,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const vm_snapshot_save_to_opfs = () => {};
     const vm_snapshot_restore_from_opfs = () => ({ cpu: new Uint8Array(), mmu: new Uint8Array(), devices: [] });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -277,8 +273,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const vmSnapshotSaveToOpfs = () => {};
     const vmSnapshotRestoreFromOpfs = () => ({ cpu: new Uint8Array(), mmu: new Uint8Array(), devices: [] });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,

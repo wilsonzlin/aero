@@ -57,6 +57,18 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
+type CoordinatorSnapshotHarness = {
+  workers: Record<string, unknown>;
+  shared: {
+    segments: { ioIpc: SharedArrayBuffer };
+    scanoutState?: SharedArrayBuffer;
+    scanoutStateOffsetBytes?: number;
+    cursorState?: SharedArrayBuffer;
+    cursorStateOffsetBytes?: number;
+  };
+  activeConfig?: Record<string, unknown>;
+};
+
 function installReadyWorkers(
   coordinator: WorkerCoordinator,
   workers: { cpu: StubWorker; io?: StubWorker; gpu?: StubWorker; net?: StubWorker },
@@ -85,9 +97,9 @@ function installReadyWorkers(
       status: { state: opts?.netState ?? "ready" },
     };
   }
-  (coordinator as any).workers = map;
+  (coordinator as unknown as CoordinatorSnapshotHarness).workers = map;
   // Snapshot orchestration resets NET_TX/NET_RX via the shared `ioIpc` segment.
-  (coordinator as any).shared = { segments: { ioIpc } };
+  (coordinator as unknown as CoordinatorSnapshotHarness).shared = { segments: { ioIpc } };
 }
 
 describe("runtime/coordinator (worker VM snapshots)", () => {
@@ -172,7 +184,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const io = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io });
 
-    const shared = (coordinator as any).shared;
+    const shared = (coordinator as unknown as CoordinatorSnapshotHarness).shared;
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     txRing.tryPush(new Uint8Array([0xaa]));
@@ -292,7 +304,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const net = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io, gpu, net });
 
-    const shared = (coordinator as any).shared;
+    const shared = (coordinator as unknown as CoordinatorSnapshotHarness).shared;
     const scanoutOffsetBytes = 64;
     const scanoutSab = new SharedArrayBuffer(scanoutOffsetBytes + SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
     shared.scanoutState = scanoutSab;
@@ -435,7 +447,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const io = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io });
 
-    const shared = (coordinator as any).shared;
+    const shared = (coordinator as unknown as CoordinatorSnapshotHarness).shared;
     // Too small for a ScanoutState view; `wrapScanoutState` would throw.
     shared.scanoutState = new SharedArrayBuffer(16);
     shared.scanoutStateOffsetBytes = 0;
@@ -485,7 +497,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const net = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io, net }, { netState: "starting" });
 
-    const shared = (coordinator as any).shared;
+    const shared = (coordinator as unknown as CoordinatorSnapshotHarness).shared;
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     txRing.tryPush(new Uint8Array([0xaa]));
@@ -548,7 +560,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const io = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io });
 
-    const shared = (coordinator as any).shared;
+    const shared = (coordinator as unknown as CoordinatorSnapshotHarness).shared;
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     txRing.tryPush(new Uint8Array([0xaa]));
@@ -604,7 +616,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     const net = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io, net });
 
-    const ioIpc = (coordinator as any).shared.segments.ioIpc as SharedArrayBuffer;
+    const ioIpc = (coordinator as unknown as CoordinatorSnapshotHarness).shared.segments.ioIpc as SharedArrayBuffer;
     const netTxRing = openRingByKind(ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
 
     // Seed the ring with a frame that must not survive the restore.
@@ -664,7 +676,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
   it("orchestrates machine snapshotSaveToOpfs pause → machine.saveToOpfs → resume", async () => {
     const coordinator = new WorkerCoordinator();
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorSnapshotHarness).activeConfig = { vmRuntime: "machine" };
     const cpu = new StubWorker();
     const io = new StubWorker();
     const gpu = new StubWorker();
@@ -721,14 +733,14 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
   it("orchestrates machine snapshotRestoreFromOpfs pause → machine.restoreFromOpfs → resume", async () => {
     const coordinator = new WorkerCoordinator();
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorSnapshotHarness).activeConfig = { vmRuntime: "machine" };
     const cpu = new StubWorker();
     const io = new StubWorker();
     const gpu = new StubWorker();
     const net = new StubWorker();
     installReadyWorkers(coordinator, { cpu, io, gpu, net });
 
-    const shared = (coordinator as any).shared;
+    const shared = (coordinator as unknown as CoordinatorSnapshotHarness).shared;
     const scanoutOffsetBytes = 64;
     const scanoutSab = new SharedArrayBuffer(scanoutOffsetBytes + SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
     shared.scanoutState = scanoutSab;
@@ -854,7 +866,7 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
 
   it("orchestrates machine snapshots without an IO worker", async () => {
     const coordinator = new WorkerCoordinator();
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorSnapshotHarness).activeConfig = { vmRuntime: "machine" };
     const cpu = new StubWorker();
     const gpu = new StubWorker();
     const net = new StubWorker();
