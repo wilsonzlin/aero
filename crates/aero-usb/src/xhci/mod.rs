@@ -2122,6 +2122,12 @@ impl XhciController {
     /// `target` corresponds to the doorbell register index (slot id). For non-zero targets, the
     /// low 8 bits of `value` contain the endpoint ID (DCI).
     pub fn write_doorbell(&mut self, target: u8, value: u32) {
+        // After Host Controller Error is latched, the controller is considered halted until reset.
+        // Ignore further doorbells so a guest cannot keep queueing work for rings we will not
+        // execute.
+        if self.host_controller_error {
+            return;
+        }
         if target == 0 {
             // Doorbell 0 rings the command ring (command TRBs).
             // The low bits of `value` are reserved for doorbell 0, so ignore it.
@@ -2136,6 +2142,9 @@ impl XhciController {
     ///
     /// This marks the endpoint as active. [`XhciController::tick`] will process pending work.
     pub fn ring_doorbell(&mut self, slot_id: u8, endpoint_id: u8) {
+        if self.host_controller_error {
+            return;
+        }
         if slot_id == 0 {
             return;
         }

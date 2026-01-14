@@ -134,12 +134,12 @@ fn xhci_mmio_read_does_not_dma_after_host_controller_error() {
     let mut mem = CountingMem::new(0x20_000);
     let mut xhci = XhciController::new();
 
-    force_hce(&mut xhci, &mut mem);
-
     // MMIO reads should never DMA, even if we ring doorbell 0 (setting `cmd_kick`) before the
     // controller enters the fatal error state.
     let doorbell0 = u64::from(regs::DBOFF_VALUE);
     xhci.mmio_write(doorbell0, 4, 0);
+
+    force_hce(&mut xhci, &mut mem);
 
     mem.reset_counts();
     let _ = xhci.mmio_read(regs::REG_USBSTS, 4);
