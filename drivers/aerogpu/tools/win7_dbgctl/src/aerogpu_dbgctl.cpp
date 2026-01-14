@@ -4311,8 +4311,15 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
                                       uint64_t fbGpa,
                                       const wchar_t *path,
                                       bool quiet = false,
-                                      const wchar_t *fbGpaSource = NULL) {
+                                      const wchar_t *fbGpaSource = NULL,
+                                      NTSTATUS *outStatus = NULL) {
+  if (outStatus) {
+    *outStatus = STATUS_UNSUCCESSFUL;
+  }
   if (!f || !f->Escape || !hAdapter || !label || !path) {
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4337,6 +4344,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
              label,
              AerogpuFormatName(format),
              (unsigned long)format);
+    if (outStatus) {
+      *outStatus = STATUS_NOT_SUPPORTED;
+    }
     return 2;
   }
 
@@ -4347,6 +4357,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
              label,
              (unsigned long)width,
              (unsigned long)srcBpp);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   if ((uint64_t)pitchBytes < rowSrcBytes64) {
@@ -4355,17 +4368,26 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
              label,
              (unsigned long)pitchBytes,
              (unsigned long long)rowSrcBytes64);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
   uint64_t rowOutBytes64 = 0;
   if (!MulU64((uint64_t)width, 4ull, &rowOutBytes64) || rowOutBytes64 == 0) {
     fwprintf(stderr, L"%s: invalid width for BMP output: width=%lu\n", label, (unsigned long)width);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   uint64_t imageBytes64 = 0;
   if (!MulU64(rowOutBytes64, (uint64_t)height, &imageBytes64)) {
     fwprintf(stderr, L"%s: image size overflow: %lux%lu\n", label, (unsigned long)width, (unsigned long)height);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4379,6 +4401,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
              (unsigned long)width,
              (unsigned long)height,
              (unsigned long long)(kMaxImageBytes / (1024ull * 1024ull)));
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4387,6 +4412,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
              label,
              (unsigned long)width,
              (unsigned long)height);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4394,6 +4422,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
   uint64_t fileBytes64 = 0;
   if (!AddU64(headerBytes64, imageBytes64, &fileBytes64) || fileBytes64 > 0xFFFFFFFFull) {
     fwprintf(stderr, L"%s: BMP size overflow: %I64u bytes\n", label, (unsigned long long)fileBytes64);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4436,6 +4467,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
   const uint64_t sizeMax = (uint64_t)(~(size_t)0);
   if (rowSrcBytes64 > sizeMax || rowOutBytes64 > sizeMax) {
     fwprintf(stderr, L"%s: refusing to dump: row buffers exceed addressable size\n", label);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     fclose(fp);
     _wremove(path);
     return 2;
@@ -4447,6 +4481,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
   uint8_t *rowOut = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowOutBytes);
   if (!rowSrc || !rowOut) {
     fwprintf(stderr, L"%s: out of memory allocating row buffers (%Iu, %Iu bytes)\n", label, rowSrcBytes, rowOutBytes);
+    if (outStatus) {
+      *outStatus = STATUS_INSUFFICIENT_RESOURCES;
+    }
     if (rowSrc) HeapFree(GetProcessHeap(), 0, rowSrc);
     if (rowOut) HeapFree(GetProcessHeap(), 0, rowOut);
     fclose(fp);
@@ -4462,6 +4499,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
   uint8_t *escapeBuf = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, (size_t)escapeBufCap);
   if (!escapeBuf) {
     fwprintf(stderr, L"%s: out of memory allocating escape buffer (%lu bytes)\n", label, (unsigned long)escapeBufCap);
+    if (outStatus) {
+      *outStatus = STATUS_INSUFFICIENT_RESOURCES;
+    }
     HeapFree(GetProcessHeap(), 0, rowSrc);
     HeapFree(GetProcessHeap(), 0, rowOut);
     fclose(fp);
@@ -4476,6 +4516,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
     uint64_t rowOffset = 0;
     if (!MulU64((uint64_t)(uint32_t)y, (uint64_t)pitchBytes, &rowOffset) || !AddU64(fbGpa, rowOffset, &rowGpa)) {
       fwprintf(stderr, L"%s: GPA overflow computing row %ld address\n", label, (long)y);
+      if (outStatus) {
+        *outStatus = STATUS_INVALID_PARAMETER;
+      }
       HeapFree(GetProcessHeap(), 0, escapeBuf);
       HeapFree(GetProcessHeap(), 0, rowSrc);
       HeapFree(GetProcessHeap(), 0, rowOut);
@@ -4493,6 +4536,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
       uint64_t chunkGpa = 0;
       if (!AddU64(rowGpa, (uint64_t)done, &chunkGpa)) {
         fwprintf(stderr, L"%s: GPA overflow computing read offset for row %ld\n", label, (long)y);
+        if (outStatus) {
+          *outStatus = STATUS_INVALID_PARAMETER;
+        }
         HeapFree(GetProcessHeap(), 0, escapeBuf);
         HeapFree(GetProcessHeap(), 0, rowSrc);
         HeapFree(GetProcessHeap(), 0, rowOut);
@@ -4508,6 +4554,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
           PrintReadGpaNotSupportedHint(label);
         }
         fwprintf(stderr, L"%s: failed to read row %ld (offset %Iu, size %lu)\n", label, (long)y, done, (unsigned long)chunk);
+        if (outStatus) {
+          *outStatus = rst;
+        }
         HeapFree(GetProcessHeap(), 0, escapeBuf);
         HeapFree(GetProcessHeap(), 0, rowSrc);
         HeapFree(GetProcessHeap(), 0, rowOut);
@@ -4606,6 +4655,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
                label,
                AerogpuFormatName(format),
                (unsigned long)format);
+      if (outStatus) {
+        *outStatus = STATUS_NOT_SUPPORTED;
+      }
       HeapFree(GetProcessHeap(), 0, escapeBuf);
       HeapFree(GetProcessHeap(), 0, rowSrc);
       HeapFree(GetProcessHeap(), 0, rowOut);
@@ -4652,6 +4704,9 @@ static int DumpLinearFramebufferToBmp(const D3DKMT_FUNCS *f,
               path);
     }
   }
+  if (outStatus) {
+    *outStatus = 0;
+  }
   return 0;
 }
 
@@ -4665,8 +4720,15 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
                                       uint64_t fbGpa,
                                       const wchar_t *path,
                                       bool quiet = false,
-                                      const wchar_t *fbGpaSource = NULL) {
+                                      const wchar_t *fbGpaSource = NULL,
+                                      NTSTATUS *outStatus = NULL) {
+  if (outStatus) {
+    *outStatus = STATUS_UNSUCCESSFUL;
+  }
   if (!f || !f->Escape || !hAdapter || !label || !path) {
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4691,6 +4753,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
              label,
              AerogpuFormatName(format),
              (unsigned long)format);
+    if (outStatus) {
+      *outStatus = STATUS_NOT_SUPPORTED;
+    }
     return 2;
   }
 
@@ -4701,6 +4766,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
              label,
              (unsigned long)width,
              (unsigned long)srcBpp);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   if ((uint64_t)pitchBytes < rowSrcBytes64) {
@@ -4709,17 +4777,26 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
              label,
              (unsigned long)pitchBytes,
              (unsigned long long)rowSrcBytes64);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
   uint64_t rowOutBytes64 = 0;
   if (!MulU64((uint64_t)width, 4ull, &rowOutBytes64) || rowOutBytes64 == 0) {
     fwprintf(stderr, L"%s: invalid width for PNG output: width=%lu\n", label, (unsigned long)width);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   uint64_t imageBytes64 = 0;
   if (!MulU64(rowOutBytes64, (uint64_t)height, &imageBytes64)) {
     fwprintf(stderr, L"%s: image size overflow: %lux%lu\n", label, (unsigned long)width, (unsigned long)height);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4733,11 +4810,17 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
              (unsigned long)width,
              (unsigned long)height,
              (unsigned long long)(kMaxImageBytes / (1024ull * 1024ull)));
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
   if (width == 0 || height == 0) {
     fwprintf(stderr, L"%s: invalid size %lux%lu\n", label, (unsigned long)width, (unsigned long)height);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4745,11 +4828,17 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
   uint64_t rowRawBytes64 = 0;
   if (!AddU64(rowOutBytes64, 1ull, &rowRawBytes64)) {
     fwprintf(stderr, L"%s: row size overflow\n", label);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   uint64_t rawBytes64 = 0;
   if (!MulU64(rowRawBytes64, (uint64_t)height, &rawBytes64)) {
     fwprintf(stderr, L"%s: raw image size overflow\n", label);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
 
@@ -4759,11 +4848,17 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
   uint64_t blockOverhead64 = 0;
   if (!MulU64(numBlocks, 5ull, &blockOverhead64)) {
     fwprintf(stderr, L"%s: deflate overhead overflow\n", label);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   uint64_t zlibPayload64 = 0;
   if (!AddU64(rawBytes64, blockOverhead64, &zlibPayload64)) {
     fwprintf(stderr, L"%s: deflate payload overflow\n", label);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   uint64_t idatLen64 = 0;
@@ -4772,6 +4867,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
     fwprintf(stderr, L"%s: refusing to dump: IDAT chunk too large (%I64u bytes)\n",
              label,
              (unsigned long long)idatLen64);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   const uint32_t idatLen = (uint32_t)idatLen64;
@@ -4779,6 +4877,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
   const uint64_t sizeMax = (uint64_t)(~(size_t)0);
   if (rowSrcBytes64 > sizeMax || rowOutBytes64 > sizeMax) {
     fwprintf(stderr, L"%s: refusing to dump: row buffers exceed addressable size\n", label);
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 2;
   }
   const size_t rowSrcBytes = (size_t)rowSrcBytes64;
@@ -4825,6 +4926,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
   uint8_t *rowOut = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, rowOutBytes);
   if (!rowSrc || !rowOut) {
     fwprintf(stderr, L"%s: out of memory allocating row buffers (%Iu, %Iu bytes)\n", label, rowSrcBytes, rowOutBytes);
+    if (outStatus) {
+      *outStatus = STATUS_INSUFFICIENT_RESOURCES;
+    }
     if (rowSrc) HeapFree(GetProcessHeap(), 0, rowSrc);
     if (rowOut) HeapFree(GetProcessHeap(), 0, rowOut);
     fclose(fp);
@@ -4838,6 +4942,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
   uint8_t *escapeBuf = (uint8_t *)HeapAlloc(GetProcessHeap(), 0, (size_t)escapeBufCap);
   if (!escapeBuf) {
     fwprintf(stderr, L"%s: out of memory allocating escape buffer (%lu bytes)\n", label, (unsigned long)escapeBufCap);
+    if (outStatus) {
+      *outStatus = STATUS_INSUFFICIENT_RESOURCES;
+    }
     HeapFree(GetProcessHeap(), 0, rowSrc);
     HeapFree(GetProcessHeap(), 0, rowOut);
     fclose(fp);
@@ -4929,6 +5036,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
     uint64_t rowOffset = 0;
     if (!MulU64((uint64_t)y, (uint64_t)pitchBytes, &rowOffset) || !AddU64(fbGpa, rowOffset, &rowGpa)) {
       fwprintf(stderr, L"%s: GPA overflow computing row %lu address\n", label, (unsigned long)y);
+      if (outStatus) {
+        *outStatus = STATUS_INVALID_PARAMETER;
+      }
       HeapFree(GetProcessHeap(), 0, escapeBuf);
       HeapFree(GetProcessHeap(), 0, rowSrc);
       HeapFree(GetProcessHeap(), 0, rowOut);
@@ -4946,6 +5056,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
       uint64_t chunkGpa = 0;
       if (!AddU64(rowGpa, (uint64_t)done, &chunkGpa)) {
         fwprintf(stderr, L"%s: GPA overflow computing read offset for row %lu\n", label, (unsigned long)y);
+        if (outStatus) {
+          *outStatus = STATUS_INVALID_PARAMETER;
+        }
         HeapFree(GetProcessHeap(), 0, escapeBuf);
         HeapFree(GetProcessHeap(), 0, rowSrc);
         HeapFree(GetProcessHeap(), 0, rowOut);
@@ -4966,6 +5079,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
                  (unsigned long)y,
                  done,
                  (unsigned long)chunk);
+        if (outStatus) {
+          *outStatus = rst;
+        }
         HeapFree(GetProcessHeap(), 0, escapeBuf);
         HeapFree(GetProcessHeap(), 0, rowSrc);
         HeapFree(GetProcessHeap(), 0, rowOut);
@@ -5064,6 +5180,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
                label,
                AerogpuFormatName(format),
                (unsigned long)format);
+      if (outStatus) {
+        *outStatus = STATUS_NOT_SUPPORTED;
+      }
       HeapFree(GetProcessHeap(), 0, escapeBuf);
       HeapFree(GetProcessHeap(), 0, rowSrc);
       HeapFree(GetProcessHeap(), 0, rowOut);
@@ -5159,6 +5278,9 @@ static int DumpLinearFramebufferToPng(const D3DKMT_FUNCS *f,
               (unsigned long long)fbGpa,
               path);
     }
+  }
+  if (outStatus) {
+    *outStatus = 0;
   }
   return 0;
 }
@@ -8660,9 +8782,25 @@ static int DoDumpScanoutBmpJson(const D3DKMT_FUNCS *f,
 
   wchar_t label[32];
   swprintf_s(label, sizeof(label) / sizeof(label[0]), L"scanout%lu", (unsigned long)q.base.vidpn_source_id);
-  const int rc = DumpLinearFramebufferToBmp(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path, true);
+  NTSTATUS dumpStatus = STATUS_UNSUCCESSFUL;
+  const int rc = DumpLinearFramebufferToBmp(f,
+                                            hAdapter,
+                                            label,
+                                            width,
+                                            height,
+                                            format,
+                                            pitchBytes,
+                                            fbGpa,
+                                            path,
+                                            true,
+                                            usingCachedFbGpa ? L"cached_fb_gpa" : NULL,
+                                            &dumpStatus);
   if (rc != 0) {
-    JsonWriteTopLevelError(out, "dump-scanout-bmp", f, "Failed to dump scanout framebuffer to BMP", STATUS_UNSUCCESSFUL);
+    JsonWriteTopLevelError(out,
+                           "dump-scanout-bmp",
+                           f,
+                           "Failed to dump scanout framebuffer to BMP",
+                           dumpStatus != 0 ? dumpStatus : STATUS_UNSUCCESSFUL);
     return rc;
   }
 
@@ -8833,9 +8971,25 @@ static int DoDumpScanoutPngJson(const D3DKMT_FUNCS *f,
 
   wchar_t label[32];
   swprintf_s(label, sizeof(label) / sizeof(label[0]), L"scanout%lu", (unsigned long)q.base.vidpn_source_id);
-  const int rc = DumpLinearFramebufferToPng(f, hAdapter, label, width, height, format, pitchBytes, fbGpa, path, true);
+  NTSTATUS dumpStatus = STATUS_UNSUCCESSFUL;
+  const int rc = DumpLinearFramebufferToPng(f,
+                                            hAdapter,
+                                            label,
+                                            width,
+                                            height,
+                                            format,
+                                            pitchBytes,
+                                            fbGpa,
+                                            path,
+                                            true,
+                                            usingCachedFbGpa ? L"cached_fb_gpa" : NULL,
+                                            &dumpStatus);
   if (rc != 0) {
-    JsonWriteTopLevelError(out, "dump-scanout-png", f, "Failed to dump scanout framebuffer to PNG", STATUS_UNSUCCESSFUL);
+    JsonWriteTopLevelError(out,
+                           "dump-scanout-png",
+                           f,
+                           "Failed to dump scanout framebuffer to PNG",
+                           dumpStatus != 0 ? dumpStatus : STATUS_UNSUCCESSFUL);
     return rc;
   }
 
@@ -8976,9 +9130,15 @@ static int DoDumpCursorBmpJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, co
     return 2;
   }
 
-  const int rc = DumpLinearFramebufferToBmp(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path, true);
+  NTSTATUS dumpStatus = STATUS_UNSUCCESSFUL;
+  const int rc = DumpLinearFramebufferToBmp(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path, true,
+                                            NULL, &dumpStatus);
   if (rc != 0) {
-    JsonWriteTopLevelError(out, "dump-cursor-bmp", f, "Failed to dump cursor framebuffer to BMP", STATUS_UNSUCCESSFUL);
+    JsonWriteTopLevelError(out,
+                           "dump-cursor-bmp",
+                           f,
+                           "Failed to dump cursor framebuffer to BMP",
+                           dumpStatus != 0 ? dumpStatus : STATUS_UNSUCCESSFUL);
     return rc;
   }
 
@@ -9082,9 +9242,15 @@ static int DoDumpCursorPngJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, co
     return 2;
   }
 
-  const int rc = DumpLinearFramebufferToPng(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path, true);
+  NTSTATUS dumpStatus = STATUS_UNSUCCESSFUL;
+  const int rc = DumpLinearFramebufferToPng(f, hAdapter, L"cursor", width, height, format, pitchBytes, fbGpa, path, true,
+                                            NULL, &dumpStatus);
   if (rc != 0) {
-    JsonWriteTopLevelError(out, "dump-cursor-png", f, "Failed to dump cursor framebuffer to PNG", STATUS_UNSUCCESSFUL);
+    JsonWriteTopLevelError(out,
+                           "dump-cursor-png",
+                           f,
+                           "Failed to dump cursor framebuffer to PNG",
+                           dumpStatus != 0 ? dumpStatus : STATUS_UNSUCCESSFUL);
     return rc;
   }
 
