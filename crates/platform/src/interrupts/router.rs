@@ -517,11 +517,15 @@ impl PlatformInterrupts {
     pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
         self.lapics.iter().map(|lapic| lapic.as_ref())
     }
+    #[track_caller]
     pub fn lapic(&self, cpu_index: usize) -> &LocalApic {
-        self.lapics
-            .get(cpu_index)
-            .map(|lapic| lapic.as_ref())
-            .unwrap_or_else(|| panic!("invalid CPU index {cpu_index}"))
+        match self.lapics.get(cpu_index) {
+            Some(lapic) => lapic.as_ref(),
+            None => panic!(
+                "invalid CPU index {cpu_index} (cpu_count={})",
+                self.lapics.len()
+            ),
+        }
     }
 
     pub fn set_mode(&mut self, mode: PlatformInterruptMode) {
@@ -1189,6 +1193,7 @@ impl IoSnapshot for PlatformInterrupts {
 mod tests {
     use super::*;
     use aero_interrupts::apic::{DeliveryMode, DestinationShorthand, Icr, Level};
+    use crate::test_util::capture_panic_location;
 
     fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
         let redtbl_low = 0x10u32 + gsi * 2;
@@ -1197,6 +1202,19 @@ mod tests {
         ints.ioapic_mmio_write(0x10, low);
         ints.ioapic_mmio_write(0x00, redtbl_high);
         ints.ioapic_mmio_write(0x10, high);
+    }
+
+    #[test]
+    fn lapic_panics_at_call_site_on_invalid_cpu_index() {
+        let ints = PlatformInterrupts::new_with_cpu_count(1);
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = ints.lapic(1);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 
     #[test]

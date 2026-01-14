@@ -11,6 +11,9 @@ pub mod platform;
 pub mod reset;
 pub mod time;
 
+#[cfg(test)]
+mod test_util;
+
 pub use chipset::{A20GateHandle, ChipsetState};
 pub use platform::Platform;
 pub use reset::{PlatformResetSink, ResetKind, ResetLatch};
