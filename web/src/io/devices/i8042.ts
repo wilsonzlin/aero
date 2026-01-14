@@ -1043,16 +1043,15 @@ export class I8042Controller implements PortIoHandler {
   // Packed output queue entries:
   // - low 8 bits: value
   // - bits 8..9: OutputSource
-  // - upper bits: monotonically increasing sequence number
   //
-  // Including the sequence number avoids missing IRQ pulses when consecutive head bytes have the
-  // same value+source (object identity previously provided this property).
+  // IRQ pulses should still be emitted once per *byte loaded into the output buffer* even when
+  // consecutive bytes are identical. We track head changes separately via `#headToken`.
   readonly #outBuf = new Uint32Array(MAX_CONTROLLER_OUTPUT_QUEUE);
   #outHead = 0;
   #outTail = 0;
   #outLen = 0;
-  #outSeq = 1;
-  #irqLastHead: number | null = null;
+  #headToken = 0;
+  #irqLastHeadToken = 0;
   // When both devices have pending output, alternate which device gets priority so bytes can
   // interleave (mirrors Rust's `prefer_mouse` behavior).
   #preferMouse = false;
@@ -1381,11 +1380,8 @@ export class I8042Controller implements PortIoHandler {
   }
 
   #packOut(value: number, source: OutputSource): number {
-    const v = value & 0xff;
-    const s = source & 0x03;
-    const seq = this.#outSeq++;
     // See `#outBuf` comment for layout.
-    return seq * 1024 + (s << 8) + v;
+    return ((source & 0x03) << 8) | (value & 0xff);
   }
 
   #outSource(packed: number): OutputSource {
@@ -1396,6 +1392,7 @@ export class I8042Controller implements PortIoHandler {
     this.#outHead = 0;
     this.#outTail = 0;
     this.#outLen = 0;
+    this.#headToken = 0;
   }
 
   #outPeek(): number | null {
@@ -1405,10 +1402,12 @@ export class I8042Controller implements PortIoHandler {
 
   #outPush(packed: number): boolean {
     if (this.#outLen >= MAX_CONTROLLER_OUTPUT_QUEUE) return false;
+    const wasEmpty = this.#outLen === 0;
     this.#outBuf[this.#outTail] = packed >>> 0;
     this.#outTail += 1;
     if (this.#outTail === MAX_CONTROLLER_OUTPUT_QUEUE) this.#outTail = 0;
     this.#outLen += 1;
+    if (wasEmpty) this.#headToken = (this.#headToken + 1) >>> 0;
     return true;
   }
 
@@ -1418,6 +1417,7 @@ export class I8042Controller implements PortIoHandler {
     this.#outHead += 1;
     if (this.#outHead === MAX_CONTROLLER_OUTPUT_QUEUE) this.#outHead = 0;
     this.#outLen -= 1;
+    this.#headToken = (this.#headToken + 1) >>> 0;
     if (this.#outLen === 0) {
       // Keep head/tail aligned to avoid growth in the mod-arithmetic state.
       this.#outTail = this.#outHead;
@@ -1494,8 +1494,8 @@ export class I8042Controller implements PortIoHandler {
     //
     // The web runtime transports IRQs as line level transitions (`raiseIrq`/`lowerIrq`), so we
     // represent the edge by emitting an explicit pulse each time the head output byte changes.
-    if (head !== this.#irqLastHead) {
-      this.#irqLastHead = head;
+    if (this.#headToken !== this.#irqLastHeadToken) {
+      this.#irqLastHeadToken = this.#headToken;
       // Update the interleaving preference to match the byte we just loaded into the output buffer.
       // When the output buffer becomes empty, keep the previous preference (mirrors Rust behavior).
       if (head !== null) {
@@ -1616,7 +1616,6 @@ export class I8042Controller implements PortIoHandler {
     }
 
     this.#outClear();
-    this.#outSeq = 1;
     const outLenRaw = r.u32();
     const outLen = Math.min(outLenRaw, MAX_CONTROLLER_OUTPUT_QUEUE);
     for (let i = 0; i < outLen; i++) {
@@ -1643,7 +1642,7 @@ export class I8042Controller implements PortIoHandler {
     // Restore derived status bits. Snapshot restore should not emit spurious IRQ pulses for any
     // already-buffered output byte; pending edge-triggered interrupts must be captured/restored
     // by the interrupt controller (PIC/APIC) model instead.
-    this.#irqLastHead = head;
+    this.#irqLastHeadToken = this.#headToken;
     this.#syncStatusAndIrq();
   }
 
