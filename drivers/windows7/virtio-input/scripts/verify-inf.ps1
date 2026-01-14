@@ -10,8 +10,9 @@
   - Must bind as HIDClass
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
-  - Must include the contract v1 HWID set (revision gated, REV_01)
-  - Must bind only to SUBSYS-specific Aero contract v1 HWIDs (no generic fallback)
+  - Must include the contract v1 HWID set (revision gated, REV_01), including:
+    - SUBSYS-specific keyboard/mouse IDs (distinct Device Manager names)
+    - a generic fallback ID for environments that do not expose Aero subsystem IDs
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
 
