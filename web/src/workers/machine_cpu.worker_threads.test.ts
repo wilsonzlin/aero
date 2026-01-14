@@ -133,6 +133,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+    const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+    const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -187,6 +190,15 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       if (got.join(",") !== expected.join(",")) {
         throw new Error(`unexpected recycled buffer contents: got [${got.join(",")}] expected [${expected.join(",")}]`);
       }
+
+      const receivedAfter = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+      const droppedAfter = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
+      if (receivedAfter - receivedBase !== 1) {
+        throw new Error(`expected IoInputBatchReceivedCounter to increase by 1, got ${receivedAfter - receivedBase}`);
+      }
+      if (droppedAfter - droppedBase !== 0) {
+        throw new Error(`expected IoInputBatchDropCounter to not change, got ${droppedAfter - droppedBase}`);
+      }
     } finally {
       await worker.terminate();
     }
@@ -194,6 +206,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
   it("queues input batches while snapshot-paused and flushes them on resume", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+    const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+    const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -281,6 +296,15 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
         const got = Array.from(new Int32Array(recycledBuf));
         if (got.join(",") !== expected.join(",")) {
           throw new Error(`unexpected recycled buffer contents: got [${got.join(",")}] expected [${expected.join(",")}]`);
+        }
+
+        const receivedAfter = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+        const droppedAfter = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
+        if (receivedAfter - receivedBase !== 1) {
+          throw new Error(`expected IoInputBatchReceivedCounter to increase by 1, got ${receivedAfter - receivedBase}`);
+        }
+        if (droppedAfter - droppedBase !== 0) {
+          throw new Error(`expected IoInputBatchDropCounter to not change, got ${droppedAfter - droppedBase}`);
         }
       } finally {
         worker.off("message", onMessage);
