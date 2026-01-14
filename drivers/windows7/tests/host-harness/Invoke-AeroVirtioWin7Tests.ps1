@@ -123,6 +123,16 @@ param(
   # This is a looser check than -RequireNoBlkResetRecovery (ignores reset_detected).
   [Parameter(Mandatory = $false)]
   [switch]$FailOnBlkResetRecovery,
+  
+  # If set, fail if the guest virtio-blk miniport flags diagnostic reports any non-zero
+  # removed/surprise_removed/reset_in_progress/reset_pending bits (best-effort; ignores missing/WARN markers).
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireNoBlkMiniportFlags,
+  
+  # If set, fail if the guest virtio-blk miniport flags diagnostic reports device removal activity
+  # (removed or surprise_removed set). This is a looser check than -RequireNoBlkMiniportFlags.
+  [Parameter(Mandatory = $false)]
+  [switch]$FailOnBlkMiniportFlags,
 
   # If set, require the guest virtio-blk-reset marker to PASS (treat SKIP/FAIL/missing as failure).
   #
@@ -2831,6 +2841,66 @@ function Get-AeroVirtioBlkResetRecoveryCounters {
     if (-not $fields.ContainsKey($k)) { return $null }
     $raw = [string]$fields[$k]
     $v = & $parseInt $raw
+    if ($null -eq $v) { return $null }
+    $out[$k] = $v
+  }
+  return $out
+}
+
+function Get-AeroVirtioBlkMiniportFlags {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk-miniport-flags marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $parseInt = {
+    param([string]$Raw)
+    $v = 0L
+    $ok = [int64]::TryParse($Raw, [ref]$v)
+    if (-not $ok) {
+      if ($Raw -match "^0x[0-9a-fA-F]+$") {
+        try {
+          $v = [Convert]::ToInt64($Raw.Substring(2), 16)
+          $ok = $true
+        } catch {
+          $ok = $false
+        }
+      }
+    }
+    if (-not $ok) { return $null }
+    return $v
+  }
+
+  $prefix = "virtio-blk-miniport-flags|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return $null }
+
+  $toks = $line.Split("|")
+  if ($toks.Count -ge 2) {
+    $s = $toks[1].Trim().ToUpperInvariant()
+    if ($s -ne "INFO") { return $null }
+  } else {
+    return $null
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $keys = @("raw", "removed", "surprise_removed", "reset_in_progress", "reset_pending")
+  $out = @{}
+  foreach ($k in $keys) {
+    if (-not $fields.ContainsKey($k)) { return $null }
+    $v = & $parseInt ([string]$fields[$k])
     if ($null -eq $v) { return $null }
     $out[$k] = $v
   }
@@ -7350,6 +7420,36 @@ try {
     }
   }
 
+  if ($RequireNoBlkMiniportFlags -and $result.Result -eq "PASS") {
+    $flags = Get-AeroVirtioBlkMiniportFlags -Tail $result.Tail -SerialLogPath $SerialLogPath
+    if ($null -ne $flags) {
+      $nonzero = $false
+      foreach ($k in @("removed", "surprise_removed", "reset_in_progress", "reset_pending")) {
+        if ($flags.ContainsKey($k)) {
+          try { if ([int64]$flags[$k] -gt 0) { $nonzero = $true; break } } catch { }
+        }
+      }
+      if ($nonzero) {
+        $result["Result"] = "VIRTIO_BLK_MINIPORT_FLAGS_NONZERO"
+        $result["BlkMiniportFlags"] = $flags
+      }
+    }
+  }
+
+  if ($FailOnBlkMiniportFlags -and $result.Result -eq "PASS") {
+    $flags = Get-AeroVirtioBlkMiniportFlags -Tail $result.Tail -SerialLogPath $SerialLogPath
+    if ($null -ne $flags) {
+      $removed = 0L
+      $surprise = 0L
+      try { $removed = [int64]$flags["removed"] } catch { }
+      try { $surprise = [int64]$flags["surprise_removed"] } catch { }
+      if ($removed -gt 0 -or $surprise -gt 0) {
+        $result["Result"] = "VIRTIO_BLK_MINIPORT_FLAGS_REMOVED"
+        $result["BlkMiniportFlags"] = $flags
+      }
+    }
+  }
+
   switch ($result.Result) {
     "PASS" {
       if ($RequireIntx -or $RequireMsi) {
@@ -7522,6 +7622,54 @@ try {
       $msg = "FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED:"
       if ($null -ne $counters) {
         $msg += " hw_reset_bus=$($counters['hw_reset_bus']) reset_detected=$($counters['reset_detected'])"
+      }
+      Write-Host $msg
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_MINIPORT_FLAGS_NONZERO" {
+      $flags = $null
+      if ($result.ContainsKey("BlkMiniportFlags")) {
+        $flags = $result["BlkMiniportFlags"]
+      } else {
+        $flags = Get-AeroVirtioBlkMiniportFlags -Tail $result.Tail -SerialLogPath $SerialLogPath
+      }
+
+      $msg = "FAIL: VIRTIO_BLK_MINIPORT_FLAGS_NONZERO:"
+      if ($null -ne $flags) {
+        $rawHex = $null
+        try { $rawHex = ("0x{0:x8}" -f ([uint32]$flags["raw"])) } catch { }
+        if ($null -ne $rawHex) {
+          $msg += " raw=$rawHex"
+        }
+        $msg += " removed=$($flags['removed']) surprise_removed=$($flags['surprise_removed']) reset_in_progress=$($flags['reset_in_progress']) reset_pending=$($flags['reset_pending'])"
+      }
+      Write-Host $msg
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_MINIPORT_FLAGS_REMOVED" {
+      $flags = $null
+      if ($result.ContainsKey("BlkMiniportFlags")) {
+        $flags = $result["BlkMiniportFlags"]
+      } else {
+        $flags = Get-AeroVirtioBlkMiniportFlags -Tail $result.Tail -SerialLogPath $SerialLogPath
+      }
+
+      $msg = "FAIL: VIRTIO_BLK_MINIPORT_FLAGS_REMOVED:"
+      if ($null -ne $flags) {
+        $rawHex = $null
+        try { $rawHex = ("0x{0:x8}" -f ([uint32]$flags["raw"])) } catch { }
+        if ($null -ne $rawHex) {
+          $msg += " raw=$rawHex"
+        }
+        $msg += " removed=$($flags['removed']) surprise_removed=$($flags['surprise_removed'])"
       }
       Write-Host $msg
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {

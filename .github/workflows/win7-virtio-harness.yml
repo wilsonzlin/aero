@@ -218,6 +218,16 @@ on:
         required: false
         default: false
         type: boolean
+      require_no_blk_miniport_flags:
+        description: Fail if virtio-blk miniport flags diagnostic reports any non-zero removed/surprise_removed/reset_in_progress/reset_pending bits (best-effort; ignores missing/WARN markers)
+        required: false
+        default: false
+        type: boolean
+      fail_on_blk_miniport_flags:
+        description: Fail if virtio-blk miniport flags diagnostic reports removed or surprise_removed activity (subset of require_no_blk_miniport_flags)
+        required: false
+        default: false
+        type: boolean
       with_blk_reset:
         description: Require virtio-blk-reset to PASS (requires a guest image provisioned with --test-blk-reset)
         required: false
@@ -369,6 +379,8 @@ jobs:
             echo "  fail_on_blk_recovery: '${{ inputs.fail_on_blk_recovery }}'"
             echo "  require_no_blk_reset_recovery: '${{ inputs.require_no_blk_reset_recovery }}'"
             echo "  fail_on_blk_reset_recovery: '${{ inputs.fail_on_blk_reset_recovery }}'"
+            echo "  require_no_blk_miniport_flags: '${{ inputs.require_no_blk_miniport_flags }}'"
+            echo "  fail_on_blk_miniport_flags: '${{ inputs.fail_on_blk_miniport_flags }}'"
             echo "  with_blk_reset: '${{ inputs.with_blk_reset }}'"
             echo "  with_net_link_flap: '${{ inputs.with_net_link_flap }}'"
             echo "  require_net_csum_offload: '${{ inputs.require_net_csum_offload }}'"
@@ -514,6 +526,8 @@ jobs:
             fail_on_blk_recovery="${{ inputs.fail_on_blk_recovery }}"
             require_no_blk_reset_recovery="${{ inputs.require_no_blk_reset_recovery }}"
             fail_on_blk_reset_recovery="${{ inputs.fail_on_blk_reset_recovery }}"
+            require_no_blk_miniport_flags="${{ inputs.require_no_blk_miniport_flags }}"
+            fail_on_blk_miniport_flags="${{ inputs.fail_on_blk_miniport_flags }}"
             with_blk_reset="${{ inputs.with_blk_reset }}"
             with_net_link_flap="${{ inputs.with_net_link_flap }}"
             require_net_csum_offload="${{ inputs.require_net_csum_offload }}"
@@ -731,6 +745,12 @@ jobs:
             fi
             if [[ "${fail_on_blk_reset_recovery}" == "true" ]]; then
               args+=(--fail-on-blk-reset-recovery)
+            fi
+            if [[ "${require_no_blk_miniport_flags}" == "true" ]]; then
+              args+=(--require-no-blk-miniport-flags)
+            fi
+            if [[ "${fail_on_blk_miniport_flags}" == "true" ]]; then
+              args+=(--fail-on-blk-miniport-flags)
             fi
             if [[ "${with_blk_reset}" == "true" ]]; then
               args+=(--with-blk-reset)

@@ -3662,6 +3662,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "machine-readable virtio-blk-reset-recovery marker (checks hw_reset_bus only)."
         ),
     )
+    parser.add_argument(
+        "--require-no-blk-miniport-flags",
+        action="store_true",
+        help=(
+            "Fail the harness if the guest virtio-blk miniport flags diagnostic reports any non-zero "
+            "removed/surprise_removed/reset_in_progress/reset_pending bits (best-effort; ignores missing/WARN markers). "
+            "On failure, emits: FAIL: VIRTIO_BLK_MINIPORT_FLAGS_NONZERO:"
+        ),
+    )
+    parser.add_argument(
+        "--fail-on-blk-miniport-flags",
+        action="store_true",
+        help=(
+            "Fail the harness if the guest virtio-blk miniport flags diagnostic reports removal "
+            "activity (removed or surprise_removed set). This is a looser subset of "
+            "--require-no-blk-miniport-flags and ignores reset_in_progress/reset_pending."
+        ),
+    )
 
     return parser
 
@@ -6823,6 +6841,26 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if args.require_no_blk_miniport_flags:
+                            msg = _check_no_blk_miniport_flags_requirement(
+                                tail,
+                                blk_miniport_flags_line=virtio_blk_miniport_flags_marker_line,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        if args.fail_on_blk_miniport_flags:
+                            msg = _check_fail_on_blk_miniport_flags_requirement(
+                                tail,
+                                blk_miniport_flags_line=virtio_blk_miniport_flags_marker_line,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
 
                         if args.require_net_csum_offload or getattr(args, "require_net_udp_csum_offload", False):
                             csum_tail = (
@@ -8811,6 +8849,26 @@ def main() -> int:
                                 msg = _check_fail_on_blk_reset_recovery_requirement(
                                     tail,
                                     blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.require_no_blk_miniport_flags:
+                                msg = _check_no_blk_miniport_flags_requirement(
+                                    tail,
+                                    blk_miniport_flags_line=virtio_blk_miniport_flags_marker_line,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.fail_on_blk_miniport_flags:
+                                msg = _check_fail_on_blk_miniport_flags_requirement(
+                                    tail,
+                                    blk_miniport_flags_line=virtio_blk_miniport_flags_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -10935,6 +10993,14 @@ _VIRTIO_BLK_RESET_RECOVERY_KEYS = (
     "hw_reset_bus",
 )
 
+_VIRTIO_BLK_MINIPORT_FLAGS_KEYS = (
+    "raw",
+    "removed",
+    "surprise_removed",
+    "reset_in_progress",
+    "reset_pending",
+)
+
 
 def _try_parse_int_base0(s: str) -> Optional[int]:
     try:
@@ -11173,6 +11239,87 @@ def _check_fail_on_blk_reset_recovery_requirement(
         return (
             "FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED:"
             f" hw_reset_bus={counters['hw_reset_bus']} reset_detected={counters['reset_detected']}"
+        )
+    return None
+
+
+def _try_parse_virtio_blk_miniport_flags(
+    tail: bytes, *, blk_miniport_flags_line: Optional[str] = None
+) -> Optional[dict[str, int]]:
+    """
+    Best-effort: parse the guest virtio-blk miniport flags diagnostic line.
+
+    Guest diagnostic line format (not an AERO marker):
+      virtio-blk-miniport-flags|INFO|raw=0x...|removed=<0|1>|surprise_removed=<0|1>|reset_in_progress=<0|1>|reset_pending=<0|1>
+      virtio-blk-miniport-flags|WARN|reason=...|returned_len=...|expected_min=...
+
+    Returns a dict of parsed integer fields on INFO, otherwise None.
+    """
+    marker_line = blk_miniport_flags_line
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(tail, b"virtio-blk-miniport-flags|")
+    if not marker_line:
+        return None
+
+    toks = marker_line.split("|")
+    level = toks[1].strip().upper() if len(toks) >= 2 else ""
+    if level != "INFO":
+        return None
+
+    fields = _parse_marker_kv_fields(marker_line)
+    out: dict[str, int] = {}
+    for k in _VIRTIO_BLK_MINIPORT_FLAGS_KEYS:
+        if k not in fields:
+            return None
+        v = _try_parse_int_base0(fields[k])
+        if v is None:
+            return None
+        out[k] = v
+    return out
+
+
+def _check_no_blk_miniport_flags_requirement(
+    tail: bytes,
+    *,
+    threshold: int = 0,
+    blk_miniport_flags_line: Optional[str] = None,
+) -> Optional[str]:
+    flags = _try_parse_virtio_blk_miniport_flags(
+        tail, blk_miniport_flags_line=blk_miniport_flags_line
+    )
+    if flags is None:
+        return None
+    if (
+        flags["removed"] > threshold
+        or flags["surprise_removed"] > threshold
+        or flags["reset_in_progress"] > threshold
+        or flags["reset_pending"] > threshold
+    ):
+        raw = f"0x{flags['raw']:08x}"
+        return (
+            "FAIL: VIRTIO_BLK_MINIPORT_FLAGS_NONZERO:"
+            f" raw={raw} removed={flags['removed']} surprise_removed={flags['surprise_removed']}"
+            f" reset_in_progress={flags['reset_in_progress']} reset_pending={flags['reset_pending']}"
+        )
+    return None
+
+
+def _check_fail_on_blk_miniport_flags_requirement(
+    tail: bytes,
+    *,
+    threshold: int = 0,
+    blk_miniport_flags_line: Optional[str] = None,
+) -> Optional[str]:
+    flags = _try_parse_virtio_blk_miniport_flags(
+        tail, blk_miniport_flags_line=blk_miniport_flags_line
+    )
+    if flags is None:
+        return None
+    if flags["removed"] > threshold or flags["surprise_removed"] > threshold:
+        raw = f"0x{flags['raw']:08x}"
+        return (
+            "FAIL: VIRTIO_BLK_MINIPORT_FLAGS_REMOVED:"
+            f" raw={raw} removed={flags['removed']} surprise_removed={flags['surprise_removed']}"
         )
     return None
 

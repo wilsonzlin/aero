@@ -176,6 +176,28 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED:"))
 
+    def test_virtio_blk_miniport_flags_nonzero_token(self) -> None:
+        h = self.harness
+
+        msg = h._check_no_blk_miniport_flags_requirement(
+            b"virtio-blk-miniport-flags|INFO|raw=0x00000001|removed=1|surprise_removed=0|reset_in_progress=0|reset_pending=0\n"
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_MINIPORT_FLAGS_NONZERO:"))
+
+    def test_virtio_blk_miniport_flags_removed_token(self) -> None:
+        h = self.harness
+
+        msg = h._check_fail_on_blk_miniport_flags_requirement(
+            b"virtio-blk-miniport-flags|INFO|raw=0x00000003|removed=1|surprise_removed=1|reset_in_progress=0|reset_pending=0\n"
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_MINIPORT_FLAGS_REMOVED:"))
+
     def test_virtio_blk_reset_skip_tokens(self) -> None:
         h = self.harness
 

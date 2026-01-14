@@ -443,6 +443,21 @@ For log scraping, the host harness mirrors these into stable host markers (infor
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_FLAGS|INFO/WARN|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_RESET_RECOVERY|INFO/WARN|...`
 
+To enforce that the virtio-blk miniport did not mark the device removed/surprise-removed (and optionally did not
+leave any reset-in-progress/pending flags), enable:
+
+- PowerShell:
+  - `-RequireNoBlkMiniportFlags` (fails if any removed/surprise_removed/reset_in_progress/reset_pending is non-zero)
+  - `-FailOnBlkMiniportFlags` (fails if removed or surprise_removed is non-zero only)
+- Python:
+  - `--require-no-blk-miniport-flags`
+  - `--fail-on-blk-miniport-flags`
+
+On failure it emits deterministic tokens:
+
+- `FAIL: VIRTIO_BLK_MINIPORT_FLAGS_NONZERO: ...`
+- `FAIL: VIRTIO_BLK_MINIPORT_FLAGS_REMOVED: ...`
+
 To enforce that virtio-blk did not trigger timeout/error recovery resets (best-effort; ignores missing/SKIP markers), enable:
 
 - PowerShell:
@@ -1335,6 +1350,12 @@ to emit `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|...`), set either:
 
 - `require_no_blk_reset_recovery=true` (passes `--require-no-blk-reset-recovery`), or
 - `fail_on_blk_reset_recovery=true` (passes `--fail-on-blk-reset-recovery`, a narrower subset).
+
+To fail when the guest virtio-blk miniport flags diagnostic marker reports removal/reset activity (best-effort; ignores
+missing/WARN markers and requires the guest to emit `...|virtio-blk-miniport-flags|INFO|...`), set either:
+
+- `require_no_blk_miniport_flags=true` (passes `--require-no-blk-miniport-flags`), or
+- `fail_on_blk_miniport_flags=true` (passes `--fail-on-blk-miniport-flags`, a narrower subset).
 
 To require the optional virtio-blk reset test (`virtio-blk-reset`), set the workflow input `with_blk_reset=true`.
 This requires a guest image provisioned with `--test-blk-reset` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1`),
