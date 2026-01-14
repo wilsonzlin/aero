@@ -134,11 +134,13 @@ On Win7 x64, DWM is 64-bit but many applications are 32-bit (WOW64). Validate th
 Optional debug-only validation (when supported by the KMD):
 
 - Use `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (via `D3DKMTEscape`) to map a process-local shared `HANDLE` to a stable 32-bit **debug token**.
+  - Tooling: `aerogpu_dbgctl.exe --map-shared-handle 0x...` is a convenient wrapper around this escape.
 - This escape is disabled by default; enable via `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1` (`REG_DWORD`) and reboot/reload the driver. The caller must also be privileged (Administrator and/or `SeDebugPrivilege`), otherwise the KMD returns `STATUS_NOT_SUPPORTED` (see `drivers/aerogpu/tools/win7_dbgctl/README.md`).
 - The producer and consumer should observe the same debug token even when their numeric `HANDLE` values differ.
 - This escape is only meaningful for real NT shared handles (section objects; common for DXGI shared handles). Token-style shared handles cannot be mapped.
 - This debug token is **not** the protocol `u64 share_token` used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`; it exists only to help bring-up tooling prove that handle duplication/inheritance is working correctly.
 - Stress test: `drivers/aerogpu/tests/win7/map_shared_handle_stress/main.cpp` exercises this escape in a tight loop and under many unique section handles (skips when unsupported or gated off).
+  - Negative/gating coverage: `drivers/aerogpu/tests/win7/dbgctl_escape_security_sanity` ensures invalid handles are rejected and gated escapes do not copy any bytes (skips when unsupported or gated off).
 
 ## Validation: shared resources must be single-allocation (MVP policy)
 
