@@ -235,6 +235,82 @@ fn inf_functional_bytes(contents: &[u8]) -> &[u8] {
 
     panic!("INF did not contain a section header (e.g. [Version])");
 }
+
+fn strip_inf_sections_bytes(contents: &[u8], drop_sections: &[&str]) -> Vec<u8> {
+    // Remove entire sections (including their headers) by name (case-insensitive).
+    //
+    // This is used for controlled drift checks where we want byte-for-byte equality everywhere
+    // except a small set of allowed sections (e.g. virtio-input legacy alias INF may diverge only
+    // in its models sections).
+    let drop: Vec<String> = drop_sections
+        .iter()
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+
+    let mut out = Vec::with_capacity(contents.len());
+    let mut skipping = false;
+
+    let mut line_start = 0usize;
+    while line_start < contents.len() {
+        // Find end-of-line, keeping the newline bytes (supports \n, \r, and \r\n).
+        let mut i = line_start;
+        while i < contents.len() && contents[i] != b'\n' && contents[i] != b'\r' {
+            i += 1;
+        }
+        if i < contents.len() {
+            if contents[i] == b'\r' && i + 1 < contents.len() && contents[i + 1] == b'\n' {
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+
+        let line = &contents[line_start..i];
+
+        // Section header detection (robust to UTF-16LE/BE where ASCII bytes may be NUL-padded).
+        let mut j = 0usize;
+        while j < line.len() {
+            let b = line[j];
+            if matches!(b, 0x00 | b' ' | b'\t') {
+                j += 1;
+                continue;
+            }
+            break;
+        }
+        if j < line.len() && line[j] == b'[' {
+            // Extract the section name between '[' and ']' (ignoring NUL bytes).
+            let mut name_bytes = Vec::new();
+            let mut k = j + 1;
+            while k < line.len() {
+                let b = line[k];
+                if b == 0x00 {
+                    k += 1;
+                    continue;
+                }
+                if b == b']' {
+                    break;
+                }
+                name_bytes.push(b);
+                k += 1;
+            }
+            if k < line.len() && line[k] == b']' {
+                let name = String::from_utf8_lossy(&name_bytes)
+                    .trim()
+                    .to_ascii_lowercase();
+                skipping = drop.iter().any(|s| s == &name);
+            }
+        }
+
+        if !skipping {
+            out.extend_from_slice(line);
+        }
+
+        line_start = i;
+    }
+
+    out
+}
+
 fn inf_model_entry_for_hwid(
     contents: &str,
     section_name: &str,
@@ -625,23 +701,9 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         let fallback_entries = inf_model_entries_for_hwid(&inf_contents, section, &hwid_fallback);
         assert_eq!(
             fallback_entries.len(),
-            1,
-            "expected exactly one {hwid_fallback} fallback model entry in [{section}] (found {})",
+            0,
+            "canonical INF must not contain strict fallback model entry {hwid_fallback} in [{section}] (found {})",
             fallback_entries.len()
-        );
-        let (fallback_desc, fallback_install) = fallback_entries[0].clone();
-
-        assert_eq!(
-            fallback_install, kbd_install,
-            "{section}: fallback install section mismatch"
-        );
-        assert!(
-            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
-            "{section}: fallback DeviceDesc token must be distinct from keyboard DeviceDesc token"
-        );
-        assert!(
-            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
-            "{section}: fallback DeviceDesc token must be distinct from mouse DeviceDesc token"
         );
         assert!(
             inf_model_entry_for_hwid(&inf_contents, section, &hwid_fallback_revisionless)
@@ -656,8 +718,15 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
-        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
+    // The canonical INF must not contain the strict generic fallback HWID string anywhere (even in
+    // comments). This mirrors CI guardrails.
+    assert!(
+        !inf_contents
+            .to_ascii_uppercase()
+            .contains(&hwid_fallback.to_ascii_uppercase()),
+        "canonical INF must not contain strict fallback HWID {hwid_fallback} anywhere (fallback is alias-only)"
+    );
     let kbd_name = strings
         .get("aerovirtiokeyboard.devicedesc")
         .expect("missing AeroVirtioKeyboard.DeviceDesc in [Strings]");
@@ -694,7 +763,10 @@ fn windows_device_contract_virtio_input_alias_inf_is_strict_filename_alias() {
     // - `virtio-input.inf` and `virtio-input.inf.disabled` must not both exist, to avoid two
     //   overlapping INFs.
     // - From the first section header (`[Version]`) onward, the alias must remain byte-for-byte
-    //   identical to the canonical INF (banner/comments may differ).
+    //   identical to the canonical INF *outside* the models sections (`[Aero.NTx86]` /
+    //   `[Aero.NTamd64]`) (banner/comments may differ).
+    // - The alias may diverge from the canonical INF only in those models sections, to add an
+    //   opt-in strict generic fallback HWID (no SUBSYS).
 
     let inf_dir = repo_root().join("drivers/windows7/virtio-input/inf");
     let alias_enabled = inf_dir.join("virtio-input.inf");
@@ -717,19 +789,104 @@ fn windows_device_contract_virtio_input_alias_inf_is_strict_filename_alias() {
     let canonical_bytes = std::fs::read(&canonical_path).expect("read canonical virtio-input INF");
     let alias_bytes = std::fs::read(&alias_path).expect("read virtio-input alias INF");
 
-    // Drift check: from the first section header onward, the alias should match the canonical INF.
-    let canonical_body = inf_functional_bytes(&canonical_bytes);
-    let alias_body = inf_functional_bytes(&alias_bytes);
+    // Drift check: outside models sections, the alias should match the canonical INF.
+    let drop_sections = ["Aero.NTx86", "Aero.NTamd64"];
+    let canonical_body =
+        strip_inf_sections_bytes(inf_functional_bytes(&canonical_bytes), &drop_sections);
+    let alias_body = strip_inf_sections_bytes(inf_functional_bytes(&alias_bytes), &drop_sections);
     assert_eq!(
         alias_body,
         canonical_body,
-        "virtio-input alias INF must match the canonical INF from [Version] onward.
+        "virtio-input alias INF must match the canonical INF from [Version] onward outside models sections.
  canonical: {}
  alias: {}
  Tip: run `python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py` to diagnose drift.",
         canonical_path.display(),
         alias_path.display(),
     );
+
+    // Models section contract for the alias: add exactly one strict fallback model entry per
+    // architecture.
+    let canonical_contents =
+        std::fs::read_to_string(&canonical_path).expect("read canonical virtio-input INF");
+    let alias_contents =
+        std::fs::read_to_string(&alias_path).expect("read virtio-input alias INF from repository");
+
+    let hwid_kbd = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_mouse = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_MOUSE);
+    let hwid_fallback = hwid_ven_dev_rev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_fallback_revisionless = hwid_ven_dev(VIRTIO_INPUT_KEYBOARD);
+    let hwid_tablet = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_TABLET);
+
+    for section in ["Aero.NTx86", "Aero.NTamd64"] {
+        let kbd_entries = inf_model_entries_for_hwid(&alias_contents, section, &hwid_kbd);
+        assert_eq!(
+            kbd_entries.len(),
+            1,
+            "expected exactly one {hwid_kbd} model entry in alias INF [{section}] (found {})",
+            kbd_entries.len()
+        );
+        let (kbd_desc, kbd_install) = kbd_entries[0].clone();
+
+        let mouse_entries = inf_model_entries_for_hwid(&alias_contents, section, &hwid_mouse);
+        assert_eq!(
+            mouse_entries.len(),
+            1,
+            "expected exactly one {hwid_mouse} model entry in alias INF [{section}] (found {})",
+            mouse_entries.len()
+        );
+        let (mouse_desc, mouse_install) = mouse_entries[0].clone();
+
+        let fallback_entries = inf_model_entries_for_hwid(&alias_contents, section, &hwid_fallback);
+        assert_eq!(
+            fallback_entries.len(),
+            1,
+            "expected exactly one {hwid_fallback} fallback model entry in alias INF [{section}] (found {})",
+            fallback_entries.len()
+        );
+        let (fallback_desc, fallback_install) = fallback_entries[0].clone();
+
+        assert_eq!(
+            kbd_install, mouse_install,
+            "{section}: install section mismatch in alias INF"
+        );
+        assert_eq!(
+            fallback_install, kbd_install,
+            "{section}: fallback install section mismatch in alias INF"
+        );
+
+        assert!(
+            !kbd_desc.eq_ignore_ascii_case(&mouse_desc),
+            "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
+        );
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
+            "{section}: fallback DeviceDesc token must be distinct from keyboard DeviceDesc token"
+        );
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
+            "{section}: fallback DeviceDesc token must be distinct from mouse DeviceDesc token"
+        );
+
+        assert!(
+            inf_model_entry_for_hwid(&alias_contents, section, &hwid_fallback_revisionless).is_none(),
+            "{section}: alias INF must not contain revision-less generic fallback model entry {hwid_fallback_revisionless}"
+        );
+        assert!(
+            inf_model_entry_for_hwid(&alias_contents, section, &hwid_tablet).is_none(),
+            "{section}: alias INF must not contain tablet subsystem model entry {hwid_tablet} (binds via aero_virtio_tablet.inf)"
+        );
+
+        assert!(
+            inf_model_entry_for_hwid(&canonical_contents, section, &hwid_fallback).is_none(),
+            "{section}: canonical INF must not contain strict fallback model entry {hwid_fallback} (fallback is alias-only)"
+        );
+
+        // Expected tokens for the virtio-input INFs (kept in sync with docs/tests).
+        assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
+        assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
+        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
+    }
 }
 
 #[test]
@@ -810,7 +967,8 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
     );
 
     // Tablet binding is intentionally SUBSYS-only: it must not also include the no-SUBSYS strict
-    // fallback HWID (`...&REV_01`), since that fallback is provided by the keyboard/mouse INF.
+    // fallback HWID (`...&REV_01`), since that fallback is provided by the opt-in legacy alias INF
+    // `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable).
     // The tablet HWID is more specific, so it wins over the fallback when both packages are present.
     let hwid_kbd = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_KEYBOARD);
     let hwid_mouse = hwid_ven_dev_subsys_rev(VIRTIO_INPUT_MOUSE);
