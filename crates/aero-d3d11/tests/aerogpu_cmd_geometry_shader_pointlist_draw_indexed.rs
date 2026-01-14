@@ -294,12 +294,13 @@ fn aerogpu_cmd_geometry_shader_pointlist_draw_indexed() {
         }
 
         const VB: u32 = 1;
-        const IB: u32 = 2;
+        const IB16: u32 = 2;
         const RT: u32 = 3;
         const VS: u32 = 4;
         const GS: u32 = 5;
         const PS: u32 = 6;
         const IL: u32 = 7;
+        const IB32: u32 = 8;
 
         let vertices = [
             // Dummy vertex (should not be referenced by the indexed draw).
@@ -318,121 +319,184 @@ fn aerogpu_cmd_geometry_shader_pointlist_draw_indexed() {
         ];
         // Two points selected via `first_index=1` + `base_vertex=1`, so a broken implementation that
         // ignores index pulling / base_vertex / first_index will use the wrong vertices.
-        let indices: [u16; 4] = [0, 0, 1, 0];
+        let indices_u16: [u16; 4] = [0, 0, 1, 0];
+        let indices_u32: [u32; 4] = [0, 0, 1, 0];
 
-        let mut writer = AerogpuCmdWriter::new();
-        writer.create_buffer(
-            VB,
-            AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
-            core::mem::size_of_val(&vertices) as u64,
-            0,
-            0,
-        );
-        writer.upload_resource(VB, 0, bytemuck::cast_slice(&vertices));
-
-        writer.create_buffer(
-            IB,
-            AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-            core::mem::size_of_val(&indices) as u64,
-            0,
-            0,
-        );
-        writer.upload_resource(IB, 0, bytemuck::cast_slice(&indices));
-
+        let mut guest_mem = VecGuestMemory::new(0);
         let w = 64u32;
         let h = 64u32;
-        writer.create_texture2d(
-            RT,
-            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-            AerogpuFormat::R8G8B8A8Unorm as u32,
-            w,
-            h,
-            1,
-            1,
-            0,
-            0,
-            0,
-        );
-        writer.set_render_targets(&[RT], 0);
-        writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
 
-        // Disable culling so strip-conversion issues are visible regardless of winding/parity.
-        writer.set_rasterizer_state(
-            AerogpuFillMode::Solid,
-            AerogpuCullMode::None,
-            false,
-            false,
-            0,
-            0,
-        );
+        let assert_pixels = |pixels: &[u8]| {
+            assert_eq!(pixels.len(), (w * h * 4) as usize);
 
-        let gs_dxbc = build_gs_point_to_quad_restart_strip_dxbc();
-        writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
-        writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, &gs_dxbc);
-        writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
+            let px = |x: u32, y: u32| -> [u8; 4] {
+                let idx = ((y * w + x) * 4) as usize;
+                pixels[idx..idx + 4].try_into().unwrap()
+            };
 
-        writer.create_input_layout(IL, ILAY_POS3_COLOR);
-        writer.set_input_layout(IL);
+            let y_mid = h / 2;
+            let gap_y_top = y_mid - 8;
+            let gap_y_bottom = y_mid + 8;
 
-        writer.set_vertex_buffers(
-            0,
-            &[AerogpuVertexBufferBinding {
-                buffer: VB,
-                stride_bytes: core::mem::size_of::<VertexPos3Color4>() as u32,
-                offset_bytes: 0,
-                reserved0: 0,
-            }],
-        );
-        writer.set_index_buffer(IB, AerogpuIndexFormat::Uint16, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
-
-        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
-
-        writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
-        writer.draw_indexed(2, 1, 1, 1, 0);
-
-        let stream = writer.finish();
-        let mut guest_mem = VecGuestMemory::new(0);
-        if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-            if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
-                return;
-            }
-            panic!("execute_cmd_stream failed: {err:#}");
-        }
-        exec.poll_wait();
-
-        let pixels = exec
-            .read_texture_rgba8(RT)
-            .await
-            .expect("readback should succeed");
-        assert_eq!(pixels.len(), (w * h * 4) as usize);
-
-        let px = |x: u32, y: u32| -> [u8; 4] {
-            let idx = ((y * w + x) * 4) as usize;
-            pixels[idx..idx + 4].try_into().unwrap()
+            // Quads at x=-0.6 and x=0.6 with half-size 0.3 should cover x=8 and x=w-8 while leaving
+            // the center gap black.
+            assert_eq!(px(8, y_mid), [0, 255, 0, 255], "left quad pixel mismatch");
+            assert_eq!(
+                px(w - 8, y_mid),
+                [0, 0, 255, 255],
+                "right quad pixel mismatch"
+            );
+            assert_eq!(
+                px(w / 2, gap_y_top),
+                [0, 0, 0, 255],
+                "gap top pixel should remain clear (RestartStrip/cut semantics broken?)"
+            );
+            assert_eq!(
+                px(w / 2, gap_y_bottom),
+                [0, 0, 0, 255],
+                "gap bottom pixel should remain clear (RestartStrip/cut semantics broken?)"
+            );
         };
 
-        let y_mid = h / 2;
-        let gap_y_top = y_mid - 8;
-        let gap_y_bottom = y_mid + 8;
+        // --- Case 1: Uint16 index buffer ---
+        {
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_buffer(
+                VB,
+                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+                core::mem::size_of_val(&vertices) as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(VB, 0, bytemuck::cast_slice(&vertices));
 
-        // Quads at x=-0.6 and x=0.6 with half-size 0.3 should cover x=8 and x=w-8 while leaving
-        // the center gap black.
-        assert_eq!(px(8, y_mid), [0, 255, 0, 255], "left quad pixel mismatch");
-        assert_eq!(
-            px(w - 8, y_mid),
-            [0, 0, 255, 255],
-            "right quad pixel mismatch"
-        );
-        assert_eq!(
-            px(w / 2, gap_y_top),
-            [0, 0, 0, 255],
-            "gap top pixel should remain clear (RestartStrip/cut semantics broken?)"
-        );
-        assert_eq!(
-            px(w / 2, gap_y_bottom),
-            [0, 0, 0, 255],
-            "gap bottom pixel should remain clear (RestartStrip/cut semantics broken?)"
-        );
+            writer.create_buffer(
+                IB16,
+                AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+                core::mem::size_of_val(&indices_u16) as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(IB16, 0, bytemuck::cast_slice(&indices_u16));
+
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AerogpuFormat::R8G8B8A8Unorm as u32,
+                w,
+                h,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+
+            // Disable culling so strip-conversion issues are visible regardless of winding/parity.
+            writer.set_rasterizer_state(
+                AerogpuFillMode::Solid,
+                AerogpuCullMode::None,
+                false,
+                false,
+                0,
+                0,
+            );
+
+            let gs_dxbc = build_gs_point_to_quad_restart_strip_dxbc();
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
+            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, &gs_dxbc);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
+
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+
+            writer.set_vertex_buffers(
+                0,
+                &[AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<VertexPos3Color4>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+            writer.set_index_buffer(IB16, AerogpuIndexFormat::Uint16, 0);
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
+            writer.draw_indexed(2, 1, 1, 1, 0);
+
+            let stream = writer.finish();
+            if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+                if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                    return;
+                }
+                panic!("execute_cmd_stream failed: {err:#}");
+            }
+            exec.poll_wait();
+
+            let pixels = exec
+                .read_texture_rgba8(RT)
+                .await
+                .expect("readback should succeed");
+            assert_pixels(&pixels);
+        }
+
+        // --- Case 2: Uint32 index buffer ---
+        {
+            let mut writer = AerogpuCmdWriter::new();
+            writer.create_buffer(
+                IB32,
+                AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+                core::mem::size_of_val(&indices_u32) as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(IB32, 0, bytemuck::cast_slice(&indices_u32));
+
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+            writer.set_rasterizer_state(
+                AerogpuFillMode::Solid,
+                AerogpuCullMode::None,
+                false,
+                false,
+                0,
+                0,
+            );
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<VertexPos3Color4>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+            writer.set_index_buffer(IB32, AerogpuIndexFormat::Uint32, 0);
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
+            writer.draw_indexed(2, 1, 1, 1, 0);
+
+            let stream = writer.finish();
+            if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+                if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                    return;
+                }
+                panic!("execute_cmd_stream failed: {err:#}");
+            }
+            exec.poll_wait();
+
+            let pixels = exec
+                .read_texture_rgba8(RT)
+                .await
+                .expect("readback should succeed");
+            assert_pixels(&pixels);
+        }
     });
 }
