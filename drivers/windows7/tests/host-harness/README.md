@@ -814,6 +814,24 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_cou
 AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...
 ```
 
+#### IRQ mode enforcement (optional)
+
+To turn the guest IRQ mode diagnostics into a hard PASS/FAIL condition, enable one of:
+
+- PowerShell: `-RequireIntx` / `-RequireMsi`
+- Python: `--require-intx` / `--require-msi`
+
+These flags are mutually exclusive. `-RequireMsi` / `--require-msi` accept both `mode=msi` and `mode=msix` (MSI-X is treated as part of the MSI family).
+
+On mismatch (or when the guest does not emit a recognizable IRQ mode marker), the harness fails with a deterministic token, for example:
+
+`FAIL: IRQ_MODE_MISMATCH: virtio-net expected=intx got=msi`
+
+Notes:
+
+- The harness prefers the standalone guest lines `virtio-<dev>-irq|INFO/WARN|mode=...` when present.
+- For virtio-blk, it also understands dedicated `virtio-blk-irq` markers and falls back to `irq_mode=...` on `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...`.
+
 ### virtio-snd `eventq`
 
 Contract v1 reserves virtio-snd `eventq` and forbids the driver from depending on it, but the Win7 virtio-snd driver is

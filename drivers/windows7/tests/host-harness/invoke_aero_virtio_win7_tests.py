@@ -2122,6 +2122,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Override virtio-input MSI-X vectors via `-device virtio-*-pci,...,vectors=N` when supported.",
     )
+    parser.add_argument(
+        "--require-intx",
+        action="store_true",
+        help=(
+            "Require INTx interrupt mode for the attached virtio devices (virtio-blk/net/input/snd). "
+            "Fails if the guest reports MSI/MSI-X via virtio-*-irq markers."
+        ),
+    )
+    parser.add_argument(
+        "--require-msi",
+        action="store_true",
+        help=(
+            "Require MSI/MSI-X interrupt mode for the attached virtio devices (virtio-blk/net/input/snd). "
+            "Fails if the guest reports INTx via virtio-*-irq markers."
+        ),
+    )
 
     return parser
 
@@ -2162,6 +2178,9 @@ def main() -> int:
     virtio_blk_vectors_flag = "--virtio-blk-vectors" if args.virtio_blk_vectors is not None else "--virtio-msix-vectors"
     virtio_snd_vectors_flag = "--virtio-snd-vectors" if args.virtio_snd_vectors is not None else "--virtio-msix-vectors"
     virtio_input_vectors_flag = "--virtio-input-vectors" if args.virtio_input_vectors is not None else "--virtio-msix-vectors"
+
+    if args.require_intx and args.require_msi:
+        parser.error("--require-intx and --require-msi are mutually exclusive")
 
     if args.virtio_msix_vectors is not None and args.virtio_msix_vectors <= 0:
         parser.error("--virtio-msix-vectors must be a positive integer")
@@ -2484,6 +2503,8 @@ def main() -> int:
                 )
                 virtio_input_args += ["-device", tablet]
 
+            attached_virtio_input = bool(virtio_input_args)
+
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
                 try:
@@ -2581,6 +2602,7 @@ def main() -> int:
                 virtio_input_vectors,
                 flag_name=virtio_input_vectors_flag,
             )
+            attached_virtio_input = True
             virtio_tablet = None
             if attach_virtio_tablet:
                 virtio_tablet = _qemu_device_arg_maybe_add_vectors(
@@ -2663,6 +2685,12 @@ def main() -> int:
                 "-device",
                 virtio_blk,
             ] + virtio_snd_args + qemu_extra
+
+        irq_mode_devices = ["virtio-blk", "virtio-net"]
+        if attached_virtio_input:
+            irq_mode_devices.append("virtio-input")
+        if args.enable_virtio_snd:
+            irq_mode_devices.append("virtio-snd")
 
         print("Launching QEMU:")
         print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
@@ -3802,6 +3830,18 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        irq_fail = _check_virtio_irq_mode_enforcement(
+                            tail,
+                            irq_diag_markers=irq_diag_markers,
+                            require_intx=args.require_intx,
+                            require_msi=args.require_msi,
+                            devices=irq_mode_devices,
+                        )
+                        if irq_fail is not None:
+                            print(irq_fail, file=sys.stderr)
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -4740,6 +4780,18 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                            irq_fail = _check_virtio_irq_mode_enforcement(
+                                tail,
+                                irq_diag_markers=irq_diag_markers,
+                                require_intx=args.require_intx,
+                                require_msi=args.require_msi,
+                                devices=irq_mode_devices,
+                            )
+                            if irq_fail is not None:
+                                print(irq_fail, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break
@@ -5460,6 +5512,133 @@ def _update_last_marker_line_from_chunk(
             continue
 
     return last, new_carry
+
+
+def _normalize_irq_mode(mode: str) -> str:
+    """
+    Normalize an IRQ mode string from guest markers.
+
+    The guest selftest typically reports one of:
+      - intx
+      - msi
+      - msix
+    """
+    m = (mode or "").strip().lower()
+    m = m.replace("_", "-")
+    if m in ("msi-x", "msix"):
+        return "msix"
+    if m == "msi":
+        return "msi"
+    if m == "intx":
+        return "intx"
+    return m
+
+
+def _irq_mode_family(mode: str) -> Optional[str]:
+    """
+    Return "intx" or "msi" for known modes, else None.
+
+    MSI-X is treated as part of the MSI family for the purpose of --require-msi.
+    """
+    m = _normalize_irq_mode(mode)
+    if m == "intx":
+        return "intx"
+    if m in ("msi", "msix"):
+        return "msi"
+    return None
+
+
+def _try_extract_irq_mode_from_aero_marker_line(marker_line: str) -> Optional[str]:
+    fields = _parse_marker_kv_fields(marker_line)
+    if not fields:
+        return None
+    # Prefer the explicit irq_mode key, but accept mode= when it clearly names an IRQ mode.
+    if "irq_mode" in fields:
+        return fields["irq_mode"]
+    if "mode" in fields:
+        mode = fields["mode"]
+        if _irq_mode_family(mode) is not None:
+            return mode
+    if "interrupt_mode" in fields:
+        mode = fields["interrupt_mode"]
+        if _irq_mode_family(mode) is not None:
+            return mode
+    return None
+
+
+def _extract_virtio_irq_mode(
+    tail: bytes, *, irq_diag_markers: dict[str, dict[str, str]], device: str
+) -> Optional[str]:
+    """
+    Extract the guest-reported IRQ mode for a virtio device.
+
+    Preference order:
+    - standalone guest IRQ diagnostics (`virtio-<dev>-irq|...|mode=...`) captured in `irq_diag_markers`
+    - virtio-blk: dedicated `virtio-blk-irq` AERO marker lines when present
+    - fall back to `AERO_VIRTIO_SELFTEST|TEST|<device>|...|irq_mode=...`
+    """
+    if device in irq_diag_markers:
+        fields = irq_diag_markers[device]
+        if "mode" in fields and fields["mode"]:
+            return fields["mode"]
+
+    if device == "virtio-blk":
+        for prefix in (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-irq|",
+            b"AERO_VIRTIO_SELFTEST|MARKER|virtio-blk-irq|",
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|IRQ|",
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|INFO|",
+        ):
+            line = _try_extract_last_marker_line(tail, prefix)
+            if line is None:
+                continue
+            mode = _try_extract_irq_mode_from_aero_marker_line(line)
+            if mode is not None:
+                return mode
+
+    line = _try_extract_last_marker_line(tail, f"AERO_VIRTIO_SELFTEST|TEST|{device}|".encode("utf-8"))
+    if line is None:
+        return None
+    return _try_extract_irq_mode_from_aero_marker_line(line)
+
+
+def _check_virtio_irq_mode_enforcement(
+    tail: bytes,
+    *,
+    irq_diag_markers: Optional[dict[str, dict[str, str]]] = None,
+    require_intx: bool = False,
+    require_msi: bool = False,
+    devices: Optional[list[str]] = None,
+) -> Optional[str]:
+    """
+    Enforce virtio IRQ mode requirements.
+
+    Returns a deterministic failure message (starting with `FAIL:`) on mismatch, otherwise None.
+    """
+    if not require_intx and not require_msi:
+        return None
+    if require_intx and require_msi:
+        raise AssertionError("require_intx and require_msi are mutually exclusive")
+
+    expected = "intx" if require_intx else "msi"
+    if devices is None:
+        devices = ["virtio-blk", "virtio-net", "virtio-input", "virtio-snd"]
+
+    diag = irq_diag_markers if irq_diag_markers is not None else _parse_virtio_irq_markers(tail)
+
+    for dev in devices:
+        got_raw = _extract_virtio_irq_mode(tail, irq_diag_markers=diag, device=dev)
+        if got_raw is None or not str(got_raw).strip():
+            return f"FAIL: IRQ_MODE_MISMATCH: {dev} expected={expected} got=unknown"
+        got = _normalize_irq_mode(str(got_raw))
+        got_family = _irq_mode_family(got)
+        if expected == "intx":
+            if got_family != "intx":
+                return f"FAIL: IRQ_MODE_MISMATCH: {dev} expected=intx got={got}"
+        else:
+            if got_family != "msi":
+                return f"FAIL: IRQ_MODE_MISMATCH: {dev} expected=msi got={got}"
+    return None
 
 
 def _emit_virtio_irq_host_markers(

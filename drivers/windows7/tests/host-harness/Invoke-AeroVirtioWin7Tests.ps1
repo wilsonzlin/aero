@@ -74,6 +74,16 @@ param(
   [Alias("VirtioInputMsixVectors")]
   [int]$VirtioInputVectors = 0,
 
+  # If set, require INTx interrupt mode for attached virtio devices (blk/net/input/snd).
+  # Fails if the guest reports MSI/MSI-X via virtio-*-irq markers.
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireIntx,
+
+  # If set, require MSI/MSI-X interrupt mode for attached virtio devices (blk/net/input/snd).
+  # Fails if the guest reports INTx via virtio-*-irq markers.
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireMsi,
+
   # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
   #
@@ -268,6 +278,10 @@ if ($VirtioSndVectors -lt 0) {
 }
 if ($VirtioInputVectors -lt 0) {
   throw "-VirtioInputVectors must be a positive integer."
+}
+
+if ($RequireIntx -and $RequireMsi) {
+  throw "-RequireIntx and -RequireMsi are mutually exclusive."
 }
 
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
@@ -1972,6 +1986,141 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   }
 }
 
+function Normalize-AeroVirtioIrqMode {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Mode
+  )
+
+  $m = ([string]$Mode).Trim().ToLowerInvariant().Replace("_", "-")
+  if ($m -eq "msi-x") { return "msix" }
+  return $m
+}
+
+function Get-AeroVirtioIrqModeFamily {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Mode
+  )
+
+  $m = Normalize-AeroVirtioIrqMode $Mode
+  if ($m -eq "intx") { return "intx" }
+  if ($m -eq "msi" -or $m -eq "msix") { return "msi" }
+  return ""
+}
+
+function Get-AeroIrqModeFromAeroMarkerLine {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Line
+  )
+
+  $fields = @{}
+  foreach ($tok in $Line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx)
+    $v = $tok.Substring($idx + 1)
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  if ($fields.ContainsKey("irq_mode")) { return $fields["irq_mode"] }
+  if ($fields.ContainsKey("mode")) {
+    $m = $fields["mode"]
+    if (-not [string]::IsNullOrEmpty((Get-AeroVirtioIrqModeFamily $m))) { return $m }
+  }
+  if ($fields.ContainsKey("interrupt_mode")) {
+    $m = $fields["interrupt_mode"]
+    if (-not [string]::IsNullOrEmpty((Get-AeroVirtioIrqModeFamily $m))) { return $m }
+  }
+
+  return $null
+}
+
+function Get-AeroVirtioIrqMode {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    [Parameter(Mandatory = $true)] [string]$Device
+  )
+
+  $dev = $Device
+  if ($dev.StartsWith("virtio-")) { $dev = $dev.Substring(7) }
+
+  # Prefer standalone guest IRQ diagnostics markers:
+  #   virtio-<dev>-irq|INFO/WARN|mode=intx/msi/msix|...
+  $re = [regex]::new("(?m)^\\s*virtio-" + [regex]::Escape($dev) + "-irq\\|(INFO|WARN)(?:\\|(?<rest>.*))?$")
+  $matches = $re.Matches($Tail)
+  if ($matches.Count -gt 0) {
+    $rest = $matches[$matches.Count - 1].Groups["rest"].Value
+    if (-not [string]::IsNullOrEmpty($rest)) {
+      foreach ($tok in $rest.Split("|")) {
+        if ($tok -match "^mode=(.+)$") {
+          return $Matches[1]
+        }
+      }
+    }
+  }
+
+  # virtio-blk has additional marker variants in some guest builds.
+  if ($Device -eq "virtio-blk") {
+    foreach ($prefix in @(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-irq|",
+        "AERO_VIRTIO_SELFTEST|MARKER|virtio-blk-irq|",
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|IRQ|",
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|INFO|"
+      )) {
+      $mm = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+      if ($mm.Count -gt 0) {
+        $line = $mm[$mm.Count - 1].Value
+        $mode = Get-AeroIrqModeFromAeroMarkerLine $line
+        if (-not [string]::IsNullOrEmpty($mode)) { return $mode }
+      }
+    }
+  }
+
+  # Fall back to per-test marker fields when present.
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|$Device|"
+  $mm = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  if ($mm.Count -gt 0) {
+    $line = $mm[$mm.Count - 1].Value
+    $mode = Get-AeroIrqModeFromAeroMarkerLine $line
+    if (-not [string]::IsNullOrEmpty($mode)) { return $mode }
+  }
+
+  return $null
+}
+
+function Test-AeroVirtioIrqModeEnforcement {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    [Parameter(Mandatory = $true)] [string[]]$Devices,
+    [Parameter(Mandatory = $true)] [ValidateSet("intx", "msi")] [string]$Expected
+  )
+
+  foreach ($dev in $Devices) {
+    $mode = Get-AeroVirtioIrqMode -Tail $Tail -Device $dev
+    $got = ""
+    if (-not [string]::IsNullOrEmpty($mode)) {
+      $got = Normalize-AeroVirtioIrqMode $mode
+    }
+    $family = ""
+    if (-not [string]::IsNullOrEmpty($got)) {
+      $family = Get-AeroVirtioIrqModeFamily $got
+    }
+
+    if ([string]::IsNullOrEmpty($family)) {
+      return @{ Ok = $false; Device = $dev; Expected = $Expected; Got = $(if ([string]::IsNullOrEmpty($got)) { "unknown" } else { $got }) }
+    }
+    if ($Expected -eq "intx" -and $family -ne "intx") {
+      return @{ Ok = $false; Device = $dev; Expected = $Expected; Got = $got }
+    }
+    if ($Expected -eq "msi" -and $family -ne "msi") {
+      return @{ Ok = $false; Device = $dev; Expected = $Expected; Got = $got }
+    }
+  }
+
+  return @{ Ok = $true }
+}
+
 function Invoke-AeroVirtioSndWavVerification {
   param(
     [Parameter(Mandatory = $true)] [string]$WavPath,
@@ -3121,6 +3270,7 @@ try {
         "-device", $tabletArg
       )
     }
+    $attachedVirtioInput = ($virtioInputArgs.Count -gt 0)
 
     $virtioSndArgs = @()
     if ($WithVirtioSnd) {
@@ -3194,6 +3344,7 @@ try {
 
     $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $kbdVectors),id=$($script:VirtioInputKeyboardQmpId)"
     $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $mouseVectors),id=$($script:VirtioInputMouseQmpId)"
+    $attachedVirtioInput = $true
     $virtioTabletArgs = @()
     if ($needVirtioTablet) {
       $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $tabletVectors),id=$($script:VirtioInputTabletQmpId)"
@@ -3361,6 +3512,23 @@ try {
 
   switch ($result.Result) {
     "PASS" {
+      if ($RequireIntx -or $RequireMsi) {
+        $expected = if ($RequireIntx) { "intx" } else { "msi" }
+        $devices = @("virtio-blk", "virtio-net")
+        if ($attachedVirtioInput) { $devices += "virtio-input" }
+        if ($WithVirtioSnd) { $devices += "virtio-snd" }
+        $chk = Test-AeroVirtioIrqModeEnforcement -Tail $result.Tail -Devices $devices -Expected $expected
+        if (-not $chk.Ok) {
+          Write-Host "FAIL: IRQ_MODE_MISMATCH: $($chk.Device) expected=$($chk.Expected) got=$($chk.Got)"
+          if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+            Write-Host "`n--- Serial tail ---"
+            Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+          }
+          $scriptExitCode = 1
+          break
+        }
+      }
+
       Write-Host "PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS"
       $scriptExitCode = 0
     }
