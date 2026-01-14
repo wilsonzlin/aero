@@ -11811,6 +11811,34 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
   cmd->slot = stage;
   cmd->texture = tex ? tex->handle : 0;
   cmd->reserved0 = 0;
+
+  // If the app is using the fixed-function pipeline (no user shaders bound),
+  // stage0 texture binding/unbinding affects the selected internal pixel shader
+  // variant.
+  if (stage == 0 && fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = nullptr;
+    switch (dev->fvf) {
+      case kSupportedFvfXyzrhwDiffuse:
+      case kSupportedFvfXyzDiffuse:
+        ps_slot = &dev->fixedfunc_ps;
+        break;
+      case kSupportedFvfXyzrhwDiffuseTex1:
+        ps_slot = &dev->fixedfunc_ps_tex1;
+        break;
+      case kSupportedFvfXyzDiffuseTex1:
+        ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+        break;
+      default:
+        ps_slot = nullptr;
+        break;
+    }
+    if (ps_slot) {
+      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+      if (FAILED(ps_hr)) {
+        return trace.ret(ps_hr);
+      }
+    }
+  }
   return trace.ret(S_OK);
 }
 
@@ -13866,8 +13894,26 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
   if (st == 0 &&
       (ss == kD3dTssColorOp || ss == kD3dTssColorArg1 || ss == kD3dTssColorArg2 ||
        ss == kD3dTssAlphaOp || ss == kD3dTssAlphaArg1 || ss == kD3dTssAlphaArg2) &&
-      fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
-    Shader** ps_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fixedfunc_ps : &dev->fixedfunc_ps_tex1;
+      fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = nullptr;
+    switch (dev->fvf) {
+      case kSupportedFvfXyzrhwDiffuse:
+      case kSupportedFvfXyzDiffuse:
+        ps_slot = &dev->fixedfunc_ps;
+        break;
+      case kSupportedFvfXyzrhwDiffuseTex1:
+        ps_slot = &dev->fixedfunc_ps_tex1;
+        break;
+      case kSupportedFvfXyzDiffuseTex1:
+        ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+        break;
+      default:
+        ps_slot = nullptr;
+        break;
+    }
+    if (!ps_slot) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
     const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
     if (FAILED(ps_hr)) {
       return trace.ret(ps_hr);
