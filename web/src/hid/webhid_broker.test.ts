@@ -117,7 +117,7 @@ afterEach(() => {
   if (originalCrossOriginIsolatedDescriptor) {
     Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
   } else if (original) {
-    Reflect.deleteProperty(globalThis as any, "crossOriginIsolated");
+    Reflect.deleteProperty(globalThis, "crossOriginIsolated");
   }
   vi.clearAllMocks();
 });
@@ -929,8 +929,7 @@ describe("hid/WebHidBroker", () => {
       if (prev) {
         Object.defineProperty(globalThis, "crossOriginIsolated", prev);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        delete (globalThis as any).crossOriginIsolated;
+        Reflect.deleteProperty(globalThis, "crossOriginIsolated");
       }
     }
   });
@@ -977,8 +976,7 @@ describe("hid/WebHidBroker", () => {
       if (prev) {
         Object.defineProperty(globalThis, "crossOriginIsolated", prev);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        delete (globalThis as any).crossOriginIsolated;
+        Reflect.deleteProperty(globalThis, "crossOriginIsolated");
       }
     }
   });
@@ -1002,9 +1000,13 @@ describe("hid/WebHidBroker", () => {
     // The broker reacts to manager detaches asynchronously.
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.detach" && (p.msg as any).deviceId === id)).toBe(
-      true,
-    );
+    expect(
+      port.posted.some(
+        (p) =>
+          (p.msg as { type?: unknown; deviceId?: unknown }).type === "hid.detach" &&
+          (p.msg as { type?: unknown; deviceId?: unknown }).deviceId === id,
+      ),
+    ).toBe(true);
 
     const before = port.posted.length;
     device.dispatchInputReport(1, Uint8Array.of(1));
@@ -1267,7 +1269,9 @@ describe("hid/WebHidBroker", () => {
       expect(device.receiveFeatureReport).toHaveBeenCalledWith(7);
 
       const result = port.posted.find(
-        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
+        (p) =>
+          (p.msg as { type?: unknown; requestId?: unknown }).type === "hid.featureReportResult" &&
+          (p.msg as { type?: unknown; requestId?: unknown }).requestId === 1,
       ) as { msg: HidFeatureReportResultMessage; transfer?: Transferable[] } | undefined;
       expect(result).toBeTruthy();
       expect(result!.msg).toMatchObject({ deviceId: id, reportId: 7, requestId: 1, ok: true });
@@ -1627,10 +1631,14 @@ describe("hid/WebHidBroker", () => {
       const res = port.posted
         .slice()
         .reverse()
-        .find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 99) as any;
+        .find(
+          (p) =>
+            (p.msg as { type?: unknown; requestId?: unknown }).type === "hid.featureReportResult" &&
+            (p.msg as { type?: unknown; requestId?: unknown }).requestId === 99,
+        ) as { msg: HidFeatureReportResultMessage; transfer?: Transferable[] } | undefined;
       expect(res).toBeTruthy();
-      expect(res.msg).toMatchObject({ requestId: 99, deviceId: id, reportId: 7, ok: false });
-      expect(String(res.msg.error)).toMatch(/Too many pending HID report tasks/i);
+      expect(res!.msg).toMatchObject({ requestId: 99, deviceId: id, reportId: 7, ok: false });
+      expect(String(res!.msg.error)).toMatch(/Too many pending HID report tasks/i);
 
       expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
       expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
@@ -2278,10 +2286,12 @@ describe("hid/WebHidBroker", () => {
     await expect(attachPromise).rejects.toThrow("boom");
     await new Promise((r) => setTimeout(r, 0));
 
-    const result = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult") as any;
+    const result = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult") as
+      | { msg: HidFeatureReportResultMessage; transfer?: Transferable[] }
+      | undefined;
     expect(result).toBeTruthy();
-    expect(result.msg).toMatchObject({ requestId: 123, deviceId: id, reportId: 7, ok: false });
-    expect(String(result.msg.error)).toContain("boom");
+    expect(result!.msg).toMatchObject({ requestId: 123, deviceId: id, reportId: 7, ok: false });
+    expect(String(result!.msg.error)).toContain("boom");
     expect(device.receiveFeatureReport).not.toHaveBeenCalled();
 
     broker.destroy();
@@ -2649,8 +2659,13 @@ describe("hid/WebHidBroker", () => {
     const failed = port.posted
       .slice()
       .reverse()
-      .find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 3) as any;
-    expect(failed.msg).toMatchObject({ requestId: 3, ok: false });
+      .find(
+        (p) =>
+          (p.msg as { type?: unknown; requestId?: unknown }).type === "hid.featureReportResult" &&
+          (p.msg as { type?: unknown; requestId?: unknown }).requestId === 3,
+      ) as { msg: HidFeatureReportResultMessage; transfer?: Transferable[] } | undefined;
+    expect(failed).toBeTruthy();
+    expect(failed!.msg).toMatchObject({ requestId: 3, ok: false });
   });
 
   it("clamps oversized feature report payloads to the expected report size before forwarding", async () => {
@@ -2692,13 +2707,15 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       const result = port.posted.find(
-        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
-      ) as any;
+        (p) =>
+          (p.msg as { type?: unknown; requestId?: unknown }).type === "hid.featureReportResult" &&
+          (p.msg as { type?: unknown; requestId?: unknown }).requestId === 1,
+      ) as { msg: HidFeatureReportResultMessage; transfer?: Transferable[] } | undefined;
       expect(result).toBeTruthy();
-      expect(result.msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
-      expect(result.msg.data.byteLength).toBe(4);
-      expect(Array.from(result.msg.data)).toEqual([1, 2, 3, 4]);
-      expect(result.transfer?.[0]).toBe(result.msg.data.buffer);
+      expect(result!.msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
+      expect(result!.msg.data!.byteLength).toBe(4);
+      expect(Array.from(result!.msg.data!)).toEqual([1, 2, 3, 4]);
+      expect(result!.transfer?.[0]).toBe(result!.msg.data!.buffer);
       expect(warn).toHaveBeenCalledTimes(1);
     } finally {
       warn.mockRestore();
@@ -2740,12 +2757,14 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       const result = port.posted.find(
-        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
-      ) as any;
+        (p) =>
+          (p.msg as { type?: unknown; requestId?: unknown }).type === "hid.featureReportResult" &&
+          (p.msg as { type?: unknown; requestId?: unknown }).requestId === 1,
+      ) as { msg: HidFeatureReportResultMessage; transfer?: Transferable[] } | undefined;
       expect(result).toBeTruthy();
-      expect(result.msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
-      expect(Array.from(result.msg.data)).toEqual([9, 8, 0, 0]);
-      expect(result.transfer?.[0]).toBe(result.msg.data.buffer);
+      expect(result!.msg).toMatchObject({ requestId: 1, deviceId: id, reportId: 7, ok: true });
+      expect(Array.from(result!.msg.data!)).toEqual([9, 8, 0, 0]);
+      expect(result!.transfer?.[0]).toBe(result!.msg.data!.buffer);
       expect(warn).toHaveBeenCalledTimes(1);
     } finally {
       warn.mockRestore();
@@ -2788,19 +2807,21 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 0));
       await new Promise((r) => setTimeout(r, 0));
 
-      const results = port.posted.filter(
-        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).ok === true,
-      ) as any[];
+      type PostedFeatureReportResult = { msg: HidFeatureReportResultMessage; transfer?: Transferable[] };
+      const results = port.posted.filter((p): p is PostedFeatureReportResult => {
+        const msg = p.msg as { type?: unknown; ok?: unknown };
+        return msg.type === "hid.featureReportResult" && msg.ok === true;
+      });
       expect(results.length).toBeGreaterThanOrEqual(2);
 
       const a = results.find((r) => r.msg.requestId === 1);
       const b = results.find((r) => r.msg.requestId === 2);
       expect(a).toBeTruthy();
       expect(b).toBeTruthy();
-      expect(a.msg.data.byteLength).toBe(4096);
-      expect(Array.from(a.msg.data.slice(0, 3))).toEqual([1, 2, 3]);
-      expect(b.msg.data.byteLength).toBe(4096);
-      expect(Array.from(b.msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+      expect(a!.msg.data!.byteLength).toBe(4096);
+      expect(Array.from(a!.msg.data!.slice(0, 3))).toEqual([1, 2, 3]);
+      expect(b!.msg.data!.byteLength).toBe(4096);
+      expect(Array.from(b!.msg.data!.slice(0, 3))).toEqual([1, 2, 3]);
 
       // Warn once per (deviceId, reportId) when hard-capping unknown report sizes.
       expect(warn).toHaveBeenCalledTimes(1);
@@ -2849,6 +2870,12 @@ describe("hid/WebHidBroker", () => {
     warn.mockRestore();
 
     await broker.attachDevice(device as unknown as HIDDevice);
-    expect(port2.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.attach" && (p.msg as any).deviceId === id)).toBe(true);
+    expect(
+      port2.posted.some(
+        (p) =>
+          (p.msg as { type?: unknown; deviceId?: unknown }).type === "hid.attach" &&
+          (p.msg as { type?: unknown; deviceId?: unknown }).deviceId === id,
+      ),
+    ).toBe(true);
   });
 });

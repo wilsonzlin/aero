@@ -9,6 +9,8 @@ class MockWorker {
   throwOnNextPostMessage: boolean | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onmessage: ((event: any) => void) | null = null;
+  onerror: ((event: { message?: string }) => void) | null = null;
+  onmessageerror: ((event: unknown) => void) | null = null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   postMessage(msg: any, transfer?: any[]): void {
@@ -119,8 +121,10 @@ describe("RuntimeDiskClient.write", () => {
     expect(w.calls[0]?.transfer).toHaveLength(1);
     expect(w.calls[0]?.transfer?.[0]).toBe(buffer);
 
-    const secondMsg = w.calls[1]?.msg as any;
-    const secondTransfer = w.calls[1]?.transfer;
+    const secondCall = w.calls[1];
+    if (!secondCall) throw new Error("Expected second postMessage call.");
+    const secondMsg = secondCall.msg as { requestId: number; op: string; payload: { data: Uint8Array } };
+    const secondTransfer = secondCall.transfer;
     expect(secondMsg.requestId).toBe(2);
     expect(secondMsg.op).toBe("write");
 
@@ -130,7 +134,7 @@ describe("RuntimeDiskClient.write", () => {
     expect(secondTransfer?.[0]).toBe(payloadData.buffer);
 
     // Ensure we don't leak the failed request's pending entry.
-    expect(((client as any).pending as Map<number, unknown>).size).toBe(1);
+    expect((client as unknown as { pending: Map<number, unknown> }).pending.size).toBe(1);
 
     w.emit({ type: "response", requestId: 2, ok: true, result: { ok: true } });
     await p;
@@ -198,8 +202,10 @@ describe("RuntimeDiskClient.restoreFromSnapshot", () => {
     expect(w.calls[0]?.transfer).toHaveLength(1);
     expect(w.calls[0]?.transfer?.[0]).toBe(buffer);
 
-    const secondMsg = w.calls[1]?.msg as any;
-    const secondTransfer = w.calls[1]?.transfer;
+    const secondCall = w.calls[1];
+    if (!secondCall) throw new Error("Expected second postMessage call.");
+    const secondMsg = secondCall.msg as { requestId: number; op: string; payload: { state: Uint8Array } };
+    const secondTransfer = secondCall.transfer;
     expect(secondMsg.requestId).toBe(2);
     expect(secondMsg.op).toBe("restoreFromSnapshot");
 
@@ -220,10 +226,10 @@ describe("RuntimeDiskClient error handling", () => {
     const client = new RuntimeDiskClient(w as unknown as Worker);
 
     const p = client.openRemote("https://example.invalid/disk.img");
-    (w as any).onerror?.({ message: "boom" });
+    w.onerror?.({ message: "boom" });
 
     await expect(p).rejects.toThrow(/boom/);
-    expect(((client as any).pending as Map<number, unknown>).size).toBe(0);
+    expect((client as unknown as { pending: Map<number, unknown> }).pending.size).toBe(0);
     client.close();
   });
 
@@ -232,10 +238,10 @@ describe("RuntimeDiskClient error handling", () => {
     const client = new RuntimeDiskClient(w as unknown as Worker);
 
     const p = client.openRemote("https://example.invalid/disk.img");
-    (w as any).onmessageerror?.({});
+    w.onmessageerror?.({});
 
     await expect(p).rejects.toThrow(/deserialization failed/);
-    expect(((client as any).pending as Map<number, unknown>).size).toBe(0);
+    expect((client as unknown as { pending: Map<number, unknown> }).pending.size).toBe(0);
     client.close();
   });
 
@@ -310,7 +316,7 @@ describe("RuntimeDiskClient message validation", () => {
       const p = client.openRemote("https://example.invalid/disk.img");
 
       // Missing `type` must not be satisfied by prototype pollution.
-      w.emit({ requestId: 1, ok: true, result: { handle: 7, sectorSize: 512, capacityBytes: 0, readOnly: true } } as any);
+      w.emit({ requestId: 1, ok: true, result: { handle: 7, sectorSize: 512, capacityBytes: 0, readOnly: true } });
 
       const raced = await Promise.race([p.then(() => "resolved", () => "rejected"), Promise.resolve("pending")]);
       expect(raced).toBe("pending");
@@ -320,7 +326,7 @@ describe("RuntimeDiskClient message validation", () => {
       await expect(p).resolves.toMatchObject({ handle: 7 });
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "type", existing);
-      else delete (Object.prototype as any).type;
+      else Reflect.deleteProperty(Object.prototype, "type");
       client.close();
     }
   });

@@ -48,32 +48,33 @@ describe("PointerLock", () => {
 
       const plc = doc.__listeners.get("pointerlockchange");
       expect(typeof plc).toBe("function");
+      const plcFn = plc as unknown as () => void;
 
       // No-op if no transition.
-      (plc as any)();
+      plcFn();
       expect(onChange).toHaveBeenCalledTimes(0);
       expect(pl.isLocked).toBe(false);
 
       // Transition to locked.
       doc.pointerLockElement = element;
-      (plc as any)();
+      plcFn();
       expect(onChange).toHaveBeenCalledTimes(1);
       expect(onChange).toHaveBeenLastCalledWith(true);
       expect(pl.isLocked).toBe(true);
 
       // No-op if still locked.
-      (plc as any)();
+      plcFn();
       expect(onChange).toHaveBeenCalledTimes(1);
 
       // Transition to unlocked.
       doc.pointerLockElement = null;
-      (plc as any)();
+      plcFn();
       expect(onChange).toHaveBeenCalledTimes(2);
       expect(onChange).toHaveBeenLastCalledWith(false);
       expect(pl.isLocked).toBe(false);
 
       // No-op if still unlocked.
-      (plc as any)();
+      plcFn();
       expect(onChange).toHaveBeenCalledTimes(2);
 
       pl.dispose();
@@ -82,12 +83,13 @@ describe("PointerLock", () => {
 
   it("request() no-ops if already locked", () => {
     withListenerTrackingDocument((doc) => {
-      const element = { requestPointerLock: vi.fn() } as unknown as HTMLElement;
+      const requestPointerLock = vi.fn();
+      const element = { requestPointerLock } as unknown as HTMLElement;
       doc.pointerLockElement = element;
 
       const pl = new PointerLock(element);
       pl.request();
-      expect((element.requestPointerLock as any) as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(0);
+      expect(requestPointerLock).toHaveBeenCalledTimes(0);
       pl.dispose();
     });
   });

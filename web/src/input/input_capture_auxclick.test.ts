@@ -3,18 +3,25 @@ import { describe, expect, it, vi } from "vitest";
 import { InputCapture } from "./input_capture";
 import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureAuxclickHarness = {
+  hasFocus: boolean;
+  pointerLock: { locked: boolean };
+  handleAuxClick: (ev: MouseEvent) => void;
+};
+
 describe("InputCapture auxclick handling", () => {
   it("swallows auxclick events on the canvas while capture is active", () => {
     withStubbedDocument(() => {
       const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+      const h = capture as unknown as InputCaptureAuxclickHarness;
 
-      (capture as any).hasFocus = true;
+      h.hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
-      (capture as any).handleAuxClick({
+      h.handleAuxClick({
         button: 1,
         target: canvas,
         preventDefault,
@@ -31,12 +38,13 @@ describe("InputCapture auxclick handling", () => {
       const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+      const h = capture as unknown as InputCaptureAuxclickHarness;
 
-      (capture as any).hasFocus = true;
+      h.hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
-      (capture as any).handleAuxClick({
+      h.handleAuxClick({
         button: 1,
         target: {},
         preventDefault,
@@ -53,12 +61,13 @@ describe("InputCapture auxclick handling", () => {
       const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+      const h = capture as unknown as InputCaptureAuxclickHarness;
 
-      (capture as any).pointerLock.locked = true;
+      h.pointerLock.locked = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
-      (capture as any).handleAuxClick({
+      h.handleAuxClick({
         button: 1,
         target: {},
         preventDefault,

@@ -44,19 +44,29 @@ describe("perf export schema", () => {
 
   beforeEach(() => {
     // The perf layer is written for browsers; unit tests run under node.
-    originals.window = (globalThis as any).window;
-    originals.requestAnimationFrame = (globalThis as any).requestAnimationFrame;
-    originals.cancelAnimationFrame = (globalThis as any).cancelAnimationFrame;
+    const g = globalThis as unknown as {
+      window?: unknown;
+      requestAnimationFrame?: unknown;
+      cancelAnimationFrame?: unknown;
+    };
+    originals.window = g.window;
+    originals.requestAnimationFrame = g.requestAnimationFrame;
+    originals.cancelAnimationFrame = g.cancelAnimationFrame;
 
-    (globalThis as any).window = globalThis;
-    (globalThis as any).requestAnimationFrame = () => 0;
-    (globalThis as any).cancelAnimationFrame = () => {};
+    g.window = globalThis;
+    g.requestAnimationFrame = () => 0;
+    g.cancelAnimationFrame = () => {};
   });
 
   afterEach(() => {
-    (globalThis as any).window = originals.window;
-    (globalThis as any).requestAnimationFrame = originals.requestAnimationFrame;
-    (globalThis as any).cancelAnimationFrame = originals.cancelAnimationFrame;
+    const g = globalThis as unknown as {
+      window?: unknown;
+      requestAnimationFrame?: unknown;
+      cancelAnimationFrame?: unknown;
+    };
+    g.window = originals.window;
+    g.requestAnimationFrame = originals.requestAnimationFrame;
+    g.cancelAnimationFrame = originals.cancelAnimationFrame;
   });
 
   it("exports v2 schema in SharedArrayBuffer mode (PerfSession)", () => {
@@ -100,7 +110,8 @@ describe("perf export schema", () => {
       endFrameId: 3,
     });
     expect((exported.records as unknown[]).length).toBe(3);
-    expect((exported.capture_control as any).records).toBe(3);
+    const captureControl = exported.capture_control as Record<string, unknown>;
+    expect(captureControl.records).toBe(3);
   });
 
   it("exports v2 schema in fallback mode (FallbackPerf)", () => {
@@ -117,7 +128,8 @@ describe("perf export schema", () => {
     assertJsonSerializable(exported);
 
     expect((exported.records as unknown[]).length).toBe(3);
-    expect((exported.capture_control as any).records).toBe(3);
+    const captureControl = exported.capture_control as Record<string, unknown>;
+    expect(captureControl.records).toBe(3);
   });
 
   it("computes MIPS p95 for PerfSession HUD snapshots", () => {
@@ -133,7 +145,7 @@ describe("perf export schema", () => {
       runStartEpochMs,
     });
 
-    const windowSize = (session as any).aggregator.windowSize as number;
+    const windowSize = (session as unknown as { aggregator: { windowSize: number } }).aggregator.windowSize;
     // Ensure we're testing a rolling window rather than "all recorded frames".
     const outlierFrames = 8;
     const totalFrames = windowSize + outlierFrames;

@@ -8,8 +8,7 @@ let hadNavigatorStorage = false;
 
 afterEach(() => {
   // Restore `navigator.storage` after OPFS mock tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nav = globalThis.navigator as any;
+  const nav = globalThis.navigator as unknown as { storage?: unknown };
   if (hadNavigatorStorage) {
     nav.storage = realNavigatorStorage;
   } else {
@@ -21,8 +20,7 @@ afterEach(() => {
 
 describe("OpfsLruChunkCache prototype pollution hardening", () => {
   it("does not accept required index.json fields inherited from Object.prototype (signature wipe)", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = globalThis.navigator as any;
+    const nav = globalThis.navigator as unknown as { storage?: unknown };
     realNavigatorStorage = nav.storage;
     hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
 
@@ -75,16 +73,15 @@ describe("OpfsLruChunkCache prototype pollution hardening", () => {
       expect(indices).toEqual([]);
     } finally {
       if (existingVersion) Object.defineProperty(Object.prototype, "version", existingVersion);
-      else delete (Object.prototype as any).version;
+      else Reflect.deleteProperty(Object.prototype, "version");
       if (existingChunkSize) Object.defineProperty(Object.prototype, "chunkSize", existingChunkSize);
-      else delete (Object.prototype as any).chunkSize;
+      else Reflect.deleteProperty(Object.prototype, "chunkSize");
       if (existingAccessCounter) Object.defineProperty(Object.prototype, "accessCounter", existingAccessCounter);
-      else delete (Object.prototype as any).accessCounter;
+      else Reflect.deleteProperty(Object.prototype, "accessCounter");
       if (existingChunks) Object.defineProperty(Object.prototype, "chunks", existingChunks);
-      else delete (Object.prototype as any).chunks;
+      else Reflect.deleteProperty(Object.prototype, "chunks");
       if (existingSignature) Object.defineProperty(Object.prototype, "signature", existingSignature);
-      else delete (Object.prototype as any).signature;
+      else Reflect.deleteProperty(Object.prototype, "signature");
     }
   });
 });
-

@@ -328,6 +328,23 @@ function makeTestData(sizeBytes: number): Uint8Array {
   return out;
 }
 
+function headerValue(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  if (headers instanceof Headers) {
+    return (headers.get(name) ?? headers.get(name.toLowerCase()) ?? undefined) || undefined;
+  }
+  const lower = name.toLowerCase();
+  if (Array.isArray(headers)) {
+    for (const [k, v] of headers) {
+      if (k.toLowerCase() === lower) return v;
+    }
+    return undefined;
+  }
+  // Record form: `RequestInit.headers` accepts a plain object.
+  const record = headers as Record<string, string>;
+  return record[name] ?? record[lower] ?? undefined;
+}
+
 describe("RemoteRangeDisk", () => {
   it("falls back to an in-memory cache when navigator.storage (OPFS) is unavailable", async () => {
     const chunkSize = 512;
@@ -335,13 +352,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -369,7 +380,7 @@ describe("RemoteRangeDisk", () => {
       throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
     };
 
-    const nav = (globalThis as any).navigator as { storage?: unknown } | undefined;
+    const nav = (globalThis as unknown as { navigator?: { storage?: unknown } }).navigator;
     const prevStorage = nav?.storage;
     if (nav) delete nav.storage;
 
@@ -400,13 +411,7 @@ describe("RemoteRangeDisk", () => {
       let rangeGets = 0;
       const fetchFn: typeof fetch = async (_input, init) => {
         const method = String(init?.method ?? "GET").toUpperCase();
-        const headers = init?.headers;
-        const rangeHeader =
-          headers instanceof Headers
-            ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-            : typeof headers === "object" && headers
-              ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-              : undefined;
+        const rangeHeader = headerValue(init?.headers, "Range");
 
         if (method === "HEAD") {
           return new Response(null, {
@@ -509,13 +514,7 @@ describe("RemoteRangeDisk", () => {
       seenCredentials.push(init?.credentials as RequestCredentials | undefined);
 
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -574,13 +573,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -643,13 +636,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -742,7 +729,7 @@ describe("RemoteRangeDisk", () => {
     expect(maxInflightGets).toBeLessThanOrEqual(maxConcurrentFetches);
 
     // And it should avoid queuing up an unbounded number of tasks waiting on the fetch semaphore.
-    const semaphore = (disk as any).fetchSemaphore as any;
+    const semaphore = (disk as unknown as { fetchSemaphore: { waiters: unknown[] } }).fetchSemaphore;
     expect(semaphore.waiters.length).toBeLessThanOrEqual(maxConcurrentFetches);
 
     // Release Range responses until the read finishes.
@@ -1646,13 +1633,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetcher: typeof fetch = async (_url, init) => {
       const method = String(init?.method || "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? headers.get("Range") || undefined
-          : typeof headers === "object" && headers
-            ? ((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined)
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -1769,13 +1750,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -1863,13 +1838,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -1953,13 +1922,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -2067,13 +2030,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -2157,13 +2114,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -2265,13 +2216,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {
@@ -2366,13 +2311,7 @@ describe("RemoteRangeDisk", () => {
 
     const fetchFn: typeof fetch = async (_input, init) => {
       const method = String(init?.method ?? "GET").toUpperCase();
-      const headers = init?.headers;
-      const rangeHeader =
-        headers instanceof Headers
-          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
-          : typeof headers === "object" && headers
-            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
-            : undefined;
+      const rangeHeader = headerValue(init?.headers, "Range");
 
       if (method === "HEAD") {
         return new Response(null, {

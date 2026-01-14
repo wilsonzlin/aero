@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { AsyncSectorDisk } from "./disk";
+import type { DiskImageMetadata } from "./metadata";
 import { RUNTIME_DISK_MAX_IO_BYTES } from "./runtime_disk_limits";
 import type { RuntimeDiskRequestMessage } from "./runtime_disk_protocol";
 import { RuntimeDiskWorker, type OpenDiskFn } from "./runtime_disk_worker_impl";
+
+const dummyMeta = {} as unknown as DiskImageMetadata;
 
 describe("RuntimeDiskWorker (I/O size limits)", () => {
   it("rejects oversize reads before allocating", async () => {
@@ -27,7 +30,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();
@@ -69,7 +72,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();
@@ -111,7 +114,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();
@@ -156,7 +159,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();
@@ -200,7 +203,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();
@@ -247,7 +250,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();
@@ -288,7 +291,7 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
       type: "request",
       requestId: 1,
       op: "open",
-      payload: { spec: { kind: "local", meta: {} as any } },
+      payload: { spec: { kind: "local", meta: dummyMeta } },
     } satisfies RuntimeDiskRequestMessage);
 
     const openResp = posted.shift();

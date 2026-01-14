@@ -38,19 +38,19 @@ afterEach(() => {
   if (originalNavigatorDescriptor) {
     Object.defineProperty(globalThis, "navigator", originalNavigatorDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "navigator");
+    Reflect.deleteProperty(globalThis, "navigator");
   }
 
   if (originalDocumentDescriptor) {
     Object.defineProperty(globalThis, "document", originalDocumentDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "document");
+    Reflect.deleteProperty(globalThis, "document");
   }
 
   if (originalSecureContextDescriptor) {
     Object.defineProperty(globalThis, "isSecureContext", originalSecureContextDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "isSecureContext");
+    Reflect.deleteProperty(globalThis, "isSecureContext");
   }
 });
 
@@ -121,7 +121,7 @@ function findAll(root: FakeElement, predicate: (el: FakeElement) => boolean): Fa
 describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
   it("includes a site settings link in the revocation hint", () => {
     stubIsSecureContext(true);
-    stubNavigator({ usb: {} } as any);
+    stubNavigator({ usb: {} });
     stubDocument(new FakeDocument());
 
     const report: PlatformFeatureReport = {
@@ -169,7 +169,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
     } satisfies Partial<USB>;
 
     stubIsSecureContext(true);
-    stubNavigator({ usb } as any);
+    stubNavigator({ usb });
     stubDocument(new FakeDocument());
 
     const report: PlatformFeatureReport = {
@@ -221,7 +221,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
     const usb = { getDevices } satisfies Partial<USB>;
 
     stubIsSecureContext(true);
-    stubNavigator({ usb } as any);
+    stubNavigator({ usb });
     stubDocument(new FakeDocument());
 
     const report: PlatformFeatureReport = {
@@ -259,6 +259,9 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
 
   it("forgets the selected device permission when USBDevice.forget() is available", async () => {
     let permittedDevices: USBDevice[] = [];
+    const forget = vi.fn(async () => {
+      permittedDevices = [];
+    });
     const device = {
       vendorId: 0x1234,
       productId: 0x5678,
@@ -268,9 +271,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
       serialNumber: "sn-1",
       close: vi.fn(async () => {}),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      forget: vi.fn(async () => {
-        permittedDevices = [];
-      }),
+      forget,
     } as unknown as USBDevice;
     permittedDevices = [device];
     const getDevices = vi.fn(async () => permittedDevices);
@@ -280,7 +281,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
     } satisfies Partial<USB>;
 
     stubIsSecureContext(true);
-    stubNavigator({ usb } as any);
+    stubNavigator({ usb });
     stubDocument(new FakeDocument());
 
     const report: PlatformFeatureReport = {
@@ -319,8 +320,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
 
     await (forgetButton.onclick as () => Promise<void>)();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect(forget).toHaveBeenCalledTimes(1);
     expect(getDevices).toHaveBeenCalledTimes(2);
     expect(status.textContent).toContain("No device selected");
     expect(forgetButton.hidden).toBe(true);
@@ -331,6 +331,9 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
 
   it("surfaces forget() errors without breaking the panel", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const forget = vi.fn(async () => {
+      throw new Error("boom");
+    });
     const device = {
       vendorId: 0x1234,
       productId: 0x5678,
@@ -338,9 +341,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
       productName: "Example USB Device",
       close: vi.fn(async () => {}),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      forget: vi.fn(async () => {
-        throw new Error("boom");
-      }),
+      forget,
     } as unknown as USBDevice;
 
     const usb = {
@@ -348,7 +349,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
     } satisfies Partial<USB>;
 
     stubIsSecureContext(true);
-    stubNavigator({ usb } as any);
+    stubNavigator({ usb });
     stubDocument(new FakeDocument());
 
     const report: PlatformFeatureReport = {
@@ -381,8 +382,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
 
       const errorTitle = findAll(panel, (el) => el.tagName === "DIV" && el.className === "bad")[0];
       expect(errorTitle.textContent).toContain("WebUSB");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((device as any).forget).toHaveBeenCalledTimes(1);
+      expect(forget).toHaveBeenCalledTimes(1);
       expect(forgetButton.hidden).toBe(false);
     } finally {
       consoleError.mockRestore();

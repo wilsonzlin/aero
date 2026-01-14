@@ -4,6 +4,14 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureMouseupOutsideCanvasHarness = {
+  hasFocus: boolean;
+  pointerLock: { isLocked: boolean };
+  handleMouseDown: (ev: MouseEvent) => void;
+  handleMouseUp: (ev: MouseEvent) => void;
+  mouseButtons: number;
+};
+
 describe("InputCapture mouseup outside canvas handling", () => {
   it("releases tracked mouse buttons even if mouseup target is not the canvas (prevents stuck buttons)", () => {
     withStubbedDocument(() => {
@@ -15,13 +23,14 @@ describe("InputCapture mouseup outside canvas handling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      const h = capture as unknown as InputCaptureMouseupOutsideCanvasHarness;
 
       // Simulate the canvas being focused (capture active) and pointer lock not active.
-      (capture as any).hasFocus = true;
-      expect((capture as any).pointerLock.isLocked).toBe(false);
+      h.hasFocus = true;
+      expect(h.pointerLock.isLocked).toBe(false);
 
       // Press left button on the canvas.
-      (capture as any).handleMouseDown({
+      h.handleMouseDown({
         button: 0,
         target: canvas,
         preventDefault: vi.fn(),
@@ -29,10 +38,10 @@ describe("InputCapture mouseup outside canvas handling", () => {
         timeStamp: 0,
       } as unknown as MouseEvent);
 
-      expect((capture as any).mouseButtons).toBe(1);
+      expect(h.mouseButtons).toBe(1);
 
       // Release left button outside the canvas (common drag-out scenario).
-      (capture as any).handleMouseUp({
+      h.handleMouseUp({
         button: 0,
         // Not the canvas.
         target: {},
@@ -41,7 +50,7 @@ describe("InputCapture mouseup outside canvas handling", () => {
         timeStamp: 1,
       } as unknown as MouseEvent);
 
-      expect((capture as any).mouseButtons).toBe(0);
+      expect(h.mouseButtons).toBe(0);
 
       capture.flushNow();
 
@@ -68,11 +77,12 @@ describe("InputCapture mouseup outside canvas handling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
-      (capture as any).hasFocus = true;
+      const h = capture as unknown as InputCaptureMouseupOutsideCanvasHarness;
+      h.hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
-      (capture as any).handleMouseUp({
+      h.handleMouseUp({
         button: 0,
         target: {},
         preventDefault,

@@ -316,7 +316,7 @@ describe("RemoteChunkedDisk", () => {
       ).rejects.toThrow(/schema/i);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "schema", existing);
-      else delete (Object.prototype as any).schema;
+      else Reflect.deleteProperty(Object.prototype, "schema");
     }
   });
 
@@ -1546,13 +1546,13 @@ describe("RemoteChunkedDisk", () => {
     });
     closeServer = close;
 
-    const prevLocation = (globalThis as any).location;
+    const globals = globalThis as unknown as { location?: unknown };
+    const prevLocation = globals.location;
     const prevFetch = globalThis.fetch;
-    (globalThis as any).location = { href: `${baseUrl}/` };
+    globals.location = { href: `${baseUrl}/` };
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const resolved =
-        typeof input === "string" && input.startsWith("/") ? `${baseUrl}${input}` : (input as RequestInfo | URL);
-      return prevFetch(resolved as any, init);
+      const resolved: RequestInfo | URL = typeof input === "string" && input.startsWith("/") ? `${baseUrl}${input}` : input;
+      return prevFetch(resolved, init);
     }) as typeof fetch;
 
     try {
@@ -1568,7 +1568,7 @@ describe("RemoteChunkedDisk", () => {
       await disk.close();
     } finally {
       globalThis.fetch = prevFetch;
-      (globalThis as any).location = prevLocation;
+      globals.location = prevLocation;
     }
   });
 
@@ -1914,7 +1914,7 @@ describe("RemoteChunkedDisk", () => {
       }
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "0", existing);
-      else delete (Object.prototype as any)["0"];
+      else Reflect.deleteProperty(Object.prototype, "0");
     }
   });
 

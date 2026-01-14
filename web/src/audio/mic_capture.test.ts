@@ -2,8 +2,8 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { MicCapture } from "./mic_capture";
 
-const GLOBALS = globalThis as unknown as { AudioContext?: unknown };
-const ORIGINAL_AUDIO_WORKLET_NODE = (globalThis as any).AudioWorkletNode as unknown;
+const GLOBALS = globalThis as unknown as { AudioContext?: unknown; AudioWorkletNode?: unknown };
+const ORIGINAL_AUDIO_WORKLET_NODE = GLOBALS.AudioWorkletNode;
 
 const ORIGINAL_AUDIO_CONTEXT = GLOBALS.AudioContext;
 const ORIGINAL_MEDIA_DEVICES = (navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
@@ -22,9 +22,9 @@ afterEach(() => {
   }
 
   if (ORIGINAL_AUDIO_WORKLET_NODE) {
-    (globalThis as any).AudioWorkletNode = ORIGINAL_AUDIO_WORKLET_NODE;
+    GLOBALS.AudioWorkletNode = ORIGINAL_AUDIO_WORKLET_NODE;
   } else {
-    delete (globalThis as any).AudioWorkletNode;
+    delete GLOBALS.AudioWorkletNode;
   }
 });
 
@@ -115,7 +115,7 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
     }
   }
 
-  (globalThis as any).AudioWorkletNode = FakeAudioWorkletNode;
+  GLOBALS.AudioWorkletNode = FakeAudioWorkletNode;
 
   class FakeAudioContext {
     sampleRate = 48_000;
@@ -214,7 +214,7 @@ test("MicCapture falls back to ScriptProcessorNode when AudioWorklet initializat
     }
   }
 
-  (globalThis as any).AudioWorkletNode = FakeAudioWorkletNode;
+  GLOBALS.AudioWorkletNode = FakeAudioWorkletNode;
 
   class FakeAudioContext {
     sampleRate = 48_000;
@@ -259,7 +259,7 @@ test("MicCapture falls back to ScriptProcessorNode when AudioWorklet initializat
 });
 
 test("MicCapture script backend emits periodic stats messages", async () => {
-  delete (globalThis as any).AudioWorkletNode;
+  delete GLOBALS.AudioWorkletNode;
 
   class FakeNode {
     connect = vi.fn();
@@ -318,7 +318,7 @@ test("MicCapture script backend emits periodic stats messages", async () => {
   expect(mic.getDebugInfo().backend).toBe("script");
   expect(mic.getDebugInfo().workletInitError).toBe(null);
 
-  const node = (mic as any).scriptNode as FakeScriptProcessorNode;
+  const node = (mic as unknown as { scriptNode: FakeScriptProcessorNode }).scriptNode;
   expect(node).toBeTruthy();
   expect(typeof node.onaudioprocess).toBe("function");
 

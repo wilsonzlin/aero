@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { IoWorkerLegacyHidPassthroughAdapter, computeHasInterruptOut } from "./io_hid_passthrough_legacy_adapter";
+import type { NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
 
 describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
   it("computes hasInterruptOut based on max output report on-wire size (feature-only does not require interrupt OUT)", () => {
@@ -9,7 +10,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
         outputReports: [{ reportId: 1, items: [] }],
         children: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
     expect(computeHasInterruptOut(withOutput)).toBe(true);
 
     const withChildOutput = [
@@ -22,7 +23,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
           },
         ],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
     expect(computeHasInterruptOut(withChildOutput)).toBe(true);
 
     const withLargeOutput = [
@@ -30,7 +31,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
         outputReports: [{ reportId: 0, items: [{ reportSize: 8, reportCount: 65 }] }],
         children: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
     expect(computeHasInterruptOut(withLargeOutput)).toBe(false);
 
     const featureOnly = [
@@ -38,7 +39,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
         outputReports: [],
         children: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
     expect(computeHasInterruptOut(featureOnly)).toBe(false);
   });
 
@@ -50,7 +51,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
         outputReports: [],
         children: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
 
     const attach = adapter.attach({
       type: "hid:attach",
@@ -109,7 +110,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
         outputReports: [],
         children: [],
       },
-    ] as any;
+    ] as unknown as NormalizedHidCollectionInfo[];
 
     const attachA = adapter.attach({
       type: "hid:attach",
@@ -147,7 +148,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
       guestPort: 0,
       vendorId: 1,
       productId: 2,
-      collections: [] as any,
+      collections: [] as unknown as NormalizedHidCollectionInfo[],
     });
 
     const backing = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]).buffer;
@@ -171,7 +172,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
       guestPort: 0,
       vendorId: 1,
       productId: 2,
-      collections: [] as any,
+      collections: [] as unknown as NormalizedHidCollectionInfo[],
     });
 
     const shared = new SharedArrayBuffer(1024 * 1024);
@@ -195,7 +196,7 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
       guestPort: 0,
       vendorId: 1,
       productId: 2,
-      collections: [] as any,
+      collections: [] as unknown as NormalizedHidCollectionInfo[],
     });
 
     const req = adapter.getFeatureReport({ deviceId: 10, requestId: 1, reportId: 7 });

@@ -4,6 +4,12 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureConsumerKeysHarness = {
+  hasFocus: boolean;
+  handleKeyDown: (ev: KeyboardEvent) => void;
+  handleKeyUp: (ev: KeyboardEvent) => void;
+};
+
 describe("InputCapture consumer/media keys", () => {
   it("emits HidUsage16 Consumer Control events for AudioVolumeUp", () => {
     withStubbedDocument(() => {
@@ -13,9 +19,10 @@ describe("InputCapture consumer/media keys", () => {
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      const h = capture as unknown as InputCaptureConsumerKeysHarness;
+      h.hasFocus = true;
 
-      (capture as any).handleKeyDown({
+      h.handleKeyDown({
         code: "AudioVolumeUp",
         repeat: false,
         timeStamp: 0,
@@ -27,7 +34,7 @@ describe("InputCapture consumer/media keys", () => {
         stopPropagation: vi.fn(),
       } as unknown as KeyboardEvent);
 
-      (capture as any).handleKeyUp({
+      h.handleKeyUp({
         code: "AudioVolumeUp",
         repeat: false,
         timeStamp: 1,
@@ -69,9 +76,10 @@ describe("InputCapture consumer/media keys", () => {
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      const h = capture as unknown as InputCaptureConsumerKeysHarness;
+      h.hasFocus = true;
 
-      (capture as any).handleKeyDown({
+      h.handleKeyDown({
         code: "BrowserBack",
         repeat: false,
         timeStamp: 0,
@@ -83,7 +91,7 @@ describe("InputCapture consumer/media keys", () => {
         stopPropagation: vi.fn(),
       } as unknown as KeyboardEvent);
 
-      (capture as any).handleKeyUp({
+      h.handleKeyUp({
         code: "BrowserBack",
         repeat: false,
         timeStamp: 1,

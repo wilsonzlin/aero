@@ -34,7 +34,8 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const maybeMessage = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof maybeMessage === "string" ? maybeMessage : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -206,7 +207,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const ack2 = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; version?: unknown }).kind === "config.ack" && (msg as any).version === 2,
+        (msg) =>
+          (msg as { kind?: unknown; version?: unknown }).kind === "config.ack" &&
+          (msg as { kind?: unknown; version?: unknown }).version === 2,
         10_000,
       );
       worker.postMessage({
@@ -378,7 +381,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       const fence = 123n;
       const completion = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === fence,
+        (msg) =>
+          (msg as { type?: unknown; fence?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" &&
+          (msg as { type?: unknown; fence?: unknown }).fence === fence,
         10_000,
       );
       worker.postMessage({ kind: "aerogpu.complete_fence", fence });
@@ -869,7 +874,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       try {
         const pause1Ack = waitForWorkerMessage(
           worker,
-          (msg) => (msg as { kind?: unknown; requestId?: unknown; ok?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 1,
+          (msg) =>
+            (msg as { kind?: unknown; requestId?: unknown; ok?: unknown }).kind === "vm.snapshot.paused" &&
+            (msg as { kind?: unknown; requestId?: unknown; ok?: unknown }).requestId === 1,
           10_000,
         );
         worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
@@ -892,7 +899,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
         const pause2Ack = waitForWorkerMessage(
           worker,
-          (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 2,
+          (msg) =>
+            (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" &&
+            (msg as { kind?: unknown; requestId?: unknown }).requestId === 2,
           10_000,
         );
         worker.postMessage({ kind: "vm.snapshot.pause", requestId: 2 });
@@ -909,7 +918,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
         );
         const resumedPromise = waitForWorkerMessage(
           worker,
-          (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" && (msg as any).requestId === 3,
+          (msg) =>
+            (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" &&
+            (msg as { kind?: unknown; requestId?: unknown }).requestId === 3,
           10_000,
         );
         worker.postMessage({ kind: "vm.snapshot.resume", requestId: 3 });
@@ -970,7 +981,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const notPausedPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" && (msg as any).requestId === 1,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 1,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.machine.saveToOpfs", requestId: 1, path: "state/test.snap" });
@@ -985,7 +998,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const pauseAck = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 2,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 2,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 2 });
@@ -993,7 +1008,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const missingWasmPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" && (msg as any).requestId === 3,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 3,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.machine.saveToOpfs", requestId: 3, path: "state/test.snap" });
@@ -1037,7 +1054,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const notPausedPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.restored" && (msg as any).requestId === 1,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.restored" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 1,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.machine.restoreFromOpfs", requestId: 1, path: "state/test.snap" });
@@ -1052,7 +1071,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const pauseAck = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 2,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 2,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 2 });
@@ -1060,7 +1081,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const missingWasmPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.restored" && (msg as any).requestId === 3,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.restored" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 3,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.machine.restoreFromOpfs", requestId: 3, path: "state/test.snap" });
@@ -1104,7 +1127,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const pauseAck = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 1,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 1,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
@@ -1112,12 +1137,16 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const save1 = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" && (msg as any).requestId === 10,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 10,
         10_000,
       );
       const save2 = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" && (msg as any).requestId === 11,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.saved" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 11,
         10_000,
       );
 
@@ -1169,7 +1198,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
       const pauseAck = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 1,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 1,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
@@ -1223,7 +1254,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       );
       const resumedAck = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" && (msg as any).requestId === 2,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 2,
         10_000,
       );
       worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
@@ -1285,7 +1318,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
     try {
       const msgPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "cdrom",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "cdrom",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1314,7 +1349,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
     try {
       const msgPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "hdd",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "hdd",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1343,7 +1380,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
     try {
       const msgPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "hdd",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "hdd",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1373,7 +1412,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
     try {
       const msgPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "cdrom",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "cdrom",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1403,7 +1444,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
     try {
       const msgPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "hdd",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "hdd",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1460,9 +1503,13 @@ describe("workers/machine_cpu.worker (active boot device reporting)", () => {
 
       const activePromise = waitForWorkerMessage(
         worker,
-        (msg) =>
-          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" &&
-          ((msg as any).bootDevice === "cdrom" || (msg as any).bootDevice === "hdd"),
+        (msg) => {
+          const maybe = msg as { type?: unknown; bootDevice?: unknown };
+          const bootDevice = maybe.bootDevice;
+          return (
+            maybe.type === "machineCpu.bootDeviceActive" && (bootDevice === "cdrom" || bootDevice === "hdd")
+          );
+        },
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1530,13 +1577,17 @@ describe("workers/machine_cpu.worker (CD-first boot policy)", () => {
 
       const setBootDrivePromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; drive?: unknown }).kind === "__test.machine_cpu.setBootDrive" && (msg as any).drive === 0x80,
+        (msg) =>
+          (msg as { kind?: unknown; drive?: unknown }).kind === "__test.machine_cpu.setBootDrive" &&
+          (msg as { kind?: unknown; drive?: unknown }).drive === 0x80,
         10_000,
       ) as Promise<{ kind: string; drive: number }>;
 
       const activePromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" && (msg as any).bootDevice === "cdrom",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "cdrom",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 
@@ -1622,7 +1673,9 @@ describe("workers/machine_cpu.worker (guest reset boot policy)", () => {
       // deciding whether to switch to HDD after the guest reboots.
       const activePromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" && (msg as any).bootDevice === "cdrom",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "cdrom",
         10_000,
       );
 
@@ -1652,7 +1705,9 @@ describe("workers/machine_cpu.worker (guest reset boot policy)", () => {
 
       const selectedPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "hdd",
+        (msg) =>
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "hdd",
         10_000,
       );
 
@@ -1907,13 +1962,16 @@ describe("workers/machine_cpu.worker (snapshot restore boot device reporting)", 
 
       const restoredPromise = waitForWorkerMessage(
         worker,
-        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "machine.snapshot.restored" && (msg as any).requestId === 1,
+        (msg) =>
+          (msg as { kind?: unknown; requestId?: unknown }).kind === "machine.snapshot.restored" &&
+          (msg as { kind?: unknown; requestId?: unknown }).requestId === 1,
         10_000,
       ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
       const activePromise = waitForWorkerMessage(
         worker,
         (msg) =>
-          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" && (msg as any).bootDevice === "cdrom",
+          (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" &&
+          (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "cdrom",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
 

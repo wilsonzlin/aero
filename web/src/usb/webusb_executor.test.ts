@@ -20,7 +20,7 @@ afterEach(() => {
   if (originalNavigatorDescriptor) {
     Object.defineProperty(globalThis, "navigator", originalNavigatorDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "navigator");
+    Reflect.deleteProperty(globalThis, "navigator");
   }
 });
 
@@ -64,7 +64,7 @@ function fakeUsbDevice(partial: Partial<USBDevice>): USBDevice {
 
 describe("WebUsbExecutor", () => {
   it("executes bulk in/out actions and returns completions", async () => {
-    stubNavigator({ usb: {} } as any);
+    stubNavigator({ usb: {} });
 
     const transferIn = vi.fn<[number, number], Promise<USBInTransferResult>>();
     transferIn.mockResolvedValueOnce({ status: "ok", data: dataViewFromBytes([0x11, 0x22]) });
@@ -98,7 +98,7 @@ describe("WebUsbExecutor", () => {
   });
 
   it("maps thrown WebUSB errors to {status: error}", async () => {
-    stubNavigator({ usb: {} } as any);
+    stubNavigator({ usb: {} });
 
     const transferIn = vi.fn<[number, number], Promise<USBInTransferResult>>();
     transferIn.mockRejectedValueOnce(new Error("boom"));
@@ -114,7 +114,7 @@ describe("WebUsbExecutor", () => {
   });
 
   it("keeps OTHER_SPEED_CONFIGURATION → CONFIGURATION translation for controlIn config descriptor requests", async () => {
-    stubNavigator({ usb: {} } as any);
+    stubNavigator({ usb: {} });
 
     const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
     controlTransferIn.mockResolvedValueOnce({
@@ -163,45 +163,69 @@ describe("UsbHostAction/Completion wire fixture", () => {
 
     const parseAction = (v: unknown): UsbHostAction => {
       if (!v || typeof v !== "object") throw new Error("action must be object");
-      const action = v as any;
-      if (typeof action.kind !== "string" || typeof action.id !== "number") throw new Error("invalid action header");
+      const action = v as Record<string, unknown>;
+      const kind = action.kind;
+      const id = action.id;
+      if (typeof kind !== "string" || typeof id !== "number") throw new Error("invalid action header");
 
-      switch (action.kind as UsbHostAction["kind"]) {
+      switch (kind) {
         case "controlIn":
-          return { kind: "controlIn", id: action.id, setup: action.setup };
+          return {
+            kind: "controlIn",
+            id,
+            setup: action.setup as Extract<UsbHostAction, { kind: "controlIn" }>["setup"],
+          };
         case "controlOut":
-          return { kind: "controlOut", id: action.id, setup: action.setup, data: toUint8Array(action.data) };
+          return {
+            kind: "controlOut",
+            id,
+            setup: action.setup as Extract<UsbHostAction, { kind: "controlOut" }>["setup"],
+            data: toUint8Array(action.data),
+          };
         case "bulkIn":
-          return { kind: "bulkIn", id: action.id, endpoint: action.endpoint, length: action.length };
+          return {
+            kind: "bulkIn",
+            id,
+            endpoint: action.endpoint as number,
+            length: action.length as number,
+          };
         case "bulkOut":
-          return { kind: "bulkOut", id: action.id, endpoint: action.endpoint, data: toUint8Array(action.data) };
+          return {
+            kind: "bulkOut",
+            id,
+            endpoint: action.endpoint as number,
+            data: toUint8Array(action.data),
+          };
         default:
-          throw new Error(`unknown action kind: ${action.kind}`);
+          throw new Error(`unknown action kind: ${kind}`);
       }
     };
 
     const parseCompletion = (v: unknown): UsbHostCompletion => {
       if (!v || typeof v !== "object") throw new Error("completion must be object");
-      const c = v as any;
-      if (typeof c.kind !== "string" || typeof c.id !== "number" || typeof c.status !== "string") {
+      const c = v as Record<string, unknown>;
+      const kind = c.kind;
+      const id = c.id;
+      const status = c.status;
+      if (typeof kind !== "string" || typeof id !== "number" || typeof status !== "string") {
         throw new Error("invalid completion header");
       }
 
-      switch (c.kind as UsbHostCompletion["kind"]) {
+      switch (kind) {
         case "controlIn":
         case "bulkIn":
-          if (c.status === "success") return { kind: c.kind, id: c.id, status: "success", data: toUint8Array(c.data) };
-          if (c.status === "stall") return { kind: c.kind, id: c.id, status: "stall" };
-          if (c.status === "error") return { kind: c.kind, id: c.id, status: "error", message: String(c.message) };
-          throw new Error(`unknown status: ${c.status}`);
+          if (status === "success") return { kind, id, status: "success", data: toUint8Array(c.data) };
+          if (status === "stall") return { kind, id, status: "stall" };
+          if (status === "error") return { kind, id, status: "error", message: String(c.message) };
+          throw new Error(`unknown status: ${status}`);
         case "controlOut":
         case "bulkOut":
-          if (c.status === "success") return { kind: c.kind, id: c.id, status: "success", bytesWritten: c.bytesWritten };
-          if (c.status === "stall") return { kind: c.kind, id: c.id, status: "stall" };
-          if (c.status === "error") return { kind: c.kind, id: c.id, status: "error", message: String(c.message) };
-          throw new Error(`unknown status: ${c.status}`);
+          if (status === "success") return { kind, id, status: "success", bytesWritten: c.bytesWritten as number };
+          if (status === "stall") return { kind, id, status: "stall" };
+          if (status === "error") return { kind, id, status: "error", message: String(c.message) };
+          throw new Error(`unknown status: ${status}`);
         default:
-          throw new Error(`unknown completion kind: ${c.kind}`);
+          throw new Error(`unknown completion kind: ${kind}`);
       }
     };
 

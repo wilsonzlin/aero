@@ -183,38 +183,48 @@ describe("webusb_backend WebUsbBackend.ensureOpenAndClaimed", () => {
       const iface2 = { interfaceNumber: 2, claimed: false, alternates: [], alternate: {} };
       const config = { configurationValue: 1, interfaces: [iface1, iface2] };
 
+      let opened = false;
+      let configuration: USBConfiguration | null = null;
+      const open = vi.fn(async () => {
+        opened = true;
+      });
+      const selectConfiguration = vi.fn(async (value: number) => {
+        expect(value).toBe(1);
+        configuration = config as unknown as USBConfiguration;
+      });
+      const claimInterface = vi.fn(async (ifaceNum: number) => {
+        if (ifaceNum === 1) {
+          throw new Error("protected interface");
+        }
+        if (ifaceNum === 2) {
+          iface2.claimed = true;
+          return;
+        }
+        throw new Error(`unexpected iface ${ifaceNum}`);
+      });
+
       const device: Partial<USBDevice> = {
         vendorId: 0x1234,
         productId: 0x5678,
-        opened: false,
-        configuration: null,
+        get opened() {
+          return opened;
+        },
+        get configuration() {
+          return configuration;
+        },
         configurations: [config as unknown as USBConfiguration],
-        open: vi.fn(async () => {
-          (device as any).opened = true;
-        }),
-        selectConfiguration: vi.fn(async (value: number) => {
-          expect(value).toBe(1);
-          (device as any).configuration = config;
-        }),
-        claimInterface: vi.fn(async (ifaceNum: number) => {
-          if (ifaceNum === 1) {
-            throw new Error("protected interface");
-          }
-          if (ifaceNum === 2) {
-            iface2.claimed = true;
-            return;
-          }
-          throw new Error(`unexpected iface ${ifaceNum}`);
-        }),
+        open,
+        selectConfiguration,
+        claimInterface,
       };
 
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const backend = new WebUsbBackend(device as USBDevice);
         await backend.ensureOpenAndClaimed();
-        expect((device.open as any).mock.calls.length).toBe(1);
-        expect((device.selectConfiguration as any).mock.calls.length).toBe(1);
-        expect((device.claimInterface as any).mock.calls.length).toBe(2);
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(selectConfiguration).toHaveBeenCalledTimes(1);
+        expect(claimInterface).toHaveBeenCalledTimes(2);
       } finally {
         warn.mockRestore();
       }
@@ -285,6 +295,9 @@ describe("webusb_backend WebUsbBackend.ensureOpenAndClaimed", () => {
       const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
       const config = { configurationValue: 1, interfaces: [iface1] };
 
+      const claimInterface = vi.fn(async () => {
+        iface1.claimed = true;
+      });
       const device: Partial<USBDevice> = {
         vendorId: 0x1234,
         productId: 0x5678,
@@ -293,19 +306,17 @@ describe("webusb_backend WebUsbBackend.ensureOpenAndClaimed", () => {
         configurations: [config as unknown as USBConfiguration],
         open: vi.fn(async () => {}),
         selectConfiguration: vi.fn(async () => {}),
-        claimInterface: vi.fn(async () => {
-          iface1.claimed = true;
-        }),
+        claimInterface,
       };
 
       const backend = new WebUsbBackend(device as USBDevice);
       await backend.ensureOpenAndClaimed();
-      expect((device.claimInterface as any).mock.calls.length).toBe(1);
+      expect(claimInterface).toHaveBeenCalledTimes(1);
 
       // Simulate the device being closed/reopened or the claim being lost.
       iface1.claimed = false;
       await backend.ensureOpenAndClaimed();
-      expect((device.claimInterface as any).mock.calls.length).toBe(2);
+      expect(claimInterface).toHaveBeenCalledTimes(2);
     });
   });
 });
@@ -317,9 +328,12 @@ describe("webusb_backend WebUsbBackend.execute controlOut translations", () => {
       const config1 = { configurationValue: 1, interfaces: [iface1] };
       const config2 = { configurationValue: 2, interfaces: [iface1] };
 
+      let configuration: USBConfiguration | null = config1 as unknown as USBConfiguration;
       const device: Partial<USBDevice> = {
         opened: true,
-        configuration: config1 as unknown as USBConfiguration,
+        get configuration() {
+          return configuration;
+        },
         configurations: [config1 as unknown as USBConfiguration, config2 as unknown as USBConfiguration],
         open: vi.fn(async () => {}),
         claimInterface: vi.fn(async () => {}),
@@ -329,7 +343,7 @@ describe("webusb_backend WebUsbBackend.execute controlOut translations", () => {
         }),
         selectConfiguration: vi.fn(async (value: number) => {
           expect(value).toBe(2);
-          (device as any).configuration = config2;
+          configuration = config2 as unknown as USBConfiguration;
         }),
         controlTransferOut: vi.fn(async () => {
           throw new Error("controlTransferOut should not be called");
@@ -357,9 +371,12 @@ describe("webusb_backend WebUsbBackend.execute controlOut translations", () => {
       const config1 = { configurationValue: 1, interfaces: [iface1] };
       const config2 = { configurationValue: 2, interfaces: [iface1] };
 
+      let configuration: USBConfiguration | null = config1 as unknown as USBConfiguration;
       const device: Partial<USBDevice> = {
         opened: true,
-        configuration: config1 as unknown as USBConfiguration,
+        get configuration() {
+          return configuration;
+        },
         configurations: [config1 as unknown as USBConfiguration, config2 as unknown as USBConfiguration],
         open: vi.fn(async () => {}),
         claimInterface: vi.fn(async () => {
@@ -370,7 +387,7 @@ describe("webusb_backend WebUsbBackend.execute controlOut translations", () => {
         }),
         selectConfiguration: vi.fn(async (value: number) => {
           expect(value).toBe(2);
-          (device as any).configuration = config2;
+          configuration = config2 as unknown as USBConfiguration;
         }),
         controlTransferOut: vi.fn(async () => {
           throw new Error("controlTransferOut should not be called");

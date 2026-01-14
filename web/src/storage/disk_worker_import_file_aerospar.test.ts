@@ -50,6 +50,13 @@ function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: num
   return out;
 }
 
+function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // `BlobPart` types only accept ArrayBuffer-backed views; `Uint8Array` is generic over
+  // `ArrayBufferLike` and may be backed by `SharedArrayBuffer`. Copy when needed so TypeScript
+  // (and spec compliance) are happy.
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
+}
+
 async function sendImportFile(payload: any, backend: "opfs" | "idb" = "opfs"): Promise<any> {
   vi.resetModules();
 
@@ -95,7 +102,7 @@ describe("disk_worker import_file aerospar handling", () => {
     const bytes = makeAerosparBytes({ diskSizeBytes, blockSizeBytes: 4096 });
     expect(bytes.byteLength).toBeLessThan(diskSizeBytes);
 
-    const file = new File([bytes], "base.aerospar");
+    const file = new File([toArrayBufferUint8(bytes)], "base.aerospar");
     const resp = await sendImportFile({ file });
     expect(resp.ok).toBe(true);
     expect(resp.result.format).toBe("aerospar");
@@ -106,7 +113,7 @@ describe("disk_worker import_file aerospar handling", () => {
 
   it("detects aerospar content even when the filename suggests raw", async () => {
     const bytes = makeAerosparBytes({ diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096 });
-    const file = new File([bytes], "mislabeled.img");
+    const file = new File([toArrayBufferUint8(bytes)], "mislabeled.img");
     const resp = await sendImportFile({ file });
     expect(resp.ok).toBe(true);
     expect(resp.result.format).toBe("aerospar");
@@ -124,7 +131,7 @@ describe("disk_worker import_file aerospar handling", () => {
 
   it("rejects aerospar imports on the IndexedDB backend", async () => {
     const bytes = makeAerosparBytes({ diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096 });
-    const file = new File([bytes], "disk.aerospar");
+    const file = new File([toArrayBufferUint8(bytes)], "disk.aerospar");
     const resp = await sendImportFile({ file }, "idb");
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/opfs/i);
