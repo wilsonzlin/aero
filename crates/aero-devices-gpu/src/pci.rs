@@ -687,7 +687,7 @@ impl MmioHandler for AeroGpuBar1VramMmio {
             let b = usize::try_from(addr)
                 .ok()
                 .and_then(|idx| vram.get(idx).copied())
-                .unwrap_or(0);
+                .unwrap_or(0xFF);
             out |= (b as u64) << (i * 8);
         }
         out
