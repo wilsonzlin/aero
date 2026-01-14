@@ -207,3 +207,30 @@ fn machine_cd_first_policy_falls_back_to_hdd_when_iso_is_unbootable() {
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), vec![b'H']);
 }
+
+#[test]
+fn configure_win7_install_boot_forces_hdd_fallback_when_boot_drive_was_cd() {
+    // This exercises a subtle configuration trap: if a caller has explicitly selected CD boot
+    // (`boot_drive=0xE0`) and then enables the CD-first policy, the firmware fallback would
+    // otherwise attempt to fall back to *another* CD boot attempt. The helper should ensure the
+    // fallback is an HDD boot drive.
+    let iso_bytes = vec![0u8; 32 * 2048];
+    let iso = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
+
+    let mut m = Machine::new_with_win7_storage(2 * 1024 * 1024).unwrap();
+    m.set_disk_image(build_minimal_mbr_disk(b'H')).unwrap();
+
+    // Simulate a caller selecting explicit CD boot.
+    m.set_boot_drive(0xE0);
+
+    // Apply the install-boot helper (enables CD-first policy, attaches ISO, resets).
+    // The ISO is unbootable, so we expect an HDD fallback boot.
+    m.configure_win7_install_boot(Box::new(iso)).unwrap();
+
+    assert_eq!(m.boot_device(), aero_machine::BootDevice::Hdd);
+    assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0x80);
+    assert_eq!(m.active_boot_device(), aero_machine::BootDevice::Hdd);
+
+    run_until_halt(&mut m);
+    assert_eq!(m.take_serial_output(), vec![b'H']);
+}
