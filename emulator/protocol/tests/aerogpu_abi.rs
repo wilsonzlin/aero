@@ -2556,7 +2556,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
     assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 48);
-    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 216);
+    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 240);
     assert_eq!(abi.size("aerogpu_dbgctl_ring_desc"), 24);
     assert_eq!(abi.size("aerogpu_dbgctl_ring_desc_v2"), 40);
     assert_eq!(abi.size("aerogpu_escape_query_error_out"), 40);
