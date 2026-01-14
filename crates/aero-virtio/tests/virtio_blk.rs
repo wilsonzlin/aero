@@ -16,8 +16,8 @@ use aero_virtio::memory::{
 use aero_virtio::pci::{
     InterruptLog, InterruptSink, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
     VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
-    VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
-    VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_INDIRECT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
@@ -793,7 +793,7 @@ fn virtio_blk_flush_calls_backend_flush() {
 }
 
 #[test]
-fn virtio_blk_msix_queue_interrupts_fallback_to_intx_until_vector_assigned() {
+fn virtio_blk_msix_queue_interrupts_use_programmed_msix_message_and_do_not_fallback_to_intx() {
     let irq0 = TestIrq::default();
     let (mut dev, caps, mut mem, _backing, flushes, irq0) = setup_with_irq(irq0);
 
@@ -853,20 +853,14 @@ fn virtio_blk_msix_queue_interrupts_fallback_to_intx_until_vector_assigned() {
     write_u16_le(&mut mem, USED_RING, 0).unwrap();
     write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
 
-    // With MSI-X enabled but no queue vector assigned, the Aero Win7 virtio contract requires
-    // falling back to legacy INTx + ISR semantics.
+    // With MSI-X enabled but no queue vector assigned, virtio-pci must suppress interrupts and
+    // not fall back to legacy INTx.
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(flushes.get(), 1);
-    assert_eq!(irq0.legacy_count(), 1);
-    assert!(irq0.legacy_level());
-    assert!(irq0.take_msix_messages().is_empty());
-
-    // Ack the legacy interrupt via the ISR register (read-to-ack) to clear the level latch before
-    // moving on to MSI-X delivery.
-    let isr = bar_read_u16(&mut dev, caps.isr) as u8;
-    assert_eq!(isr, VIRTIO_PCI_LEGACY_ISR_QUEUE);
+    assert_eq!(irq0.legacy_count(), 0);
     assert!(!irq0.legacy_level());
+    assert!(irq0.take_msix_messages().is_empty());
 
     // Assign the queue MSI-X vector and submit another request; now the MSI message should fire.
     bar_write_u16(&mut dev, caps.common + 0x16, 0); // queue_select
@@ -879,7 +873,7 @@ fn virtio_blk_msix_queue_interrupts_fallback_to_intx_until_vector_assigned() {
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert_eq!(flushes.get(), 2);
-    assert_eq!(irq0.legacy_count(), 1);
+    assert_eq!(irq0.legacy_count(), 0);
     assert!(!irq0.legacy_level());
     assert_eq!(
         irq0.take_msix_messages(),

@@ -304,7 +304,7 @@ ISR semantics:
 - Reading the ISR byte returns the current pending bits and **acknowledges** them (read-to-ack).
 - Reading MUST clear all bits that were returned.
 
-If MSI-X is present and enabled, drivers SHOULD rely on the MSI-X vector to determine the cause; ISR is primarily for INTx and MSI fallbacks.
+If MSI-X is present and enabled, drivers SHOULD rely on the MSI-X vector to determine the cause; ISR is primarily for INTx.
 
 ### 1.8 Interrupts
 
@@ -313,14 +313,15 @@ If MSI-X is present and enabled, drivers SHOULD rely on the MSI-X vector to dete
 Contract v1 requires **legacy PCI INTx** support.
 
 - The device MUST use PCI **INTA#** (interrupt pin = 1).
-- The device MUST assert INTx when it sets any ISR cause bit (queue or config).
-- The device MUST deassert INTx after the guest acknowledges all pending causes (i.e., after `ISR` is read and no further causes remain).
+- When MSI-X is disabled, the device MUST assert INTx when it sets any ISR cause bit (queue or config).
+- When MSI-X is disabled, the device MUST deassert INTx after the guest acknowledges all pending causes (i.e., after `ISR` is read and no further causes remain).
 
 #### 1.8.2 Queue interrupt behavior
 
 When the device publishes one or more used-ring entries for a queue:
 
-- The device MUST set ISR bit 0 (`QUEUE_INTERRUPT`) and MUST assert INTx.
+- The device MUST set ISR bit 0 (`QUEUE_INTERRUPT`).
+- If MSI-X is disabled, the device MUST assert INTx (see §1.8.1). If MSI-X is enabled, interrupt delivery follows §1.8.4.
 
 The device SHOULD suppress interrupts when the driver has set `VRING_AVAIL_F_NO_INTERRUPT` in the avail ring for that queue.
 
@@ -328,7 +329,8 @@ The device SHOULD suppress interrupts when the driver has set `VRING_AVAIL_F_NO_
 
 If device-specific config changes at runtime:
 
-- The device MUST set ISR bit 1 (`CONFIG_INTERRUPT`) and MUST assert INTx.
+- The device MUST set ISR bit 1 (`CONFIG_INTERRUPT`).
+- If MSI-X is disabled, the device MUST assert INTx (see §1.8.1). If MSI-X is enabled, interrupt delivery follows §1.8.4.
 
 Contract v1 devices SHOULD NOT change config at runtime unless explicitly described in a per-device section.
 
@@ -336,10 +338,16 @@ Contract v1 devices SHOULD NOT change config at runtime unless explicitly descri
 
 Devices MAY expose a PCI MSI-X capability and MAY use `msix_config` / `queue_msix_vector` to deliver message-signaled interrupts, but Windows 7 drivers MUST remain functional when only INTx is available.
 
-If MSI-X is implemented, it MUST preserve INTx/ISR semantics as a fallback:
+If MSI-X is implemented, interrupt delivery MUST follow virtio-pci semantics:
 
-- When MSI-X is enabled and a valid vector is assigned, the device MAY signal MSI-X instead of asserting INTx.
-- When MSI-X is disabled, vectors are unassigned (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`), or the selected MSI-X table entry cannot be delivered (masked or unprogrammed, e.g. message address = 0), the device MUST use INTx + ISR as described above.
+- **MSI-X enabled:** when the PCI MSI-X Enable bit is set, the device MUST use MSI-X **exclusively** and MUST NOT fall back to legacy INTx.
+  - If `msix_config` / `queue_msix_vector` are unassigned (`VIRTIO_PCI_MSI_NO_VECTOR` / `0xFFFF`) or the MSI-X table entry cannot be delivered (masked or unprogrammed), the device MUST **suppress interrupts** (no MSI-X message and no INTx).
+- **MSI-X disabled:** when MSI-X is disabled, the device MUST use INTx + ISR as described above.
+
+> Rationale (non-normative): the Windows 7 virtio drivers in this repo expect MSI-X vectors to be
+> programmed (MSI-X table entries + `msix_config` / `queue_msix_vector`) before interrupts are
+> enabled/relied upon. If MSI-X is enabled while vectors are still `0xFFFF`, they expect silence,
+> not an unexpected legacy INTx interrupt.
 
 ## 2. Virtqueue contract (split ring only)
 
@@ -1066,7 +1074,7 @@ Drivers MUST refuse to bind to devices with an unknown major version (Revision I
 - [ ] Implement common_cfg selectors and queue programming semantics (§1.5).
 - [ ] Implement notify doorbell semantics (§1.6).
 - [ ] Implement INTx assertion/deassertion and ISR read-to-ack semantics (§1.7–§1.8).
-- [ ] (Optional) If MSI-X is implemented, ensure it cleanly falls back to INTx + ISR when disabled/unavailable (§1.8.4).
+- [ ] (Optional) If MSI-X is implemented, ensure it uses MSI-X exclusively when enabled (no INTx fallback when vectors are `0xFFFF`), and uses INTx + ISR when MSI-X is disabled (§1.8.4).
 - [ ] Implement split rings and indirect descriptors (§2.1–§2.4).
 - [ ] Offer ring-related feature bits exactly as specified: MUST offer `VIRTIO_F_RING_INDIRECT_DESC` and MUST NOT offer `VIRTIO_F_RING_EVENT_IDX` / `VIRTIO_F_RING_PACKED` (§2.3).
 - [ ] Bounds-check all guest physical memory accesses (§2.6).
