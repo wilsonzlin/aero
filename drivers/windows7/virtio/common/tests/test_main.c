@@ -676,6 +676,53 @@ static void test_event_idx_ring_size_and_kick(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_used_no_notify_kick_suppression(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    virtio_sg_entry_t sg;
+    uint16_t head;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4096, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4096,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    sg.addr = 0x700000u;
+    sg.len = 1;
+    sg.device_writes = VIRTIO_FALSE;
+
+    /* Device requests no notifications. */
+    vq.used->flags = VRING_USED_F_NO_NOTIFY;
+
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)0x1u, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    (void)head;
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_FALSE);
+    /* last_kick_avail tracks the last observed avail index even when suppressed. */
+    assert(vq.last_kick_avail == vq.avail_idx);
+
+    /* If the device later clears NO_NOTIFY, the next submission should kick. */
+    vq.used->flags = 0;
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)0x2u, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+    assert(vq.last_kick_avail == vq.avail_idx);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_invalid_queue_align(void)
 {
     test_os_ctx_t os_ctx;
@@ -1507,6 +1554,7 @@ int main(void)
     test_wraparound_event_idx();
     test_small_queue_align();
     test_event_idx_ring_size_and_kick();
+    test_used_no_notify_kick_suppression();
     test_invalid_queue_align();
     test_invalid_used_id();
     test_indirect_descriptors();
