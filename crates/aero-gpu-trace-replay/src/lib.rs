@@ -1280,7 +1280,10 @@ pub fn decode_cmd_stream_listing(
                             dxbc_size_bytes,
                             hex_prefix(dxbc, 16)
                         );
-                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                            && stage == 2
+                            && stage_ex != 0
+                        {
                             // `CREATE_SHADER_DXBC` uses `reserved0` as a `stage_ex` tag when
                             // `stage == COMPUTE` (see `docs/16-gpu-command-abi.md`).
                             let _ = write!(
@@ -1594,7 +1597,10 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " stage={stage} start_register={start_register} vec4_count={vec4_count}"
                         );
-                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                            && stage == 2
+                            && stage_ex != 0
+                        {
                             let _ = write!(
                                 line,
                                 " stage_ex={stage_ex} stage_ex_name={}",

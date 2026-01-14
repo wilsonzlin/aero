@@ -4117,10 +4117,11 @@ impl AerogpuD3d11Executor {
         // Patchlist topology / HS+DS bindings require tessellation emulation. Until real
         // tessellation is implemented, route these through the same placeholder compute prepass but
         // avoid touching guest IA buffers (the placeholder shader ignores them).
-        let tessellation_placeholder =
-            matches!(self.state.primitive_topology, CmdPrimitiveTopology::PatchList { .. })
-                || self.state.hs.is_some()
-                || self.state.ds.is_some();
+        let tessellation_placeholder = matches!(
+            self.state.primitive_topology,
+            CmdPrimitiveTopology::PatchList { .. }
+        ) || self.state.hs.is_some()
+            || self.state.ds.is_some();
 
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
@@ -4314,7 +4315,10 @@ impl AerogpuD3d11Executor {
 
         // Prepare compute prepass output buffers.
         let centered_placeholder_triangle = tessellation_placeholder
-            || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
+            || matches!(
+                self.state.primitive_topology,
+                CmdPrimitiveTopology::PointList
+            );
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;

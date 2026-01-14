@@ -1175,9 +1175,9 @@ mod tests {
         }
     }
 
-        #[test]
-        fn backend_exec_error_sets_error_irq_and_fence_advances() {
-            let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
+    #[test]
+    fn backend_exec_error_sets_error_irq_and_fence_advances() {
+        let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
 
         let cfg = AeroGpuDeviceConfig {
             vram_size_bytes: 2 * 1024 * 1024,

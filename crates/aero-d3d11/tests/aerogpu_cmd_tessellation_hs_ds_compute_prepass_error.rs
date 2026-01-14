@@ -88,7 +88,12 @@ fn aerogpu_cmd_tessellation_hs_ds_compute_prepass_runs_placeholder() {
         writer.create_shader_dxbc_ex(DS, AerogpuShaderStageEx::Domain, &ds_dxbc);
         writer.bind_shaders_ex(VS, PS, 0, 0, HS, DS);
         writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
-        writer.clear(aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CLEAR_COLOR, [0.0, 0.0, 1.0, 1.0], 1.0, 0);
+        writer.clear(
+            aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CLEAR_COLOR,
+            [0.0, 0.0, 1.0, 1.0],
+            1.0,
+            0,
+        );
         writer.draw(3, 1, 0, 0);
         let stream = writer.finish();
 
@@ -107,6 +112,10 @@ fn aerogpu_cmd_tessellation_hs_ds_compute_prepass_runs_placeholder() {
         };
         let clear = [0, 0, 255, 255];
         assert_eq!(px(0, 0), clear, "top-left should remain clear");
-        assert_ne!(px(w / 2, h / 2), clear, "center should be covered by placeholder triangle");
+        assert_ne!(
+            px(w / 2, h / 2),
+            clear,
+            "center should be covered by placeholder triangle"
+        );
     });
 }

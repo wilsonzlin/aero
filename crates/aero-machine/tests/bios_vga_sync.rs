@@ -332,7 +332,8 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         (0x118u16, (1024, 768)),
         (0x160u16, (1280, 720)),
     ] {
-        m.set_disk_image(build_vbe_boot_sector(mode).to_vec()).unwrap();
+        m.set_disk_image(build_vbe_boot_sector(mode).to_vec())
+            .unwrap();
         m.reset();
         run_until_halt(&mut m);
 

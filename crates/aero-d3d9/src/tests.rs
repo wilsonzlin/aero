@@ -3660,10 +3660,7 @@ fn translate_entrypoint_rejects_input_register_as_dst_operand() {
     // Input registers (`v#`) are read-only at runtime.
     let mut words = vec![0xFFFF_0300];
     // mov v0, c0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(1, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(1, 0, 0xF), enc_src(2, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(
@@ -3682,10 +3679,7 @@ fn translate_entrypoint_rejects_texture_register_as_dst_operand() {
     // Texture input registers (`t#`) are read-only at runtime in SM2/SM3.
     let mut words = vec![0xFFFF_0300];
     // mov t0, c0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(3, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(3, 0, 0xF), enc_src(2, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(

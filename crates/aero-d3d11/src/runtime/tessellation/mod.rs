@@ -791,8 +791,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
                 mapped_at_creation: false,
             });
 
-            let indirect_args_size =
-                core::mem::size_of::<crate::runtime::indirect_args::DrawIndexedIndirectArgs>() as u64;
+            let indirect_args_size = core::mem::size_of::<
+                crate::runtime::indirect_args::DrawIndexedIndirectArgs,
+            >() as u64;
             let indirect_args = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test indirect args"),
                 size: indirect_args_size,
@@ -1062,9 +1063,21 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 0,
                 patch_meta_size * patch_count as u64,
             );
-            encoder.copy_buffer_to_buffer(&indirect_args, 0, &staging_indirect, 0, indirect_args_size);
+            encoder.copy_buffer_to_buffer(
+                &indirect_args,
+                0,
+                &staging_indirect,
+                0,
+                indirect_args_size,
+            );
             encoder.copy_buffer_to_buffer(&layout_debug, 0, &staging_debug, 0, 4);
-            encoder.copy_buffer_to_buffer(&expanded_vertices, 0, &staging_vertices, 0, expanded_size);
+            encoder.copy_buffer_to_buffer(
+                &expanded_vertices,
+                0,
+                &staging_vertices,
+                0,
+                expanded_size,
+            );
 
             queue.submit([encoder.finish()]);
 
@@ -1115,9 +1128,10 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 "layout pass should not clamp tessellation for this test"
             );
 
-            let indirect_bytes = read_buffer(&device, &staging_indirect, indirect_args_size as usize)
-                .await
-                .unwrap();
+            let indirect_bytes =
+                read_buffer(&device, &staging_indirect, indirect_args_size as usize)
+                    .await
+                    .unwrap();
             assert_eq!(
                 read_u32_le(&indirect_bytes[0..4]),
                 expected_index_count_total,

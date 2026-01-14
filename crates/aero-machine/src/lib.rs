@@ -5733,7 +5733,8 @@ impl Machine {
                 return false;
             }
 
-            if aero_devices_gpu::AeroGpuFormat::from_u32(cursor.format).bytes_per_pixel() != Some(4) {
+            if aero_devices_gpu::AeroGpuFormat::from_u32(cursor.format).bytes_per_pixel() != Some(4)
+            {
                 return false;
             }
 
@@ -11060,8 +11061,7 @@ impl Machine {
             .vga_vram_size_bytes
             .unwrap_or(aero_gpu_vga::DEFAULT_VRAM_SIZE)
             .max(aero_gpu_vga::VGA_VRAM_SIZE);
-        let vram_size =
-            u32::try_from(vram_size).unwrap_or(u32::MAX);
+        let vram_size = u32::try_from(vram_size).unwrap_or(u32::MAX);
         vram_size
             .max(0x10)
             .checked_next_power_of_two()

@@ -398,8 +398,8 @@ fn virtio_input_keyboard_statusq_updates_leds_mask() {
 
     // Notify queue 1 and allow the device to consume the chain.
     let notify_off = m.read_physical_u16(common + 0x1e);
-    let notify_addr = notify
-        + u64::from(notify_off) * u64::from(profile::VIRTIO_NOTIFY_OFF_MULTIPLIER);
+    let notify_addr =
+        notify + u64::from(notify_off) * u64::from(profile::VIRTIO_NOTIFY_OFF_MULTIPLIER);
     m.write_physical_u16(notify_addr, 0);
     m.process_virtio_input();
 

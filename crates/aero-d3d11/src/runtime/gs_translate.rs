@@ -1759,38 +1759,64 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
 
         let r = (|| -> Result<(), GsTranslateError> {
             match inst {
-            // ---- Structured control flow ----
-            Sm4Inst::If { cond, test } => {
-                let cond_vec = emit_src_vec4(inst_index, "if", cond, &input_sivs)?;
-                let cond_scalar = format!("({cond_vec}).x");
-                // DXBC register files are untyped 32-bit lanes. `if_z` / `if_nz` are defined as a
-                // raw non-zero test on the underlying bits (not a float numeric compare).
-                let cond_bits = format!("bitcast<u32>({cond_scalar})");
-                let expr = match test {
-                    Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
-                    Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
-                };
-                w.line(&format!("if ({expr}) {{"));
-                w.indent();
-                blocks.push(BlockKind::If { has_else: false });
-            }
-            Sm4Inst::IfC { op, a, b } => {
-                let cond = emit_cmp(inst_index, "ifc", *op, a, b)?;
-                w.line(&format!("if ({cond}) {{"));
-                w.indent();
-                blocks.push(BlockKind::If { has_else: false });
-            }
-            Sm4Inst::Else => {
-                match blocks.last_mut() {
-                    Some(BlockKind::If { has_else }) => {
-                        if *has_else {
+                // ---- Structured control flow ----
+                Sm4Inst::If { cond, test } => {
+                    let cond_vec = emit_src_vec4(inst_index, "if", cond, &input_sivs)?;
+                    let cond_scalar = format!("({cond_vec}).x");
+                    // DXBC register files are untyped 32-bit lanes. `if_z` / `if_nz` are defined as a
+                    // raw non-zero test on the underlying bits (not a float numeric compare).
+                    let cond_bits = format!("bitcast<u32>({cond_scalar})");
+                    let expr = match test {
+                        Sm4TestBool::Zero => format!("{cond_bits} == 0u"),
+                        Sm4TestBool::NonZero => format!("{cond_bits} != 0u"),
+                    };
+                    w.line(&format!("if ({expr}) {{"));
+                    w.indent();
+                    blocks.push(BlockKind::If { has_else: false });
+                }
+                Sm4Inst::IfC { op, a, b } => {
+                    let cond = emit_cmp(inst_index, "ifc", *op, a, b)?;
+                    w.line(&format!("if ({cond}) {{"));
+                    w.indent();
+                    blocks.push(BlockKind::If { has_else: false });
+                }
+                Sm4Inst::Else => {
+                    match blocks.last_mut() {
+                        Some(BlockKind::If { has_else }) => {
+                            if *has_else {
+                                return Err(GsTranslateError::MalformedControlFlow {
+                                    inst_index,
+                                    expected: "if (without an else)".to_owned(),
+                                    found: BlockKind::If { has_else: true }.describe(),
+                                });
+                            }
+                            *has_else = true;
+                        }
+                        Some(other) => {
                             return Err(GsTranslateError::MalformedControlFlow {
                                 inst_index,
-                                expected: "if (without an else)".to_owned(),
-                                found: BlockKind::If { has_else: true }.describe(),
+                                expected: "if".to_owned(),
+                                found: other.describe(),
                             });
                         }
-                        *has_else = true;
+                        None => {
+                            return Err(GsTranslateError::MalformedControlFlow {
+                                inst_index,
+                                expected: "if".to_owned(),
+                                found: "none".to_owned(),
+                            });
+                        }
+                    }
+
+                    w.dedent();
+                    w.line("} else {");
+                    w.indent();
+                }
+                Sm4Inst::EndIf => match blocks.last() {
+                    Some(BlockKind::If { .. }) => {
+                        blocks.pop();
+                        w.dedent();
+                        w.line("}");
                     }
                     Some(other) => {
                         return Err(GsTranslateError::MalformedControlFlow {
@@ -1806,456 +1832,434 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                             found: "none".to_owned(),
                         });
                     }
+                },
+                Sm4Inst::Loop => {
+                    w.line("loop {");
+                    w.indent();
+                    blocks.push(BlockKind::Loop);
                 }
-
-                w.dedent();
-                w.line("} else {");
-                w.indent();
-            }
-            Sm4Inst::EndIf => match blocks.last() {
-                Some(BlockKind::If { .. }) => {
-                    blocks.pop();
+                Sm4Inst::EndLoop => match blocks.last() {
+                    Some(BlockKind::Loop) => {
+                        blocks.pop();
+                        w.dedent();
+                        w.line("}");
+                    }
+                    Some(other) => {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: other.describe(),
+                        });
+                    }
+                    None => {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: "none".to_owned(),
+                        });
+                    }
+                },
+                Sm4Inst::BreakC { op, a, b } => {
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_loop {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
+                    }
+                    let cond = emit_cmp(inst_index, "breakc", *op, a, b)?;
+                    w.line(&format!("if ({cond}) {{"));
+                    w.indent();
+                    w.line("break;");
                     w.dedent();
                     w.line("}");
                 }
-                Some(other) => {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "if".to_owned(),
-                        found: other.describe(),
-                    });
-                }
-                None => {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "if".to_owned(),
-                        found: "none".to_owned(),
-                    });
-                }
-            },
-            Sm4Inst::Loop => {
-                w.line("loop {");
-                w.indent();
-                blocks.push(BlockKind::Loop);
-            }
-            Sm4Inst::EndLoop => match blocks.last() {
-                Some(BlockKind::Loop) => {
-                    blocks.pop();
+                Sm4Inst::ContinueC { op, a, b } => {
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_loop {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
+                    }
+                    let cond = emit_cmp(inst_index, "continuec", *op, a, b)?;
+                    w.line(&format!("if ({cond}) {{"));
+                    w.indent();
+                    w.line("continue;");
                     w.dedent();
                     w.line("}");
                 }
-                Some(other) => {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: other.describe(),
-                    });
+                Sm4Inst::Switch { selector } => {
+                    // Integer instructions consume raw integer bits from the untyped register file.
+                    // Do not attempt to reinterpret float-typed sources as numeric integers.
+                    let selector_i =
+                        emit_src_vec4_i32(inst_index, "switch", selector, &input_sivs)?;
+                    let selector = format!("({selector_i}).x");
+                    w.line(&format!("switch({selector}) {{"));
+                    w.indent();
+                    cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
                 }
-                None => {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: "none".to_owned(),
-                    });
-                }
-            },
-            Sm4Inst::BreakC { op, a, b } => {
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_loop {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: blocks
-                            .last()
-                            .map(|b| b.describe())
-                            .unwrap_or_else(|| "none".to_owned()),
-                    });
-                }
-                let cond = emit_cmp(inst_index, "breakc", *op, a, b)?;
-                w.line(&format!("if ({cond}) {{"));
-                w.indent();
-                w.line("break;");
-                w.dedent();
-                w.line("}");
-            }
-            Sm4Inst::ContinueC { op, a, b } => {
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_loop {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: blocks
-                            .last()
-                            .map(|b| b.describe())
-                            .unwrap_or_else(|| "none".to_owned()),
-                    });
-                }
-                let cond = emit_cmp(inst_index, "continuec", *op, a, b)?;
-                w.line(&format!("if ({cond}) {{"));
-                w.indent();
-                w.line("continue;");
-                w.dedent();
-                w.line("}");
-            }
-            Sm4Inst::Switch { selector } => {
-                // Integer instructions consume raw integer bits from the untyped register file.
-                // Do not attempt to reinterpret float-typed sources as numeric integers.
-                let selector_i = emit_src_vec4_i32(inst_index, "switch", selector, &input_sivs)?;
-                let selector = format!("({selector_i}).x");
-                w.line(&format!("switch({selector}) {{"));
-                w.indent();
-                cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
-            }
-            Sm4Inst::Break => {
-                let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_case && !inside_loop {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop or switch case".to_owned(),
-                        found: blocks
-                            .last()
-                            .map(|b| b.describe())
-                            .unwrap_or_else(|| "none".to_owned()),
-                    });
-                }
-                w.line("break;");
-            }
-            Sm4Inst::Continue => {
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_loop {
-                    return Err(GsTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: blocks
-                            .last()
-                            .map(|b| b.describe())
-                            .unwrap_or_else(|| "none".to_owned()),
-                    });
-                }
-                w.line("continue;");
-            }
-            Sm4Inst::Setp { dst, op, a, b } => {
-                let unsigned = matches!(
-                    op,
-                    Sm4CmpOp::EqU
-                        | Sm4CmpOp::NeU
-                        | Sm4CmpOp::LtU
-                        | Sm4CmpOp::GeU
-                        | Sm4CmpOp::LeU
-                        | Sm4CmpOp::GtU
-                );
-                let a_expr = if unsigned {
-                    emit_src_vec4_u32(inst_index, "setp", a, &input_sivs)?
-                } else {
-                    emit_src_vec4(inst_index, "setp", a, &input_sivs)?
-                };
-                let b_expr = if unsigned {
-                    emit_src_vec4_u32(inst_index, "setp", b, &input_sivs)?
-                } else {
-                    emit_src_vec4(inst_index, "setp", b, &input_sivs)?
-                };
-                let cmp = match op {
-                    Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
-                    Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
-                    Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
-                    Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
-                    Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
-                    Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
-                };
-                let expr = format!("({a_expr}) {cmp} ({b_expr})");
-                emit_write_masked_bool(&mut w, *dst, expr)?;
-            }
-            Sm4Inst::Mov { dst, src } => {
-                let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, rhs);
-                emit_write_masked(&mut w, inst_index, "mov", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Movc { dst, cond, a, b } => {
-                let cond_vec = emit_src_vec4(inst_index, "movc", cond, &input_sivs)?;
-                let a_vec = emit_src_vec4(inst_index, "movc", a, &input_sivs)?;
-                let b_vec = emit_src_vec4(inst_index, "movc", b, &input_sivs)?;
-
-                let cond_bits = format!("movc_cond_bits_{inst_index}");
-                let cond_bool = format!("movc_cond_bool_{inst_index}");
-                w.line(&format!(
-                    "let {cond_bits} = bitcast<vec4<u32>>({cond_vec});"
-                ));
-                w.line(&format!("let {cond_bool} = {cond_bits} != vec4<u32>(0u);"));
-
-                let rhs = maybe_saturate(
-                    dst.saturate,
-                    format!("select(({b_vec}), ({a_vec}), {cond_bool})"),
-                );
-                emit_write_masked(&mut w, inst_index, "movc", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Itof { dst, src } => {
-                let src_i = emit_src_vec4_i32(inst_index, "itof", src, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({src_i})"));
-                emit_write_masked(&mut w, inst_index, "itof", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Utof { dst, src } => {
-                let src_u = emit_src_vec4_u32(inst_index, "utof", src, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({src_u})"));
-                emit_write_masked(&mut w, inst_index, "utof", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Ftoi { dst, src } => {
-                let src_f = emit_src_vec4(inst_index, "ftoi", src, &input_sivs)?;
-                let rhs = format!("bitcast<vec4<f32>>(vec4<i32>({src_f}))");
-                emit_write_masked(&mut w, inst_index, "ftoi", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Ftou { dst, src } => {
-                let src_f = emit_src_vec4(inst_index, "ftou", src, &input_sivs)?;
-                let rhs = format!("bitcast<vec4<f32>>(vec4<u32>({src_f}))");
-                emit_write_masked(&mut w, inst_index, "ftou", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::F32ToF16 { dst, src } => {
-                let src_f = emit_src_vec4(inst_index, "f32tof16", src, &input_sivs)?;
-                let src_f = maybe_saturate(dst.saturate, src_f);
-
-                let pack_lane =
-                    |c: char| format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)");
-                let ux = pack_lane('x');
-                let uy = pack_lane('y');
-                let uz = pack_lane('z');
-                let uw = pack_lane('w');
-
-                let rhs_u = format!("vec4<u32>({ux}, {uy}, {uz}, {uw})");
-                let rhs = format!("bitcast<vec4<f32>>({rhs_u})");
-                emit_write_masked(&mut w, inst_index, "f32tof16", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::F16ToF32 { dst, src } => {
-                // Preserve the raw half-float bit-pattern by ignoring operand modifiers.
-                let mut src_bits = src.clone();
-                src_bits.modifier = OperandModifier::None;
-                let src_u = emit_src_vec4_u32(inst_index, "f16tof32", &src_bits, &input_sivs)?;
-
-                let unpack_lane = |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
-                let x = unpack_lane('x');
-                let y = unpack_lane('y');
-                let z = unpack_lane('z');
-                let w_lane = unpack_lane('w');
-
-                let rhs =
-                    maybe_saturate(dst.saturate, format!("vec4<f32>({x}, {y}, {z}, {w_lane})"));
-                emit_write_masked(&mut w, inst_index, "f16tof32", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Rcp { dst, src } => {
-                let src = emit_src_vec4(inst_index, "rcp", src, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("1.0 / ({src})"));
-                emit_write_masked(&mut w, inst_index, "rcp", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Rsq { dst, src } => {
-                let src = emit_src_vec4(inst_index, "rsq", src, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("inverseSqrt({src})"));
-                emit_write_masked(&mut w, inst_index, "rsq", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Add { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "add", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "add", b, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("({a}) + ({b})"));
-                emit_write_masked(&mut w, inst_index, "add", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::And { dst, a, b } => {
-                let a = emit_src_vec4_u32(inst_index, "and", a, &input_sivs)?;
-                let b = emit_src_vec4_u32(inst_index, "and", b, &input_sivs)?;
-                let rhs = format!("bitcast<vec4<f32>>(({a}) & ({b}))");
-                emit_write_masked(&mut w, inst_index, "and", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Mul { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "mul", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "mul", b, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("({a}) * ({b})"));
-                emit_write_masked(&mut w, inst_index, "mul", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Mad { dst, a, b, c } => {
-                let a = emit_src_vec4(inst_index, "mad", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "mad", b, &input_sivs)?;
-                let c = emit_src_vec4(inst_index, "mad", c, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("({a}) * ({b}) + ({c})"));
-                emit_write_masked(&mut w, inst_index, "mad", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Dp3 { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "dp3", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "dp3", b, &input_sivs)?;
-                let rhs = format!("vec4<f32>(dot(({a}).xyz, ({b}).xyz))");
-                let rhs = maybe_saturate(dst.saturate, rhs);
-                emit_write_masked(&mut w, inst_index, "dp3", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Dp4 { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "dp4", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "dp4", b, &input_sivs)?;
-                let rhs = format!("vec4<f32>(dot(({a}), ({b})))");
-                let rhs = maybe_saturate(dst.saturate, rhs);
-                emit_write_masked(&mut w, inst_index, "dp4", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Min { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "min", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "min", b, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("min(({a}), ({b}))"));
-                emit_write_masked(&mut w, inst_index, "min", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Max { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "max", a, &input_sivs)?;
-                let b = emit_src_vec4(inst_index, "max", b, &input_sivs)?;
-                let rhs = maybe_saturate(dst.saturate, format!("max(({a}), ({b}))"));
-                emit_write_masked(&mut w, inst_index, "max", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Sample {
-                dst,
-                coord,
-                texture,
-                sampler,
-            } => {
-                let coord = emit_src_vec4(inst_index, "sample", coord, &input_sivs)?;
-                // The translated GS prepass always runs as a compute shader, so use explicit LOD
-                // sampling to keep the generated WGSL valid outside the fragment stage.
-                let rhs = format!(
-                    "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
-                    texture.slot, sampler.slot
-                );
-                let rhs = maybe_saturate(dst.saturate, rhs);
-                emit_write_masked(&mut w, inst_index, "sample", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::SampleL {
-                dst,
-                coord,
-                texture,
-                sampler,
-                lod,
-            } => {
-                let coord = emit_src_vec4(inst_index, "sample_l", coord, &input_sivs)?;
-                let lod_vec = emit_src_vec4(inst_index, "sample_l", lod, &input_sivs)?;
-                let rhs = format!(
-                    "textureSampleLevel(t{}, s{}, ({coord}).xy, ({lod_vec}).x)",
-                    texture.slot, sampler.slot
-                );
-                let rhs = maybe_saturate(dst.saturate, rhs);
-                emit_write_masked(&mut w, inst_index, "sample_l", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Ld {
-                dst,
-                coord,
-                texture,
-                lod,
-            } => {
-                // SM4 `ld` (e.g. `Texture2D.Load`) consumes integer texel coordinates and an
-                // integer mip level. Interpret the source lanes strictly as integer bits.
-                let coord_i = emit_src_vec4_i32(inst_index, "ld", coord, &input_sivs)?;
-                let x = format!("({coord_i}).x");
-                let y = format!("({coord_i}).y");
-                let lod_i = emit_src_vec4_i32(inst_index, "ld", lod, &input_sivs)?;
-                let lod_scalar = format!("({lod_i}).x");
-                let rhs = format!(
-                    "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
-                    texture.slot
-                );
-                let rhs = maybe_saturate(dst.saturate, rhs);
-                emit_write_masked(&mut w, inst_index, "ld", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::LdRaw { dst, addr, buffer } => {
-                // Raw buffer loads operate on byte offsets. Model buffers as a storage `array<u32>`
-                // and derive a word index from the byte address.
-                let addr_u32 = emit_src_scalar_u32_addr(inst_index, "ld_raw", addr, &input_sivs)?;
-                let base_name = format!("ld_raw_base{inst_index}");
-                w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
-
-                let mask_bits = dst.mask.0 & 0xF;
-                let load_lane = |bit: u8, offset: u32| {
-                    if (mask_bits & bit) != 0 {
-                        format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
-                    } else {
-                        "0u".to_owned()
+                Sm4Inst::Break => {
+                    let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_case && !inside_loop {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop or switch case".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
                     }
-                };
-
-                let u_name = format!("ld_raw_u{inst_index}");
-                w.line(&format!(
-                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
-                    load_lane(1, 0),
-                    load_lane(2, 1),
-                    load_lane(4, 2),
-                    load_lane(8, 3),
-                ));
-                let f_name = format!("ld_raw_f{inst_index}");
-                w.line(&format!(
-                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
-                ));
-
-                let rhs = maybe_saturate(dst.saturate, f_name);
-                emit_write_masked(&mut w, inst_index, "ld_raw", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::LdStructured {
-                dst,
-                index,
-                offset,
-                buffer,
-            } => {
-                // Structured SRV loads read 1–4 consecutive `u32` words from a byte offset within
-                // the element.
-                let Some((kind, stride)) = srv_buffer_decls.get(&buffer.slot).copied() else {
-                    return Err(GsTranslateError::UnsupportedInstruction {
-                        inst_index,
-                        opcode: "ld_structured",
-                    });
-                };
-                if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
-                    return Err(GsTranslateError::UnsupportedInstruction {
-                        inst_index,
-                        opcode: "ld_structured",
-                    });
+                    w.line("break;");
                 }
-
-                let index_u32 =
-                    emit_src_scalar_u32_addr(inst_index, "ld_structured", index, &input_sivs)?;
-                let offset_u32 =
-                    emit_src_scalar_u32_addr(inst_index, "ld_structured", offset, &input_sivs)?;
-                let base_name = format!("ld_struct_base{inst_index}");
-                w.line(&format!(
-                    "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
-                ));
-
-                let mask_bits = dst.mask.0 & 0xF;
-                let load_lane = |bit: u8, offset: u32| {
-                    if (mask_bits & bit) != 0 {
-                        format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
-                    } else {
-                        "0u".to_owned()
+                Sm4Inst::Continue => {
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_loop {
+                        return Err(GsTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
                     }
-                };
+                    w.line("continue;");
+                }
+                Sm4Inst::Setp { dst, op, a, b } => {
+                    let unsigned = matches!(
+                        op,
+                        Sm4CmpOp::EqU
+                            | Sm4CmpOp::NeU
+                            | Sm4CmpOp::LtU
+                            | Sm4CmpOp::GeU
+                            | Sm4CmpOp::LeU
+                            | Sm4CmpOp::GtU
+                    );
+                    let a_expr = if unsigned {
+                        emit_src_vec4_u32(inst_index, "setp", a, &input_sivs)?
+                    } else {
+                        emit_src_vec4(inst_index, "setp", a, &input_sivs)?
+                    };
+                    let b_expr = if unsigned {
+                        emit_src_vec4_u32(inst_index, "setp", b, &input_sivs)?
+                    } else {
+                        emit_src_vec4(inst_index, "setp", b, &input_sivs)?
+                    };
+                    let cmp = match op {
+                        Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
+                        Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
+                        Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
+                        Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
+                        Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
+                        Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
+                    };
+                    let expr = format!("({a_expr}) {cmp} ({b_expr})");
+                    emit_write_masked_bool(&mut w, *dst, expr)?;
+                }
+                Sm4Inst::Mov { dst, src } => {
+                    let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, rhs);
+                    emit_write_masked(&mut w, inst_index, "mov", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Movc { dst, cond, a, b } => {
+                    let cond_vec = emit_src_vec4(inst_index, "movc", cond, &input_sivs)?;
+                    let a_vec = emit_src_vec4(inst_index, "movc", a, &input_sivs)?;
+                    let b_vec = emit_src_vec4(inst_index, "movc", b, &input_sivs)?;
 
-                let u_name = format!("ld_struct_u{inst_index}");
-                w.line(&format!(
-                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
-                    load_lane(1, 0),
-                    load_lane(2, 1),
-                    load_lane(4, 2),
-                    load_lane(8, 3),
-                ));
-                let f_name = format!("ld_struct_f{inst_index}");
-                w.line(&format!(
-                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
-                ));
+                    let cond_bits = format!("movc_cond_bits_{inst_index}");
+                    let cond_bool = format!("movc_cond_bool_{inst_index}");
+                    w.line(&format!(
+                        "let {cond_bits} = bitcast<vec4<u32>>({cond_vec});"
+                    ));
+                    w.line(&format!("let {cond_bool} = {cond_bits} != vec4<u32>(0u);"));
 
-                let rhs = maybe_saturate(dst.saturate, f_name);
-                emit_write_masked(&mut w, inst_index, "ld_structured", dst.reg, dst.mask, rhs)?;
-            }
-            Sm4Inst::Emit { stream: _ } => {
-                w.line(&format!("gs_emit({gs_emit_args}); // emit"));
-            }
-            Sm4Inst::Cut { stream: _ } => {
-                w.line("gs_cut(&strip_len); // cut");
-            }
-            Sm4Inst::EmitThenCut { stream: _ } => {
-                w.line(&format!("gs_emit({gs_emit_args}); // emitthen_cut"));
-                w.line("gs_cut(&strip_len); // emitthen_cut");
-            }
-            Sm4Inst::Ret => {
-                w.line("return;");
-            }
-            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {
-                unreachable!("switch label instructions handled at top of loop")
-            }
+                    let rhs = maybe_saturate(
+                        dst.saturate,
+                        format!("select(({b_vec}), ({a_vec}), {cond_bool})"),
+                    );
+                    emit_write_masked(&mut w, inst_index, "movc", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Itof { dst, src } => {
+                    let src_i = emit_src_vec4_i32(inst_index, "itof", src, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({src_i})"));
+                    emit_write_masked(&mut w, inst_index, "itof", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Utof { dst, src } => {
+                    let src_u = emit_src_vec4_u32(inst_index, "utof", src, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({src_u})"));
+                    emit_write_masked(&mut w, inst_index, "utof", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Ftoi { dst, src } => {
+                    let src_f = emit_src_vec4(inst_index, "ftoi", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<i32>({src_f}))");
+                    emit_write_masked(&mut w, inst_index, "ftoi", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Ftou { dst, src } => {
+                    let src_f = emit_src_vec4(inst_index, "ftou", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>({src_f}))");
+                    emit_write_masked(&mut w, inst_index, "ftou", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::F32ToF16 { dst, src } => {
+                    let src_f = emit_src_vec4(inst_index, "f32tof16", src, &input_sivs)?;
+                    let src_f = maybe_saturate(dst.saturate, src_f);
+
+                    let pack_lane = |c: char| {
+                        format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)")
+                    };
+                    let ux = pack_lane('x');
+                    let uy = pack_lane('y');
+                    let uz = pack_lane('z');
+                    let uw = pack_lane('w');
+
+                    let rhs_u = format!("vec4<u32>({ux}, {uy}, {uz}, {uw})");
+                    let rhs = format!("bitcast<vec4<f32>>({rhs_u})");
+                    emit_write_masked(&mut w, inst_index, "f32tof16", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::F16ToF32 { dst, src } => {
+                    // Preserve the raw half-float bit-pattern by ignoring operand modifiers.
+                    let mut src_bits = src.clone();
+                    src_bits.modifier = OperandModifier::None;
+                    let src_u = emit_src_vec4_u32(inst_index, "f16tof32", &src_bits, &input_sivs)?;
+
+                    let unpack_lane =
+                        |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
+                    let x = unpack_lane('x');
+                    let y = unpack_lane('y');
+                    let z = unpack_lane('z');
+                    let w_lane = unpack_lane('w');
+
+                    let rhs =
+                        maybe_saturate(dst.saturate, format!("vec4<f32>({x}, {y}, {z}, {w_lane})"));
+                    emit_write_masked(&mut w, inst_index, "f16tof32", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Rcp { dst, src } => {
+                    let src = emit_src_vec4(inst_index, "rcp", src, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("1.0 / ({src})"));
+                    emit_write_masked(&mut w, inst_index, "rcp", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Rsq { dst, src } => {
+                    let src = emit_src_vec4(inst_index, "rsq", src, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("inverseSqrt({src})"));
+                    emit_write_masked(&mut w, inst_index, "rsq", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Add { dst, a, b } => {
+                    let a = emit_src_vec4(inst_index, "add", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "add", b, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("({a}) + ({b})"));
+                    emit_write_masked(&mut w, inst_index, "add", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::And { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "and", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "and", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) & ({b}))");
+                    emit_write_masked(&mut w, inst_index, "and", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Mul { dst, a, b } => {
+                    let a = emit_src_vec4(inst_index, "mul", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "mul", b, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("({a}) * ({b})"));
+                    emit_write_masked(&mut w, inst_index, "mul", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Mad { dst, a, b, c } => {
+                    let a = emit_src_vec4(inst_index, "mad", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "mad", b, &input_sivs)?;
+                    let c = emit_src_vec4(inst_index, "mad", c, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("({a}) * ({b}) + ({c})"));
+                    emit_write_masked(&mut w, inst_index, "mad", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Dp3 { dst, a, b } => {
+                    let a = emit_src_vec4(inst_index, "dp3", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "dp3", b, &input_sivs)?;
+                    let rhs = format!("vec4<f32>(dot(({a}).xyz, ({b}).xyz))");
+                    let rhs = maybe_saturate(dst.saturate, rhs);
+                    emit_write_masked(&mut w, inst_index, "dp3", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Dp4 { dst, a, b } => {
+                    let a = emit_src_vec4(inst_index, "dp4", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "dp4", b, &input_sivs)?;
+                    let rhs = format!("vec4<f32>(dot(({a}), ({b})))");
+                    let rhs = maybe_saturate(dst.saturate, rhs);
+                    emit_write_masked(&mut w, inst_index, "dp4", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Min { dst, a, b } => {
+                    let a = emit_src_vec4(inst_index, "min", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "min", b, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("min(({a}), ({b}))"));
+                    emit_write_masked(&mut w, inst_index, "min", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Max { dst, a, b } => {
+                    let a = emit_src_vec4(inst_index, "max", a, &input_sivs)?;
+                    let b = emit_src_vec4(inst_index, "max", b, &input_sivs)?;
+                    let rhs = maybe_saturate(dst.saturate, format!("max(({a}), ({b}))"));
+                    emit_write_masked(&mut w, inst_index, "max", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Sample {
+                    dst,
+                    coord,
+                    texture,
+                    sampler,
+                } => {
+                    let coord = emit_src_vec4(inst_index, "sample", coord, &input_sivs)?;
+                    // The translated GS prepass always runs as a compute shader, so use explicit LOD
+                    // sampling to keep the generated WGSL valid outside the fragment stage.
+                    let rhs = format!(
+                        "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
+                        texture.slot, sampler.slot
+                    );
+                    let rhs = maybe_saturate(dst.saturate, rhs);
+                    emit_write_masked(&mut w, inst_index, "sample", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::SampleL {
+                    dst,
+                    coord,
+                    texture,
+                    sampler,
+                    lod,
+                } => {
+                    let coord = emit_src_vec4(inst_index, "sample_l", coord, &input_sivs)?;
+                    let lod_vec = emit_src_vec4(inst_index, "sample_l", lod, &input_sivs)?;
+                    let rhs = format!(
+                        "textureSampleLevel(t{}, s{}, ({coord}).xy, ({lod_vec}).x)",
+                        texture.slot, sampler.slot
+                    );
+                    let rhs = maybe_saturate(dst.saturate, rhs);
+                    emit_write_masked(&mut w, inst_index, "sample_l", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Ld {
+                    dst,
+                    coord,
+                    texture,
+                    lod,
+                } => {
+                    // SM4 `ld` (e.g. `Texture2D.Load`) consumes integer texel coordinates and an
+                    // integer mip level. Interpret the source lanes strictly as integer bits.
+                    let coord_i = emit_src_vec4_i32(inst_index, "ld", coord, &input_sivs)?;
+                    let x = format!("({coord_i}).x");
+                    let y = format!("({coord_i}).y");
+                    let lod_i = emit_src_vec4_i32(inst_index, "ld", lod, &input_sivs)?;
+                    let lod_scalar = format!("({lod_i}).x");
+                    let rhs = format!(
+                        "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
+                        texture.slot
+                    );
+                    let rhs = maybe_saturate(dst.saturate, rhs);
+                    emit_write_masked(&mut w, inst_index, "ld", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::LdRaw { dst, addr, buffer } => {
+                    // Raw buffer loads operate on byte offsets. Model buffers as a storage `array<u32>`
+                    // and derive a word index from the byte address.
+                    let addr_u32 =
+                        emit_src_scalar_u32_addr(inst_index, "ld_raw", addr, &input_sivs)?;
+                    let base_name = format!("ld_raw_base{inst_index}");
+                    w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
+
+                    let mask_bits = dst.mask.0 & 0xF;
+                    let load_lane = |bit: u8, offset: u32| {
+                        if (mask_bits & bit) != 0 {
+                            format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
+                        } else {
+                            "0u".to_owned()
+                        }
+                    };
+
+                    let u_name = format!("ld_raw_u{inst_index}");
+                    w.line(&format!(
+                        "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                        load_lane(1, 0),
+                        load_lane(2, 1),
+                        load_lane(4, 2),
+                        load_lane(8, 3),
+                    ));
+                    let f_name = format!("ld_raw_f{inst_index}");
+                    w.line(&format!(
+                        "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                    ));
+
+                    let rhs = maybe_saturate(dst.saturate, f_name);
+                    emit_write_masked(&mut w, inst_index, "ld_raw", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::LdStructured {
+                    dst,
+                    index,
+                    offset,
+                    buffer,
+                } => {
+                    // Structured SRV loads read 1–4 consecutive `u32` words from a byte offset within
+                    // the element.
+                    let Some((kind, stride)) = srv_buffer_decls.get(&buffer.slot).copied() else {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "ld_structured",
+                        });
+                    };
+                    if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "ld_structured",
+                        });
+                    }
+
+                    let index_u32 =
+                        emit_src_scalar_u32_addr(inst_index, "ld_structured", index, &input_sivs)?;
+                    let offset_u32 =
+                        emit_src_scalar_u32_addr(inst_index, "ld_structured", offset, &input_sivs)?;
+                    let base_name = format!("ld_struct_base{inst_index}");
+                    w.line(&format!(
+                        "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
+                    ));
+
+                    let mask_bits = dst.mask.0 & 0xF;
+                    let load_lane = |bit: u8, offset: u32| {
+                        if (mask_bits & bit) != 0 {
+                            format!("t{}.data[{base_name} + {offset}u]", buffer.slot)
+                        } else {
+                            "0u".to_owned()
+                        }
+                    };
+
+                    let u_name = format!("ld_struct_u{inst_index}");
+                    w.line(&format!(
+                        "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                        load_lane(1, 0),
+                        load_lane(2, 1),
+                        load_lane(4, 2),
+                        load_lane(8, 3),
+                    ));
+                    let f_name = format!("ld_struct_f{inst_index}");
+                    w.line(&format!(
+                        "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                    ));
+
+                    let rhs = maybe_saturate(dst.saturate, f_name);
+                    emit_write_masked(&mut w, inst_index, "ld_structured", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Emit { stream: _ } => {
+                    w.line(&format!("gs_emit({gs_emit_args}); // emit"));
+                }
+                Sm4Inst::Cut { stream: _ } => {
+                    w.line("gs_cut(&strip_len); // cut");
+                }
+                Sm4Inst::EmitThenCut { stream: _ } => {
+                    w.line(&format!("gs_emit({gs_emit_args}); // emitthen_cut"));
+                    w.line("gs_cut(&strip_len); // emitthen_cut");
+                }
+                Sm4Inst::Ret => {
+                    w.line("return;");
+                }
+                Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {
+                    unreachable!("switch label instructions handled at top of loop")
+                }
                 other => {
                     return Err(GsTranslateError::UnsupportedInstruction {
                         inst_index,

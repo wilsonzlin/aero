@@ -506,9 +506,7 @@ fn decode_known_fields(
                 out.insert("shader_stage".into(), json!(shader_stage));
                 out.insert("slot".into(), json!(slot));
                 out.insert("texture".into(), json!(texture));
-                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
-                    && shader_stage == 2
-                    && stage_ex != 0
+                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && shader_stage == 2 && stage_ex != 0
                 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
@@ -526,9 +524,7 @@ fn decode_known_fields(
                 out.insert("shader_stage".into(), json!(shader_stage));
                 out.insert("start_slot".into(), json!(start_slot));
                 out.insert("sampler_count".into(), json!(sampler_count));
-                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
-                    && shader_stage == 2
-                    && stage_ex != 0
+                if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && shader_stage == 2 && stage_ex != 0
                 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
