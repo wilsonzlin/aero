@@ -238,6 +238,8 @@ Semantics:
     - acknowledge any pending bits via `AEROGPU_MMIO_REG_IRQ_ACK`.
   - On legacy devices, also acknowledge any pending fence interrupts via `INT_ACK` (legacy fence IRQ path).
   - If the device advertises `AEROGPU_FEATURE_CURSOR`, disable the hardware cursor and clear its GPA to stop DMA.
+  - Disable scanout and clear its framebuffer GPA to stop scanout DMA while the adapter is powered down.
+  - Stop ring execution (best-effort) by clearing ring/fence MMIO programming so the device will not touch freed ring memory.
 
 - **Transition to D0**:
   - Block submissions while restoring state.
