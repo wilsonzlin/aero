@@ -12,6 +12,7 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
+const DUMMY_GS: u32 = 0xCAFE_BABE;
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 
 #[repr(C)]
@@ -131,10 +132,10 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_smoke() {
         );
         writer.set_index_buffer(IB, AerogpuIndexFormat::Uint32, 0);
 
-        // Force the compute-prepass path by using a topology that cannot be expressed in a WebGPU
-        // render pipeline (patchlists).
-        writer.bind_shaders(VS, PS, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
+        // Force the compute-prepass path by binding a dummy GS handle (without depending on
+        // patchlist+tessellation validation).
+        writer.bind_shaders_with_gs(VS, DUMMY_GS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
         writer.draw_indexed(3, 1, 0, 0, 0);
 
         let stream = writer.finish();
