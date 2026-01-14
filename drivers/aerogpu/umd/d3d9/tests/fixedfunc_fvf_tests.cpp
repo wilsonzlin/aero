@@ -2609,6 +2609,531 @@ bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
   return true;
 }
 
+bool TestVertexDeclXyzDiffuseDrawPrimitiveVbCpuTransformsAndRestoresDecl() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr, "pfnLock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnUnlock != nullptr, "pfnUnlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitive != nullptr, "pfnDrawPrimitive is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Create and bind a vertex decl matching XYZ|DIFFUSE (no SetFVF call). The
+  // driver should infer the implied FVF and still apply the fixed-function CPU
+  // transform path for DrawPrimitive.
+  const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|DIFFUSE)")) {
+    return false;
+  }
+  cleanup.vertex_decls.push_back(hDecl);
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  aerogpu_handle_t decl_handle = 0;
+  VertexDecl* decl_ptr = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzDiffuse, "SetVertexDecl inferred FVF == XYZ|DIFFUSE")) {
+      return false;
+    }
+    decl_ptr = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+    decl_handle = decl_ptr ? decl_ptr->handle : 0;
+  }
+  if (!Check(decl_handle != 0, "explicit XYZ|DIFFUSE decl handle non-zero")) {
+    return false;
+  }
+
+  // Set a simple world translation; view/projection are identity.
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuse expected_clip[3] = {
+      {-1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFF0000u},
+      {1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFF00FF00u},
+      {-1.0f + tx, 1.0f + ty, 0.0f + tz, 1.0f, 0xFF0000FFu},
+  };
+
+  // Create a VB with a leading dummy vertex so we can draw with start_vertex=1.
+  const VertexXyzDiffuse verts[4] = {
+      {123.0f, 456.0f, 0.0f, 0xFFFFFFFFu},
+      {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
+      {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
+      {-1.0f, 1.0f, 0.0f, 0xFF0000FFu},
+  };
+
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0u;
+  create_vb.format = 0u;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(verts);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pPrivateDriverData = nullptr;
+  create_vb.PrivateDriverDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer xyz|diffuse via decl)")) {
+    return false;
+  }
+  if (!Check(create_vb.hResource.pDrvPrivate != nullptr, "CreateResource returned vb handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_vb.hResource);
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer xyz|diffuse via decl)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer xyz|diffuse via decl)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(
+      cleanup.hDevice, /*stream=*/0, create_vb.hResource, /*offset=*/0, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=vb xyz|diffuse via decl)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitive(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*start_vertex=*/1, /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawPrimitive(XYZ|DIFFUSE via decl)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_clip_layout = 0;
+  aerogpu_handle_t expected_up_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock_dev(dev->mutex);
+    // Ensure the draw-time override restored the original decl.
+    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl restored after XYZ|DIFFUSE draw")) {
+      return false;
+    }
+
+    if (!Check(dev->fixedfunc_vs != nullptr, "fixedfunc_vs created")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs, "XYZ|DIFFUSE via decl binds passthrough VS")) {
+      return false;
+    }
+
+    if (dev->fvf_vertex_decl) {
+      expected_clip_layout = dev->fvf_vertex_decl->handle;
+    }
+    if (dev->up_vertex_buffer) {
+      expected_up_vb = dev->up_vertex_buffer->handle;
+      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(expected_clip),
+                 "scratch VB storage contains converted vertices (decl xyz|diffuse)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(dev->up_vertex_buffer->storage.data(), expected_clip, sizeof(expected_clip)) == 0,
+                 "scratch VB contains expected clip-space vertices (decl xyz|diffuse)")) {
+        return false;
+      }
+    }
+  }
+  if (!Check(expected_clip_layout != 0, "clip-space decl handle non-zero (decl xyz|diffuse)")) {
+    return false;
+  }
+  if (!Check(expected_up_vb != 0, "scratch VB handle non-zero (decl xyz|diffuse)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE VB draw via decl)")) {
+    return false;
+  }
+
+  bool saw_decl_layout = false;
+  bool saw_clip_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == decl_handle) {
+      saw_decl_layout = true;
+    }
+    if (il->input_layout_handle == expected_clip_layout) {
+      saw_clip_layout = true;
+    }
+  }
+  if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds explicit decl (XYZ|DIFFUSE VB draw)")) {
+    return false;
+  }
+  if (!Check(saw_clip_layout, "SET_INPUT_LAYOUT binds clip-space decl (XYZ|DIFFUSE VB draw)")) {
+    return false;
+  }
+
+  bool saw_up_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+        reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_up_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuse)) {
+        saw_up_vb = true;
+        break;
+      }
+    }
+    if (saw_up_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_up_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (decl xyz|diffuse)")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndRestoresDecl() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr, "pfnLock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnUnlock != nullptr, "pfnUnlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitive != nullptr, "pfnDrawPrimitive is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Create and bind a vertex decl matching XYZ|DIFFUSE|TEX1 (no SetFVF call). The
+  // driver should infer the implied FVF and still apply the fixed-function CPU
+  // transform path for DrawPrimitive.
+  const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  cleanup.vertex_decls.push_back(hDecl);
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t decl_handle = 0;
+  VertexDecl* decl_ptr = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzDiffuseTex1, "SetVertexDecl inferred FVF == XYZ|DIFFUSE|TEX1")) {
+      return false;
+    }
+    decl_ptr = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+    decl_handle = decl_ptr ? decl_ptr->handle : 0;
+  }
+  if (!Check(decl_handle != 0, "explicit XYZ|DIFFUSE|TEX1 decl handle non-zero")) {
+    return false;
+  }
+
+  // Set a simple world translation; view/projection are identity.
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 expected_clip[3] = {
+      {-1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {-1.0f + tx, 1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  const VertexXyzDiffuseTex1 verts[4] = {
+      {123.0f, 456.0f, 0.0f, 0xFFFFFFFFu, 9.0f, 9.0f},
+      {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0u;
+  create_vb.format = 0u;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(verts);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pPrivateDriverData = nullptr;
+  create_vb.PrivateDriverDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer xyz|diffuse|tex1 via decl)")) {
+    return false;
+  }
+  if (!Check(create_vb.hResource.pDrvPrivate != nullptr, "CreateResource returned vb handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_vb.hResource);
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer xyz|diffuse|tex1 via decl)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer xyz|diffuse|tex1 via decl)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(
+      cleanup.hDevice, /*stream=*/0, create_vb.hResource, /*offset=*/0, sizeof(VertexXyzDiffuseTex1));
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=vb xyz|diffuse|tex1 via decl)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitive(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*start_vertex=*/1, /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawPrimitive(XYZ|DIFFUSE|TEX1 via decl)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_clip_layout = 0;
+  aerogpu_handle_t expected_up_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock_dev(dev->mutex);
+    // Ensure the draw-time override restored the original decl.
+    if (!Check(dev->vertex_decl == decl_ptr, "vertex decl restored after XYZ|DIFFUSE|TEX1 draw")) {
+      return false;
+    }
+
+    if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 via decl binds passthrough VS")) {
+      return false;
+    }
+
+    if (dev->fvf_vertex_decl_tex1) {
+      expected_clip_layout = dev->fvf_vertex_decl_tex1->handle;
+    }
+    if (dev->up_vertex_buffer) {
+      expected_up_vb = dev->up_vertex_buffer->handle;
+      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(expected_clip),
+                 "scratch VB storage contains converted vertices (decl xyz|diffuse|tex1)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(dev->up_vertex_buffer->storage.data(), expected_clip, sizeof(expected_clip)) == 0,
+                 "scratch VB contains expected clip-space vertices (decl xyz|diffuse|tex1)")) {
+        return false;
+      }
+    }
+  }
+  if (!Check(expected_clip_layout != 0, "clip-space decl handle non-zero (decl xyz|diffuse|tex1)")) {
+    return false;
+  }
+  if (!Check(expected_up_vb != 0, "scratch VB handle non-zero (decl xyz|diffuse|tex1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 VB draw via decl)")) {
+    return false;
+  }
+
+  bool saw_decl_layout = false;
+  bool saw_clip_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == decl_handle) {
+      saw_decl_layout = true;
+    }
+    if (il->input_layout_handle == expected_clip_layout) {
+      saw_clip_layout = true;
+    }
+  }
+  if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds explicit decl (XYZ|DIFFUSE|TEX1 VB draw)")) {
+    return false;
+  }
+  if (!Check(saw_clip_layout, "SET_INPUT_LAYOUT binds clip-space decl (XYZ|DIFFUSE|TEX1 VB draw)")) {
+    return false;
+  }
+
+  bool saw_up_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+        reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_up_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuseTex1)) {
+        saw_up_vb = true;
+        break;
+      }
+    }
+    if (saw_up_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_up_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (decl xyz|diffuse|tex1)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
   // ---------------------------------------------------------------------------
   // XYZRHW | TEX1
@@ -4424,6 +4949,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzTex1InfersFvfAndUploadsWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveVbCpuTransformsAndRestoresDecl()) {
+    return 1;
+  }
+  if (!aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndRestoresDecl()) {
     return 1;
   }
   if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs()) {
