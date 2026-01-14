@@ -2978,7 +2978,16 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
         return E_FAIL;
       }
 
-      const uint64_t backing_size = alloc_priv.size_bytes ? static_cast<uint64_t>(alloc_priv.size_bytes) : total_bytes;
+      uint64_t backing_size = total_bytes;
+      if (alloc_priv.size_bytes) {
+        backing_size = static_cast<uint64_t>(alloc_priv.size_bytes);
+      } else if (pDesc->pAllocationInfo) {
+        // Some runtime/KMD paths update the allocation size out-of-band (via the
+        // allocation info array) without updating the private allocation blob.
+        // Use that as a fallback so we can accept a pitch-selected layout that
+        // still fits the actual allocation size.
+        backing_size = static_cast<uint64_t>(pDesc->pAllocationInfo[0].Size);
+      }
       if (updated_total_bytes == 0 || updated_total_bytes > backing_size || updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
         SetError(dev, E_INVALIDARG);
         deallocate_if_needed();
