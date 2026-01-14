@@ -29,6 +29,14 @@ impl DepContext {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn find_any(_candidates: &[&str]) -> Option<PathBuf> {
+    // This tool is host-only (it runs external commands / uses a filesystem).
+    // For wasm32 CI builds, just compile without probing the environment.
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn find_any(candidates: &[&str]) -> Option<PathBuf> {
     for cand in candidates {
         if let Ok(path) = which::which(cand) {
