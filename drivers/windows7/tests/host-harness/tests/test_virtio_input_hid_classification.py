@@ -301,7 +301,75 @@ class VirtioInputHidClassificationTests(unittest.TestCase):
         self.assertGreaterEqual(summary.mouse_xy_absolute_collections, 1)
         self.assertEqual(classify_descriptor(summary), "tablet")
 
+    def test_digitizer_descriptor_classifies_as_tablet(self) -> None:
+        # Minimal Digitizers (0x0D) Application Collection with absolute X/Y.
+        digitizer_desc = bytes(
+            [
+                0x05,
+                0x0D,  # Usage Page (Digitizers)
+                0x09,
+                0x04,  # Usage (Touch Screen)
+                0xA1,
+                0x01,  # Collection (Application)
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x30,  # Usage (X)
+                0x09,
+                0x31,  # Usage (Y)
+                0x15,
+                0x00,  # Logical Minimum (0)
+                0x26,
+                0xFF,
+                0x7F,  # Logical Maximum (32767)
+                0x75,
+                0x10,  # Report Size (16)
+                0x95,
+                0x02,  # Report Count (2)
+                0x81,
+                0x02,  # Input (Data,Var,Abs)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(digitizer_desc)
+        self.assertGreaterEqual(summary.tablet_app_collections, 1)
+        self.assertEqual(classify_descriptor(summary), "tablet")
+
+    def test_mouse_descriptor_without_xy_is_unknown(self) -> None:
+        # Minimal mouse application collection that lacks X/Y; should not be treated as a valid
+        # relative mouse device by the guest selftest logic.
+        button_only_mouse = bytes(
+            [
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x02,  # Usage (Mouse)
+                0xA1,
+                0x01,  # Collection (Application)
+                0x05,
+                0x09,  # Usage Page (Button)
+                0x19,
+                0x01,  # Usage Minimum (Button 1)
+                0x29,
+                0x03,  # Usage Maximum (Button 3)
+                0x15,
+                0x00,  # Logical Minimum (0)
+                0x25,
+                0x01,  # Logical Maximum (1)
+                0x95,
+                0x03,  # Report Count (3)
+                0x75,
+                0x01,  # Report Size (1)
+                0x81,
+                0x02,  # Input (Data,Var,Abs) ; Buttons only (no X/Y)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(button_only_mouse)
+        self.assertEqual(summary.mouse_app_collections, 1)
+        self.assertEqual(summary.mouse_xy_relative_collections, 0)
+        self.assertEqual(classify_descriptor(summary), "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()
-
