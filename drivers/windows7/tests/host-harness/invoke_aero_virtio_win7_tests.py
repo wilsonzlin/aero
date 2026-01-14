@@ -5524,7 +5524,14 @@ def main() -> int:
                                 break
 
                         if bool(args.require_virtio_input_msix):
-                            ok, reason = _require_virtio_input_msix_marker(tail)
+                            # Prefer the parsed marker line if we captured it earlier so we don't rely on
+                            # the rolling tail buffer still containing the marker.
+                            msix_tail = (
+                                virtio_input_msix_marker.line.encode("utf-8")
+                                if virtio_input_msix_marker is not None
+                                else tail
+                            )
+                            ok, reason = _require_virtio_input_msix_marker(msix_tail)
                             if not ok:
                                 if reason.startswith("missing virtio-input-msix marker"):
                                     print(
@@ -6903,7 +6910,12 @@ def main() -> int:
                                     break
 
                             if bool(args.require_virtio_input_msix):
-                                ok, reason = _require_virtio_input_msix_marker(tail)
+                                msix_tail = (
+                                    virtio_input_msix_marker.line.encode("utf-8")
+                                    if virtio_input_msix_marker is not None
+                                    else tail
+                                )
+                                ok, reason = _require_virtio_input_msix_marker(msix_tail)
                                 if not ok:
                                     if reason.startswith("missing virtio-input-msix marker"):
                                         print(
@@ -8890,13 +8902,23 @@ def _require_virtio_input_msix_marker(tail: bytes) -> tuple[bool, str]:
     if marker_line is None:
         return False, "missing virtio-input-msix marker (guest selftest too old?)"
 
+    fields = _parse_marker_kv_fields(marker_line)
+
     parts = marker_line.split("|")
     if "FAIL" in parts:
-        return False, "virtio-input-msix marker reported FAIL"
+        reason = "virtio-input-msix marker reported FAIL"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
     if "SKIP" in parts:
-        return False, "virtio-input-msix marker reported SKIP"
-
-    fields = _parse_marker_kv_fields(marker_line)
+        reason = "virtio-input-msix marker reported SKIP"
+        if "reason" in fields:
+            reason += f" reason={fields['reason']}"
+        if "err" in fields:
+            reason += f" err={fields['err']}"
+        return False, reason
     mode = fields.get("mode")
     if mode is None:
         return False, "virtio-input-msix marker missing mode=... field"
