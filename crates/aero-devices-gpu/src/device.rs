@@ -46,6 +46,14 @@ pub struct AeroGpuBar0MmioDevice {
     /// This avoids exposing a torn 64-bit framebuffer address to scanout readers; drivers
     /// typically write LO then HI.
     scanout0_fb_gpa_lo_pending: bool,
+
+    /// Pending LO dword for `CURSOR_FB_GPA` while waiting for the HI write commit.
+    cursor_fb_gpa_pending_lo: u32,
+    /// Whether the guest has written `CURSOR_FB_GPA_LO` without a subsequent HI write.
+    ///
+    /// This avoids exposing a torn 64-bit cursor framebuffer address; drivers typically write LO
+    /// then HI.
+    cursor_fb_gpa_lo_pending: bool,
 }
 
 impl AeroGpuBar0MmioDevice {
@@ -69,6 +77,8 @@ impl AeroGpuBar0MmioDevice {
             next_vblank_deadline_ns: None,
             scanout0_fb_gpa_pending_lo: 0,
             scanout0_fb_gpa_lo_pending: false,
+            cursor_fb_gpa_pending_lo: 0,
+            cursor_fb_gpa_lo_pending: false,
         }
     }
 
@@ -178,6 +188,25 @@ impl AeroGpuBar0MmioDevice {
             mmio::SCANOUT0_VBLANK_TIME_NS_HI => (self.regs.scanout0_vblank_time_ns >> 32) as u32,
             mmio::SCANOUT0_VBLANK_PERIOD_NS => self.regs.scanout0_vblank_period_ns,
 
+            // Cursor registers are implemented as simple storage; presentation is handled by the caller.
+            mmio::CURSOR_ENABLE => self.regs.cursor.enable as u32,
+            mmio::CURSOR_X => self.regs.cursor.x as u32,
+            mmio::CURSOR_Y => self.regs.cursor.y as u32,
+            mmio::CURSOR_HOT_X => self.regs.cursor.hot_x,
+            mmio::CURSOR_HOT_Y => self.regs.cursor.hot_y,
+            mmio::CURSOR_WIDTH => self.regs.cursor.width,
+            mmio::CURSOR_HEIGHT => self.regs.cursor.height,
+            mmio::CURSOR_FORMAT => self.regs.cursor.format as u32,
+            mmio::CURSOR_FB_GPA_LO => {
+                if self.cursor_fb_gpa_lo_pending {
+                    self.cursor_fb_gpa_pending_lo
+                } else {
+                    self.regs.cursor.fb_gpa as u32
+                }
+            }
+            mmio::CURSOR_FB_GPA_HI => (self.regs.cursor.fb_gpa >> 32) as u32,
+            mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes,
+
             _ => 0,
         }
     }
@@ -248,6 +277,39 @@ impl AeroGpuBar0MmioDevice {
                 self.regs.scanout0.fb_gpa = (u64::from(value) << 32) | u64::from(lo);
                 self.scanout0_fb_gpa_lo_pending = false;
             }
+
+            mmio::CURSOR_ENABLE => {
+                let prev_enable = self.regs.cursor.enable;
+                let new_enable = value != 0;
+                self.regs.cursor.enable = new_enable;
+                if prev_enable && !new_enable {
+                    // Reset torn-update tracking so a stale LO write can't affect future updates.
+                    self.cursor_fb_gpa_pending_lo = 0;
+                    self.cursor_fb_gpa_lo_pending = false;
+                }
+            }
+            mmio::CURSOR_X => self.regs.cursor.x = value as i32,
+            mmio::CURSOR_Y => self.regs.cursor.y = value as i32,
+            mmio::CURSOR_HOT_X => self.regs.cursor.hot_x = value,
+            mmio::CURSOR_HOT_Y => self.regs.cursor.hot_y = value,
+            mmio::CURSOR_WIDTH => self.regs.cursor.width = value,
+            mmio::CURSOR_HEIGHT => self.regs.cursor.height = value,
+            mmio::CURSOR_FORMAT => self.regs.cursor.format = AeroGpuFormat::from_u32(value),
+            mmio::CURSOR_FB_GPA_LO => {
+                // Avoid exposing torn 64-bit cursor base updates; treat the HI write as the commit point.
+                self.cursor_fb_gpa_pending_lo = value;
+                self.cursor_fb_gpa_lo_pending = true;
+            }
+            mmio::CURSOR_FB_GPA_HI => {
+                let lo = if self.cursor_fb_gpa_lo_pending {
+                    self.cursor_fb_gpa_pending_lo
+                } else {
+                    self.regs.cursor.fb_gpa as u32
+                };
+                self.regs.cursor.fb_gpa = (u64::from(value) << 32) | u64::from(lo);
+                self.cursor_fb_gpa_lo_pending = false;
+            }
+            mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes = value,
 
             _ => {
                 let _ = (mem, now_ns, dma_enabled);
