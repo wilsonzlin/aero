@@ -6606,9 +6606,9 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  AEROGPU_D3D10_11_LOG_CALL();
-  AEROGPU_D3D10_TRACEF("OpenAdapter10");
   try {
+    AEROGPU_D3D10_11_LOG_CALL();
+    AEROGPU_D3D10_TRACEF("OpenAdapter10");
     return OpenAdapterCommon(pOpenData);
   } catch (const std::bad_alloc&) {
     return E_OUTOFMEMORY;
@@ -6618,9 +6618,9 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  AEROGPU_D3D10_11_LOG_CALL();
-  AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
   try {
+    AEROGPU_D3D10_11_LOG_CALL();
+    AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
     return OpenAdapterCommon(pOpenData);
   } catch (const std::bad_alloc&) {
     return E_OUTOFMEMORY;
@@ -6630,9 +6630,9 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  AEROGPU_D3D10_11_LOG_CALL();
-  AEROGPU_D3D10_TRACEF("OpenAdapter11");
   try {
+    AEROGPU_D3D10_11_LOG_CALL();
+    AEROGPU_D3D10_TRACEF("OpenAdapter11");
     return OpenAdapterCommon(pOpenData);
   } catch (const std::bad_alloc&) {
     return E_OUTOFMEMORY;

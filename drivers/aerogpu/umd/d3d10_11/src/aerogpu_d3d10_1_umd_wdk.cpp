@@ -10451,10 +10451,10 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  LogModulePathOnce();
-  AEROGPU_D3D10_11_LOG_CALL();
-  AEROGPU_D3D10_TRACEF("OpenAdapter10");
   try {
+    LogModulePathOnce();
+    AEROGPU_D3D10_11_LOG_CALL();
+    AEROGPU_D3D10_TRACEF("OpenAdapter10");
     if (!pOpenData) {
       return E_INVALIDARG;
     }
@@ -10472,10 +10472,10 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  LogModulePathOnce();
-  AEROGPU_D3D10_11_LOG_CALL();
-  AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
   try {
+    LogModulePathOnce();
+    AEROGPU_D3D10_11_LOG_CALL();
+    AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
     if (!pOpenData) {
       return E_INVALIDARG;
     }
