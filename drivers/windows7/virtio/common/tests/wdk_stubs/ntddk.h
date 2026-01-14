@@ -305,6 +305,15 @@ static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ 
     KIRQL cur;
 
     cur = KeGetCurrentIrql();
+    if (cur > DISPATCH_LEVEL) {
+        /*
+         * Real WDK contract: KeAcquireSpinLock is callable at IRQL <= DISPATCH_LEVEL.
+         *
+         * Failing fast here helps host tests catch incorrect spinlock usage (e.g.
+         * acquiring a DISPATCH_LEVEL lock from an ISR).
+         */
+        ASSERT(FALSE);
+    }
     if (OldIrql != NULL) {
         *OldIrql = cur;
     }
@@ -332,8 +341,19 @@ static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ 
 
 static __forceinline VOID KeReleaseSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _In_ KIRQL OldIrql)
 {
+    /*
+     * KeReleaseSpinLock is expected to be called at DISPATCH_LEVEL (the IRQL at
+     * which KeAcquireSpinLock holds the caller). Enforce that invariant to avoid
+     * accidentally allowing sleeps or other PASSIVE_LEVEL-only operations while
+     * still holding a spinlock in host tests.
+     */
+    ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
     if (SpinLock != NULL) {
-        __atomic_store_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
+        LONG prev = __atomic_exchange_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
+        if (prev == 0) {
+            /* Releasing a lock that is not held (double-release) is a bug. */
+            ASSERT(FALSE);
+        }
     }
     WdkTestSetCurrentIrql(OldIrql);
 }
