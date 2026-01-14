@@ -407,3 +407,81 @@ fn tier2_shl_updates_sf_observed_by_js() {
     assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
 }
+
+#[test]
+fn tier2_shl16_updates_sf_observed_by_js() {
+    // mov ax, 0x4000
+    // shl ax, 1
+    // js +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // 0x4000 << 1 = 0x8000 => SF=1 for 16-bit operand => JS taken.
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x00, 0x40, // mov ax, 0x4000
+        0x66, 0xD1, 0xE0, // shl ax, 1
+        0x78, 0x03, // js +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 14 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
+fn tier2_shl32_updates_sf_observed_by_js() {
+    // mov eax, 0x4000_0000
+    // shl eax, 1
+    // js +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // 0x4000_0000 << 1 = 0x8000_0000 => SF=1 for 32-bit operand => JS taken.
+    const CODE: &[u8] = &[
+        0xB8, 0x00, 0x00, 0x00, 0x40, // mov eax, 0x4000_0000
+        0xD1, 0xE0, // shl eax, 1
+        0x78, 0x03, // js +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 14 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
+fn tier2_shl_high8_updates_cf_observed_by_jc() {
+    // mov ah, 0x81
+    // shl ah, 1
+    // jc +3
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    //
+    // For the given input, SHL sets CF=1 (old MSB), so JC must be taken.
+    const CODE: &[u8] = &[
+        0xB4, 0x81, // mov ah, 0x81
+        0xD0, 0xE4, // shl ah, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
