@@ -3138,6 +3138,160 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_vhd_fixed() -> Result<()> {
+        use std::io::Write;
+
+        let virtual_size = 64 * 1024u64;
+        let mut data = vec![0u8; virtual_size as usize];
+        data[0..10].copy_from_slice(b"hello vhd!");
+
+        let mut footer = [0u8; SECTOR_SIZE];
+        footer[0..8].copy_from_slice(b"conectix");
+        footer[8..12].copy_from_slice(&2u32.to_be_bytes()); // features
+        footer[12..16].copy_from_slice(&0x0001_0000u32.to_be_bytes()); // file_format_version
+        footer[16..24].copy_from_slice(&u64::MAX.to_be_bytes()); // data_offset for fixed disks
+        footer[40..48].copy_from_slice(&virtual_size.to_be_bytes()); // original_size
+        footer[48..56].copy_from_slice(&virtual_size.to_be_bytes()); // current_size
+        footer[60..64].copy_from_slice(&2u32.to_be_bytes()); // disk_type fixed
+        // checksum at 64..68 (big-endian)
+        let checksum = {
+            let mut sum: u32 = 0;
+            for (i, b) in footer.iter().enumerate() {
+                if (64..68).contains(&i) {
+                    continue;
+                }
+                sum = sum.wrapping_add(*b as u32);
+            }
+            !sum
+        };
+        footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&data)
+            .context("write vhd data")?;
+        tmp.as_file_mut()
+            .write_all(&footer)
+            .context("write vhd footer")?;
+        tmp.as_file_mut().flush().context("flush vhd image")?;
+
+        let physical_len = tmp.as_file().metadata().context("stat temp vhd")?.len();
+        assert_eq!(
+            physical_len,
+            virtual_size + SECTOR_SIZE as u64,
+            "expected fixed VHD file len to be data + footer"
+        );
+
+        let expected_version = format!("sha256-{}", sha256_hex(&data));
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Auto).await?;
+        assert_eq!(version, expected_version);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_qcow2() -> Result<()> {
+        use std::io::Write;
+
+        use aero_storage::{MemBackend, StorageBackend};
+
+        const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
+
+        fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
+            buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
+        }
+
+        fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
+            buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
+        }
+
+        fn make_qcow2_with_pattern(virtual_size: u64) -> MemBackend {
+            assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+
+            // Keep fixture small while still exercising the full metadata path.
+            let cluster_bits = 12u32; // 4 KiB clusters
+            let cluster_size = 1u64 << cluster_bits;
+
+            let refcount_table_offset = cluster_size;
+            let l1_table_offset = cluster_size * 2;
+            let refcount_block_offset = cluster_size * 3;
+            let l2_table_offset = cluster_size * 4;
+
+            let file_len = cluster_size * 5;
+            let mut backend = MemBackend::with_len(file_len).unwrap();
+
+            let mut header = [0u8; 104];
+            header[0..4].copy_from_slice(b"QFI\xfb");
+            write_be_u32(&mut header, 4, 3); // version
+            write_be_u32(&mut header, 20, cluster_bits);
+            write_be_u64(&mut header, 24, virtual_size);
+            write_be_u32(&mut header, 36, 1); // l1_size
+            write_be_u64(&mut header, 40, l1_table_offset);
+            write_be_u64(&mut header, 48, refcount_table_offset);
+            write_be_u32(&mut header, 56, 1); // refcount_table_clusters
+            write_be_u64(&mut header, 72, 0); // incompatible_features
+            write_be_u64(&mut header, 80, 0); // compatible_features
+            write_be_u64(&mut header, 88, 0); // autoclear_features
+            write_be_u32(&mut header, 96, 4); // refcount_order (16-bit)
+            write_be_u32(&mut header, 100, 104); // header_length
+            backend.write_at(0, &header).unwrap();
+
+            // Refcount table points at a single refcount block.
+            backend
+                .write_at(refcount_table_offset, &refcount_block_offset.to_be_bytes())
+                .unwrap();
+
+            // L1 table points at a single L2 table.
+            let l1_entry = l2_table_offset | QCOW2_OFLAG_COPIED;
+            backend
+                .write_at(l1_table_offset, &l1_entry.to_be_bytes())
+                .unwrap();
+
+            // Mark metadata clusters as in-use: header, refcount table, L1 table, refcount block, L2 table.
+            for cluster_index in 0u64..5 {
+                let off = refcount_block_offset + cluster_index * 2;
+                backend.write_at(off, &1u16.to_be_bytes()).unwrap();
+            }
+
+            // Allocate a single data cluster and map guest cluster 0 to it.
+            let data_cluster_offset = cluster_size * 5;
+            backend.set_len(cluster_size * 6).unwrap();
+
+            let l2_entry = data_cluster_offset | QCOW2_OFLAG_COPIED;
+            backend
+                .write_at(l2_table_offset, &l2_entry.to_be_bytes())
+                .unwrap();
+
+            // Mark the new data cluster as allocated in the refcount block (cluster index 5).
+            backend
+                .write_at(refcount_block_offset + 5 * 2, &1u16.to_be_bytes())
+                .unwrap();
+
+            let mut sector = [0u8; SECTOR_SIZE];
+            sector[..12].copy_from_slice(b"hello qcow2!");
+            backend.write_at(data_cluster_offset, &sector).unwrap();
+
+            backend
+        }
+
+        let virtual_size = 16 * 1024u64;
+        let backend = make_qcow2_with_pattern(virtual_size);
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&backend.into_vec())
+            .context("write qcow2 image")?;
+        tmp.as_file_mut().flush().context("flush qcow2 image")?;
+
+        let mut expected = vec![0u8; virtual_size as usize];
+        expected[0..12].copy_from_slice(b"hello qcow2!");
+        let expected_version = format!("sha256-{}", sha256_hex(&expected));
+
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Auto).await?;
+        assert_eq!(version, expected_version);
+        Ok(())
+    }
+
     #[test]
     fn chunk_count_rounds_up() {
         assert_eq!(chunk_count(0, 8), 0);
