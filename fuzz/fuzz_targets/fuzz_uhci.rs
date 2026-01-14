@@ -13,18 +13,26 @@ const MAX_OPS: usize = 1024;
 
 // Minimal UHCI schedule seed layout (all within MEM_SIZE).
 const FRAME_LIST_BASE: u32 = 0x1000;
-const TD_SETUP_ADDR0: u32 = 0x2000;
-const TD_STATUS_ADDR0: u32 = 0x2010;
-const TD_SETUP_ADDR1: u32 = 0x2020;
-const TD_STATUS_ADDR1: u32 = 0x2030;
-const TD_INTR_ADDR: u32 = 0x2040;
-const SETUP_BUF_ADDR0: u32 = 0x3000;
-const SETUP_BUF_ADDR1: u32 = 0x3010;
-const INTR_BUF_ADDR: u32 = 0x3100;
+const TD_GET_DESC_SETUP: u32 = 0x2000;
+const TD_GET_DESC_DATA: u32 = 0x2010;
+const TD_GET_DESC_STATUS: u32 = 0x2020;
+const TD_SET_ADDR_SETUP: u32 = 0x2030;
+const TD_SET_ADDR_STATUS: u32 = 0x2040;
+const TD_SET_CONF_SETUP: u32 = 0x2050;
+const TD_SET_CONF_STATUS: u32 = 0x2060;
+const TD_INTR_ADDR: u32 = 0x2070;
+
+const SETUP_BUF_GET_DESC: u32 = 0x3000;
+const SETUP_BUF_SET_ADDR: u32 = 0x3010;
+const SETUP_BUF_SET_CONF: u32 = 0x3020;
+
+const DESC_BUF_ADDR: u32 = 0x3100;
+const INTR_BUF_ADDR: u32 = 0x3200;
 
 // UHCI link pointer bits / token PIDs / status bits (duplicated from `aero-usb` internals).
 const LINK_PTR_TERMINATE: u32 = 1 << 0;
 const PID_IN: u32 = 0x69;
+const PID_OUT: u32 = 0xe1;
 const PID_SETUP: u32 = 0x2d;
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
 
@@ -44,6 +52,16 @@ impl FuzzBus {
         let n = init.len().min(size);
         data[..n].copy_from_slice(&init[..n]);
         Self { data }
+    }
+
+    fn read_u32(&self, addr: u64) -> u32 {
+        let Ok(addr) = usize::try_from(addr) else {
+            return 0;
+        };
+        if addr.checked_add(4).is_none() || addr + 4 > self.data.len() {
+            return 0;
+        }
+        u32::from_le_bytes(self.data[addr..addr + 4].try_into().unwrap())
     }
 
     fn write_u32(&mut self, addr: u32, value: u32) {
@@ -141,8 +159,9 @@ fuzz_target!(|data: &[u8]| {
     // does not happen to contain a well-formed frame list/QH/TD structure.
     //
     // Frame list: all entries point at a short TD chain:
-    //   SETUP (SET_ADDRESS 1) -> STATUS IN (ZLP)
-    //     -> SETUP (SET_CONFIGURATION 1) -> STATUS IN (ZLP)
+    //   GET_DESCRIPTOR(Device, 18 bytes) -> STATUS OUT (ZLP)
+    //     -> SET_ADDRESS(1) -> STATUS IN (ZLP)
+    //     -> SET_CONFIGURATION(1) -> STATUS IN (ZLP)
     //     -> interrupt IN (boot keyboard report) -> T
     //
     // This drives:
@@ -150,42 +169,68 @@ fuzz_target!(|data: &[u8]| {
     // - interrupt IN polling (`UsbHidKeyboard`)
     // - schedule walking (including per-frame budgets/cycle guards)
     for i in 0..1024u32 {
-        bus.write_u32(FRAME_LIST_BASE + i * 4, TD_SETUP_ADDR0);
+        bus.write_u32(FRAME_LIST_BASE + i * 4, TD_GET_DESC_SETUP);
     }
-    // SET_ADDRESS SETUP TD (dev_addr=0).
-    bus.write_u32(TD_SETUP_ADDR0, TD_STATUS_ADDR0);
-    bus.write_u32(TD_SETUP_ADDR0 + 4, TD_STATUS_ACTIVE);
+
+    // GET_DESCRIPTOR setup TD (dev_addr=0).
+    bus.write_u32(TD_GET_DESC_SETUP, TD_GET_DESC_DATA);
+    bus.write_u32(TD_GET_DESC_SETUP + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
-        TD_SETUP_ADDR0 + 8,
+        TD_GET_DESC_SETUP + 8,
         PID_SETUP | (7u32 << 21), // max_len = 8
     );
-    bus.write_u32(TD_SETUP_ADDR0 + 12, SETUP_BUF_ADDR0);
-    // SET_ADDRESS STATUS (control IN, ZLP) TD.
-    bus.write_u32(TD_STATUS_ADDR0, TD_SETUP_ADDR1);
-    bus.write_u32(TD_STATUS_ADDR0 + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(TD_GET_DESC_SETUP + 12, SETUP_BUF_GET_DESC);
+
+    // GET_DESCRIPTOR data stage IN TD (dev_addr=0, ep=0, max_len=64).
+    bus.write_u32(TD_GET_DESC_DATA, TD_GET_DESC_STATUS);
+    bus.write_u32(TD_GET_DESC_DATA + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(TD_GET_DESC_DATA + 8, PID_IN | (63u32 << 21));
+    bus.write_u32(TD_GET_DESC_DATA + 12, DESC_BUF_ADDR);
+
+    // GET_DESCRIPTOR status stage OUT TD (dev_addr=0, ep=0, ZLP).
+    bus.write_u32(TD_GET_DESC_STATUS, TD_SET_ADDR_SETUP);
+    bus.write_u32(TD_GET_DESC_STATUS + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
-        TD_STATUS_ADDR0 + 8,
+        TD_GET_DESC_STATUS + 8,
+        PID_OUT | (0x7ffu32 << 21), // max_len = 0
+    );
+    bus.write_u32(TD_GET_DESC_STATUS + 12, 0);
+
+    // SET_ADDRESS SETUP TD (dev_addr=0).
+    bus.write_u32(TD_SET_ADDR_SETUP, TD_SET_ADDR_STATUS);
+    bus.write_u32(TD_SET_ADDR_SETUP + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(
+        TD_SET_ADDR_SETUP + 8,
+        PID_SETUP | (7u32 << 21), // max_len = 8
+    );
+    bus.write_u32(TD_SET_ADDR_SETUP + 12, SETUP_BUF_SET_ADDR);
+
+    // SET_ADDRESS STATUS (control IN, ZLP) TD (dev_addr=0).
+    bus.write_u32(TD_SET_ADDR_STATUS, TD_SET_CONF_SETUP);
+    bus.write_u32(TD_SET_ADDR_STATUS + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(
+        TD_SET_ADDR_STATUS + 8,
         PID_IN | (0x7ffu32 << 21), // max_len = 0
     );
-    bus.write_u32(TD_STATUS_ADDR0 + 12, 0);
+    bus.write_u32(TD_SET_ADDR_STATUS + 12, 0);
 
     // SET_CONFIGURATION SETUP TD (dev_addr=1).
-    bus.write_u32(TD_SETUP_ADDR1, TD_STATUS_ADDR1);
-    bus.write_u32(TD_SETUP_ADDR1 + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(TD_SET_CONF_SETUP, TD_SET_CONF_STATUS);
+    bus.write_u32(TD_SET_CONF_SETUP + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
-        TD_SETUP_ADDR1 + 8,
+        TD_SET_CONF_SETUP + 8,
         PID_SETUP | (1u32 << 8) | (7u32 << 21), // dev_addr=1, max_len=8
     );
-    bus.write_u32(TD_SETUP_ADDR1 + 12, SETUP_BUF_ADDR1);
+    bus.write_u32(TD_SET_CONF_SETUP + 12, SETUP_BUF_SET_CONF);
 
     // SET_CONFIGURATION STATUS (control IN, ZLP) TD (dev_addr=1).
-    bus.write_u32(TD_STATUS_ADDR1, TD_INTR_ADDR);
-    bus.write_u32(TD_STATUS_ADDR1 + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(TD_SET_CONF_STATUS, TD_INTR_ADDR);
+    bus.write_u32(TD_SET_CONF_STATUS + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
-        TD_STATUS_ADDR1 + 8,
+        TD_SET_CONF_STATUS + 8,
         PID_IN | (1u32 << 8) | (0x7ffu32 << 21), // dev_addr=1, max_len=0
     );
-    bus.write_u32(TD_STATUS_ADDR1 + 12, 0);
+    bus.write_u32(TD_SET_CONF_STATUS + 12, 0);
 
     // Interrupt IN TD (endpoint 1, 8 bytes).
     bus.write_u32(TD_INTR_ADDR, LINK_PTR_TERMINATE);
@@ -198,13 +243,19 @@ fuzz_target!(|data: &[u8]| {
 
     // SET_ADDRESS(1) setup packet (standard, device, host-to-device).
     bus.write_bytes(
-        SETUP_BUF_ADDR0,
+        SETUP_BUF_SET_ADDR,
         &[0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+
+    // GET_DESCRIPTOR(Device) setup packet (standard, device, device-to-host).
+    bus.write_bytes(
+        SETUP_BUF_GET_DESC,
+        &[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00],
     );
 
     // SET_CONFIGURATION(1) setup packet (standard, device, host-to-device).
     bus.write_bytes(
-        SETUP_BUF_ADDR1,
+        SETUP_BUF_SET_CONF,
         &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
     );
 
