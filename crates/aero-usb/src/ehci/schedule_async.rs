@@ -184,9 +184,6 @@ impl QtdCursor {
                 self.offset = 0;
             }
         }
-        if self.page >= 5 {
-            return Err(BufferFault::OutOfPages);
-        }
         Ok(())
     }
 

@@ -33,6 +33,7 @@ const QTD_BUF0: u32 = 0x0c;
 
 const QTD_STS_ACTIVE: u32 = 1 << 7;
 const QTD_STS_HALT: u32 = 1 << 6;
+const QTD_STS_BUFERR: u32 = 1 << 5;
 const QTD_STS_XACTERR: u32 = 1 << 3;
 const QTD_IOC: u32 = 1 << 15;
 const QTD_TOTAL_BYTES_SHIFT: u32 = 16;
@@ -228,6 +229,32 @@ impl UsbDeviceModel for ChunkedInDevice {
             3 => UsbInResult::Data(vec![5u8, 6, 7, 8][..max_len.min(4)].to_vec()),
             _ => UsbInResult::Nak,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FillInDevice {
+    pattern: u8,
+}
+
+impl UsbDeviceModel for FillInDevice {
+    fn speed(&self) -> UsbSpeed {
+        UsbSpeed::High
+    }
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Ack
+    }
+
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        if ep != 0x81 {
+            return UsbInResult::Stall;
+        }
+        UsbInResult::Data(vec![self.pattern; max_len])
     }
 }
 
@@ -535,6 +562,78 @@ fn ehci_async_short_packet_uses_alt_next_to_skip_remaining_qtds() {
             0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00,
             0x01, 0x01, 0x02, 0x03, 0x01
         ]
+    );
+}
+
+#[test]
+fn ehci_async_in_transfer_spans_five_pages_without_buffer_error() {
+    let mut mem = TestMemory::new(0x100000);
+    let mut ctrl = EhciController::new();
+    ctrl.hub_mut().attach(0, Box::new(FillInDevice { pattern: 0x5a }));
+
+    ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.mmio_write(REG_USBINTR, 4, USBINTR_USBINT | USBINTR_USBERRINT);
+    ctrl.mmio_write(REG_USBCMD, 4, USBCMD_RS | USBCMD_ASE);
+
+    let mut alloc = Alloc::new(0x1000);
+    let qh_addr = alloc.alloc(0x40, 0x20);
+    let qtd = alloc.alloc(0x20, 0x20);
+
+    const TOTAL: u32 = 5 * 4096;
+    let buf_base = alloc.alloc(TOTAL, 0x1000);
+
+    ctrl.mmio_write(REG_ASYNCLISTADDR, 4, qh_addr);
+
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        LINK_TERMINATE,
+        qtd_token(PID_IN, TOTAL as u16, true, true),
+        buf_base,
+    );
+    // Populate the remaining buffer page pointers.
+    for i in 1..5u32 {
+        mem.write_u32(qtd + QTD_BUF0 + i * 4, buf_base + i * 4096);
+    }
+
+    write_qh(&mut mem, qh_addr, qh_ep_char(0, 1, 512), qtd);
+
+    ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
+    for _ in 0..10 {
+        ctrl.tick_1ms(&mut mem);
+        let tok = mem.read_u32(qtd + QTD_TOKEN);
+        if (tok & QTD_STS_ACTIVE) == 0 {
+            break;
+        }
+    }
+
+    let tok = mem.read_u32(qtd + QTD_TOKEN);
+    assert_eq!(tok & QTD_STS_ACTIVE, 0, "qTD should complete");
+    assert_eq!(
+        (tok >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
+        0,
+        "all bytes should be consumed"
+    );
+    assert_eq!(
+        tok & (QTD_STS_HALT | QTD_STS_BUFERR | QTD_STS_XACTERR),
+        0,
+        "qTD should not report buffer or transaction errors"
+    );
+
+    let sts = ctrl.mmio_read(REG_USBSTS, 4);
+    assert_ne!(sts & USBSTS_USBINT, 0, "IOC should raise USBINT");
+    assert_eq!(sts & USBSTS_USBERRINT, 0, "no error interrupt expected");
+
+    let mut got = vec![0u8; TOTAL as usize];
+    mem.read(buf_base, &mut got);
+    assert!(
+        got.iter().all(|&b| b == 0x5a),
+        "all DMA-written bytes should match the pattern"
     );
 }
 
