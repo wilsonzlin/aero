@@ -50,23 +50,23 @@ cargo +"$nightly" fuzz run fuzz_atapi
 cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
-cargo +"$nightly" fuzz run fuzz_aerogpu_parse
-cargo +"$nightly" fuzz run fuzz_aerogpu_trace_read
+cargo +"$nightly" fuzz run --features aerogpu fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run --features aerogpu-trace fuzz_aerogpu_trace_read
 cargo +"$nightly" fuzz run fuzz_i8042
 cargo +"$nightly" fuzz run fuzz_uhci
 cargo +"$nightly" fuzz run fuzz_hid_report_descriptor
-cargo +"$nightly" fuzz run fuzz_aerogpu_bc_decompress
+cargo +"$nightly" fuzz run --features aerogpu fuzz_aerogpu_bc_decompress
 cargo +"$nightly" fuzz run fuzz_bios_interrupts
 cargo +"$nightly" fuzz run fuzz_tier0_step
 cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
 
 # DXBC / shaders
-  cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
-  cargo +"$nightly" fuzz run fuzz_dxbc_parse
-  cargo +"$nightly" fuzz run fuzz_d3d11_sm4_translate
-  cargo +"$nightly" fuzz run fuzz_d3d9_sm3_decode
-  cargo +"$nightly" fuzz run fuzz_d3d9_sm3_wgsl
-  cargo +"$nightly" fuzz run fuzz_d3d9_shader_parse
+  cargo +"$nightly" fuzz run --features dxbc fuzz_dxbc_sm4_parse
+  cargo +"$nightly" fuzz run --features d3d11 fuzz_dxbc_parse
+  cargo +"$nightly" fuzz run --features d3d11 fuzz_d3d11_sm4_translate
+  cargo +"$nightly" fuzz run --features d3d9 fuzz_d3d9_sm3_decode
+  cargo +"$nightly" fuzz run --features d3d9 fuzz_d3d9_sm3_wgsl
+  cargo +"$nightly" fuzz run --features d3d9-shader fuzz_d3d9_shader_parse
   
   # Audio
   cargo +"$nightly" fuzz run fuzz_hda_mmio
@@ -119,10 +119,16 @@ Workarounds:
 
 ## Smoke runs
 
-Build all targets:
+Build the default target set (excludes GPU/WGPU-heavy fuzzers unless their features are enabled):
 
 ```bash
 cd fuzz && cargo +"$nightly" fuzz build
+```
+
+To build *everything* (including GPU/shader fuzzers), enable all Cargo features:
+
+```bash
+cd fuzz && cargo +"$nightly" fuzz build --all-features
 ```
 
 The `fuzz/` directory includes its own `rust-toolchain.toml` (nightly), so you can also run these
@@ -130,6 +136,12 @@ from inside `fuzz/` without specifying a `+toolchain`:
 
 ```bash
 cd fuzz && cargo fuzz build
+```
+
+To build everything from inside `fuzz/`:
+
+```bash
+cd fuzz && cargo fuzz build --all-features
 ```
 
 Note: an explicit `RUSTUP_TOOLCHAIN=...` environment variable overrides `rust-toolchain.toml`.
@@ -186,48 +198,48 @@ cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000 -max_len=1048
 cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
-cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
+cd fuzz && cargo fuzz run --features aerogpu fuzz_aerogpu_parse -- -runs=10000
 
 # AeroGPU trace container + record parsing (tries to be resilient to malformed/corrupt traces)
-cd fuzz && cargo fuzz run fuzz_aerogpu_trace_read -- -runs=10000
-cd fuzz && cargo fuzz run fuzz_aerogpu_trace_read -- -runs=10000 -dict=fuzz_targets/fuzz_aerogpu_trace_read.dict
+cd fuzz && cargo fuzz run --features aerogpu-trace fuzz_aerogpu_trace_read -- -runs=10000
+cd fuzz && cargo fuzz run --features aerogpu-trace fuzz_aerogpu_trace_read -- -runs=10000 -dict=fuzz_targets/fuzz_aerogpu_trace_read.dict
 
 # AeroGPU CPU BCn decompression (BC1/BC2/BC3/BC7) + hostile dims/truncated inputs
-cd fuzz && cargo fuzz run fuzz_aerogpu_bc_decompress -- -runs=10000
+cd fuzz && cargo fuzz run --features aerogpu fuzz_aerogpu_bc_decompress -- -runs=10000
 
 # DXBC parsing
-cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
-cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_parse.dict
+cd fuzz && cargo fuzz run --features d3d11 fuzz_dxbc_parse -- -runs=10000
+cd fuzz && cargo fuzz run --features d3d11 fuzz_dxbc_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_parse.dict
   
 # DXBC container + signature + SM4/SM5 token parsing
-cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
+cd fuzz && cargo fuzz run --features dxbc fuzz_dxbc_sm4_parse -- -runs=10000
 
 # Optional: use the bundled dictionary to help libFuzzer find DXBC/signature chunk IDs faster
-cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
+cd fuzz && cargo fuzz run --features dxbc fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
   
 # D3D11 SM4/SM5 decode + WGSL translation
-cd fuzz && cargo fuzz run fuzz_d3d11_sm4_translate -- -runs=10000
+cd fuzz && cargo fuzz run --features d3d11 fuzz_d3d11_sm4_translate -- -runs=10000
 
 # Optional: use the bundled dictionary to help libFuzzer find DXBC/signature + SM token patterns faster
-cd fuzz && cargo fuzz run fuzz_d3d11_sm4_translate -- -runs=10000 -dict=fuzz_targets/fuzz_d3d11_sm4_translate.dict
- 
+cd fuzz && cargo fuzz run --features d3d11 fuzz_d3d11_sm4_translate -- -runs=10000 -dict=fuzz_targets/fuzz_d3d11_sm4_translate.dict
+  
 # D3D9 SM2/SM3 bytecode decode + IR build
-cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000
+cd fuzz && cargo fuzz run --features d3d9 fuzz_d3d9_sm3_decode -- -runs=10000
 
 # Optional: use the bundled dictionary to help libFuzzer find version/opcode tokens faster
-cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
+cd fuzz && cargo fuzz run --features d3d9 fuzz_d3d9_sm3_decode -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
 
 # D3D9 SM2/SM3 IR -> WGSL generation
-cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000
+cd fuzz && cargo fuzz run --features d3d9 fuzz_d3d9_sm3_wgsl -- -runs=10000
 
 # Optional: same dictionary for WGSL generation fuzzer
-cd fuzz && cargo fuzz run fuzz_d3d9_sm3_wgsl -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
+cd fuzz && cargo fuzz run --features d3d9 fuzz_d3d9_sm3_wgsl -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_sm3.dict
   
 # D3D9 legacy token stream parser + disassembly formatting
-cd fuzz && cargo fuzz run fuzz_d3d9_shader_parse -- -runs=10000
+cd fuzz && cargo fuzz run --features d3d9-shader fuzz_d3d9_shader_parse -- -runs=10000
 
 # Optional: use the bundled dictionary to help libFuzzer find DXBC/version tokens faster
-cd fuzz && cargo fuzz run fuzz_d3d9_shader_parse -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_shader_parse.dict
+cd fuzz && cargo fuzz run --features d3d9-shader fuzz_d3d9_shader_parse -- -runs=10000 -dict=fuzz_targets/fuzz_d3d9_shader_parse.dict
   
 # Networking (quick sanity)
 cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000

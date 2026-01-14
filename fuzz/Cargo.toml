@@ -8,6 +8,19 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+[features]
+# Keep the default feature set minimal so CPU-only fuzz targets (notably `fuzz_tier0_step`) don't
+# build GPU/WGPU-related crates unless explicitly requested.
+default = []
+
+# GPU / shader-related fuzz targets (opt-in).
+aerogpu = ["dep:aero-gpu"]
+aerogpu-trace = ["dep:aero-gpu-trace"]
+dxbc = ["dep:aero-dxbc"]
+d3d9 = ["dep:aero-d3d9"]
+d3d9-shader = ["dxbc", "dep:aero-d3d9-shader"]
+d3d11 = ["dxbc", "dep:aero-d3d11"]
+
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
@@ -46,17 +59,21 @@ path = "../crates/aero-auth-tokens"
 
 [dependencies.aero-gpu]
 path = "../crates/aero-gpu"
+optional = true
 
 [dependencies.aero-dxbc]
 path = "../crates/aero-dxbc"
 features = ["test-utils"]
+optional = true
 
 [dependencies.aero-d3d11]
 path = "../crates/aero-d3d11"
+optional = true
 
 [dependencies.aero-d3d9]
 path = "../crates/aero-d3d9"
 features = ["dxbc-robust"]
+optional = true
 
 [dependencies.aero-audio]
 path = "../crates/aero-audio"
@@ -66,10 +83,12 @@ path = "../crates/aero-virtio"
 
 [dependencies.aero-gpu-trace]
 path = "../crates/aero-gpu-trace"
+optional = true
 
 [dependencies.aero-d3d9-shader]
 # Legacy/reference shader token-stream parser (currently lives under `crates/legacy/`).
 path = "../crates/legacy/aero-d3d9-shader"
+optional = true
 
 [dependencies.aero-shared]
 path = "../crates/aero-shared"
@@ -163,6 +182,7 @@ name = "fuzz_aerogpu_parse"
 path = "fuzz_targets/fuzz_aerogpu_parse.rs"
 test = false
 doc = false
+required-features = ["aerogpu"]
 
 [[bin]]
 name = "fuzz_aerosparse_open"
@@ -241,18 +261,21 @@ name = "fuzz_dxbc_sm4_parse"
 path = "fuzz_targets/fuzz_dxbc_sm4_parse.rs"
 test = false
 doc = false
+required-features = ["dxbc"]
 
 [[bin]]
 name = "fuzz_dxbc_parse"
 path = "fuzz_targets/fuzz_dxbc_parse.rs"
 test = false
 doc = false
+required-features = ["d3d11"]
 
 [[bin]]
 name = "fuzz_d3d9_sm3_decode"
 path = "fuzz_targets/fuzz_d3d9_sm3_decode.rs"
 test = false
 doc = false
+required-features = ["d3d9"]
 
 [[bin]]
 name = "fuzz_auth_tokens"
@@ -265,6 +288,7 @@ name = "fuzz_d3d9_sm3_wgsl"
 path = "fuzz_targets/fuzz_d3d9_sm3_wgsl.rs"
 test = false
 doc = false
+required-features = ["d3d9"]
 
 [[bin]]
 name = "fuzz_hda_mmio"
@@ -325,18 +349,21 @@ name = "fuzz_d3d11_sm4_translate"
 path = "fuzz_targets/fuzz_d3d11_sm4_translate.rs"
 test = false
 doc = false
+required-features = ["d3d11"]
 
 [[bin]]
 name = "fuzz_aerogpu_trace_read"
 path = "fuzz_targets/fuzz_aerogpu_trace_read.rs"
 test = false
 doc = false
+required-features = ["aerogpu-trace"]
 
 [[bin]]
 name = "fuzz_d3d9_shader_parse"
 path = "fuzz_targets/fuzz_d3d9_shader_parse.rs"
 test = false
 doc = false
+required-features = ["d3d9-shader"]
 
 [[bin]]
 name = "fuzz_bios_interrupt_dispatch"
@@ -349,6 +376,7 @@ name = "fuzz_aerogpu_bc_decompress"
 path = "fuzz_targets/fuzz_aerogpu_bc_decompress.rs"
 test = false
 doc = false
+required-features = ["aerogpu"]
 
 [[bin]]
 name = "fuzz_bios_interrupts"
