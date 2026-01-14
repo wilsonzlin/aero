@@ -581,6 +581,12 @@ struct AEROVNET_DIAG_INFO {
 
   ULONG RxVqErrorFlags;
   ULONG TxVqErrorFlags;
+
+  ULONG TxTsoMaxOffloadSize;
+  UCHAR TxUdpChecksumV4Enabled;
+  UCHAR TxUdpChecksumV6Enabled;
+  UCHAR Reserved1;
+  UCHAR Reserved2;
 };
 #pragma pack(pop)
 
@@ -1276,20 +1282,41 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     tx_err_flags_s = tx_err_buf;
   }
 
+  const char* udp4_s = "unknown";
+  const char* udp6_s = "unknown";
+  char udp4_buf[8];
+  char udp6_buf[8];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, TxUdpChecksumV4Enabled) + sizeof(UCHAR)) {
+    snprintf(udp4_buf, sizeof(udp4_buf), "%u", static_cast<unsigned>(info.TxUdpChecksumV4Enabled));
+    udp4_s = udp4_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, TxUdpChecksumV6Enabled) + sizeof(UCHAR)) {
+    snprintf(udp6_buf, sizeof(udp6_buf), "%u", static_cast<unsigned>(info.TxUdpChecksumV6Enabled));
+    udp6_s = udp6_buf;
+  }
+
+  const char* tso_max_s = "unknown";
+  char tso_max_buf[32];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, TxTsoMaxOffloadSize) + sizeof(ULONG)) {
+    snprintf(tso_max_buf, sizeof(tso_max_buf), "%lu", static_cast<unsigned long>(info.TxTsoMaxOffloadSize));
+    tso_max_s = tso_max_buf;
+  }
+
   log.Logf(
       "virtio-net-diag|INFO|host_features=%s|guest_features=%s|irq_mode=%s|irq_message_count=%lu|"
       "msix_config_vector=0x%04x|msix_rx_vector=0x%04x|msix_tx_vector=0x%04x|"
       "rx_queue_size=%u|tx_queue_size=%u|"
       "rx_avail_idx=%u|rx_used_idx=%u|tx_avail_idx=%u|tx_used_idx=%u|"
       "rx_vq_error_flags=%s|tx_vq_error_flags=%s|"
-      "tx_csum_v4=%u|tx_csum_v6=%u|tx_tso_v4=%u|tx_tso_v6=%u|"
+      "tx_csum_v4=%u|tx_csum_v6=%u|tx_udp_csum_v4=%s|tx_udp_csum_v6=%s|"
+      "tx_tso_v4=%u|tx_tso_v6=%u|tx_tso_max_size=%s|"
       "stat_tx_err=%llu|stat_rx_err=%llu|stat_rx_no_buf=%llu",
       VirtioFeaturesToString(info.HostFeatures).c_str(), VirtioFeaturesToString(info.GuestFeatures).c_str(), mode,
       static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
       static_cast<unsigned>(info.MsixRxVector), static_cast<unsigned>(info.MsixTxVector), info.RxQueueSize,
       info.TxQueueSize, info.RxAvailIdx, info.RxUsedIdx, info.TxAvailIdx, info.TxUsedIdx, rx_err_flags_s,
-      tx_err_flags_s, info.TxChecksumV4Enabled,
-      info.TxChecksumV6Enabled, info.TxTsoV4Enabled, info.TxTsoV6Enabled,
+      tx_err_flags_s, info.TxChecksumV4Enabled, info.TxChecksumV6Enabled, udp4_s, udp6_s, info.TxTsoV4Enabled,
+      info.TxTsoV6Enabled, tso_max_s,
       static_cast<unsigned long long>(info.StatTxErrors), static_cast<unsigned long long>(info.StatRxErrors),
       static_cast<unsigned long long>(info.StatRxNoBuffers));
 }

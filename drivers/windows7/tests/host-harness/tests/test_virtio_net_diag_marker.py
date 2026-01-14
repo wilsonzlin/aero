@@ -75,6 +75,21 @@ class VirtioNetDiagMarkerTests(unittest.TestCase):
             "rx_vq_error_flags=0x00000000|tx_vq_error_flags=0x00000001",
         )
 
+    def test_emits_udp_checksum_fields(self) -> None:
+        tail = (
+            b"virtio-net-diag|INFO|host_features=0x1|guest_features=0x2|irq_mode=msix|irq_message_count=3|"
+            b"tx_csum_v4=1|tx_csum_v6=1|tx_udp_csum_v4=0|tx_udp_csum_v6=1|"
+            b"tx_tso_v4=1|tx_tso_v6=0|tx_tso_max_size=65536\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|host_features=0x1|guest_features=0x2|"
+            "irq_mode=msix|irq_message_count=3|"
+            "tx_csum_v4=1|tx_csum_v6=1|tx_udp_csum_v4=0|tx_udp_csum_v6=1|"
+            "tx_tso_v4=1|tx_tso_v6=0|tx_tso_max_size=65536",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

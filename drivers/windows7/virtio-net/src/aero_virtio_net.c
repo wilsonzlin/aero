@@ -84,6 +84,13 @@ typedef struct _AEROVNET_DIAG_INFO {
 
   ULONG RxVqErrorFlags;
   ULONG TxVqErrorFlags;
+
+  // TX offload configuration (NDIS-controlled).
+  ULONG TxTsoMaxOffloadSize;
+  UCHAR TxUdpChecksumV4Enabled;
+  UCHAR TxUdpChecksumV6Enabled;
+  UCHAR Reserved1;
+  UCHAR Reserved2;
 } AEROVNET_DIAG_INFO;
 #pragma pack(pop)
 
@@ -4946,6 +4953,10 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
 
   Info.RxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->RxVq.Vq);
   Info.TxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->TxVq.Vq);
+
+  Info.TxTsoMaxOffloadSize = Adapter->TxTsoMaxOffloadSize;
+  Info.TxUdpChecksumV4Enabled = Adapter->TxUdpChecksumV4Enabled ? 1 : 0;
+  Info.TxUdpChecksumV6Enabled = Adapter->TxUdpChecksumV6Enabled ? 1 : 0;
   NdisReleaseSpinLock(&Adapter->Lock);
 
   // Read back the currently programmed MSI-X vectors from virtio common config.
