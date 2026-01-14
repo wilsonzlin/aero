@@ -2,6 +2,11 @@
 
 This repository includes a minimal **virtio-snd** device model (`crates/aero-virtio`, `aero_virtio::devices::snd`) intended to be used as a high-performance alternative to full Intel HDA emulation once guest drivers exist.
 
+> Runtime note: the browser integration details in this document describe the legacy worker device stack
+> (`vmRuntime=legacy`), where guest devices are hosted in the I/O worker. In the canonical machine runtime
+> (`vmRuntime=machine`), the I/O worker runs in a host-only stub mode and guest audio devices are not yet
+> exposed via the browser worker runtime.
+
 Note: the **browser worker runtime** (IO worker) wires up **HDA** as the default *active* guest audio device, but **virtio-snd is
 also wired into the IO-worker PCI stack**:
 

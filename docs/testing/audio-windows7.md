@@ -10,6 +10,10 @@ This is a **manual**, **reproducible** smoke test to validate that Windows 7’s
 > Windows 7 uses the inbox `hdaudbus.sys` (bus) + `hdaudio.sys` (function) drivers.
 > The goal of this smoke test is to confirm we do **not** need a custom driver just to get basic sound.
 
+> Runtime note: this checklist currently applies to the legacy browser runtime (`vmRuntime=legacy`), where guest audio devices
+> are hosted in the I/O worker. The canonical machine runtime (`vmRuntime=machine`) does not yet expose guest audio devices via
+> the browser worker stack.
+
 Important:
 
 - This checklist is for the **baseline HDA device**.

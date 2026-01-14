@@ -849,11 +849,14 @@ Expected signal:
 
 ### 5.4 Verify routing switch happens at `DRIVER_OK`
 
-In the **web runtime**, input auto-routing is implemented by the IO worker:
+In the **web runtime** (`vmRuntime=legacy`), input auto-routing is implemented by the IO worker:
 
 - [`web/src/workers/io.worker.ts`](../web/src/workers/io.worker.ts)
   - `maybeUpdateKeyboardInputBackend` / `maybeUpdateMouseInputBackend`
   - It prefers virtio-input only when `virtioInputKeyboard?.driverOk()` / `virtioInputMouse?.driverOk()` becomes true.
+
+> Machine runtime note: in `vmRuntime=machine` the CPU worker runs the canonical `api.Machine` and receives input batches directly.
+> The legacy IO-worker backend selection policy described in this section does not currently apply to machine runtime.
 
 The backend selection policy is factored into a small pure helper (with unit tests), which is useful when refactoring routing behavior:
 
