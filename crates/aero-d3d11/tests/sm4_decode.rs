@@ -1977,6 +1977,13 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_IMAX, 0x64);
     assert_eq!(OPCODE_UMIN, 0x65);
     assert_eq!(OPCODE_UMAX, 0x66);
+    // Integer compare opcodes.
+    assert_eq!(OPCODE_IEQ, 0x20);
+    assert_eq!(OPCODE_IGE, 0x21);
+    assert_eq!(OPCODE_ILT, 0x22);
+    assert_eq!(OPCODE_INE, 0x27);
+    assert_eq!(OPCODE_ULT, 0x4f);
+    assert_eq!(OPCODE_UGE, 0x50);
     assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
     assert_eq!(OPCODE_DCL_RESOURCE_RAW, 0x205);
     assert_eq!(OPCODE_DCL_RESOURCE_STRUCTURED, 0x206);
