@@ -76,7 +76,7 @@ function evalRustConstExpr(expr: string, env: Readonly<Record<string, bigint>>):
   const cast = e.match(/^(.+?)\s+as\s+[A-Za-z0-9_]+$/);
   if (cast) return evalRustConstExpr(cast[1] ?? "", env);
 
-  const aerogpuFormat = e.match(/^AerogpuFormat::([A-Za-z0-9_]+)$/);
+  const aerogpuFormat = e.match(/^(?:[A-Za-z0-9_:]+::)?AerogpuFormat::([A-Za-z0-9_]+)$/);
   if (aerogpuFormat) {
     const variant = aerogpuFormat[1] ?? "";
     const values = getAerogpuFormatValues();
