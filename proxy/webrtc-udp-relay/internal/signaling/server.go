@@ -18,7 +18,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/httpserver"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
@@ -415,7 +414,7 @@ func (s *server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientOrigin := httpserver.NormalizedOriginFromRequest(r)
+	clientOrigin := normalizedOriginFromRequest(r)
 	clientCredential := authRes.Credential
 
 	var relaySession *relay.Session
@@ -576,7 +575,7 @@ func (s *server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientOrigin := httpserver.NormalizedOriginFromRequest(r)
+	clientOrigin := normalizedOriginFromRequest(r)
 	clientCredential := authRes.Credential
 
 	sessionID, relaySession, err := s.allocateRelaySession(authRes.SessionKey)
@@ -967,7 +966,7 @@ func (wss *wsSession) keepaliveLoop() {
 func (wss *wsSession) run() {
 	defer wss.Close()
 
-	wss.origin = httpserver.NormalizedOriginFromRequest(wss.req)
+	wss.origin = normalizedOriginFromRequest(wss.req)
 
 	wss.conn.SetReadLimit(wss.maxMessageBytes)
 	// Ensure we always respond to peer pings while serializing writes with the
