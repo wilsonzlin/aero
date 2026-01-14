@@ -1571,7 +1571,9 @@ static VOID AerovblkDrainCompletionsLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION de
 
 static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   STOR_LOCK_HANDLE lock;
+  BOOLEAN needReset;
 
+  needReset = FALSE;
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
   if (devExt->ResetInProgress != 0) {
     /*
@@ -1583,7 +1585,22 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
     return TRUE;
   }
   AerovblkDrainCompletionsLocked(devExt);
+
+  if (devExt->Vq.queue_size != 0 && virtqueue_split_get_error_flags(&devExt->Vq) != 0) {
+    /*
+     * The virtqueue implementation detected invalid device behaviour (e.g.
+     * corrupted used-ring entries). Ask StorPort to reset the bus so we can
+     * reinitialize the device/queue and abort outstanding requests safely.
+     */
+    virtqueue_split_clear_error_flags(&devExt->Vq);
+    needReset = TRUE;
+  }
   StorPortReleaseSpinLock(devExt, &lock);
+
+  if (needReset) {
+    StorPortNotification(ResetDetected, devExt, 0);
+    return TRUE;
+  }
 
   StorPortNotification(NextRequest, devExt, NULL);
   return TRUE;
