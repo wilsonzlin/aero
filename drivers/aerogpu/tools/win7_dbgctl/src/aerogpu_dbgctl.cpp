@@ -800,10 +800,11 @@ static void PrintUsage() {
 
 static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS st) {
   DWORD win32 = 0;
-  if (f->RtlNtStatusToDosError) {
+  if (f && f->RtlNtStatusToDosError) {
     win32 = f->RtlNtStatusToDosError(st);
   }
 
+  bool printed = false;
   if (win32 != 0) {
     wchar_t msg[512];
     DWORD chars = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, win32, 0,
@@ -814,11 +815,18 @@ static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS
       }
       fwprintf(stderr, L"%s: NTSTATUS=0x%08lx (Win32=%lu: %s)\n", prefix, (unsigned long)st,
                (unsigned long)win32, msg);
-      return;
+      printed = true;
     }
   }
 
-  fwprintf(stderr, L"%s: NTSTATUS=0x%08lx\n", prefix, (unsigned long)st);
+  if (!printed) {
+    fwprintf(stderr, L"%s: NTSTATUS=0x%08lx\n", prefix, (unsigned long)st);
+  }
+  if (st == STATUS_TIMEOUT && g_escape_timeout_ms != 0) {
+    fwprintf(stderr,
+             L"hint: operation timed out after %lu ms (increase --timeout-ms if the system is slow)\n",
+             (unsigned long)g_escape_timeout_ms);
+  }
 }
 
 static void PrintReadGpaNotSupportedHint(const wchar_t *label) {
