@@ -1044,6 +1044,8 @@ GpuErrorEvent { time_ms, backend_kind, severity, category, message, details? }
 
 Categories are intentionally coarse so they can be aggregated and alerted on: `Init`, `DeviceLost`, `Surface`, `ShaderCompile`, `PipelineCreate`, `Validation`, `OutOfMemory`, `Unknown`.
 
+Implementation note (WebGPU): validation/pipeline errors are often reported asynchronously via `GPUDevice`'s `uncapturederror` event (rather than thrown exceptions). The WebGPU presenter backends (Rust/wgpu and the TS WebGPU worker presenter) register an uncaptured-error handler and forward each error as a structured `GpuErrorEvent` so diagnostics are not lost.
+
 ### Surface recovery during present
 
 When presenting a frame, handle surface errors deterministically:
