@@ -2052,11 +2052,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     }
                 },
                 Sm4Inst::BreakC { op, a, b } => {
+                    let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
                     let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                    if !inside_loop {
+                    if !inside_case && !inside_loop {
                         return Err(GsTranslateError::MalformedControlFlow {
                             inst_index,
-                            expected: "loop".to_owned(),
+                            expected: "loop or switch case".to_owned(),
                             found: blocks
                                 .last()
                                 .map(|b| b.describe())

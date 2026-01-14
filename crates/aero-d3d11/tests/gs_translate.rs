@@ -1943,6 +1943,70 @@ fn gs_translate_supports_switch_case_default() {
 }
 
 #[test]
+fn gs_translate_supports_breakc_inside_switch_case() {
+    const D3D_NAME_PRIMITIVE_ID: u32 = 7;
+
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle(3),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(3),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_PRIMITIVE_ID,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::Switch {
+                selector: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Case { value: 0 },
+            Sm4Inst::BreakC {
+                op: Sm4CmpOp::Eq,
+                a: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                b: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::EndSwitch,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(wgsl.contains("switch("), "expected switch statement:\n{wgsl}");
+    assert!(
+        wgsl.contains("case 0i:"),
+        "expected case label:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("if (") && wgsl.contains("break;"),
+        "expected conditional break in WGSL:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn gs_translate_supports_constant_buffer_operands() {
     let module = Sm4Module {
         stage: ShaderStage::Geometry,
