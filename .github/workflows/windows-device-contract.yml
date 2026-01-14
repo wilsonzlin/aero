@@ -73,3 +73,9 @@ jobs:
         run: |
           set -euo pipefail
           cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p device-contract-validator
+
+      - name: Run Windows device contract integration test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-devices --test windows_device_contract
