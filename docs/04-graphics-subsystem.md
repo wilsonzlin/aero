@@ -109,6 +109,11 @@ At a high level, the runtime is:
 
 The details of worker orchestration are outside the scope of this doc, but the “presentation boundary” (what memory is shared and how) is defined by the shared-memory structures below.
 
+Note: there is also a main-thread fallback presenter for the legacy shared framebuffer path (no GPU worker / no OffscreenCanvas transfer). This uses a 2D canvas and polls `SharedFramebufferHeaderIndex.FRAME_SEQ`:
+
+- implementation: `web/src/display/shared_layout_presenter.ts` (`SharedLayoutPresenter`)
+- wired in the web UI/runtime: `web/src/main.ts` (`ensureVgaPresenter`)
+
 ## Frame pacing / “new frame” state (SharedArrayBuffer)
 
 In addition to the pixel/scanout structures, the browser runtime uses a small `SharedArrayBuffer` as a cross-thread “frame status” flag + metrics block.
