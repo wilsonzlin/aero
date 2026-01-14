@@ -103,6 +103,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
   uint8_t IhlWords;
   size_t IpHdrLen;
   uint16_t TotalLen;
+  size_t MaxEnd;
   uint16_t FragOffFlags;
   uint16_t FragOff;
   uint16_t MoreFrags;
@@ -138,6 +139,8 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED;
   }
 
+  MaxEnd = (TotalLen != 0) ? (L3Offset + (size_t)TotalLen) : FrameLen;
+
   Info->L3Proto = (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4;
   Info->L3Offset = (uint16_t)L3Offset;
   Info->L3Len = (uint16_t)IpHdrLen;
@@ -166,9 +169,9 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
 
   switch (Info->L4Proto) {
     case 6: /* TCP */
-      return VirtioNetHdrOffloadParseTcp(Frame, FrameLen, L4Offset, Info);
+      return VirtioNetHdrOffloadParseTcp(Frame, MaxEnd, L4Offset, Info);
     case 17: /* UDP */
-      return VirtioNetHdrOffloadParseUdp(Frame, FrameLen, L4Offset, Info);
+      return VirtioNetHdrOffloadParseUdp(Frame, MaxEnd, L4Offset, Info);
     default:
       Info->L4Len = 0;
       Info->PayloadOffset = (uint16_t)L4Offset;
@@ -309,9 +312,9 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
 
   switch (NextHdr) {
     case 6:
-      return VirtioNetHdrOffloadParseTcp(Frame, FrameLen, Offset, Info);
+      return VirtioNetHdrOffloadParseTcp(Frame, MaxEnd, Offset, Info);
     case 17:
-      return VirtioNetHdrOffloadParseUdp(Frame, FrameLen, Offset, Info);
+      return VirtioNetHdrOffloadParseUdp(Frame, MaxEnd, Offset, Info);
     default:
       Info->L4Len = 0;
       Info->PayloadOffset = (uint16_t)Offset;

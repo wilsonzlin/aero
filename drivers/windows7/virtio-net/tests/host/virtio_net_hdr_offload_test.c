@@ -413,12 +413,43 @@ static int test_malformed_and_truncated(void) {
     ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
   }
 
+  /* IPv4 total_len smaller than L4 header (must treat as truncated even if frame has padding). */
+  {
+    static const uint8_t Frame[] = {
+        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x08, 0x00,
+        0x45, 0x00, 0x00, 0x14, /* total_len=20 (IPv4 header only) */
+        0x00, 0x00, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00, /* proto=TCP */
+        0,    0,    0,    0,    0,    0,    0,    0,
+        /* TCP header bytes (should be ignored due to total_len) */
+        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x50, 0x00, 0,    0,    0,    0,    0,
+        0,
+    };
+    St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+    ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
+  }
+
   /* IPv6 header with payload_len exceeding available bytes */
   {
     static const uint8_t Frame[] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x86, 0xdd,
         0x60, 0, 0, 0, 0x00, 0x10, 0x06, 0x40, /* payload_len=16, next=TCP */
         /* rest of IPv6 header truncated */
+    };
+    St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+    ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
+  }
+
+  /* IPv6 payload_len smaller than TCP header (must treat as truncated even if frame has trailing bytes). */
+  {
+    static const uint8_t Frame[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x86, 0xdd,
+        0x60, 0, 0, 0, 0x00, 0x08, 0x06, 0x40, /* payload_len=8, next=TCP */
+        /* rest of IPv6 header */
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        /* 8 bytes of payload (not a full TCP header) */
+        0, 0, 0, 0, 0, 0, 0, 0,
+        /* extra trailing bytes that should not be read */
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     };
     St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
     ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
