@@ -178,6 +178,13 @@ const UCHAR VirtioInputTabletReportDescriptor[] = {
     0xC0,              // End Collection
 };
 
+/*
+ * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN).
+ *
+ * Total: 47 bytes (8 buttons + absolute X/Y).
+ */
+C_ASSERT(sizeof(VirtioInputTabletReportDescriptor) == 47);
+
 const USHORT VirtioInputTabletReportDescriptorLength = (USHORT)sizeof(VirtioInputTabletReportDescriptor);
 
 const HID_DESCRIPTOR VirtioInputTabletHidDescriptor = {

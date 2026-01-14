@@ -44,6 +44,11 @@ SPECS: list[DescriptorSpec] = [
         array_name="VirtioInputMouseReportDescriptor",
         hidtest_len_macro="VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN",
     ),
+    DescriptorSpec(
+        kind="tablet",
+        array_name="VirtioInputTabletReportDescriptor",
+        hidtest_len_macro="VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN",
+    ),
 ]
 
 
@@ -170,13 +175,16 @@ def main() -> int:
     try:
         hidtest_kbd_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN")
         hidtest_mouse_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN")
+        hidtest_tablet_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN")
         translate_kbd_size = extract_enum_int(translate_text, "HID_TRANSLATE_KEYBOARD_REPORT_SIZE")
         translate_mouse_size = extract_enum_int(translate_text, "HID_TRANSLATE_MOUSE_REPORT_SIZE")
+        translate_tablet_size = extract_enum_int(translate_text, "HID_TRANSLATE_TABLET_REPORT_SIZE")
 
         print(
             "  input report sizes:"
             f" kbd hidtest={hidtest_kbd_input} translate={translate_kbd_size},"
-            f" mouse hidtest={hidtest_mouse_input} translate={translate_mouse_size}"
+            f" mouse hidtest={hidtest_mouse_input} translate={translate_mouse_size},"
+            f" tablet hidtest={hidtest_tablet_input} translate={translate_tablet_size}"
         )
 
         if hidtest_kbd_input != translate_kbd_size:
@@ -196,6 +204,16 @@ def main() -> int:
                         "mouse input report length mismatch:",
                         f"  hidtest VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN : {hidtest_mouse_input}",
                         f"  hid_translate.h HID_TRANSLATE_MOUSE_REPORT_SIZE : {translate_mouse_size}",
+                    ]
+                )
+            )
+        if hidtest_tablet_input != translate_tablet_size:
+            failures.append(
+                "\n".join(
+                    [
+                        "tablet input report length mismatch:",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN : {hidtest_tablet_input}",
+                        f"  hid_translate.h HID_TRANSLATE_TABLET_REPORT_SIZE : {translate_tablet_size}",
                     ]
                 )
             )
@@ -222,4 +240,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
