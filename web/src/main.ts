@@ -5786,15 +5786,26 @@ function renderAudioPanel(): HTMLElement {
         // Bundle manifest (best-effort). This helps tooling quickly identify which files were
         // emitted by this export run without unpacking the tar manually.
         try {
-          const files = entries.map((e) => ({ path: e.path, bytes: e.data.byteLength }));
-          files.sort((a, b) => a.path.localeCompare(b.path));
-          const totalBytes = files.reduce((sum, f) => sum + (typeof f.bytes === "number" && Number.isFinite(f.bytes) ? f.bytes : 0), 0);
-          entries.push({
-            path: `${dir}/manifest.json`,
-            data: encoder.encode(
-              JSON.stringify({ timeIso, build: getBuildInfoForExport(), fileCount: files.length, totalBytes, files }, null, 2),
-            ),
-          });
+          const build = getBuildInfoForExport();
+          const manifestPath = `${dir}/manifest.json`;
+          const baseFiles = entries.map((e) => ({ path: e.path, bytes: e.data.byteLength }));
+
+          // Include the manifest itself in the file list. This is self-referential (the manifest
+          // contains its own byte size), so compute a small fixed point by iterating until the
+          // encoded size stabilizes.
+          let manifestSizeGuess = 0;
+          let manifestBytes = encoder.encode("");
+          for (let i = 0; i < 8; i += 1) {
+            const files = [...baseFiles, { path: manifestPath, bytes: manifestSizeGuess }];
+            files.sort((a, b) => a.path.localeCompare(b.path));
+            const totalBytes = files.reduce((sum, f) => sum + (Number.isFinite(f.bytes) ? f.bytes : 0), 0);
+            manifestBytes = encoder.encode(JSON.stringify({ timeIso, build, fileCount: files.length, totalBytes, files }, null, 2));
+            const next = manifestBytes.byteLength;
+            if (next === manifestSizeGuess) break;
+            manifestSizeGuess = next;
+          }
+
+          entries.push({ path: manifestPath, data: manifestBytes });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/manifest-error.txt`, data: encoder.encode(message) });
