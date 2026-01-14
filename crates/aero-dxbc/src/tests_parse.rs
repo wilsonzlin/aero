@@ -57,28 +57,26 @@ fn parse_empty_dxbc_is_ok() {
 fn parse_allows_misaligned_chunk_offsets() {
     // Some real-world DXBC containers (and fuzzed inputs) may not maintain strict
     // 4-byte alignment for chunk starts. The parser should handle this safely.
-    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1]), (FourCC(*b"JUNK"), &[2, 3])]);
+    let mut bytes = dxbc_test_utils::build_container_unaligned(&[
+        (FourCC(*b"SHDR"), &[1]),
+        (FourCC(*b"JUNK"), &[2, 3]),
+    ]);
 
-    // `build_container` always aligns chunks, so patch the blob to deliberately place the second
-    // chunk header at a misaligned offset (using the padding after the first chunk).
+    // The first chunk is 8 (header) + 1 (payload) bytes long, so the second chunk offset is
+    // naturally misaligned. Also add a trailing byte beyond the declared total_size to ensure the
+    // parser treats `total_size` as authoritative.
+    let declared_total_size = bytes.len();
+    bytes.push(0xcc);
+
+    // Sanity check: ensure we actually produced a misaligned offset for the second chunk.
     let offset_table_pos = 4 + 16 + 4 + 4 + 4;
     let second_off = u32::from_le_bytes(
         bytes[offset_table_pos + 4..offset_table_pos + 8]
             .try_into()
             .unwrap(),
     ) as usize;
-    let misaligned_off = second_off - 1;
-    bytes.copy_within(second_off.., misaligned_off);
-    bytes[offset_table_pos + 4..offset_table_pos + 8]
-        .copy_from_slice(&(misaligned_off as u32).to_le_bytes());
-
-    // Also make the declared total_size non-4-aligned (the parser should treat the declared size
-    // as the authoritative bounds and ignore any trailing bytes).
-    let declared_total_size = (bytes.len() - 1) as u32;
-    bytes[24..28].copy_from_slice(&declared_total_size.to_le_bytes());
-
-    // Sanity check: ensure we actually produced a misaligned offset for the second chunk.
-    assert!(!misaligned_off.is_multiple_of(4));
+    assert!(!second_off.is_multiple_of(4));
+    assert!(!declared_total_size.is_multiple_of(4));
 
     let file = DxbcFile::parse(&bytes).expect("parse should succeed");
     let chunks: Vec<_> = file.chunks().collect();

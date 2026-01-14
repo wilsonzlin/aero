@@ -133,6 +133,9 @@ fn build_signature_chunk_with_entry_size(
 /// The checksum field is **not** computed; it is set to all zeros. This is
 /// intentional: `aero-dxbc` does not require checksum correctness during
 /// parsing, and most tests only need a structurally-valid container.
+///
+/// Chunk payloads are padded to 4-byte alignment (with zero bytes), mirroring
+/// common FXC/D3DCompiler output.
 pub fn build_container(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     // Header layout:
     // - magic:      4 bytes ("DXBC")
@@ -191,6 +194,55 @@ pub fn build_container(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     out
 }
 
+/// Builds a minimal `DXBC` container containing the provided chunks, **without**
+/// padding chunk payloads to 4-byte alignment.
+///
+/// This is useful for tests that intentionally exercise odd/malformed chunk
+/// layouts (e.g. misaligned chunk offsets) while still keeping the container
+/// structurally self-consistent.
+pub fn build_container_unaligned(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
+    let header_size = 4 + 16 + 4 + 4 + 4 + (4 * chunks.len());
+    let chunk_bytes = chunks.iter().map(|(_, data)| 8 + data.len()).sum::<usize>();
+
+    let mut out = Vec::with_capacity(header_size + chunk_bytes);
+
+    out.extend_from_slice(b"DXBC");
+    out.extend_from_slice(&[0u8; 16]); // checksum
+    out.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    out.extend_from_slice(&0u32.to_le_bytes()); // total_size placeholder
+
+    let chunk_count = u32::try_from(chunks.len()).expect("DXBC chunk_count does not fit in u32");
+    out.extend_from_slice(&chunk_count.to_le_bytes());
+
+    // Reserve space for the chunk offset table and fill it in once we know the offsets.
+    let offsets_pos = out.len();
+    out.resize(out.len() + 4 * chunks.len(), 0);
+
+    let mut offsets = Vec::with_capacity(chunks.len());
+    for (fourcc, data) in chunks {
+        let offset = u32::try_from(out.len()).expect("DXBC chunk offset does not fit in u32");
+        offsets.push(offset);
+
+        let chunk_size = u32::try_from(data.len()).expect("DXBC chunk size does not fit in u32");
+        out.extend_from_slice(&fourcc.0);
+        out.extend_from_slice(&chunk_size.to_le_bytes());
+        out.extend_from_slice(data);
+    }
+
+    // Fill offsets.
+    for (i, offset) in offsets.iter().enumerate() {
+        let pos = offsets_pos + i * 4;
+        out[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
+    }
+
+    // Fill total_size.
+    let total_size = u32::try_from(out.len()).expect("DXBC total_size does not fit in u32");
+    let total_size_pos = 4 + 16 + 4;
+    out[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
+
+    out
+}
+
 /// Convenience wrapper for [`build_container`] that accepts chunk payloads as owned `Vec<u8>`.
 ///
 /// This is handy for tests that build chunk data inline (e.g. `vec![0u8; 32]`)
@@ -201,6 +253,15 @@ pub fn build_container_owned(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
         .map(|(fourcc, data)| (*fourcc, data.as_slice()))
         .collect();
     build_container(&refs)
+}
+
+/// Convenience wrapper for [`build_container_unaligned`] that accepts chunk payloads as owned `Vec<u8>`.
+pub fn build_container_owned_unaligned(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    let refs: Vec<(FourCC, &[u8])> = chunks
+        .iter()
+        .map(|(fourcc, data)| (*fourcc, data.as_slice()))
+        .collect();
+    build_container_unaligned(&refs)
 }
 
 #[cfg(test)]
@@ -220,5 +281,25 @@ mod tests {
 
         let chunk = file.get_chunk(FourCC(*b"SHDR")).expect("missing SHDR");
         assert_eq!(chunk.data, &shdr);
+    }
+
+    #[test]
+    fn build_container_unaligned_roundtrips_through_parser() {
+        let shdr = [1u8];
+        let junk = [2u8, 3];
+        let bytes = build_container_unaligned(&[
+            (FourCC(*b"SHDR"), &shdr),
+            (FourCC(*b"JUNK"), &junk),
+        ]);
+
+        let file = DxbcFile::parse(&bytes).expect("built unaligned container should parse");
+        assert_eq!(file.header().magic, FourCC(*b"DXBC"));
+        assert_eq!(file.header().total_size as usize, bytes.len());
+        assert_eq!(file.header().chunk_count, 2);
+
+        let shdr_chunk = file.get_chunk(FourCC(*b"SHDR")).expect("missing SHDR");
+        assert_eq!(shdr_chunk.data, &shdr);
+        let junk_chunk = file.get_chunk(FourCC(*b"JUNK")).expect("missing JUNK");
+        assert_eq!(junk_chunk.data, &junk);
     }
 }
