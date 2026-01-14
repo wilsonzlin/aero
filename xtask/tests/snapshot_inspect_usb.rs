@@ -48,7 +48,7 @@ impl SnapshotSource for UsbcMultiControllerSource {
         let nested_ehci = io_snapshot_header(b"EHCP", (1, 0));
         let nested_xhci = io_snapshot_header(b"XHCP", (1, 0));
 
-        let mut data = io_snapshot_header(b"USBC", (1, 1));
+        let mut data = io_snapshot_header(b"USBC", (1, 2));
         // UHCI remainder + nested bytes.
         data.extend_from_slice(&1u16.to_le_bytes());
         data.extend_from_slice(&8u32.to_le_bytes());
@@ -116,6 +116,8 @@ fn snapshot_inspect_decodes_usbc_multi_controller_fields() {
     assert!(stdout.contains("inner=USBC"));
     assert!(stdout.contains("nested=UHCP"));
     assert!(stdout.contains("nested=EHCP"));
+    assert!(stdout.contains("nested=XHCP"));
+    assert!(stdout.contains("xhci_ns_remainder=125000ns"));
 }
 
 struct AusbContainerSource;

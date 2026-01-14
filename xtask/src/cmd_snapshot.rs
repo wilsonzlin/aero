@@ -829,8 +829,8 @@ fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionI
                         // - 2: uhci_state (bytes, typically `UHCP`)
                         // - 3: ehci_ns_remainder (u64)
                         // - 4: ehci_state (bytes, typically `EHCP`)
-                        // - 5: xhci_ns_remainder (u64) (future)
-                        // - 6: xhci_state (bytes, typically `XHCP`) (future)
+                        // - 5: xhci_ns_remainder (u64) (added in USBC v1.2)
+                        // - 6: xhci_state (bytes, typically `XHCP`) (added in USBC v1.2)
                         let mut uhci_ns_remainder: Option<u64> = None;
                         let mut uhci_nested: Option<DeviceInnerHeader> = None;
                         let mut ehci_ns_remainder: Option<u64> = None;
