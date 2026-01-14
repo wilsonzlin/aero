@@ -4673,6 +4673,8 @@ impl AerogpuD3d11Executor {
                 | OPCODE_SET_RENDER_STATE
                 | OPCODE_SET_SAMPLERS
                 | OPCODE_SET_CONSTANT_BUFFERS
+                | OPCODE_SET_SHADER_RESOURCE_BUFFERS
+                | OPCODE_SET_UNORDERED_ACCESS_BUFFERS
                 | OPCODE_CLEAR
                 | OPCODE_NOP
                 | OPCODE_DEBUG_MARKER => {}
@@ -6414,15 +6416,29 @@ impl AerogpuD3d11Executor {
                                 .try_into()
                                 .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
                             if slot_usize < used_slots.len() && used_slots[slot_usize] {
-                                let needs_upload = self
+                                if self
                                     .resources
-                                    .textures
+                                    .buffers
                                     .get(&texture)
-                                    .is_some_and(|tex| tex.dirty && tex.backing.is_some());
-                                if needs_upload && !self.encoder_used_textures.contains(&texture) {
-                                    self.upload_texture_from_guest_memory(
-                                        texture, allocs, guest_mem,
-                                    )?;
+                                    .is_some_and(|buf| buf.backing.is_some() && buf.dirty.is_some())
+                                {
+                                    if !self.encoder_used_buffers.contains(&texture) {
+                                        self.upload_buffer_from_guest_memory(
+                                            texture, allocs, guest_mem,
+                                        )?;
+                                    }
+                                } else {
+                                    let needs_upload = self
+                                        .resources
+                                        .textures
+                                        .get(&texture)
+                                        .is_some_and(|tex| tex.dirty && tex.backing.is_some());
+                                    if needs_upload && !self.encoder_used_textures.contains(&texture)
+                                    {
+                                        self.upload_texture_from_guest_memory(
+                                            texture, allocs, guest_mem,
+                                        )?;
+                                    }
                                 }
                             }
                         }
@@ -6495,6 +6511,142 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     self.exec_set_constant_buffers(cmd_bytes)?;
+                }
+                OPCODE_SET_SHADER_RESOURCE_BUFFERS => {
+                    // Allow first-use uploads of allocation-backed SRV buffers inside a render pass
+                    // by reordering the upload ahead of the pass submission. This is only safe
+                    // when the buffer has not been referenced by any previously recorded GPU
+                    // commands in the current command encoder.
+                    if cmd_bytes.len() >= 24 {
+                        let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                        let start_slot = read_u32_le(cmd_bytes, 12)?;
+                        let buffer_count_u32 = read_u32_le(cmd_bytes, 16)?;
+                        let stage_ex = read_u32_le(cmd_bytes, 20)?;
+                        let buffer_count: usize = buffer_count_u32.try_into().map_err(|_| {
+                            anyhow!("SET_SHADER_RESOURCE_BUFFERS: buffer_count out of range")
+                        })?;
+                        let expected =
+                            24usize
+                                .checked_add(buffer_count.checked_mul(16).ok_or_else(|| {
+                                    anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow")
+                                })?)
+                                .ok_or_else(|| {
+                                    anyhow!("SET_SHADER_RESOURCE_BUFFERS: size overflow")
+                                })?;
+                        if cmd_bytes.len() >= expected {
+                            let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
+                                stage_raw, stage_ex,
+                            )
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "SET_SHADER_RESOURCE_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
+                                )
+                            })?;
+                            let used_slots = match stage {
+                                ShaderStage::Vertex => &used_textures_vs,
+                                ShaderStage::Pixel => &used_textures_ps,
+                                ShaderStage::Compute => &used_textures_cs,
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                    &used_textures_cs
+                                }
+                            };
+                            for i in 0..buffer_count {
+                                let slot = start_slot.checked_add(i as u32).ok_or_else(|| {
+                                    anyhow!("SET_SHADER_RESOURCE_BUFFERS: slot overflow")
+                                })?;
+                                let slot_usize: usize = slot.try_into().map_err(|_| {
+                                    anyhow!("SET_SHADER_RESOURCE_BUFFERS: slot out of range")
+                                })?;
+                                if slot_usize >= used_slots.len() || !used_slots[slot_usize] {
+                                    continue;
+                                }
+
+                                let base = 24 + i * 16;
+                                let buffer = read_u32_le(cmd_bytes, base)?;
+                                if buffer == 0 {
+                                    continue;
+                                }
+                                let needs_upload =
+                                    self.resources.buffers.get(&buffer).is_some_and(|buf| {
+                                        buf.backing.is_some() && buf.dirty.is_some()
+                                    });
+                                if needs_upload && !self.encoder_used_buffers.contains(&buffer) {
+                                    self.upload_buffer_from_guest_memory(
+                                        buffer, allocs, guest_mem,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                    self.exec_set_shader_resource_buffers(cmd_bytes)?;
+                }
+                OPCODE_SET_UNORDERED_ACCESS_BUFFERS => {
+                    // Allow first-use uploads of allocation-backed UAV buffers inside a render pass
+                    // by reordering the upload ahead of the pass submission. This is only safe
+                    // when the buffer has not been referenced by any previously recorded GPU
+                    // commands in the current command encoder.
+                    if cmd_bytes.len() >= 24 {
+                        let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                        let start_slot = read_u32_le(cmd_bytes, 12)?;
+                        let uav_count_u32 = read_u32_le(cmd_bytes, 16)?;
+                        let stage_ex = read_u32_le(cmd_bytes, 20)?;
+                        let uav_count: usize = uav_count_u32.try_into().map_err(|_| {
+                            anyhow!("SET_UNORDERED_ACCESS_BUFFERS: uav_count out of range")
+                        })?;
+                        let expected =
+                            24usize
+                                .checked_add(uav_count.checked_mul(16).ok_or_else(|| {
+                                    anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
+                                })?)
+                                .ok_or_else(|| {
+                                    anyhow!("SET_UNORDERED_ACCESS_BUFFERS: size overflow")
+                                })?;
+                        if cmd_bytes.len() >= expected {
+                            let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
+                                stage_raw, stage_ex,
+                            )
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "SET_UNORDERED_ACCESS_BUFFERS: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
+                                )
+                            })?;
+                            let used_slots = match stage {
+                                ShaderStage::Vertex => &used_uavs_vs,
+                                ShaderStage::Pixel => &used_uavs_ps,
+                                ShaderStage::Compute => &used_uavs_cs,
+                                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                                    &used_uavs_cs
+                                }
+                            };
+                            for i in 0..uav_count {
+                                let slot = start_slot.checked_add(i as u32).ok_or_else(|| {
+                                    anyhow!("SET_UNORDERED_ACCESS_BUFFERS: slot overflow")
+                                })?;
+                                let slot_usize: usize = slot.try_into().map_err(|_| {
+                                    anyhow!("SET_UNORDERED_ACCESS_BUFFERS: slot out of range")
+                                })?;
+                                if slot_usize >= used_slots.len() || !used_slots[slot_usize] {
+                                    continue;
+                                }
+
+                                let base = 24 + i * 16;
+                                let buffer = read_u32_le(cmd_bytes, base)?;
+                                if buffer == 0 {
+                                    continue;
+                                }
+                                let needs_upload =
+                                    self.resources.buffers.get(&buffer).is_some_and(|buf| {
+                                        buf.backing.is_some() && buf.dirty.is_some()
+                                    });
+                                if needs_upload && !self.encoder_used_buffers.contains(&buffer) {
+                                    self.upload_buffer_from_guest_memory(
+                                        buffer, allocs, guest_mem,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                    self.exec_set_unordered_access_buffers(cmd_bytes)?;
                 }
                 OPCODE_NOP | OPCODE_DEBUG_MARKER => {}
                 _ => {}
