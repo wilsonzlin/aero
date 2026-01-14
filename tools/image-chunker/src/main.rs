@@ -377,6 +377,9 @@ async fn publish(args: PublishArgs) -> Result<()> {
     let (input_format, total_size) =
         inspect_input_disk(&args.file, args.format).context("open input disk")?;
     let sector = SECTOR_SIZE as u64;
+    if total_size == 0 {
+        bail!("virtual disk size must be > 0");
+    }
     if !total_size.is_multiple_of(sector) {
         bail!("virtual disk size {total_size} is not a multiple of {sector} bytes");
     }
@@ -3863,6 +3866,34 @@ mod tests {
         assert!(
             err.to_string().contains("virtual disk size")
                 && err.to_string().contains("not a multiple"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn publish_rejects_zero_virtual_disk_size() -> Result<()> {
+        let tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.file = tmp.path().to_path_buf();
+        args.format = InputFormat::Raw;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("virtual disk size") && err.to_string().contains("> 0"),
             "unexpected error: {err:?}"
         );
         Ok(())

@@ -283,6 +283,9 @@ fn open_disk_image(path: &Path, format: ImageFormat) -> Result<DiskImage<FileBac
 
 fn validate_virtual_disk_alignment(total_size: u64) -> Result<()> {
     let sector = SECTOR_SIZE as u64;
+    if total_size == 0 {
+        bail!("virtual disk size must be > 0");
+    }
     if !total_size.is_multiple_of(sector) {
         bail!("virtual disk size {total_size} is not a multiple of {sector} bytes");
     }
@@ -1061,6 +1064,15 @@ pub fn chunk_disk_to_vecs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_virtual_disk_alignment_rejects_zero_size() {
+        let err = validate_virtual_disk_alignment(0).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("virtual disk size must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
 
     #[test]
     fn default_cache_control_values_match_docs() {
