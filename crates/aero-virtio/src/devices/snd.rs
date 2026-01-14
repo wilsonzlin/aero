@@ -417,7 +417,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let mut need_irq = false;
 
         while let Some(chain) = self.event_buffers.pop_front() {
-            let Some(event) = self.pending_events.pop_front() else {
+            let Some(event_len) = self.pending_events.front().map(|event| event.len()) else {
                 self.event_buffers.push_front(chain);
                 break;
             };
@@ -427,11 +427,35 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 return Err(VirtioDeviceError::BadDescriptorChain);
             }
 
-            let mut written = 0usize;
+            let mut capacity = 0usize;
             for d in descs {
                 if !d.is_write_only() {
                     return Err(VirtioDeviceError::BadDescriptorChain);
                 }
+                if capacity >= event_len {
+                    break;
+                }
+                capacity = capacity.saturating_add(d.len as usize);
+            }
+
+            // If the guest posted a buffer chain that is too small for a full event,
+            // complete it with 0 bytes (returning it to the guest) but keep the
+            // pending event so it can be delivered into a future adequately-sized
+            // chain.
+            if capacity < event_len {
+                need_irq |= queue
+                    .add_used(mem, chain.head_index(), 0)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                continue;
+            }
+
+            let event = self
+                .pending_events
+                .pop_front()
+                .expect("pending_events was non-empty when event_len was read");
+
+            let mut written = 0usize;
+            for d in descs {
                 if written == event.len() {
                     break;
                 }
@@ -1749,6 +1773,73 @@ mod tests {
 
         assert_eq!(mem.get_slice(buf0, 4).unwrap(), &evt[0..4]);
         assert_eq!(mem.get_slice(buf1, 4).unwrap(), &evt[4..8]);
+    }
+
+    #[test]
+    fn virtio_snd_eventq_flush_keeps_event_pending_when_buffer_too_small() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let buf_small = 0x4000;
+        let buf_full = 0x5000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        // Initialise rings (flags/idx).
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        // Post a too-small (4-byte) write-only buffer.
+        mem.write(buf_small, &[0xAAu8; 4]).unwrap();
+        write_desc(&mut mem, desc_table, 0, buf_small, 4, VIRTQ_DESC_F_WRITE, 0);
+        write_u16_le(&mut mem, avail + 4, 0).unwrap(); // avail.ring[0] = desc 0
+        write_u16_le(&mut mem, avail + 2, 1).unwrap(); // avail.idx = 1
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.event_buffers.push_back(chain);
+
+        let evt = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        snd.pending_events.push_back(evt.to_vec());
+
+        snd.flush_eventq(&mut queue, &mut mem).unwrap();
+
+        // The small buffer should be completed with 0 bytes and the event should remain pending.
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 0);
+        assert_eq!(mem.get_slice(buf_small, 4).unwrap(), &[0xAAu8; 4]);
+        assert_eq!(snd.pending_events.len(), 1);
+        assert!(snd.event_buffers.is_empty());
+
+        // Now post a full-sized (8-byte) buffer and ensure the pending event is delivered.
+        mem.write(buf_full, &[0u8; 8]).unwrap();
+        write_desc(&mut mem, desc_table, 1, buf_full, 8, VIRTQ_DESC_F_WRITE, 0);
+        write_u16_le(&mut mem, avail + 6, 1).unwrap(); // avail.ring[1] = desc 1
+        write_u16_le(&mut mem, avail + 2, 2).unwrap(); // avail.idx = 2
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.event_buffers.push_back(chain);
+
+        snd.flush_eventq(&mut queue, &mut mem).unwrap();
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 2);
+        assert_eq!(read_u32_le(&mem, used + 12).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 16).unwrap(), 8);
+        assert_eq!(mem.get_slice(buf_full, 8).unwrap(), &evt);
+        assert!(snd.pending_events.is_empty());
     }
 
     #[test]
