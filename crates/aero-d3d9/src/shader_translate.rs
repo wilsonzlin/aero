@@ -242,6 +242,8 @@ pub fn translate_d3d9_shader_to_wgsl(
                 | shader::ShaderError::UnsupportedCompareOp(_)
                 | shader::ShaderError::UnsupportedVersion(_)
                 | shader::ShaderError::InvalidControlFlow(_)
+                | shader::ShaderError::InvalidDstRegisterFile { .. }
+                | shader::ShaderError::InvalidSrcRegisterFile { .. }
                 // Out-of-range indices / unknown enum values are malformed input.
                 | shader::ShaderError::RegisterIndexTooLarge { .. }
                 | shader::ShaderError::UnsupportedSamplerTextureType { .. } => {

@@ -282,6 +282,16 @@ pub enum ShaderError {
     },
     #[error("unsupported sampler texture type {ty:?} for s{sampler}")]
     UnsupportedSamplerTextureType { sampler: u32, ty: TextureType },
+    #[error("invalid destination register file {file:?} in {stage:?} shader")]
+    InvalidDstRegisterFile {
+        stage: ShaderStage,
+        file: RegisterFile,
+    },
+    #[error("invalid source register file {file:?} in {stage:?} shader")]
+    InvalidSrcRegisterFile {
+        stage: ShaderStage,
+        file: RegisterFile,
+    },
 }
 
 fn read_u32(words: &[u32], idx: &mut usize) -> Result<u32, ShaderError> {
@@ -370,6 +380,48 @@ fn decode_src(token: u32) -> Result<Src, ShaderError> {
         swizzle: Swizzle::from_d3d_byte(swizzle_byte),
         modifier,
     })
+}
+
+fn validate_dst_for_stage(stage: ShaderStage, dst: &Dst) -> Result<(), ShaderError> {
+    let ok = match stage {
+        ShaderStage::Vertex => matches!(
+            dst.reg.file,
+            RegisterFile::Temp
+                | RegisterFile::RastOut
+                | RegisterFile::AttrOut
+                | RegisterFile::TexCoordOut
+        ),
+        ShaderStage::Pixel => matches!(dst.reg.file, RegisterFile::Temp | RegisterFile::ColorOut),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(ShaderError::InvalidDstRegisterFile {
+            stage,
+            file: dst.reg.file,
+        })
+    }
+}
+
+fn validate_src_for_stage(stage: ShaderStage, src: &Src) -> Result<(), ShaderError> {
+    // Sampler registers are not general-purpose numeric sources; they are only valid as the
+    // dedicated `texld` sampler operand.
+    if src.reg.file == RegisterFile::Sampler {
+        return Err(ShaderError::InvalidSrcRegisterFile {
+            stage,
+            file: src.reg.file,
+        });
+    }
+    // The legacy translator does not model the vertex-shader address register file (`a#`).
+    // D3D9 encodes it using the same raw register-type as pixel shader `t#` inputs, so reject it
+    // in vertex shaders to avoid generating invalid WGSL.
+    if stage == ShaderStage::Vertex && src.reg.file == RegisterFile::Texture {
+        return Err(ShaderError::InvalidSrcRegisterFile {
+            stage,
+            file: src.reg.file,
+        });
+    }
+    Ok(())
 }
 
 fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
@@ -769,10 +821,12 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     ));
                 }
                 if_stack.push(false);
+                let cond = decode_src(params[0])?;
+                validate_src_for_stage(stage, &cond)?;
                 Instruction {
                     op,
                     dst: None,
-                    src: vec![decode_src(params[0])?],
+                    src: vec![cond],
                     sampler: None,
                     imm: None,
                     result_modifier,
@@ -792,10 +846,14 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     ));
                 }
                 if_stack.push(false);
+                let src0 = decode_src(params[0])?;
+                let src1 = decode_src(params[1])?;
+                validate_src_for_stage(stage, &src0)?;
+                validate_src_for_stage(stage, &src1)?;
                 Instruction {
                     op,
                     dst: None,
-                    src: vec![decode_src(params[0])?, decode_src(params[1])?],
+                    src: vec![src0, src1],
                     sampler: None,
                     imm: Some(u32::from(cmp_code)),
                     result_modifier,
@@ -897,18 +955,25 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     _ => unreachable!("arithmetic op matched above"),
                 };
 
-                // The legacy translator only supports single-token operands. Malformed shaders can
-                // (intentionally or accidentally) encode an operand count that is smaller than what
-                // the opcode requires, which would later cause panics in code generation. Treat
-                // this as a truncated instruction stream.
-                if params.len() < required_params {
+                // The legacy translator only supports single-token operands. Reject token streams
+                // whose instruction length doesn't match the opcode's fixed operand count (after
+                // stripping the optional predicate token above).
+                //
+                // Accepting extra tokens would implicitly ignore multi-token operand encodings
+                // like relative addressing, which can hide malformed bytecode behind legacy
+                // fallback.
+                if params.len() != required_params {
                     return Err(ShaderError::UnexpectedEof);
                 }
                 let dst = decode_dst(params[0])?;
+                validate_dst_for_stage(stage, &dst)?;
                 let src = params[1..required_params]
                     .iter()
                     .map(|t| decode_src(*t))
                     .collect::<Result<Vec<_>, _>>()?;
+                for s in &src {
+                    validate_src_for_stage(stage, s)?;
+                }
                 Instruction {
                     op,
                     dst: Some(dst),
@@ -924,13 +989,23 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     return Err(ShaderError::UnexpectedEof);
                 }
                 let dst = decode_dst(params[0])?;
+                validate_dst_for_stage(stage, &dst)?;
                 let coord = decode_src(params[1])?;
+                validate_src_for_stage(stage, &coord)?;
                 let sampler_src = decode_src(params[2])?;
-                let sampler_index = if sampler_src.reg.file == RegisterFile::Sampler {
-                    sampler_src.reg.index
-                } else {
-                    return Err(ShaderError::UnsupportedRegisterType(99));
+                if sampler_src.reg.file != RegisterFile::Sampler {
+                    return Err(ShaderError::InvalidSrcRegisterFile {
+                        stage,
+                        file: sampler_src.reg.file,
+                    });
+                }
+                // Sampler operands are not numeric sources; reject any source modifier encodings
+                // instead of silently ignoring them.
+                let sampler_modifier_raw = ((params[2] >> 24) & 0xF) as u8;
+                if sampler_modifier_raw != 0 {
+                    return Err(ShaderError::UnsupportedSrcModifier(sampler_modifier_raw));
                 };
+                let sampler_index = sampler_src.reg.index;
                 used_samplers.insert(sampler_index);
                 Instruction {
                     op,

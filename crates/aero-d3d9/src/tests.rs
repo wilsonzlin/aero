@@ -3732,6 +3732,129 @@ fn translate_entrypoint_rejects_out_of_range_register_index_after_fallback() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_sampler_operand_with_src_modifier_after_fallback() {
+    // Ensure malformed sampler operand encodings are rejected even when the shader triggers
+    // SM3→legacy fallback (e.g. due to an unknown opcode).
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // texld r0, t0, -s0
+    words.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src_mod(10, 0, 0xE4, 1), // negate
+        ],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_sampler_register_as_src_operand_after_fallback() {
+    // Sampler registers (`s#`) are not numeric sources; reject even when legacy fallback runs.
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // mov r0, s0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(10, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_input_register_as_dst_operand_after_fallback() {
+    // Input registers (`v#`) are read-only at runtime; legacy fallback should not emit invalid WGSL
+    // that assigns to them.
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // mov v0, c0
+    words.extend(enc_inst(0x0001, &[enc_dst(1, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_pixel_shader_write_to_o_pos_after_fallback() {
+    // Pixel shaders cannot write to oPos (`oPos` is a VS output). Legacy fallback would otherwise
+    // generate invalid WGSL (missing variable declaration).
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // mov oPos, c0
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_relative_addressing_on_dst_operand_after_fallback() {
+    // Relative addressing on destination operands is malformed bytecode. Ensure it is still
+    // rejected when legacy fallback runs.
+    const RELATIVE: u32 = 0x0000_2000;
+
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // mov r0[a0.x], c0
+    let dst = enc_dst(0, 0, 0xF) | RELATIVE;
+    let rel = enc_src(3, 0, 0x00); // a0.x
+    words.extend(enc_inst(0x0001, &[dst, rel, enc_src(2, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_unknown_sampler_texture_type() {
     // An unknown `dcl_* s#` texture type encoding should be treated as malformed input (not a
     // fallbackable "unsupported feature").
