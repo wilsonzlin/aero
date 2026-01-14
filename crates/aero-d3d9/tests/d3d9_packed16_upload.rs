@@ -206,6 +206,45 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
+const SAMPLE_CUBE_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    let p = positions[idx];
+    var out: VsOut;
+    out.pos = vec4<f32>(p, 0.0, 1.0);
+    return out;
+}
+
+@group(0) @binding(0) var t: texture_cube<f32>;
+@group(0) @binding(1) var s: sampler;
+
+// Output 6 pixels in a row, each sampling one face at its axis direction.
+// Cube layer order is +X, -X, +Y, -Y, +Z, -Z (WebGPU spec).
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let x = i32(pos.x);
+    var dir: vec3<f32>;
+    switch x {
+        case 0: { dir = vec3<f32>( 1.0,  0.0,  0.0); }
+        case 1: { dir = vec3<f32>(-1.0,  0.0,  0.0); }
+        case 2: { dir = vec3<f32>( 0.0,  1.0,  0.0); }
+        case 3: { dir = vec3<f32>( 0.0, -1.0,  0.0); }
+        case 4: { dir = vec3<f32>( 0.0,  0.0,  1.0); }
+        default: { dir = vec3<f32>( 0.0,  0.0, -1.0); }
+    }
+    return textureSampleLevel(t, s, dir, 0.0);
+}
+"#;
+
 #[test]
 fn d3d9_packed16_upload_and_sample() {
     let (device, queue) = match pollster::block_on(request_device()) {
@@ -439,4 +478,192 @@ fn d3d9_packed16_upload_and_sample() {
 
         assert!(rm.destroy_texture(id));
     }
+}
+
+#[test]
+fn d3d9_packed16_cube_upload_and_sample() {
+    let (device, queue) = match pollster::block_on(request_device()) {
+        Some(device) => device,
+        None => {
+            skip_or_panic(module_path!(), "wgpu adapter/device not available");
+            return;
+        }
+    };
+
+    let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
+    rm.begin_frame();
+
+    let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("packed16 cube sample shader"),
+        source: wgpu::ShaderSource::Wgsl(SAMPLE_CUBE_SHADER.into()),
+    });
+
+    let sampler = rm.device().create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("cube sampler"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        ..Default::default()
+    });
+
+    let bgl = rm
+        .device()
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("cube bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+    let pipeline_layout = rm.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("cube pipeline layout"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = rm
+        .device()
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("cube sample pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+    const TEX: GuestResourceId = 100;
+    rm.create_texture(
+        TEX,
+        TextureDesc {
+            kind: TextureKind::Cube { size: 1, levels: 1 },
+            format: D3DFormat::A1R5G5B5,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        },
+    )
+    .unwrap();
+
+    // Fill cube faces (array layers) in WebGPU order: +X, -X, +Y, -Y, +Z, -Z.
+    // Use distinct colors + alpha to validate A1 handling as well.
+    let faces: [(u16, [u8; 4]); 6] = [
+        (0xFC00, [255, 0, 0, 255]),     // +X: opaque red
+        (0x03E0, [0, 255, 0, 0]),       // -X: transparent green
+        (0x801F, [0, 0, 255, 255]),     // +Y: opaque blue
+        (0x7FFF, [255, 255, 255, 0]),   // -Y: transparent white
+        (0x8000, [0, 0, 0, 255]),       // +Z: opaque black
+        (0x7C1F, [255, 0, 255, 0]),     // -Z: transparent magenta
+    ];
+
+    for (layer, (pixel, _expected)) in faces.iter().enumerate() {
+        let packed = pixel.to_le_bytes();
+        let locked = rm
+            .lock_texture_rect(TEX, 0, layer as u32, LockFlags::empty())
+            .unwrap();
+        assert_eq!(locked.pitch, 2);
+        assert_eq!(locked.data.len(), 2);
+        locked.data.copy_from_slice(&packed);
+        rm.unlock_texture_rect(TEX).unwrap();
+    }
+
+    let view = rm.texture_view(TEX).unwrap();
+
+    let bg = rm.device().create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cube bg"),
+        layout: &bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+
+    let out_tex = rm.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("out cube"),
+        size: wgpu::Extent3d {
+            width: 6,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut encoder = rm
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    rm.encode_uploads(&mut encoder);
+
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("cube pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &out_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    rm.submit(encoder);
+
+    let pixels = readback_rgba8(rm.device(), rm.queue(), &out_tex, 6, 1);
+    for (i, (_pixel, expected)) in faces.into_iter().enumerate() {
+        assert_rgba_approx(pixel_at_rgba(&pixels, 6, i as u32, 0), expected, 2);
+    }
+
+    assert!(rm.destroy_texture(TEX));
 }
