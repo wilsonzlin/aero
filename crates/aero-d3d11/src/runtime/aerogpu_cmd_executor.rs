@@ -4274,27 +4274,19 @@ impl AerogpuD3d11Executor {
             }
 
             let mut max_temp: i32 = -1;
+            let mut max_output: i32 = -1;
             let mut inst_count = 0usize;
 
             // Pre-scan for temp register usage and validate supported instruction set.
             for inst in &module.instructions {
                 match inst {
                     Sm4Inst::Mov { dst, src } => {
-                        if dst.reg.file == RegFile::Temp {
-                            max_temp = max_temp.max(dst.reg.index as i32);
-                        } else if dst.reg.file == RegFile::Output {
-                            if dst.reg.index >= gs_input_reg_count {
-                                bail!(
-                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
-                                    dst.reg.index,
-                                    gs_input_reg_count
-                                );
+                        match dst.reg.file {
+                            RegFile::Temp => max_temp = max_temp.max(dst.reg.index as i32),
+                            RegFile::Output => max_output = max_output.max(dst.reg.index as i32),
+                            other => {
+                                bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
                             }
-                        } else {
-                            bail!(
-                                "VS-as-compute: unsupported mov dst reg file {:?}",
-                                dst.reg.file
-                            );
                         }
 
                         match &src.kind {
@@ -4302,13 +4294,7 @@ impl AerogpuD3d11Executor {
                                 if reg.file == RegFile::Temp {
                                     max_temp = max_temp.max(reg.index as i32);
                                 } else if reg.file == RegFile::Output {
-                                    if reg.index >= gs_input_reg_count {
-                                        bail!(
-                                            "VS-as-compute: reads from o{} but GS expects only {} output regs",
-                                            reg.index,
-                                            gs_input_reg_count
-                                        );
-                                    }
+                                    max_output = max_output.max(reg.index as i32);
                                 } else if reg.file != RegFile::Input {
                                     bail!(
                                         "VS-as-compute: unsupported mov src reg file {:?}",
@@ -4326,21 +4312,12 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     Sm4Inst::Add { dst, a, b } => {
-                        if dst.reg.file == RegFile::Temp {
-                            max_temp = max_temp.max(dst.reg.index as i32);
-                        } else if dst.reg.file == RegFile::Output {
-                            if dst.reg.index >= gs_input_reg_count {
-                                bail!(
-                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
-                                    dst.reg.index,
-                                    gs_input_reg_count
-                                );
+                        match dst.reg.file {
+                            RegFile::Temp => max_temp = max_temp.max(dst.reg.index as i32),
+                            RegFile::Output => max_output = max_output.max(dst.reg.index as i32),
+                            other => {
+                                bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
                             }
-                        } else {
-                            bail!(
-                                "VS-as-compute: unsupported add dst reg file {:?}",
-                                dst.reg.file
-                            );
                         }
 
                         for src in [a, b] {
@@ -4349,13 +4326,7 @@ impl AerogpuD3d11Executor {
                                     if reg.file == RegFile::Temp {
                                         max_temp = max_temp.max(reg.index as i32);
                                     } else if reg.file == RegFile::Output {
-                                        if reg.index >= gs_input_reg_count {
-                                            bail!(
-                                                "VS-as-compute: reads from o{} but GS expects only {} output regs",
-                                                reg.index,
-                                                gs_input_reg_count
-                                            );
-                                        }
+                                        max_output = max_output.max(reg.index as i32);
                                     } else if reg.file != RegFile::Input {
                                         bail!(
                                             "VS-as-compute: unsupported add src reg file {:?}",
@@ -4380,6 +4351,11 @@ impl AerogpuD3d11Executor {
             }
 
             let temp_reg_count: u32 = (max_temp + 1).max(1) as u32;
+            let out_reg_count: u32 = (max_output + 1)
+                .max(gs_input_reg_count as i32)
+                .max(1)
+                .try_into()
+                .unwrap_or(1);
 
             fn swizzle_to_wgsl(swizzle: Swizzle) -> String {
                 let mut s = String::new();
@@ -4691,16 +4667,16 @@ impl AerogpuD3d11Executor {
                 );
             }
             out.push_str(&format!("    var r: array<vec4<f32>, {temp_reg_count}>;\n"));
-            out.push_str(&format!(
-                "    var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
-            ));
+            out.push_str(&format!("    var o: array<vec4<f32>, {out_reg_count}>;\n"));
             out.push_str("    for (var i: u32 = 0u; i < TEMP_REG_COUNT; i = i + 1u) { r[i] = vec4<f32>(0.0); }\n");
-            out.push_str("    for (var i: u32 = 0u; i < GS_INPUT_REG_COUNT; i = i + 1u) { o[i] = aero_vs_default(); }\n\n");
+            out.push_str(&format!(
+                "    for (var i: u32 = 0u; i < {out_reg_count}u; i = i + 1u) {{ o[i] = aero_vs_default(); }}\n\n"
+            ));
 
             for (idx, inst) in module.instructions.iter().enumerate().take(inst_count) {
                 match inst {
                     Sm4Inst::Mov { dst, src } => {
-                        let expr = eval_src(src, "vertex_index", gs_input_reg_count)?;
+                        let expr = eval_src(src, "vertex_index", out_reg_count)?;
                         let mut val = expr;
                         if dst.saturate {
                             val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
@@ -4725,8 +4701,8 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     Sm4Inst::Add { dst, a, b } => {
-                        let a_expr = eval_src(a, "vertex_index", gs_input_reg_count)?;
-                        let b_expr = eval_src(b, "vertex_index", gs_input_reg_count)?;
+                        let a_expr = eval_src(a, "vertex_index", out_reg_count)?;
+                        let b_expr = eval_src(b, "vertex_index", out_reg_count)?;
                         let mut val = format!("({a_expr}) + ({b_expr})");
                         if dst.saturate {
                             val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
@@ -7148,27 +7124,19 @@ impl AerogpuD3d11Executor {
             }
 
             let mut max_temp: i32 = -1;
+            let mut max_output: i32 = -1;
             let mut inst_count = 0usize;
 
             // Pre-scan for temp register usage and validate supported instruction set.
             for inst in &module.instructions {
                 match inst {
                     Sm4Inst::Mov { dst, src } => {
-                        if dst.reg.file == RegFile::Temp {
-                            max_temp = max_temp.max(dst.reg.index as i32);
-                        } else if dst.reg.file == RegFile::Output {
-                            if dst.reg.index >= gs_input_reg_count {
-                                bail!(
-                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
-                                    dst.reg.index,
-                                    gs_input_reg_count
-                                );
+                        match dst.reg.file {
+                            RegFile::Temp => max_temp = max_temp.max(dst.reg.index as i32),
+                            RegFile::Output => max_output = max_output.max(dst.reg.index as i32),
+                            other => {
+                                bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
                             }
-                        } else {
-                            bail!(
-                                "VS-as-compute: unsupported mov dst reg file {:?}",
-                                dst.reg.file
-                            );
                         }
 
                         match &src.kind {
@@ -7176,13 +7144,7 @@ impl AerogpuD3d11Executor {
                                 if reg.file == RegFile::Temp {
                                     max_temp = max_temp.max(reg.index as i32);
                                 } else if reg.file == RegFile::Output {
-                                    if reg.index >= gs_input_reg_count {
-                                        bail!(
-                                            "VS-as-compute: reads from o{} but GS expects only {} output regs",
-                                            reg.index,
-                                            gs_input_reg_count
-                                        );
-                                    }
+                                    max_output = max_output.max(reg.index as i32);
                                 } else if reg.file != RegFile::Input {
                                     bail!(
                                         "VS-as-compute: unsupported mov src reg file {:?}",
@@ -7200,21 +7162,12 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     Sm4Inst::Add { dst, a, b } => {
-                        if dst.reg.file == RegFile::Temp {
-                            max_temp = max_temp.max(dst.reg.index as i32);
-                        } else if dst.reg.file == RegFile::Output {
-                            if dst.reg.index >= gs_input_reg_count {
-                                bail!(
-                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
-                                    dst.reg.index,
-                                    gs_input_reg_count
-                                );
+                        match dst.reg.file {
+                            RegFile::Temp => max_temp = max_temp.max(dst.reg.index as i32),
+                            RegFile::Output => max_output = max_output.max(dst.reg.index as i32),
+                            other => {
+                                bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
                             }
-                        } else {
-                            bail!(
-                                "VS-as-compute: unsupported add dst reg file {:?}",
-                                dst.reg.file
-                            );
                         }
 
                         for src in [a, b] {
@@ -7223,13 +7176,7 @@ impl AerogpuD3d11Executor {
                                     if reg.file == RegFile::Temp {
                                         max_temp = max_temp.max(reg.index as i32);
                                     } else if reg.file == RegFile::Output {
-                                        if reg.index >= gs_input_reg_count {
-                                            bail!(
-                                                "VS-as-compute: reads from o{} but GS expects only {} output regs",
-                                                reg.index,
-                                                gs_input_reg_count
-                                            );
-                                        }
+                                        max_output = max_output.max(reg.index as i32);
                                     } else if reg.file != RegFile::Input {
                                         bail!(
                                             "VS-as-compute: unsupported add src reg file {:?}",
@@ -7254,6 +7201,11 @@ impl AerogpuD3d11Executor {
             }
 
             let temp_reg_count: u32 = (max_temp + 1).max(1) as u32;
+            let out_reg_count: u32 = (max_output + 1)
+                .max(gs_input_reg_count as i32)
+                .max(1)
+                .try_into()
+                .unwrap_or(1);
 
             fn swizzle_to_wgsl(swizzle: Swizzle) -> String {
                 let mut s = String::new();
@@ -7446,16 +7398,16 @@ impl AerogpuD3d11Executor {
                 );
             }
             out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
-            out.push_str(&format!(
-                "  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
-            ));
+            out.push_str(&format!("  var o: array<vec4<f32>, {out_reg_count}>;\n"));
             out.push_str("  for (var i: u32 = 0u; i < TEMP_REG_COUNT; i = i + 1u) { r[i] = vec4<f32>(0.0); }\n");
-            out.push_str("  for (var i: u32 = 0u; i < GS_INPUT_REG_COUNT; i = i + 1u) { o[i] = aero_vs_default(); }\n\n");
+            out.push_str(&format!(
+                "  for (var i: u32 = 0u; i < {out_reg_count}u; i = i + 1u) {{ o[i] = aero_vs_default(); }}\n\n"
+            ));
 
             for (idx, inst) in module.instructions.iter().enumerate().take(inst_count) {
                 match inst {
                     Sm4Inst::Mov { dst, src } => {
-                        let expr = eval_src(src, "vertex_index", gs_input_reg_count)?;
+                        let expr = eval_src(src, "vertex_index", out_reg_count)?;
                         let mut val = expr;
                         if dst.saturate {
                             val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
@@ -7480,8 +7432,8 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     Sm4Inst::Add { dst, a, b } => {
-                        let a_expr = eval_src(a, "vertex_index", gs_input_reg_count)?;
-                        let b_expr = eval_src(b, "vertex_index", gs_input_reg_count)?;
+                        let a_expr = eval_src(a, "vertex_index", out_reg_count)?;
+                        let b_expr = eval_src(b, "vertex_index", out_reg_count)?;
                         let mut val = format!("({a_expr}) + ({b_expr})");
                         if dst.saturate {
                             val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");

@@ -236,6 +236,74 @@ fn build_ps_solid_green_dxbc() -> Vec<u8> {
     ])
 }
 
+fn build_vs_shift_x_and_passthrough_color_dxbc() -> Vec<u8> {
+    // vs_4_0:
+    //   o0 = v0 + float4(1,0,0,0)
+    //   o1 = v1
+    //   ret
+    let isgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x07,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+    let osgn = build_signature_chunk(&[
+        SigParam {
+            semantic_name: "SV_Position",
+            semantic_index: 0,
+            register: 0,
+            mask: 0x0f,
+        },
+        SigParam {
+            semantic_name: "COLOR",
+            semantic_index: 0,
+            register: 1,
+            mask: 0x0f,
+        },
+    ]);
+
+    let mut body = Vec::<u32>::new();
+
+    // add o0, v0, imm
+    let mut inst = vec![0u32];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XYZW));
+    inst.extend_from_slice(&imm_f32x4([1.0, 0.0, 0.0, 0.0]));
+    inst[0] = opcode_token(OPCODE_ADD, inst.len() as u32);
+    body.extend_from_slice(&inst);
+
+    // mov o1, v1
+    let mut inst = vec![0u32];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    inst.extend_from_slice(&reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::XYZW));
+    inst[0] = opcode_token(OPCODE_MOV, inst.len() as u32);
+    body.extend_from_slice(&inst);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let version = 0x0001_0040u32; // vs_4_0
+    let mut tokens = Vec::with_capacity(2 + body.len());
+    tokens.push(version);
+    tokens.push(0); // length patched below
+    tokens.extend_from_slice(&body);
+    tokens[1] = tokens.len() as u32;
+
+    let shdr = tokens_to_bytes(&tokens);
+    build_dxbc(&[
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+        (FOURCC_SHDR, shdr),
+    ])
+}
+
 fn build_vs_shift_x_from_instance_color_step2_dxbc() -> Vec<u8> {
     // vs_4_0:
     //   o0 = v0 + v1.xyyy  (COLOR0.x supplies shift; y=0 ensures we don't modify y/z/w)
@@ -452,6 +520,145 @@ fn aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs() {
 
         // With correct VS-as-compute feeding, the triangle shifts far right and the center pixel
         // remains red.
+        assert_eq!(px(w / 2, h / 2), [255, 0, 0, 255], "center pixel mismatch");
+        // Ensure something drew: a pixel near the right edge should be green.
+        assert_eq!(
+            px(w - 4, h / 2),
+            [0, 255, 0, 255],
+            "right-edge pixel mismatch"
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_allows_extra_vs_outputs() {
+    // Regression: VS-as-compute feeding should tolerate the VS writing output registers that the
+    // GS does not consume. D3D11 allows this; only the subset of VS outputs referenced by the GS
+    // should be stored in the `gs_inputs` register file.
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_allows_extra_vs_outputs"
+        );
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
+
+        const VB: u32 = 1;
+        const RT: u32 = 2;
+        const VS: u32 = 3;
+        const GS: u32 = 4;
+        const PS: u32 = 5;
+        const IL: u32 = 6;
+
+        let vertices = [
+            VertexPos3Color4 {
+                pos: [-0.5, -0.5, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+            },
+            VertexPos3Color4 {
+                pos: [0.0, 0.5, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+            },
+            VertexPos3Color4 {
+                pos: [0.5, -0.5, 0.0],
+                color: [0.0, 0.0, 0.0, 1.0],
+            },
+        ];
+        let vb_bytes = bytemuck::bytes_of(&vertices);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_buffer(
+            VB,
+            AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+            vb_bytes.len() as u64,
+            0,
+            0,
+        );
+        writer.upload_resource(VB, 0, vb_bytes);
+
+        // Use an odd-sized render target so NDC (0,0) maps exactly to the center pixel.
+        let w = 65u32;
+        let h = 65u32;
+        writer.create_texture2d(
+            RT,
+            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            AerogpuFormat::B8G8R8A8Unorm as u32,
+            w,
+            h,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        writer.set_render_targets(&[RT], 0);
+        writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+
+        // Disable culling so output is visible regardless of winding.
+        writer.set_rasterizer_state(
+            AerogpuFillMode::Solid,
+            AerogpuCullMode::None,
+            false,
+            false,
+            0,
+            0,
+        );
+
+        writer.create_shader_dxbc(
+            VS,
+            AerogpuShaderStage::Vertex,
+            &build_vs_shift_x_and_passthrough_color_dxbc(),
+        );
+        writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, GS_PASSTHROUGH);
+        writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
+
+        writer.create_input_layout(IL, ILAY_POS3_COLOR);
+        writer.set_input_layout(IL);
+        writer.set_vertex_buffers(
+            0,
+            &[AerogpuVertexBufferBinding {
+                buffer: VB,
+                stride_bytes: core::mem::size_of::<VertexPos3Color4>() as u32,
+                offset_bytes: 0,
+                reserved0: 0,
+            }],
+        );
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+
+        writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
+        writer.draw(3, 1, 0, 0);
+
+        let stream = writer.finish();
+        let mut guest_mem = VecGuestMemory::new(0);
+        if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            if common::skip_if_compute_or_indirect_unsupported(test_name, &err) {
+                return;
+            }
+            panic!("execute_cmd_stream failed: {err:#}");
+        }
+        exec.poll_wait();
+
+        let pixels = exec
+            .read_texture_rgba8(RT)
+            .await
+            .expect("readback should succeed");
+        assert_eq!(pixels.len(), (w * h * 4) as usize);
+
+        let px = |x: u32, y: u32| -> [u8; 4] {
+            let idx = ((y * w + x) * 4) as usize;
+            pixels[idx..idx + 4].try_into().unwrap()
+        };
+
+        // The triangle should be shifted far right, leaving the center pixel untouched (red).
         assert_eq!(px(w / 2, h / 2), [255, 0, 0, 255], "center pixel mismatch");
         // Ensure something drew: a pixel near the right edge should be green.
         assert_eq!(
