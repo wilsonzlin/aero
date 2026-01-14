@@ -1241,8 +1241,8 @@ struct Device {
     // Texture stage state defaults (numeric values from d3d9types.h).
     //
     // These are fixed-function states. Most are cached-only (GetTextureStageState
-    // + state blocks), but stage0 is consulted by the UMD's minimal fixed-function
-    // fallback path to select a pixel shader variant.
+    // + state blocks), but stages 0..3 are consulted by the UMD's fixed-function
+    // fallback path to select/synthesize a pixel shader variant.
     //
     // D3DTEXTUREOP:
     // - DISABLE = 1
@@ -1423,7 +1423,8 @@ struct Device {
     // Optional lit+fog VS variant (used for NORMAL FVFs when lighting and fog
     // are enabled simultaneously).
     Shader* vs_lit_fog = nullptr;
-    // Cached stage0 fixed-function PS currently selected for this variant.
+    // Cached fixed-function PS currently selected for this variant (derived from
+    // texture stage state).
     Shader* ps = nullptr;
   };
   FixedFuncPipelineResources fixedfunc_pipelines[static_cast<size_t>(FixedFuncVariant::COUNT)] = {};
@@ -1464,7 +1465,8 @@ struct Device {
   // explicitly bound by the app (D3D9 allows VS-only or PS-only draws).
   //
   // - If `user_vs != nullptr` and `user_ps == nullptr`, we bind an internal
-  //   stage0 fixed-function pixel shader to `ps` at draw time.
+  //   fixed-function pixel shader (derived from texture stage state) to `ps` at
+  //   draw time.
   // - If `user_vs == nullptr` and `user_ps != nullptr`, we reuse the existing
   //   fixed-function VS for the active fixed-function variant as a draw-time fallback.
   Shader* fixedfunc_ps_interop = nullptr;

@@ -18,7 +18,7 @@ namespace fixedfunc {
 // vs_2_0:
 //   mov oPos, v0
 //   mov oD0, v1       ; D3DCOLOR is BGRA in memory but is presented to shaders as RGBA
-//   mov oT0, v0       ; Provide a stable t0 for stage0 texture sampling (minimal fixed-function fallback)
+//   mov oT0, v0       ; Provide a stable t0 for fixed-function texture sampling (minimal fixed-function fallback)
 //   end
 static constexpr uint32_t kVsPassthroughPosColor[] = {
     0xFFFE0200u, // vs_2_0
@@ -256,8 +256,8 @@ static constexpr uint32_t kVsWvpPosColorTex0Fog[] = {
 //   in the shader input register (v0.w = 1).
 // - The UMD uploads the *columns* of the row-major WORLD*VIEW*PROJECTION matrix
 //   into a reserved high VS constant range (c240..c243).
-// - Like `kVsPassthroughPosColor`, we also write oT0 to provide a stable stage0
-//   texture coordinate stream for minimal fixed-function PS variants.
+// - Like `kVsPassthroughPosColor`, we also write oT0 to provide a stable TEXCOORD0
+//   stream for fixed-function texture sampling (stages 0..3).
 static constexpr uint32_t kVsWvpPosColor[] = {
     0xFFFE0200u, // vs_2_0
 
@@ -3455,9 +3455,9 @@ static constexpr uint32_t kPsTexturedModulateVertexColor[] = {
 // These were used by the initial bring-up implementation, which hard-selected
 // from a tiny set of pre-baked pixel shader token streams.
 //
-// Stage0 emulation has since been expanded: the D3D9 UMD now synthesizes a
-// `ps_2_0` token stream at runtime based on the supported subset of stage0
-// texture stage state (see `fixedfunc_ps20` in `aerogpu_d3d9_driver.cpp`).
+// Texture stage emulation has since been expanded: the D3D9 UMD now synthesizes a
+// `ps_2_0` token stream at runtime based on the supported subset of texture stage
+// state across stages 0..3 (see `fixedfunc_ps20` in `aerogpu_d3d9_driver.cpp`).
 //
 // The tables below are kept as a reference for the expected instruction
 // encodings and as a convenient source of minimal token streams.
