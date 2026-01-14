@@ -2126,13 +2126,17 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let srv = crate::Binding {
                 group: 0,
                 binding: BINDING_BASE_TEXTURE,
-                visibility: wgpu::ShaderStages::VERTEX,
+                // Using storage buffers in the vertex stage requires additional wgpu features on
+                // many backends (e.g. VERTEX_WRITABLE_STORAGE). This test is only validating the
+                // dummy-buffer fallback behavior, so keep visibility to a stage that works on
+                // downlevel adapters without extra features.
+                visibility: wgpu::ShaderStages::COMPUTE,
                 kind: crate::BindingKind::SrvBuffer { slot: 0 },
             };
             let uav = crate::Binding {
                 group: 0,
                 binding: BINDING_BASE_UAV,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::COMPUTE,
                 kind: crate::BindingKind::UavBuffer { slot: 0 },
             };
 
