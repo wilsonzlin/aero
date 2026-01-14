@@ -427,6 +427,10 @@ To support additional programmable stages used by D3D11 (HS/DS) without breaking
 packets reuse their trailing `reserved0` field as an **extended stage selector** when
 `shader_stage == COMPUTE` (the same encoding may also be used for GS for compatibility).
 
+This extension is only valid for command streams with ABI minor **>= 3** (ABI 1.3+). When decoding a
+command stream whose header reports an ABI minor < 3, hosts must ignore `reserved0` (treat it as
+`0`) even when `shader_stage == COMPUTE`, to avoid misinterpreting legacy reserved data.
+
 Encoding invariant (must be enforced by writers and hosts):
 
 - If `shader_stage != COMPUTE`, then `reserved0` **must** be `0` and is ignored.

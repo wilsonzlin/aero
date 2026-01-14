@@ -178,12 +178,25 @@ enum aerogpu_shader_stage {
 };
 
 /*
+ * Minimum command-stream ABI minor version that enables the `stage_ex` encoding.
+ *
+ * Hosts must ignore `reserved0` as `stage_ex` when decoding a command stream whose header reports
+ * `abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR` to avoid misinterpreting legacy reserved data.
+ *
+ * Introduced in ABI 1.3.
+ */
+#define AEROGPU_STAGE_EX_MIN_ABI_MINOR 3u
+
+/*
  * Extended shader stage encoding (`stage_ex`).
  *
  * Some packets contain a `shader_stage` (or `stage`) field whose base enum supports VS/PS/CS (+ GS).
  * To represent additional D3D10+ stages (HS/DS) without changing packet layouts, when
  * `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE` the packet's `reserved0` field is repurposed as a
  * `stage_ex` override. If `shader_stage != COMPUTE`, `reserved0` MUST be 0 and is ignored.
+ *
+ * This extension is only valid for command streams with ABI minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR.
+ * For older command streams, `reserved0` must be treated as reserved and ignored even if non-zero.
  *
  * Canonical rules:
  * - `reserved0 == 0` means "no stage_ex override" and MUST be interpreted as the legacy Compute stage
