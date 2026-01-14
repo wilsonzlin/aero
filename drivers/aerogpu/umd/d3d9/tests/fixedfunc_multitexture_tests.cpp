@@ -4769,6 +4769,190 @@ bool TestFixedfuncUnusedTfactorDoesNotUploadPsConstant() {
   return true;
 }
 
+bool TestFixedfuncTfactorSetBeforeUseUploadsPsConstantOnFirstUseDraw() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Stage0: CURRENT = tex0 (both color and alpha). Stage1 disabled so the
+  // fixed-function PS does not use TFACTOR yet.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=DISABLE (baseline)")) {
+    return false;
+  }
+
+  // Set TEXTUREFACTOR while it is not referenced by the active stage chain.
+  // This must not upload c255 yet.
+  constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
+
+  uint32_t tf_prev = 0;
+  float cached_tf_before[4] = {};
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    tf_prev = dev->render_states[kD3dRsTextureFactor];
+    const float* cached = dev->ps_consts_f + 255u * 4u;
+    std::memcpy(cached_tf_before, cached, sizeof(cached_tf_before));
+  }
+
+  struct TfCandidate {
+    uint32_t tf;
+    float expected[4];
+  };
+  const TfCandidate candidates[] = {
+      {0xFF000000u, {0.0f, 0.0f, 0.0f, 1.0f}}, // black
+      {0xFF00FF00u, {0.0f, 1.0f, 0.0f, 1.0f}}, // green
+      {0xFFFF0000u, {1.0f, 0.0f, 0.0f, 1.0f}}, // red
+      {0xFFFFFFFFu, {1.0f, 1.0f, 1.0f, 1.0f}}, // white
+  };
+
+  uint32_t tf = 0;
+  float expected[4] = {};
+  for (const auto& cand : candidates) {
+    if (cand.tf == tf_prev) {
+      continue; // avoid cached_same path in SetRenderState
+    }
+    if (cached_tf_before[0] == cand.expected[0] &&
+        cached_tf_before[1] == cand.expected[1] &&
+        cached_tf_before[2] == cand.expected[2] &&
+        cached_tf_before[3] == cand.expected[3]) {
+      continue; // avoid no-op in ensure_fixedfunc_texture_factor_constant_locked at draw time
+    }
+    tf = cand.tf;
+    std::memcpy(expected, cand.expected, sizeof(expected));
+    break;
+  }
+  if (!Check(tf != 0, "selected a non-default TEXTUREFACTOR value to force an upload when first used")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, tf);
+  if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR, before use)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 255u) {
+      return Check(false, "SetRenderState(TEXTUREFACTOR) before use must not upload PS constant c255");
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_states[kD3dRsTextureFactor] == tf, "SetRenderState(TEXTUREFACTOR) updates cached render state")) {
+      return false;
+    }
+    const float* cached = dev->ps_consts_f + 255u * 4u;
+    if (!Check(std::memcmp(cached, cached_tf_before, sizeof(cached_tf_before)) == 0,
+               "SetRenderState(TEXTUREFACTOR) before use does not update PS constant cache")) {
+      return false;
+    }
+  }
+
+  // Now enable stage1 to use TFACTOR (no additional texturing). The fixed-function
+  // PS selection logic runs during stage-state updates, so this should upload c255
+  // even though TEXTUREFACTOR was set earlier.
+  dev->cmd.reset();
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorArg1, kD3dTaTFactor);
+  if (!Check(hr == S_OK, "TSS stage1 COLORARG1=TFACTOR")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssAlphaArg1, kD3dTaCurrent);
+  if (!Check(hr == S_OK, "TSS stage1 ALPHAARG1=CURRENT")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=SELECTARG1 (enable)")) {
+    return false;
+  }
+
+  // Ensure the stage chain ends deterministically.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 2, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "TSS stage2 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 tfactor first use)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  const size_t len2 = dev->cmd.bytes_used();
+
+  bool saw_tf_upload = false;
+  for (const auto* hdr : CollectOpcodes(buf, len2, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 255u || sc->vec4_count != 1u) {
+      continue;
+    }
+    const auto* data = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (data[0] == expected[0] && data[1] == expected[1] && data[2] == expected[2] && data[3] == expected[3]) {
+      saw_tf_upload = true;
+      break;
+    }
+  }
+  if (!Check(saw_tf_upload, "first fixed-function use of TFACTOR uploads PS constant c255")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncUnboundStage0TextureTruncatesChainToZeroStages() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6830,6 +7014,9 @@ int main() {
     return 1;
   }
   if (!TestFixedfuncUnusedTfactorDoesNotUploadPsConstant()) {
+    return 1;
+  }
+  if (!TestFixedfuncTfactorSetBeforeUseUploadsPsConstantOnFirstUseDraw()) {
     return 1;
   }
   if (!TestFixedfuncUnboundStage2TextureDoesNotTruncateWhenStage2DoesNotSample()) {
