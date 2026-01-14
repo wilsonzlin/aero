@@ -248,7 +248,7 @@ async function main(): Promise<void> {
     Atomics.store(fbHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
     Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 2 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer,
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -277,7 +277,8 @@ async function main(): Promise<void> {
       writeBgrxTestPattern(backing, width, height, pitchBytes);
       scanoutBasePaddr = VRAM_BASE_PADDR + vramOffset;
     } else {
-      const basePaddr = 0x10_0000; // 1 MiB (stays clear of demo/shared framebuffer offsets)
+      // Keep this non-zero so scanout translation tests aren't trivially special-cased.
+      const basePaddr = 0x1000;
       if (basePaddr + requiredScanoutBytes > views.guestLayout.guest_size) {
         throw new Error("guest RAM too small for scanout test pattern");
       }

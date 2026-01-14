@@ -316,12 +316,12 @@ async function main() {
   // We intentionally avoid the full runtime allocator, which reserves a large wasm32 runtime region
   // for the VM; this page does not execute the WASM runtime.
   const segments = allocateHarnessSharedMemorySegments({
-    guestRamBytes: 2 * 1024 * 1024,
+    guestRamBytes: 1 * 1024 * 1024,
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
     // GPU worker doesn't use IO IPC for this page; keep it empty.
     ioIpcBytes: 0,
-    vramBytes: 2 * 1024 * 1024,
+    vramBytes: 1 * 1024 * 1024,
   });
   const views = createSharedMemoryViews(segments);
   const scanoutWords = views.scanoutStateI32;
@@ -355,9 +355,9 @@ async function main() {
   const maxPitch = Math.max(rowBytes, paddedPitch);
   const requiredMaxBytes = maxPitch * (HEIGHT - 1) + rowBytes;
 
-  // Keep this clear of the demo shared framebuffer offsets (0x20_0000) so this page
-  // stays compatible with other harnesses that embed a framebuffer into guest RAM.
-  const BUF0_PADDR = 0x0010_0000;
+  // Place the scanout surfaces in low guest RAM so this page can run with a small guest RAM
+  // allocation (it does not embed the demo shared framebuffer into guest RAM).
+  const BUF0_PADDR = 0x1000;
   const BUF1_PADDR = BUF0_PADDR + alignUp(requiredMaxBytes, 0x1000) + 0x1000;
 
   // Equivalent buffers in the BAR1/VRAM aperture (start at the canonical VBE LFB offset).

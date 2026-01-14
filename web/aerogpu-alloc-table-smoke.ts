@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     // a fixed 128MiB wasm32 runtime region and allocates the large default IO IPC + VRAM buffers.
     const sharedFramebuffer = new SharedArrayBuffer(8);
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 8 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer,
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -175,7 +175,7 @@ async function main(): Promise<void> {
     const backingBytes = rowPitchBytes * texHeight;
 
     const allocId = 1;
-    const gpaBase = 0x500000; // within 8 MiB guest RAM
+    const gpaBase = 0x1000;
     const allocSizeBytes = 4096;
 
     if (gpaBase + allocSizeBytes > views.guestLayout.guest_size) {

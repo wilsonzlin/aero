@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     Atomics.store(fbHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
     Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 2 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer,
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
