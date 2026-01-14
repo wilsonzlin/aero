@@ -120,6 +120,70 @@ describe("io/devices/xhci", () => {
     expect(irqSink.raiseIrq).toHaveBeenCalledWith(11);
   });
 
+  it("prefers step_frames(frames) over tick/step_frame fallbacks when available", () => {
+    const bridge: XhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      tick: vi.fn(),
+      step_frame: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new XhciPciDevice({ bridge, irqSink });
+    dev.onPciCommandWrite(1 << 2);
+
+    dev.tick(0);
+    dev.tick(5);
+
+    expect(bridge.step_frames).toHaveBeenCalledWith(5);
+    expect(bridge.tick).not.toHaveBeenCalled();
+    expect(bridge.step_frame).not.toHaveBeenCalled();
+    expect(bridge.tick_1ms).not.toHaveBeenCalled();
+  });
+
+  it("falls back to tick(frames) when step_frames is unavailable", () => {
+    const bridge: XhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      tick: vi.fn(),
+      step_frame: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new XhciPciDevice({ bridge, irqSink });
+    dev.onPciCommandWrite(1 << 2);
+
+    dev.tick(0);
+    dev.tick(4);
+
+    expect(bridge.tick).toHaveBeenCalledWith(4);
+    expect(bridge.step_frame).not.toHaveBeenCalled();
+    expect(bridge.tick_1ms).not.toHaveBeenCalled();
+  });
+
+  it("falls back to tick_1ms() when only per-frame stepping is available", () => {
+    const bridge: XhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new XhciPciDevice({ bridge, irqSink });
+    dev.onPciCommandWrite(1 << 2);
+
+    dev.tick(0);
+    dev.tick(3);
+
+    expect(bridge.tick_1ms).toHaveBeenCalledTimes(3);
+  });
+
   it("gates DMA stepping on PCI Bus Master Enable (command bit 2)", () => {
     const bridge: XhciControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),
