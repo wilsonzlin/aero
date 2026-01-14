@@ -597,6 +597,49 @@ static void test_ipv4_ip_options_tcp_checksum_only(void)
     assert(hdr.CsumOffset == 16);
 }
 
+static void test_ipv4_ip_options_udp_checksum_only(void)
+{
+    /* IHL=6 (24 bytes). */
+    uint8_t pkt[14 + 24 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+
+    /* IPv4 header with options (IHL=6) and UDP protocol. */
+    {
+        const uint16_t total_len = (uint16_t)(24 + 8);
+        memset(pkt + 14, 0, 24);
+        pkt[14] = (4u << 4) | 6u;
+        pkt[14 + 2] = (uint8_t)(total_len >> 8);
+        pkt[14 + 3] = (uint8_t)(total_len & 0xff);
+        pkt[14 + 8] = 64;
+        pkt[14 + 9] = 17; /* UDP */
+        /* src/dst */
+        pkt[14 + 12] = 192;
+        pkt[14 + 13] = 0;
+        pkt[14 + 14] = 2;
+        pkt[14 + 15] = 1;
+        pkt[14 + 16] = 198;
+        pkt[14 + 17] = 51;
+        pkt[14 + 18] = 100;
+        pkt[14 + 19] = 2;
+    }
+
+    build_udp_header(pkt + 14 + 24);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_NONE);
+    assert(hdr.CsumStart == (uint16_t)(14 + 24));
+    assert(hdr.CsumOffset == 6);
+}
+
 static void test_ipv4_ip_options_tcp_lso(void)
 {
     /* IPv4 IHL=6 (24 bytes). */
@@ -1221,6 +1264,7 @@ int main(void)
     test_ipv4_vlan_udp_checksum_only();
     test_ipv4_qinq_udp_checksum_only();
     test_ipv4_ip_options_tcp_checksum_only();
+    test_ipv4_ip_options_udp_checksum_only();
     test_ipv4_ip_options_tcp_lso();
     test_ipv4_tcp_lso();
     test_ipv4_tcp_lso_partial_headers();
