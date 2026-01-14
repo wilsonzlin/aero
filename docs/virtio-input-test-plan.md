@@ -306,7 +306,7 @@ Tip: `hidtest.exe --counters` can help diagnose “input buffered while no pendi
 - `PendingRingDepth`/`PendingRingDrops`: READ_REPORT backlog in `DEVICE_CONTEXT.PendingReportRing[]` (primary buffering layer).
 - Compare with `ReportRingDepth`/`ReportRingDrops`: translation-layer ring (`virtio_input_device.report_ring`).
 
-Tip: `hidtest.exe --interrupt-info` / `--interrupt-info-json` can help diagnose the effective interrupt mode (INTx vs MSI-X),
+Tip: `hidtest.exe --interrupt-info` / `--interrupt-info --json` / `--interrupt-info-json` can help diagnose the effective interrupt mode (INTx vs MSI-X),
 message count granted by Windows, and MSI-X vector routing (config vs per-queue).
 
 Tip: keyboard LED output reports exercise the **statusq** (driver → device) path. Useful probes:
@@ -316,7 +316,7 @@ Tip: keyboard LED output reports exercise the **statusq** (driver → device) pa
 
 To stress backpressure/coalescing, use `hidtest.exe --keyboard --led-spam N` (alternates `0` and `0x1F` by default; override the "on" mask via `--led 0xMASK` / `--led-hidd` / `--led-ioctl-set-output`) and watch `hidtest.exe --counters`.
 
-Tip: `hidtest.exe --keyboard --state` / `--state-json` shows the driver’s statusq/LED configuration (`StatusQActive`, `StatusQDropOnFull`, and `KeyboardLedSupportedMask`).
+Tip: `hidtest.exe --keyboard --state` / `--state --json` / `--state-json` shows the driver’s statusq/LED configuration (`StatusQActive`, `StatusQDropOnFull`, and `KeyboardLedSupportedMask`).
 
 After the driver is installed and confirmed working, you can optionally disable PS/2 in QEMU (`-machine ...,i8042=off`) to ensure you are not accidentally testing the emulated PS/2 devices. Only do this once you have a known-good virtio-input driver; otherwise you may lose input in the guest.
 

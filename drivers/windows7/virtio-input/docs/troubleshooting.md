@@ -38,7 +38,9 @@ On diagnostics builds, you can also toggle the mask at runtime using `hidtest.ex
 
 ```bat
 hidtest.exe --get-log-mask
+hidtest.exe --get-log-mask --json
 hidtest.exe --set-log-mask 0x8000000F
+hidtest.exe --set-log-mask 0x8000000F --json
 ```
 
 See `drivers/windows7/virtio-input/src/log.h` for bit definitions (`VIOINPUT_LOG_*`).
@@ -219,7 +221,7 @@ hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
 
-Tip: use `hidtest.exe --keyboard --state-json` for machine-readable state output (useful when scraping logs).
+Tip: use `hidtest.exe --keyboard --state --json` (or `--state-json`) for machine-readable state output (useful when scraping logs).
 
 `--state` prints `KeyboardLedSupportedMask` and `StatusQActive`. If the mask is `0` (device does not advertise `EV_LED`), the driver will keep statusq inactive and will not send LED events.
 
