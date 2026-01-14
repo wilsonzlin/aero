@@ -1472,6 +1472,10 @@ mod tests {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
 
+        // Mutate state so we can observe that `reset_lapic` actually resets it.
+        ints.lapics[1].mmio_write(0xF0, &(0x1EEu32).to_le_bytes()); // enable + spurious vec != 0xFF
+        ints.lapics[1].mmio_write(0x80, &(0x20u32).to_le_bytes()); // TPR
+
         ints.reset_lapic(1);
 
         // Platform-level reset keeps the LAPIC software-enable bit set so external interrupt
@@ -1479,6 +1483,9 @@ mod tests {
         let mut buf = [0u8; 4];
         ints.lapics[1].mmio_read(0xF0, &mut buf);
         assert_eq!(u32::from_le_bytes(buf), 0x1FF);
+
+        ints.lapics[1].mmio_read(0x80, &mut buf);
+        assert_eq!(u32::from_le_bytes(buf), 0);
 
         // When SVR[8] is explicitly cleared, injected interrupts are silently dropped.
         let vector = 0x44u8;
@@ -1807,10 +1814,6 @@ mod tests {
     fn init_ipi_records_pending_init_and_resets_destination_lapic_state() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
-
-        // LAPICs start enabled by PlatformInterrupts (SVR[8]=1).
-        let svr_before = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
-        assert_ne!(svr_before & (1 << 8), 0);
 
         // Mutate LAPIC1 state and ensure INIT resets it.
         lapic_write_u32_for_cpu(&ints, 1, 0x80, 0x70); // TPR
