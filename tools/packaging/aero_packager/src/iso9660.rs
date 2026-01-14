@@ -542,6 +542,9 @@ impl Identifiers {
         // ISO9660 stores identifier lengths and directory record lengths as u8, so we must
         // guarantee the generated Joliet identifiers fit in those limits.
         //
+        // Windows expects Joliet Level 3 names (UCS-2 / BMP-only) and enforces additional
+        // constraints beyond "directory record length fits".
+        //
         // - Path tables store `id_len` as u8, so the encoded identifier must be <= 255 bytes.
         // - Directory records store `record_len` as u8. `record_len = 33 + id_len + padding`,
         //   where padding is 1 when `id_len` is even (the fixed part is 33 bytes, i.e. odd).
@@ -549,6 +552,8 @@ impl Identifiers {
         //     33 + id_len + 1 <= 255  =>  id_len <= 220
         const JOLIET_MAX_ID_LEN_PATH_TABLE: usize = 255;
         const JOLIET_MAX_ID_LEN_DIR_RECORD: usize = 220;
+        // Joliet Level 3: max 64 UCS-2 characters (i.e. UTF-16 code units) per identifier.
+        const JOLIET_LEVEL3_MAX_ID_UTF16_CODE_UNITS: usize = 64;
 
         fn validate_joliet_id_len(
             original_name: &str,
@@ -576,6 +581,22 @@ impl Identifiers {
             Ok(())
         }
 
+        fn validate_joliet_level3_name_len(
+            original_name: &str,
+            is_dir: bool,
+            full_path: &str,
+        ) -> Result<()> {
+            let kind = if is_dir { "directory" } else { "file" };
+            let len = original_name.encode_utf16().count();
+            if len > JOLIET_LEVEL3_MAX_ID_UTF16_CODE_UNITS {
+                bail!(
+                    "Joliet Level 3 {kind} identifier is too long: \
+                     name={original_name:?}, path={full_path}, utf16_len={len} code units, max={JOLIET_LEVEL3_MAX_ID_UTF16_CODE_UNITS} code units"
+                );
+            }
+            Ok(())
+        }
+
         let mut ids = Identifiers {
             joliet_dir_id: vec![Vec::new(); tree.dirs.len()],
             joliet_file_id: vec![Vec::new(); tree.files.len()],
@@ -584,13 +605,17 @@ impl Identifiers {
 
         ids.joliet_dir_id[0] = vec![0u8];
         for (idx, dir) in tree.dirs.iter().enumerate().skip(1) {
-            let encoded = encode_ucs2be(&dir.name);
+            validate_joliet_level3_name_len(&dir.name, true, &dir.path)?;
+            let encoded = encode_ucs2be(&dir.name)
+                .with_context(|| format!("encode Joliet UCS-2 identifier for {}", dir.path))?;
             validate_joliet_id_len(&dir.name, true, &dir.path, &encoded)?;
             ids.joliet_dir_id[idx] = encoded;
         }
 
         for (idx, file) in tree.files.iter().enumerate() {
-            let encoded = encode_ucs2be(&file.name);
+            validate_joliet_level3_name_len(&file.name, false, &file.rel_path)?;
+            let encoded = encode_ucs2be(&file.name)
+                .with_context(|| format!("encode Joliet UCS-2 identifier for {}", file.rel_path))?;
             validate_joliet_id_len(&file.name, false, &file.rel_path, &encoded)?;
             ids.joliet_file_id[idx] = encoded;
         }
@@ -702,12 +727,22 @@ fn short_hash_hex_upper(bytes: &[u8]) -> String {
     out
 }
 
-fn encode_ucs2be(s: &str) -> Vec<u8> {
+fn encode_ucs2be(s: &str) -> Result<Vec<u8>> {
+    // Joliet uses UCS-2 (not UTF-16): only BMP codepoints are representable. Reject non-BMP
+    // characters instead of emitting surrogate pairs.
     let mut out = Vec::with_capacity(s.len() * 2);
-    for u in s.encode_utf16() {
-        out.extend_from_slice(&u.to_be_bytes());
+    for c in s.chars() {
+        let cp = c as u32;
+        if cp > 0xFFFF {
+            bail!(
+                "Joliet UCS-2 cannot encode non-BMP character {:?} (U+{:X})",
+                c,
+                cp
+            );
+        }
+        out.extend_from_slice(&(cp as u16).to_be_bytes());
     }
-    out
+    Ok(out)
 }
 
 fn compute_path_table_len(tree: &Tree, ids: &Identifiers, kind: TreeKind) -> u32 {
