@@ -463,6 +463,117 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(newBootDisksMsgs).toHaveLength(0);
   });
 
+  it("rebroadcasts boot disks when open-relevant metadata changes (legacy runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id }, hdd, null);
+    (coordinator as any).spawnWorker("io", segments);
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const postedBefore = ioWorker.posted.length;
+
+    // Disk resize changes the open contract (`sizeBytes` is validated by the runtime disk worker).
+    // This should trigger a re-broadcast so the IO worker reopens the disk with the updated size.
+    const resizedHdd = { ...hdd, sizeBytes: 2048 } satisfies DiskImageMetadata;
+    coordinator.setBootDisks({ hddId: hdd.id }, resizedHdd, null);
+
+    const newBootDisksMsgs = ioWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(newBootDisksMsgs).toEqual([
+      {
+        message: {
+          ...emptySetBootDisksMessage(),
+          mounts: { hddId: "hdd1" },
+          hdd: resizedHdd,
+          cd: null,
+          bootDevice: "hdd",
+        } satisfies SetBootDisksMessage,
+        transfer: undefined,
+      },
+    ]);
+  });
+
+  it("rebroadcasts boot disks when remote-disk open metadata changes (legacy runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+
+    const remoteHdd: DiskImageMetadata = {
+      source: "remote",
+      id: "hdd1",
+      name: "remote-disk",
+      kind: "hdd",
+      format: "raw",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+      remote: {
+        imageId: "img_1",
+        version: "v1",
+        delivery: "range",
+        urls: { url: "https://example.invalid/v1/images/img_1/data" },
+        validator: { etag: "\"etag-a\"" },
+      },
+      cache: {
+        chunkSizeBytes: 1024 * 1024,
+        backend: "idb",
+        fileName: "cache.bin",
+        overlayFileName: "overlay.bin",
+        overlayBlockSizeBytes: 1024 * 1024,
+      },
+    };
+
+    coordinator.setBootDisks({ hddId: remoteHdd.id }, remoteHdd, null);
+    (coordinator as any).spawnWorker("io", segments);
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const postedBefore = ioWorker.posted.length;
+
+    // Changing the remote validator changes the open spec (cache binding), so the IO worker must
+    // be reconfigured/reopened with the new validator.
+    const updatedRemoteHdd: DiskImageMetadata = {
+      ...remoteHdd,
+      remote: {
+        ...remoteHdd.remote,
+        validator: { etag: "\"etag-b\"" },
+      },
+    };
+    coordinator.setBootDisks({ hddId: remoteHdd.id }, updatedRemoteHdd, null);
+
+    const newBootDisksMsgs = ioWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(newBootDisksMsgs).toEqual([
+      {
+        message: {
+          ...emptySetBootDisksMessage(),
+          mounts: { hddId: "hdd1" },
+          hdd: updatedRemoteHdd,
+          cd: null,
+          bootDevice: "hdd",
+        } satisfies SetBootDisksMessage,
+        transfer: undefined,
+      },
+    ]);
+  });
+
   it("resends boot disk selection to the IO worker when vmRuntime=legacy and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 

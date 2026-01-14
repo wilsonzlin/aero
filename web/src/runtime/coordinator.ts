@@ -8,7 +8,7 @@ import { perf } from "../perf/perf";
 import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
 import type { PlatformFeatureReport } from "../platform/features";
-import type { DiskImageMetadata, MountConfig } from "../storage/metadata";
+import { OPFS_DISKS_PATH, type DiskImageMetadata, type MountConfig } from "../storage/metadata";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "./boot_disks_protocol";
 import {
   WORKER_ROLES,
@@ -1128,17 +1128,85 @@ export class WorkerCoordinator {
     // When nothing about the effective selection changed, avoid re-broadcasting to workers. This
     // prevents expensive legacy disk remounts and avoids re-triggering machine-runtime disk
     // reattachment.
-    const prevHddMetaId = sanitizeMountId(prev?.hdd?.id);
-    const prevCdMetaId = sanitizeMountId(prev?.cd?.id);
-    const nextHddMetaId = sanitizeMountId(nextHdd?.id);
-    const nextCdMetaId = sanitizeMountId(nextCd?.id);
+    const diskOpenKey = (meta: DiskImageMetadata | null | undefined): string => {
+      if (!meta) return "";
+      if (meta.source === "local") {
+        const dirRaw = typeof meta.opfsDirectory === "string" ? meta.opfsDirectory.trim() : "";
+        const dir = dirRaw && dirRaw !== OPFS_DISKS_PATH ? dirRaw : "";
+        const remote = meta.remote
+          ? {
+              url: meta.remote.url,
+              ...(meta.remote.blockSizeBytes !== undefined ? { blockSizeBytes: meta.remote.blockSizeBytes } : {}),
+              ...(meta.remote.cacheLimitBytes !== undefined ? { cacheLimitBytes: meta.remote.cacheLimitBytes } : {}),
+              ...(meta.remote.prefetchSequentialBlocks !== undefined ? { prefetchSequentialBlocks: meta.remote.prefetchSequentialBlocks } : {}),
+            }
+          : null;
+        return JSON.stringify({
+          source: "local",
+          id: meta.id,
+          backend: meta.backend,
+          kind: meta.kind,
+          format: meta.format,
+          fileName: meta.fileName,
+          ...(dir ? { opfsDirectory: dir } : {}),
+          sizeBytes: meta.sizeBytes,
+          ...(remote ? { remote } : {}),
+        });
+      }
+
+      const stableUrl =
+        typeof meta.remote.urls.url === "string" && meta.remote.urls.url.trim() ? meta.remote.urls.url.trim() : undefined;
+      const leaseEndpoint =
+        typeof meta.remote.urls.leaseEndpoint === "string" && meta.remote.urls.leaseEndpoint.trim()
+          ? meta.remote.urls.leaseEndpoint.trim()
+          : undefined;
+      const validatorEtag = typeof meta.remote.validator?.etag === "string" ? meta.remote.validator.etag : undefined;
+      const validatorLastModified =
+        typeof meta.remote.validator?.lastModified === "string" ? meta.remote.validator.lastModified : undefined;
+
+      return JSON.stringify({
+        source: "remote",
+        id: meta.id,
+        kind: meta.kind,
+        format: meta.format,
+        sizeBytes: meta.sizeBytes,
+        remote: {
+          imageId: meta.remote.imageId,
+          version: meta.remote.version,
+          delivery: meta.remote.delivery,
+          ...(stableUrl ? { url: stableUrl } : {}),
+          ...(leaseEndpoint ? { leaseEndpoint } : {}),
+          ...(validatorEtag || validatorLastModified
+            ? {
+                validator: {
+                  ...(validatorEtag ? { etag: validatorEtag } : {}),
+                  ...(validatorLastModified ? { lastModified: validatorLastModified } : {}),
+                },
+              }
+            : {}),
+        },
+        cache: {
+          backend: meta.cache.backend,
+          chunkSizeBytes: meta.cache.chunkSizeBytes,
+          fileName: meta.cache.fileName,
+          overlayFileName: meta.cache.overlayFileName,
+          overlayBlockSizeBytes: meta.cache.overlayBlockSizeBytes,
+          ...(meta.cache.cacheLimitBytes !== undefined ? { cacheLimitBytes: meta.cache.cacheLimitBytes } : {}),
+        },
+      });
+    };
+
+    const prevHddKey = diskOpenKey(prev?.hdd);
+    const prevCdKey = diskOpenKey(prev?.cd);
+    const nextHddKey = diskOpenKey(nextHdd);
+    const nextCdKey = diskOpenKey(nextCd);
     const prevBootDevice = prev?.bootDevice ?? "";
     if (
       prev &&
       prevMountHddId === nextMountHddId &&
       prevMountCdId === nextMountCdId &&
-      prevHddMetaId === nextHddMetaId &&
-      prevCdMetaId === nextCdMetaId &&
+      prevHddKey === nextHddKey &&
+      prevCdKey === nextCdKey &&
       prevBootDevice === bootDevice
     ) {
       return;
