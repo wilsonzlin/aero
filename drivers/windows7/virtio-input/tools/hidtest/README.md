@@ -270,6 +270,9 @@ machine-readable JSON object on stdout:
 - `KeyboardLedSupportedMask` — EV_BITS(EV_LED) support mask (0 means EV_LED not advertised / LED output disabled)
 - `StatusQActive` — whether the driver is currently sending LED events on statusq
 
+The JSON output also includes the selected HID interface metadata (`path`, `vid`/`pid`, `usagePage`/`usage`, and report
+byte lengths/descriptor lengths) to make it easier to correlate with other logs when multiple HID devices are present.
+
 ### Counters interpretation
 
 The virtio-input Win7 minidriver maintains a set of best-effort counters that track:

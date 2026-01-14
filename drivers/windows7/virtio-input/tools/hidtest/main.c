@@ -1371,7 +1371,7 @@ static void print_vioinput_interrupt_info(const VIOINPUT_INTERRUPT_INFO *info, D
     }
 }
 
-static void print_vioinput_interrupt_info_json(const VIOINPUT_INTERRUPT_INFO *info, DWORD bytes)
+static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const VIOINPUT_INTERRUPT_INFO *info, DWORD bytes)
 {
     DWORD avail;
     int have_size;
@@ -1392,6 +1392,75 @@ static void print_vioinput_interrupt_info_json(const VIOINPUT_INTERRUPT_INFO *in
     have_version = (avail >= sizeof(ULONG) * 2);
 
     wprintf(L"{\n");
+
+    /* Selected HID interface metadata (helps correlate output when multiple devices are present). */
+    wprintf(L"  \"path\": ");
+    json_print_string_w(dev ? dev->path : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"vid\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"pid\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usagePage\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usage\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"inputLen\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"outputLen\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"featureLen\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"reportDescLen\": ");
+    if (dev && dev->report_desc_valid) {
+        wprintf(L"%lu", dev->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"hidReportDescLen\": ");
+    if (dev && dev->hid_report_desc_valid) {
+        wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+
     wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
     if (have_size && info->Size != 0) {
         wprintf(L"  \"Size\": %lu,\n", info->Size);
@@ -1406,8 +1475,10 @@ static void print_vioinput_interrupt_info_json(const VIOINPUT_INTERRUPT_INFO *in
 
     if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Mode) + sizeof(info->Mode)) {
         wprintf(L"  \"Mode\": \"%ls\",\n", vioinput_interrupt_mode_to_string((ULONG)info->Mode));
+        wprintf(L"  \"ModeValue\": %lu,\n", (ULONG)info->Mode);
     } else {
         wprintf(L"  \"Mode\": null,\n");
+        wprintf(L"  \"ModeValue\": null,\n");
     }
     if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, MessageCount) + sizeof(ULONG)) {
         wprintf(L"  \"MessageCount\": %lu,\n", info->MessageCount);
@@ -1416,8 +1487,10 @@ static void print_vioinput_interrupt_info_json(const VIOINPUT_INTERRUPT_INFO *in
     }
     if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Mapping) + sizeof(info->Mapping)) {
         wprintf(L"  \"Mapping\": \"%ls\",\n", vioinput_interrupt_mapping_to_string((ULONG)info->Mapping));
+        wprintf(L"  \"MappingValue\": %lu,\n", (ULONG)info->Mapping);
     } else {
         wprintf(L"  \"Mapping\": null,\n");
+        wprintf(L"  \"MappingValue\": null,\n");
     }
     if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, UsedVectorCount) + sizeof(USHORT)) {
         wprintf(L"  \"UsedVectorCount\": %u,\n", (unsigned)info->UsedVectorCount);
@@ -1994,6 +2067,72 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     } while (0)
 
     wprintf(L"{\n");
+    wprintf(L"  \"path\": ");
+    json_print_string_w(dev->path);
+    wprintf(L",\n");
+    wprintf(L"  \"vid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"pid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usagePage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"inputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"outputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"featureLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"reportDescLen\": ");
+    if (dev->report_desc_valid) {
+        wprintf(L"%lu", dev->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"hidReportDescLen\": ");
+    if (dev->hid_report_desc_valid) {
+        wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
     wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
     if (have_size && size != 0) {
         wprintf(L"  \"Size\": %lu,\n", size);
@@ -6339,7 +6478,7 @@ int wmain(int argc, wchar_t **argv)
 
         info = (const VIOINPUT_INTERRUPT_INFO*)buf;
         if (opt.query_interrupt_info_json) {
-            print_vioinput_interrupt_info_json(info, bytes);
+            print_vioinput_interrupt_info_json(&dev, info, bytes);
         } else {
             print_vioinput_interrupt_info(info, bytes);
         }
