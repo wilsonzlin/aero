@@ -1284,7 +1284,7 @@ jobs:
             if [[ -n "${error_line}" ]]; then
               echo "- Harness error: \`${error_line}\`"
             fi
-            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" ]]; then
+            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" && "${qemu_stderr_line}" != "(qemu stderr log was not produced)" && "${qemu_stderr_line}" != "(qemu stderr log was empty)" ]]; then
               echo "- QEMU stderr (last line): \`${qemu_stderr_line}\`"
             fi
             if [[ ( "${{ steps.harness.outcome }}" != "success" || "${{ inputs.dry_run }}" == "true" ) && -n "${harness_cmdline}" ]]; then
