@@ -98,7 +98,8 @@ describe("requestWebGpuDevice()", () => {
 
     expect(uncapturedHandler).toBeTypeOf("function");
     uncapturedHandler?.({ error: "boom3" });
-    expect(spy).toHaveBeenCalled();
+    uncapturedHandler?.({ error: "boom3" });
+    expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
 
@@ -123,7 +124,8 @@ describe("requestWebGpuDevice()", () => {
 
     expect(uncapturedHandler).toBeTypeOf("function");
     uncapturedHandler?.({ error: "boom4" });
-    expect(spy).toHaveBeenCalled();
+    uncapturedHandler?.({ error: "boom4" });
+    expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
 });

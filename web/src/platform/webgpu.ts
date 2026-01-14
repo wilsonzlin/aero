@@ -51,10 +51,11 @@ export async function requestWebGpuDevice(
   });
 
   // Surface async validation/pipeline errors (which do not always throw) for debugging.
-  const onUncapturedError =
-    typeof options.onUncapturedError === "function"
-      ? options.onUncapturedError
-      : (error: unknown) => console.error("[webgpu] uncapturederror", error);
+  const hasCustomUncapturedHandler = typeof options.onUncapturedError === "function";
+  const onUncapturedError = hasCustomUncapturedHandler
+    ? options.onUncapturedError
+    : (error: unknown) => console.error("[webgpu] uncapturederror", error);
+  const seenErrorKeys = new Set<string>();
   const uncapturedHandler = (ev: any) => {
     try {
       // Avoid double-reporting when cancelable.
@@ -62,8 +63,30 @@ export async function requestWebGpuDevice(
     } catch {
       // Ignore.
     }
+    const error = ev?.error ?? ev;
+    if (!hasCustomUncapturedHandler) {
+      // Avoid flooding the console with the same validation error over and over.
+      const err = ev?.error;
+      const errorName =
+        (typeof err?.name === "string" && err.name) ||
+        (typeof err?.constructor?.name === "string" && err.constructor.name) ||
+        "";
+      const errorMessage = typeof err?.message === "string" ? err.message : "";
+      let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
+      if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
+        msg = `${errorName}: ${msg}`;
+      }
+      const key = msg;
+      if (seenErrorKeys.has(key)) return;
+      seenErrorKeys.add(key);
+      if (seenErrorKeys.size > 128) {
+        seenErrorKeys.clear();
+        seenErrorKeys.add(key);
+      }
+    }
+
     try {
-      onUncapturedError(ev?.error ?? ev);
+      onUncapturedError(error);
     } catch {
       // Ignore.
     }
