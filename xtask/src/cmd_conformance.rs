@@ -5,6 +5,18 @@ use std::env;
 use std::process::Command;
 
 const DEFAULT_CASES: usize = 512;
+// `xtask conformance` can trigger a cold build of the entire `conformance` crate and its
+// dependencies. On shared CI runners / fresh workspaces this can exceed `safe-run.sh`'s default
+// 10 minute timeout, causing the harness to fail before it even starts executing test cases.
+//
+// Keep this scoped to `xtask conformance` rather than increasing the global `safe-run.sh` default
+// timeout; other commands benefit from a shorter "hang" threshold.
+const DEFAULT_TIMEOUT_SECS: u64 = 1800;
+// Building the conformance harness (and its host reference) can be extremely slow when forced to
+// `-j1` (the default under `safe-run.sh`). Use a slightly higher default parallelism so the
+// conformance smoke test (and first-run developer experience) doesn't routinely time out on cold
+// builds. Keep this conservative for shared/contended hosts.
+const DEFAULT_CARGO_BUILD_JOBS: u32 = 2;
 
 #[derive(Debug)]
 struct ConformanceOpts {
@@ -90,6 +102,20 @@ requires a unix x86_64 host."
         .arg("./scripts/safe-run.sh")
         .arg("cargo")
         .args(["test", "-p", "conformance", "--locked"]);
+
+    // Give conformance runs a more forgiving default timeout on cold builds, while still allowing
+    // callers to override via `AERO_TIMEOUT`.
+    if env::var_os("AERO_TIMEOUT").is_none() {
+        cmd.env("AERO_TIMEOUT", DEFAULT_TIMEOUT_SECS.to_string());
+    }
+
+    // `safe-run.sh` defaults to `-j1` for reliability. That's great for keeping sandboxes stable,
+    // but it makes the `conformance` crate (which pulls in a full CPU stack + iced-x86) take
+    // prohibitively long to build from scratch. Nudge the default up slightly unless the caller
+    // has explicitly chosen their own parallelism.
+    if env::var_os("AERO_CARGO_BUILD_JOBS").is_none() && env::var_os("CARGO_BUILD_JOBS").is_none() {
+        cmd.env("AERO_CARGO_BUILD_JOBS", DEFAULT_CARGO_BUILD_JOBS.to_string());
+    }
 
     // Ensure the child process gets a fully-specified set of conformance knobs.
     cmd.env("AERO_CONFORMANCE_CASES", opts.cases.to_string());
