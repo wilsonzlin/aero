@@ -418,6 +418,40 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
             finally:
                 sys.argv = old_argv
 
+    def test_rejects_qemu_stderr_log_directory(self) -> None:
+        h = self.harness
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "disk.img"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+            qemu_stderr = tmp / "serial.qemu.stderr.log"
+            qemu_stderr.mkdir()
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "invoke_aero_virtio_win7_tests.py",
+                    "--qemu-system",
+                    "qemu-system-x86_64",
+                    "--virtio-transitional",
+                    "--disk-image",
+                    str(disk),
+                    "--serial-log",
+                    str(serial),
+                ]
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    rc = h.main()
+                self.assertEqual(rc, 2)
+                self.assertIn("ERROR: qemu stderr log path is a directory", stderr.getvalue())
+            finally:
+                sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()

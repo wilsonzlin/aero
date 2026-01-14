@@ -5181,6 +5181,9 @@ try {
   $serialBase = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $SerialLogPath))
   $qemuStderrPath = Join-Path (Split-Path -Parent $SerialLogPath) "$serialBase.qemu.stderr.log"
   if (Test-Path -LiteralPath $qemuStderrPath) {
+    if (Test-Path -LiteralPath $qemuStderrPath -PathType Container) {
+      throw "QEMU stderr log path is a directory: $qemuStderrPath"
+    }
     Remove-Item -LiteralPath $qemuStderrPath -Force
   }
 

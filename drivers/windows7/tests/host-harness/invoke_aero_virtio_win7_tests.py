@@ -3029,10 +3029,19 @@ def main() -> int:
 
     qemu_stderr_log = serial_log.with_name(serial_log.stem + ".qemu.stderr.log")
     if not args.dry_run:
+        if qemu_stderr_log.exists() and qemu_stderr_log.is_dir():
+            print(f"ERROR: qemu stderr log path is a directory: {qemu_stderr_log}", file=sys.stderr)
+            return 2
         try:
             qemu_stderr_log.unlink()
         except FileNotFoundError:
             pass
+        except OSError as e:
+            print(
+                f"ERROR: failed to remove existing QEMU stderr log: {qemu_stderr_log}: {e}",
+                file=sys.stderr,
+            )
+            return 2
 
     if virtio_disable_msix and not args.dry_run:
         # INTx-only mode: verify the running QEMU build accepts `vectors=0` for the virtio-pci devices
@@ -3120,7 +3129,14 @@ def main() -> int:
                         qmp_socket.unlink()
                     except FileNotFoundError:
                         pass
-                qmp_endpoint = _QmpEndpoint(unix_socket=qmp_socket)
+                    except OSError as e:
+                        print(
+                            f"WARNING: failed to remove existing QMP socket path {qmp_socket}: {e}. Falling back to TCP QMP.",
+                            file=sys.stderr,
+                        )
+                        qmp_socket = None
+                if qmp_socket is not None:
+                    qmp_endpoint = _QmpEndpoint(unix_socket=qmp_socket)
 
         if qmp_endpoint is None:
             port = _find_free_tcp_port()
