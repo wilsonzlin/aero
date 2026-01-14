@@ -5633,7 +5633,7 @@ static NTSTATUS APIENTRY AeroGpuDdiUpdateActiveVidPnPresentPath(_In_ const HANDL
         return STATUS_INVALID_PARAMETER;
     }
 
-    const D3DKMDT_VIDPN_PRESENT_PATH* path = &pUpdate->VidPnPresentPathInfo;
+    D3DKMDT_VIDPN_PRESENT_PATH* path = &pUpdate->VidPnPresentPathInfo;
 
     if (path->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID || path->VidPnTargetId != AEROGPU_VIDPN_TARGET_ID) {
         return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
@@ -5647,6 +5647,17 @@ static NTSTATUS APIENTRY AeroGpuDdiUpdateActiveVidPnPresentPath(_In_ const HANDL
     const D3DKMDT_VIDPN_PRESENT_PATH_SCALING sc = path->ContentTransformation.Scaling;
     if (sc != D3DKMDT_VPPS_IDENTITY && sc != D3DKMDT_VPPS_UNINITIALIZED) {
         return STATUS_NOT_SUPPORTED;
+    }
+
+    /*
+     * Be explicit: treat uninitialized transforms as identity in the active path.
+     * This helps dxgkrnl keep the committed VidPN stable across mode changes.
+     */
+    if (path->ContentTransformation.Rotation == D3DKMDT_VPPR_UNINITIALIZED) {
+        path->ContentTransformation.Rotation = D3DKMDT_VPPR_IDENTITY;
+    }
+    if (path->ContentTransformation.Scaling == D3DKMDT_VPPS_UNINITIALIZED) {
+        path->ContentTransformation.Scaling = D3DKMDT_VPPS_IDENTITY;
     }
 
     return STATUS_SUCCESS;
