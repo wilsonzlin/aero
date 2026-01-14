@@ -94,10 +94,28 @@ impl Bios {
                             .current_mode
                             .and_then(|m| self.video.vbe.find_mode(m))
                         {
-                            let bytes_per_line = pixels.saturating_mul(mode.bytes_per_pixel());
-                            self.video.vbe.logical_width_pixels = pixels.max(mode.width);
+                            let bpp = mode.bytes_per_pixel();
+                            let bytes_per_line = if bpp == 0 {
+                                0
+                            } else {
+                                // Derive scanline length in bytes from the requested pixel count.
+                                // Clamp to the largest value representable in `u16` while remaining
+                                // whole-pixel aligned (multiple of bytes-per-pixel).
+                                let bpp_u32 = u32::from(bpp);
+                                let pixels_u32 = u32::from(pixels);
+                                let bytes_u32 = pixels_u32.saturating_mul(bpp_u32);
+                                let max_aligned =
+                                    (u32::from(u16::MAX) / bpp_u32).saturating_mul(bpp_u32);
+                                bytes_u32.min(max_aligned) as u16
+                            };
                             self.video.vbe.bytes_per_scan_line =
                                 bytes_per_line.max(mode.bytes_per_scan_line());
+                            let logical_pixels = if bpp == 0 {
+                                0
+                            } else {
+                                self.video.vbe.bytes_per_scan_line / bpp
+                            };
+                            self.video.vbe.logical_width_pixels = logical_pixels.max(mode.width);
                             cpu.set_bx(self.video.vbe.bytes_per_scan_line);
                             cpu.set_cx(self.video.vbe.logical_width_pixels);
                             cpu.set_dx(self.video.vbe.max_scan_lines());
