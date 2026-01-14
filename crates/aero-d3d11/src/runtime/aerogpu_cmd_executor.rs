@@ -8438,6 +8438,15 @@ impl AerogpuD3d11Executor {
             };
             colors.push(tex_id);
         }
+        // Preserve gaps, but trim trailing `None` entries so a caller that always supplies 8 RTV
+        // slots (all NULL) behaves like `color_count=0`.
+        //
+        // This avoids forcing render passes to carry around long `None` tails, and ensures our
+        // internal depth-only dummy attachment doesn't exceed `max_color_attachments` on strict
+        // WebGPU implementations.
+        while let Some(None) = colors.last() {
+            colors.pop();
+        }
         self.state.render_targets = colors;
         self.state.depth_stencil = if depth_stencil == 0 {
             None
