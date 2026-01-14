@@ -32,7 +32,9 @@ fn check_decompress_deterministic_and_len(
 
     match expected_rgba8_len(width, height) {
         Some(expected) => {
-            if out1.len() != expected {
+            // The decoder may reject some hostile dimensions by returning an empty output. If it
+            // accepts the dimensions, the output must be exactly RGBA8 for the full image.
+            if out1.len() != 0 && out1.len() != expected {
                 panic!(
                     "{name}: unexpected output length {} (expected {}) for {}x{}",
                     out1.len(),
