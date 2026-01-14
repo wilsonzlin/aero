@@ -8628,55 +8628,6 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         }
 
         format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
-    } else if (flags.Color) {
-        const ULONG srcPitch = pShape->Pitch;
-        if (srcPitch == 0 || srcPitch < dstPitchBytes) {
-            if (poweredOn) {
-                AeroGpuCursorDisable(adapter);
-            }
-            {
-                KIRQL cursorIrql;
-                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
-                adapter->CursorShapeValid = FALSE;
-                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
-            }
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        const ULONGLONG srcSize64 = (ULONGLONG)srcPitch * (ULONGLONG)height;
-        if (srcPitch != 0 && (srcSize64 / srcPitch) != height) {
-            if (poweredOn) {
-                AeroGpuCursorDisable(adapter);
-            }
-            {
-                KIRQL cursorIrql;
-                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
-                adapter->CursorShapeValid = FALSE;
-                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
-            }
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        const UCHAR* src = (const UCHAR*)pShape->pPixels;
-        UCHAR* dst = (UCHAR*)cursorFbVa;
-
-        BOOLEAN anyAlphaNonZero = FALSE;
-        for (ULONG y = 0; y < height; ++y) {
-            const UCHAR* srcRow = src + (SIZE_T)y * (SIZE_T)srcPitch;
-            UCHAR* dstRow = dst + (SIZE_T)y * (SIZE_T)dstPitchBytes;
-            RtlCopyMemory(dstRow, srcRow, (SIZE_T)dstPitchBytes);
-
-            /* Detect XRGB inputs (alpha always 0) and switch to BGRX for display. */
-            for (ULONG x = 0; x < width; ++x) {
-                const UCHAR a = dstRow[(SIZE_T)x * 4u + 3u];
-                if (a != 0) {
-                    anyAlphaNonZero = TRUE;
-                    break;
-                }
-            }
-        }
-
-        format = anyAlphaNonZero ? AEROGPU_FORMAT_B8G8R8A8_UNORM : AEROGPU_FORMAT_B8G8R8X8_UNORM;
     } else if (flags.MaskedColor) {
         /*
          * Masked-color cursor: color bitmap + 1bpp AND mask.
@@ -8855,6 +8806,55 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         }
 
         format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
+    } else if (flags.Color) {
+        const ULONG srcPitch = pShape->Pitch;
+        if (srcPitch == 0 || srcPitch < dstPitchBytes) {
+            if (poweredOn) {
+                AeroGpuCursorDisable(adapter);
+            }
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const ULONGLONG srcSize64 = (ULONGLONG)srcPitch * (ULONGLONG)height;
+        if (srcPitch != 0 && (srcSize64 / srcPitch) != height) {
+            if (poweredOn) {
+                AeroGpuCursorDisable(adapter);
+            }
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const UCHAR* src = (const UCHAR*)pShape->pPixels;
+        UCHAR* dst = (UCHAR*)cursorFbVa;
+
+        BOOLEAN anyAlphaNonZero = FALSE;
+        for (ULONG y = 0; y < height; ++y) {
+            const UCHAR* srcRow = src + (SIZE_T)y * (SIZE_T)srcPitch;
+            UCHAR* dstRow = dst + (SIZE_T)y * (SIZE_T)dstPitchBytes;
+            RtlCopyMemory(dstRow, srcRow, (SIZE_T)dstPitchBytes);
+
+            /* Detect XRGB inputs (alpha always 0) and switch to BGRX for display. */
+            for (ULONG x = 0; x < width; ++x) {
+                const UCHAR a = dstRow[(SIZE_T)x * 4u + 3u];
+                if (a != 0) {
+                    anyAlphaNonZero = TRUE;
+                    break;
+                }
+            }
+        }
+
+        format = anyAlphaNonZero ? AEROGPU_FORMAT_B8G8R8A8_UNORM : AEROGPU_FORMAT_B8G8R8X8_UNORM;
     } else {
         if (poweredOn) {
             AeroGpuCursorDisable(adapter);
