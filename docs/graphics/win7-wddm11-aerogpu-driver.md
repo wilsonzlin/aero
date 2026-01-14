@@ -882,7 +882,7 @@ We will **not** implement these in the first functional driver (they must return
 - Dedicated VRAM segments, aperture segments, hardware paging, eviction
 - Memory compression, tiling/swizzling
 - Advanced scheduling: multiple engines, priorities, fine-grained preemption
-- Power management beyond “always on” (no DxgkDdiSetPowerState complexity)
+- Power management beyond basic D0↔non‑D0 transitions (the KMD implements a minimal `DxgkDdiSetPowerState` for sleep/resume + PnP robustness)
 - Video decode/processing acceleration (DXVA)
 - OpenGL ICD
 - Kernel/user shared surface optimizations beyond correctness (performance later)
