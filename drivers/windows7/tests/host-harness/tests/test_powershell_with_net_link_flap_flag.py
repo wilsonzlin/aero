@@ -33,7 +33,9 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
             self.assertIn(token, self.text)
 
         # Ensure we parse the guest SKIP reason from the marker so CI logs can report why it was skipped.
-        self.assertIn(r"virtio-net-link-flap\|SKIP\|", self.text)
+        # This is now done via Try-ExtractLastAeroMarkerLine (tail-truncation safe) rather than a direct
+        # rolling-tail regex scan.
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|"', self.text)
 
     def test_qmp_flap_targets_stable_net_device_id(self) -> None:
         # The host harness targets the virtio-net QOM id via QMP set_link (with backcompat name fallbacks).

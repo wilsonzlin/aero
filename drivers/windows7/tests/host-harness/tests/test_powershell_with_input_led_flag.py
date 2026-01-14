@@ -38,8 +38,9 @@ class PowerShellHarnessInputLedFlagTests(unittest.TestCase):
             self.assertIn(token, self.text)
 
         # Ensure we parse the guest SKIP reason from the marker so CI logs can report why it was skipped.
-        # (PowerShell does not require C/Python-style escaping for \| in a regex string.)
-        self.assertIn(r"virtio-input-led\|SKIP\|", self.text)
+        # This is now done via Try-ExtractLastAeroMarkerLine (tail-truncation safe) rather than a direct
+        # rolling-tail regex scan.
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|"', self.text)
 
     def test_with_input_led_preflight_requires_keyboard_and_mouse(self) -> None:
         # In transitional mode, -WithInputLed implies virtio-input coverage, which requires both

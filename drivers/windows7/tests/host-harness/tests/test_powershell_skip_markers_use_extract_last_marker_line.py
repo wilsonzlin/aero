@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+
+class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.ps_path = Path(__file__).resolve().parents[1] / "Invoke-AeroVirtioWin7Tests.ps1"
+        self.text = self.ps_path.read_text(encoding="utf-8", errors="replace")
+
+    def _extract_case_body(self, case_name: str, next_sentinel: str) -> str:
+        m = re.search(
+            rf'"{re.escape(case_name)}"\s*\{{(?P<body>[\s\S]*?)\r?\n\s*\}}\r?\n\s*{next_sentinel}',
+            self.text,
+        )
+        self.assertIsNotNone(m, f"failed to locate PowerShell case {case_name}")
+        assert m is not None
+        return m.group("body")
+
+    def test_virtio_input_led_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_INPUT_LED_SKIPPED", r'"VIRTIO_INPUT_LED_FAILED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|"', body)
+
+    def test_virtio_net_link_flap_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_NET_LINK_FLAP_SKIPPED", r'"VIRTIO_NET_UDP_FAILED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|"', body)
+
+    def test_virtio_snd_capture_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_SND_CAPTURE_SKIPPED", r'"VIRTIO_SND_DUPLEX_SKIPPED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|"', body)
+
+    def test_virtio_snd_duplex_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_SND_DUPLEX_SKIPPED", r'"VIRTIO_SND_BUFFER_LIMITS_SKIPPED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|"', body)
+
+    def test_virtio_snd_buffer_limits_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_SND_BUFFER_LIMITS_SKIPPED", r"default\s*\{")
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|"', body)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

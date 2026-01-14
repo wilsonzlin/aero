@@ -8329,8 +8329,13 @@ try {
     }
     "VIRTIO_INPUT_LED_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-led\|SKIP\|([^|\r\n]+)") {
-        $reason = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
 
       if ($reason -eq "flag_not_set") {
@@ -8890,8 +8895,13 @@ try {
     }
     "VIRTIO_NET_LINK_FLAP_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-link-flap\|SKIP\|([^|\r\n]+)") {
-        $reason = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
       if ($reason -eq "flag_not_set") {
         Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but -WithNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
@@ -9123,8 +9133,13 @@ try {
     }
     "VIRTIO_SND_CAPTURE_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|SKIP\|([^|\r\n]+)") {
-        $reason = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
 
       if ($reason -eq "flag_not_set") {
@@ -9140,8 +9155,13 @@ try {
     }
     "VIRTIO_SND_DUPLEX_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|SKIP\|([^|\r\n]+)") {
-        $reason = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
 
       if ($reason -eq "flag_not_set") {
@@ -9157,8 +9177,13 @@ try {
     }
     "VIRTIO_SND_BUFFER_LIMITS_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-buffer-limits\|SKIP\|([^|\r\n]+)") {
-        $reason = $Matches[1]
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
 
       if ($reason -eq "flag_not_set") {
