@@ -124,6 +124,10 @@ constexpr uint32_t kFixedfuncLightingGlobalAmbientRel =
 constexpr uint32_t kPsOpAdd = 0x04000002u;
 constexpr uint32_t kPsOpMul = 0x04000005u;
 constexpr uint32_t kPsOpTexld = 0x04000042u;
+// Sampler source tokens (`sN`), as encoded by the fixed-function ps_2_0 token
+// builder (`src_sampler` in `aerogpu_d3d9_driver.cpp`).
+constexpr uint32_t kPsSampler0 = 0x20E40800u;
+constexpr uint32_t kPsSampler1 = 0x20E40801u;
 // Source register tokens used by the fixed-function ps_2_0 token builder
 // (`fixedfunc_ps20` in `aerogpu_d3d9_driver.cpp`). These validate that stage0
 // argument modifiers are encoded into the generated shader bytecode.
@@ -175,6 +179,25 @@ bool ShaderContainsToken(const Shader* shader, uint32_t token) {
     }
   }
   return false;
+}
+
+size_t ShaderCountToken(const Shader* shader, uint32_t token) {
+  if (!shader) {
+    return 0;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return 0;
+  }
+  size_t count = 0;
+  for (size_t off = 0; off < size; off += sizeof(uint32_t)) {
+    uint32_t w = 0;
+    std::memcpy(&w, shader->bytecode.data() + off, sizeof(uint32_t));
+    if (w == token) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
@@ -8216,6 +8239,144 @@ bool TestStage0NoTextureCanonicalizesAndReusesShader() {
                "no CREATE_SHADER_DXBC emitted for stage0 changes with texture0 null");
 }
 
+bool TestStage1TextureEnableAddsSecondTexld() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Bind texture0 but leave texture1 null initially. Stage1 state will reference
+  // TEXTURE, so stage1 should be dropped until texture1 is bound.
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex1{};
+  if (!CreateDummyTexture(&cleanup, &hTex1)) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: modulate tex0 * diffuse.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "stage0 COLORARG2=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+
+  // Stage1: add current + tex1. Requires TEXTURE at stage1, so should only take
+  // effect once texture1 is bound.
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopAdd, "stage1 COLOROP=ADD")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorArg1, kD3dTaCurrent, "stage1 COLORARG1=CURRENT")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorArg2, kD3dTaTexture, "stage1 COLORARG2=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssAlphaOp, kD3dTopDisable, "stage1 ALPHAOP=DISABLE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  // Draw without texture1: stage1 must be dropped, so PS should reference only s0.
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 texture null)")) {
+    return false;
+  }
+  Shader* ps_no_tex1 = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_no_tex1 = dev->ps;
+  }
+  if (!Check(ps_no_tex1 != nullptr, "PS bound (stage1 texture null)")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps_no_tex1, kPsOpTexld) == 1, "stage1 disabled => exactly 1 texld")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps_no_tex1, kPsSampler0), "stage1 disabled => PS references s0")) {
+    return false;
+  }
+  if (!Check(!ShaderContainsToken(ps_no_tex1, kPsSampler1), "stage1 disabled => PS does not reference s1")) {
+    return false;
+  }
+
+  // Bind texture1 and draw again: stage1 should now be enabled, producing a PS
+  // that contains a second texld and references s1.
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 texture bound)")) {
+    return false;
+  }
+  Shader* ps_with_tex1 = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_with_tex1 = dev->ps;
+  }
+  if (!Check(ps_with_tex1 != nullptr, "PS bound (stage1 texture bound)")) {
+    return false;
+  }
+  if (!Check(ps_with_tex1 != ps_no_tex1, "binding texture1 changes fixed-function PS variant")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps_with_tex1, kPsOpTexld) == 2, "stage1 enabled => exactly 2 texld")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps_with_tex1, kPsSampler0), "stage1 enabled => PS references s0")) {
+    return false;
+  }
+  return Check(ShaderContainsToken(ps_with_tex1, kPsSampler1), "stage1 enabled => PS references s1");
+}
+
 bool TestStage0UnsupportedArgFailsAtDraw() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -10521,6 +10682,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage0NoTextureCanonicalizesAndReusesShader()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage1TextureEnableAddsSecondTexld()) {
     return 1;
   }
   if (!aerogpu::TestStage0UnsupportedArgFailsAtDraw()) {
