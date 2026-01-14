@@ -46,11 +46,11 @@ export const InputEventType = {
    */
   MouseButtons: 3,
   /**
-    * Mouse wheel movement.
+   * Mouse wheel movement.
     *
     * Payload:
     *   a = dz (signed 32-bit, positive = wheel up)
-    *   b = dx (signed 32-bit, positive = wheel right / REL_HWHEEL)
+    *   b = dx (signed 32-bit, positive = scroll right / REL_HWHEEL (AC Pan))
     */
   MouseWheel: 4,
   /**

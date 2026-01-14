@@ -4721,7 +4721,7 @@ function renderInputPanel(): HTMLElement {
         } else if (type === InputEventType.MouseButtons) {
           append(`mouse: buttons=0x${(words[off + 2] >>> 0).toString(16)}`);
         } else if (type === InputEventType.MouseWheel) {
-          append(`mouse: wheel=${words[off + 2] | 0}`);
+          append(`mouse: wheel=${words[off + 2] | 0} pan=${words[off + 3] | 0}`);
         }
       }
 
