@@ -664,6 +664,8 @@ static void test_event_idx_ring_size_and_kick(void)
     for (i = 0; i < 3; i++) {
         assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)(i + 1u), VIRTIO_FALSE, &head) == VIRTIO_OK);
         assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_FALSE);
+        /* last_kick_avail tracks the last observed avail index, even if no kick is needed. */
+        assert(vq.last_kick_avail == vq.avail_idx);
     }
 
     assert(virtqueue_split_add_sg(&vq, &sg, 1, (void *)(uintptr_t)0x4u, VIRTIO_FALSE, &head) == VIRTIO_OK);
