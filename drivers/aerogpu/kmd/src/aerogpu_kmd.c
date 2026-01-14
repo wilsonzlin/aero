@@ -1152,6 +1152,9 @@ static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
 static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ const volatile ULONGLONG* Value);
 static __forceinline VOID AeroGpuAtomicWriteU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue);
 static __forceinline ULONGLONG AeroGpuAtomicExchangeU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue);
+static __forceinline ULONGLONG AeroGpuAtomicCompareExchangeU64(_Inout_ volatile ULONGLONG* Value,
+                                                               _In_ ULONGLONG NewValue,
+                                                               _In_ ULONGLONG ExpectedValue);
 static __forceinline ULONG AeroGpuAtomicReadU32(_In_ volatile ULONG* Value);
 
 /*
@@ -1356,6 +1359,16 @@ static __forceinline ULONGLONG AeroGpuAtomicExchangeU64(_Inout_ volatile ULONGLO
     ASSERT(((ULONG_PTR)Value & 7u) == 0);
 #endif
     return (ULONGLONG)InterlockedExchange64((volatile LONGLONG*)Value, (LONGLONG)NewValue);
+}
+
+static __forceinline ULONGLONG AeroGpuAtomicCompareExchangeU64(_Inout_ volatile ULONGLONG* Value,
+                                                               _In_ ULONGLONG NewValue,
+                                                               _In_ ULONGLONG ExpectedValue)
+{
+#if DBG
+    ASSERT(((ULONG_PTR)Value & 7u) == 0);
+#endif
+    return (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)Value, (LONGLONG)NewValue, (LONGLONG)ExpectedValue);
 }
 
 static __forceinline ULONG AeroGpuAtomicReadU32(_In_ volatile ULONG* Value)
@@ -13790,7 +13803,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                      * Avoid clobbering a concurrent ISR update: only clear the fence if it still
                      * matches the value we observed at the start of QUERY_ERROR.
                      */
-                    InterlockedCompareExchange64((volatile LONGLONG*)&adapter->LastErrorFence, 0, (LONGLONG)cachedFence);
+                    AeroGpuAtomicCompareExchangeU64(&adapter->LastErrorFence, 0, cachedFence);
                 }
             }
 
