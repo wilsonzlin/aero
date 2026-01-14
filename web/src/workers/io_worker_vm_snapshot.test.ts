@@ -45,6 +45,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime,
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -147,6 +148,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -243,6 +245,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime: { save_state: () => usbState },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
@@ -306,6 +309,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime: { load_state: usbLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,

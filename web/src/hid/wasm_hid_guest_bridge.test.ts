@@ -139,6 +139,7 @@ describe("hid/WasmHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };
@@ -194,6 +195,7 @@ describe("hid/WasmHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };
@@ -303,6 +305,7 @@ describe("hid/WasmHidGuestBridge", () => {
 
     const host = {
       sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
       log: vi.fn(),
       error: vi.fn(),
     };

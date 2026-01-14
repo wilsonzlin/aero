@@ -3502,6 +3502,7 @@ async function handleVmSnapshotSaveToOpfs(
       guestBase,
       guestSize,
       runtimes: {
+        usbXhciControllerBridge: xhciControllerBridge,
         usbUhciRuntime: uhciRuntime,
         usbUhciControllerBridge: uhciControllerBridge,
         usbEhciControllerBridge: ehciControllerBridge,
@@ -3552,6 +3553,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       guestBase,
       guestSize,
       runtimes: {
+        usbXhciControllerBridge: xhciControllerBridge,
         usbUhciRuntime: uhciRuntime,
         usbUhciControllerBridge: uhciControllerBridge,
         usbEhciControllerBridge: ehciControllerBridge,
