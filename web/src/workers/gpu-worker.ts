@@ -2366,8 +2366,10 @@ async function telemetryTick(): Promise<void> {
   if (telemetryTickInFlight) return;
   if (!runtimeInit) return;
   if (isDeviceLost) return;
+  if (snapshotPaused) return;
 
   telemetryTickInFlight = true;
+  beginSnapshotBarrierTask();
   try {
     const events = await tryDrainWasmEvents();
     if (events.length > 0) {
@@ -2403,6 +2405,7 @@ async function telemetryTick(): Promise<void> {
     postStatsMessage(wasmStats ?? aerogpuWasmTelemetry);
   } finally {
     telemetryTickInFlight = false;
+    endSnapshotBarrierTask();
   }
 }
 
