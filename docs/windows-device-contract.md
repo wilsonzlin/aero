@@ -23,6 +23,11 @@ It exists to prevent “it boots on my machine” failures caused by silent PCI 
 The machine-readable companion manifest (for automation like Guest Tools) is:
 **[`windows-device-contract.json`](./windows-device-contract.json)**.
 
+Editor note: the JSON manifests include a `$schema` reference to
+[`windows-device-contract.schema.json`](./windows-device-contract.schema.json) for improved
+editor/CI feedback when editing the contract. In-repo tooling ignores `$schema` and performs its
+own validation (see `cargo run -p device-contract-validator --locked`).
+
 For the optional **virtio-win** packaging flow, see: [Virtio-win packaging variant](#virtio-win-packaging-variant-non-normative).
 
 ## Virtio-win packaging variant (non-normative)
