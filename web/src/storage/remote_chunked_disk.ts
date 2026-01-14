@@ -566,6 +566,11 @@ function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function emptyChunkLastAccessMap(): Record<string, number> {
+  // Use a null prototype so corrupted/polluted `Object.prototype["0"]` etc cannot affect LRU bookkeeping.
+  return Object.create(null) as Record<string, number>;
+}
+
 function toSafeNumber(value: bigint, label: string): number {
   const n = Number(value);
   if (!Number.isSafeInteger(n)) {
@@ -792,7 +797,7 @@ class RemoteChunkCache implements ChunkCache {
   ) {
     this.meta = meta;
     this.meta.accessCounter ??= 0;
-    this.meta.chunkLastAccess ??= {};
+    this.meta.chunkLastAccess ??= emptyChunkLastAccessMap();
     for (const r of meta.cachedRanges) this.rangeSet.insert(r.start, r.end);
     this.cachedBytes = this.rangeSet.totalLen();
   }
@@ -817,7 +822,7 @@ class RemoteChunkCache implements ChunkCache {
 
   private noteAccess(chunkIndex: number): void {
     this.meta.accessCounter = (this.meta.accessCounter ?? 0) + 1;
-    (this.meta.chunkLastAccess ??= {})[String(chunkIndex)] = this.meta.accessCounter;
+    (this.meta.chunkLastAccess ??= emptyChunkLastAccessMap())[String(chunkIndex)] = this.meta.accessCounter;
     this.meta.lastAccessedAtMs = Date.now();
   }
 
@@ -865,10 +870,10 @@ class RemoteChunkCache implements ChunkCache {
     let dirty = false;
 
     this.meta.accessCounter ??= 0;
-    this.meta.chunkLastAccess ??= {};
+    this.meta.chunkLastAccess ??= emptyChunkLastAccessMap();
 
     const cached = this.cachedChunkIndices();
-    const lastAccess = this.meta.chunkLastAccess ?? {};
+    const lastAccess = this.meta.chunkLastAccess ?? emptyChunkLastAccessMap();
 
     for (const chunkStr in lastAccess) {
       if (!Object.prototype.hasOwnProperty.call(lastAccess, chunkStr)) continue;
@@ -936,17 +941,17 @@ class RemoteChunkCache implements ChunkCache {
     if (!this.rangeSet.containsRange(r.start, r.end)) return null;
 
     const expectedLen = r.end - r.start;
-    const bytes = await this.store.read(this.chunkPath(chunkIndex));
-    if (!bytes || bytes.length !== expectedLen) {
+      const bytes = await this.store.read(this.chunkPath(chunkIndex));
+      if (!bytes || bytes.length !== expectedLen) {
       // Heal: metadata said cached but file missing/corrupt.
       await this.store.remove(this.chunkPath(chunkIndex)).catch(() => {});
-      this.rangeSet.remove(r.start, r.end);
-      delete (this.meta.chunkLastAccess ?? {})[String(chunkIndex)];
-      this.meta.cachedRanges = this.rangeSet.getRanges();
-      this.cachedBytes = this.rangeSet.totalLen();
-      this.markMetaDirty();
-      return null;
-    }
+       this.rangeSet.remove(r.start, r.end);
+       if (this.meta.chunkLastAccess) delete this.meta.chunkLastAccess[String(chunkIndex)];
+       this.meta.cachedRanges = this.rangeSet.getRanges();
+       this.cachedBytes = this.rangeSet.totalLen();
+       this.markMetaDirty();
+       return null;
+      }
 
     this.noteAccess(chunkIndex);
     this.markMetaDirty();
@@ -1005,7 +1010,7 @@ class RemoteChunkCache implements ChunkCache {
     });
     this.meta = reopened.meta;
     this.meta.accessCounter ??= 0;
-    this.meta.chunkLastAccess ??= {};
+    this.meta.chunkLastAccess ??= emptyChunkLastAccessMap();
 
     this.rangeSet = new RangeSet();
     this.cachedBytes = 0;
@@ -1078,7 +1083,7 @@ class RemoteChunkCache implements ChunkCache {
     while (this.cachedBytes > this.cacheLimitBytes) {
       let lruChunk: number | null = null;
       let lruCounter = Number.POSITIVE_INFINITY;
-      const lastAccess = this.meta.chunkLastAccess ?? {};
+      const lastAccess = this.meta.chunkLastAccess ?? emptyChunkLastAccessMap();
       for (const chunkStr in lastAccess) {
         if (!Object.prototype.hasOwnProperty.call(lastAccess, chunkStr)) continue;
         const counterRaw = lastAccess[chunkStr];
@@ -1095,7 +1100,7 @@ class RemoteChunkCache implements ChunkCache {
       const r = this.chunkRange(lruChunk);
       await this.store.remove(this.chunkPath(lruChunk)).catch(() => {});
       this.rangeSet.remove(r.start, r.end);
-      delete (this.meta.chunkLastAccess ?? {})[String(lruChunk)];
+      if (this.meta.chunkLastAccess) delete this.meta.chunkLastAccess[String(lruChunk)];
       this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
       this.markMetaDirty();

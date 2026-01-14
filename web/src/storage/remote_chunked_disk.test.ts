@@ -1824,6 +1824,100 @@ describe("RemoteChunkedDisk", () => {
     await disk2.close();
   });
 
+  it("enforces cacheLimitBytes on open even when meta.json lacks chunkLastAccess and Object.prototype is polluted", async () => {
+    const chunkSize = 512;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new TestMemoryStore();
+    const stable = {
+      store,
+      cacheImageId: "img-1",
+      cacheVersion: "v1",
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    };
+
+    // Pre-seed a cache directory with a meta.json that omits chunkLastAccess (legacy/partial metadata),
+    // but includes a cached range. On open, the disk should enforce cacheLimitBytes by evicting it.
+    const cacheKey = await RemoteCacheManager.deriveCacheKey({
+      imageId: stable.cacheImageId,
+      version: stable.cacheVersion,
+      deliveryType: remoteChunkedDeliveryType(chunkSize),
+    });
+    const cacheRoot = `${OPFS_AERO_DIR}/${OPFS_DISKS_DIR}/${OPFS_REMOTE_CACHE_DIR}`;
+    await store.write(
+      `${cacheRoot}/${cacheKey}/meta.json`,
+      new TextEncoder().encode(
+        JSON.stringify(
+          {
+            version: 1,
+            imageId: stable.cacheImageId,
+            imageVersion: stable.cacheVersion,
+            deliveryType: remoteChunkedDeliveryType(chunkSize),
+            validators: { sizeBytes: totalSize },
+            chunkSizeBytes: chunkSize,
+            createdAtMs: 0,
+            lastAccessedAtMs: 0,
+            // Omit chunkLastAccess intentionally.
+            cachedRanges: [{ start: 0, end: chunkSize }],
+          },
+          null,
+          2,
+        ),
+      ) as Uint8Array<ArrayBuffer>,
+    );
+    await store.write(`${cacheRoot}/${cacheKey}/chunks/0.bin`, new Uint8Array(chunkSize).fill(0x11) as Uint8Array<ArrayBuffer>);
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "0");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      // Prototype pollution with numeric keys must not prevent LRU reconciliation / eviction.
+      Object.defineProperty(Object.prototype, "0", { value: 123, configurable: true, writable: true });
+
+      const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, { ...stable, cacheLimitBytes: 1 });
+      try {
+        // The single cached chunk should be evicted immediately on open due to the strict cache limit.
+        expect(disk.getTelemetrySnapshot().cachedBytes).toBe(0);
+        expect(await store.read(`${cacheRoot}/${cacheKey}/chunks/0.bin`)).toBeNull();
+      } finally {
+        await disk.close();
+      }
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "0", existing);
+      else delete (Object.prototype as any)["0"];
+    }
+  });
+
   it("persists LRU order across sessions when cache hits update access order", async () => {
     const chunkSize = 1024;
     const totalSize = chunkSize * 2;
