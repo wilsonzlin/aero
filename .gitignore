@@ -14,6 +14,10 @@ handoff.md
 # lockfile depending on invocation. Keep it untracked.
 crates/legacy/aero-d3d9-shader/Cargo.lock
 
+# `crates/legacy/vm` is a standalone reference-only test harness (excluded from the workspace);
+# likewise keep any per-crate lockfile untracked.
+crates/legacy/vm/Cargo.lock
+
 # `crates/aero-d3d9-shader` is a thin wrapper crate (excluded from the workspace); likewise keep any
 # per-crate lockfile untracked.
 crates/aero-d3d9-shader/Cargo.lock
