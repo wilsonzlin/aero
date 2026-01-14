@@ -1127,7 +1127,9 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   )
 
   # Collect IRQ fields from (a) the virtio-blk per-test marker (IOCTL-derived fields) and/or
-  # (b) standalone `virtio-blk-irq|...` diagnostics (resource enumeration / miniport warnings).
+  # (b) standalone diagnostics:
+  #   - `virtio-blk-irq|...` (cfgmgr32 resource enumeration / Windows-assigned IRQ mode)
+  #   - `virtio-blk-miniport-irq|...` (best-effort miniport IOCTL diagnostics; may include message_count + MSI-X vectors)
   #
   # Prefer the per-test marker when present, but fill in missing fields from the standalone
   # diagnostics so the host marker is still produced for older selftest binaries.
@@ -1179,14 +1181,19 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   if ($irqMatches.Count -gt 0) {
     & $addLineFields $irqMatches[$irqMatches.Count - 1].Value
   }
+  $miniportIrqMatches = [regex]::Matches($Tail, "(?m)^virtio-blk-miniport-irq\\|[^`r`n]*")
+  if ($miniportIrqMatches.Count -gt 0) {
+    & $addLineFields $miniportIrqMatches[$miniportIrqMatches.Count - 1].Value
+  }
 
   $sawBlkLineInTail = ($blkMatches.Count -gt 0)
-  $sawBlkIrqLineInTail = ($irqMatches.Count -gt 0)
+  $sawBlkIrqLineInTail = ($irqMatches.Count -gt 0 -or $miniportIrqMatches.Count -gt 0)
 
   if ((-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath) -and (-not ($sawBlkLineInTail -and $sawBlkIrqLineInTail))) {
     # Tail truncation fallback: scan the full serial log line-by-line and keep the last blk markers we care about.
     $lastBlkLine = $null
     $lastBlkIrqLine = $null
+    $lastBlkMiniportIrqLine = $null
     try {
       $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
       try {
@@ -1200,6 +1207,9 @@ function Try-EmitAeroVirtioBlkIrqMarker {
             }
             if ($line -match "^\s*virtio-blk-irq\|") {
               $lastBlkIrqLine = $line.Trim()
+            }
+            if ($line -match "^\s*virtio-blk-miniport-irq\|") {
+              $lastBlkMiniportIrqLine = $line.Trim()
             }
           }
         } finally {
@@ -1216,6 +1226,9 @@ function Try-EmitAeroVirtioBlkIrqMarker {
     }
     if ($null -ne $lastBlkIrqLine) {
       & $addLineFields $lastBlkIrqLine
+    }
+    if ($null -ne $lastBlkMiniportIrqLine) {
+      & $addLineFields $lastBlkMiniportIrqLine
     }
   }
 
