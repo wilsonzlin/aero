@@ -129,10 +129,10 @@ fn aerogpu_snapshot_vram_sparse_page_list_tracks_only_non_zero_pages() {
         aerogpu_entry.expect("snapshot should contain an AeroGPU device entry")
     }
 
-    fn parse_v2_page_list<'a>(
-        data: &'a [u8],
+    fn parse_v2_page_list(
+        data: &[u8],
         target_idx: Option<usize>,
-    ) -> (u32, u32, u32, Vec<bool>, Option<&'a [u8]>) {
+    ) -> (u32, u32, u32, Vec<bool>, Option<&[u8]>) {
         let mut off = 0usize;
         // Skip BAR0 regs (same ordering as `encode_aerogpu_snapshot_v2`).
         let _abi_version = read_u32(data, &mut off);
@@ -176,7 +176,7 @@ fn aerogpu_snapshot_vram_sparse_page_list_tracks_only_non_zero_pages() {
         );
         assert_eq!(page_size, 4096, "unexpected VRAM snapshot page size");
 
-        let total_pages = (vram_len as usize + page_size as usize - 1) / page_size as usize;
+        let total_pages = (vram_len as usize).div_ceil(page_size as usize);
         let mut present = vec![false; total_pages];
         let mut target_payload = None;
 
