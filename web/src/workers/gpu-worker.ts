@@ -3159,10 +3159,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         recoveryPromise = null;
 
         runtimeInit = init;
-        // `GpuRuntimeInitMessage` (gpu-protocol) does not carry `scanoutState`; clear any
-        // runtime-worker state from prior initializations and fall back to the legacy heuristic
-        // when needed.
-        scanoutState = null;
+        // `scanoutState` is provided via the runtime `WorkerInitMessage` (coordinator protocol),
+        // not the gpu-protocol `GpuRuntimeInitMessage`. Preserve any existing scanout wiring so
+        // WDDM scanout continues to work when the worker is used in the full runtime.
+        //
+        // (Legacy smoke harnesses that do not provide `scanoutState` will continue to rely on the
+        // `wddmOwnsScanoutFallback` heuristic.)
         wddmOwnsScanoutFallback = false;
         const nextCanvas = init.canvas ?? null;
         if (runtimeCanvas !== nextCanvas) {

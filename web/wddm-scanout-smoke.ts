@@ -178,8 +178,10 @@ async function main(): Promise<void> {
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
 
-    // Keep guest RAM small (but note the wasm32 runtime reserves a fixed 128MiB region).
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 2 });
+    // Keep allocations small (but note the wasm32 runtime reserves a fixed 128MiB region).
+    // VRAM is unnecessary for this test (scanout points into guest RAM), so disable it to
+    // reduce memory pressure in CI.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
 
     if (!views.scanoutStateI32) {
@@ -260,6 +262,21 @@ async function main(): Promise<void> {
       readyReject((event as ErrorEvent).error ?? event);
     });
 
+    // Worker init (SharedArrayBuffers + shared guest RAM).
+    const initMsg: WorkerInitMessage = {
+      kind: "init",
+      role: "gpu",
+      controlSab: segments.control,
+      guestMemory: segments.guestMemory,
+      vgaFramebuffer: segments.vgaFramebuffer,
+      ioIpcSab: segments.ioIpc,
+      sharedFramebuffer: segments.sharedFramebuffer,
+      sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      scanoutState: segments.scanoutState,
+      scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+    };
+    worker.postMessage(initMsg);
+
     // GPU runtime init (presenter + screenshot API).
     const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
     const frameState = new Int32Array(sharedFrameState);
@@ -289,24 +306,6 @@ async function main(): Promise<void> {
       },
       [offscreen],
     );
-
-    // Worker init (SharedArrayBuffers + shared guest RAM).
-    //
-    // Note: The GPU worker's gpu-protocol `init` path resets some runtime-worker state (including scanoutState),
-    // so send the WorkerInitMessage *after* the gpu-protocol init to ensure the scanout descriptor is wired.
-    const initMsg: WorkerInitMessage = {
-      kind: "init",
-      role: "gpu",
-      controlSab: segments.control,
-      guestMemory: segments.guestMemory,
-      ioIpcSab: segments.ioIpc,
-      sharedFramebuffer: segments.sharedFramebuffer,
-      sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-      scanoutState: segments.scanoutState,
-      scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
-    };
-    worker.postMessage(initMsg);
-
     await ready;
     if (fatalError) throw new Error(fatalError);
 
