@@ -1,9 +1,9 @@
 use crate::format::{
     AerogpuMemoryRangeRef, BlobKind, FrameTocEntry, RecordType, TraceFooter, TraceHeader, TraceToc,
     AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE, AEROGPU_SUBMISSION_RECORD_HEADER_SIZE,
-    CONTAINER_VERSION, CONTAINER_VERSION_V1, FOOTER_MAGIC, TOC_ENTRY_SIZE, TOC_HEADER_SIZE,
-    TOC_MAGIC, TOC_VERSION, TRACE_BLOB_HEADER_SIZE, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE,
-    TRACE_MAGIC, TRACE_RECORD_HEADER_SIZE,
+    CONTAINER_VERSION, CONTAINER_VERSION_V1, CONTAINER_VERSION_V2, FOOTER_MAGIC, TOC_ENTRY_SIZE,
+    TOC_HEADER_SIZE, TOC_MAGIC, TOC_VERSION, TRACE_BLOB_HEADER_SIZE, TRACE_FOOTER_SIZE,
+    TRACE_HEADER_SIZE, TRACE_MAGIC, TRACE_RECORD_HEADER_SIZE,
 };
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
@@ -175,7 +175,7 @@ impl<R: Read + Seek> TraceReader<R> {
         self.reader.seek(SeekFrom::Start(start))?;
         let mut out = Vec::new();
         while self.reader.stream_position()? < end {
-            let record = read_record(&mut self.reader, end)?;
+            let record = read_record(&mut self.reader, end, self.header.container_version)?;
             out.push(record);
         }
         Ok(out)
@@ -284,7 +284,11 @@ fn read_toc<R: Read>(reader: &mut R, toc_len: u64) -> Result<TraceToc, TraceRead
     Ok(TraceToc { entries })
 }
 
-fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, TraceReadError> {
+fn read_record<R: Read + Seek>(
+    reader: &mut R,
+    end: u64,
+    container_version: u32,
+) -> Result<TraceRecord, TraceReadError> {
     let record_type_raw = read_u8(reader)?;
     let _flags = read_u8(reader)?;
     let _reserved = read_u16(reader)?;
@@ -306,6 +310,12 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
 
     let record_type = RecordType::from_u8(record_type_raw)
         .ok_or(TraceReadError::UnknownRecordType(record_type_raw))?;
+
+    // `RecordType::AerogpuSubmission` was added in trace container v2. Reject v1 traces that
+    // attempt to use it, so writers must bump `container_version` when emitting new record types.
+    if record_type == RecordType::AerogpuSubmission && container_version < CONTAINER_VERSION_V2 {
+        return Err(TraceReadError::UnknownRecordType(record_type_raw));
+    }
 
     match record_type {
         RecordType::BeginFrame => {

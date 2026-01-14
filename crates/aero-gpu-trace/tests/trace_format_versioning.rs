@@ -1,5 +1,6 @@
 use aero_gpu_trace::{
-    TraceMeta, TraceReadError, TraceReader, TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE,
+    AerogpuSubmissionCapture, TraceMeta, TraceReadError, TraceReader, TraceWriter, CONTAINER_VERSION,
+    TRACE_FOOTER_SIZE,
 };
 use std::io::Cursor;
 
@@ -7,6 +8,25 @@ fn minimal_trace_bytes(command_abi_version: u32) -> Vec<u8> {
     let meta = TraceMeta::new("test", command_abi_version);
     let mut writer = TraceWriter::new(Vec::<u8>::new(), &meta).expect("TraceWriter::new");
     writer.begin_frame(0).unwrap();
+    writer.present(0).unwrap();
+    writer.finish().unwrap()
+}
+
+fn trace_with_aerogpu_submission_v2(command_abi_version: u32) -> Vec<u8> {
+    let meta = TraceMeta::new("test", command_abi_version);
+    let mut writer = TraceWriter::new_v2(Vec::<u8>::new(), &meta).expect("TraceWriter::new_v2");
+    writer.begin_frame(0).unwrap();
+    writer
+        .write_aerogpu_submission(AerogpuSubmissionCapture {
+            submit_flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            signal_fence: 0,
+            cmd_stream_bytes: b"dummy cmd stream bytes",
+            alloc_table_bytes: None,
+            memory_ranges: &[],
+        })
+        .unwrap();
     writer.present(0).unwrap();
     writer.finish().unwrap()
 }
@@ -141,6 +161,28 @@ fn reject_trace_with_unsupported_toc_version() {
         Err(err) => err,
     };
     assert!(matches!(err, TraceReadError::UnsupportedTocVersion(999)));
+}
+
+#[test]
+fn reject_aerogpu_submission_record_in_container_v1() {
+    // Start from a valid v2 trace containing an AerogpuSubmission record, then patch
+    // `container_version` down to v1. The reader should reject the v2-only record type.
+    let mut bytes = trace_with_aerogpu_submission_v2(0);
+
+    // Patch header container_version.
+    bytes[12..16].copy_from_slice(&1u32.to_le_bytes());
+
+    // Patch footer container_version.
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    bytes[footer_start + 12..footer_start + 16].copy_from_slice(&1u32.to_le_bytes());
+
+    let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+    let entry = reader.frame_entries()[0];
+    let err = reader
+        .read_records_in_range(entry.start_offset, entry.end_offset)
+        .unwrap_err();
+    assert!(matches!(err, TraceReadError::UnknownRecordType(0x05)));
 }
 
 #[test]
