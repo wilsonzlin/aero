@@ -246,6 +246,9 @@ pub struct MachineConfig {
     pub enable_vga: bool,
     /// Whether to expose the canonical AeroGPU PCI device (`aero_devices::pci::profile::AEROGPU`).
     ///
+    /// This exposes the canonical AeroGPU PCI identity at
+    /// `aero_devices::pci::profile::AEROGPU.bdf` (currently `00:07.0`, `VID:DID = A3A0:0001`).
+    ///
     /// When enabled, the machine wires:
     ///
     /// - BAR0: a minimal AeroGPU MMIO register block (MAGIC/ABI/FEATURES, IRQ status/enable/ack,
