@@ -254,6 +254,7 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
 
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), sci_irq)),
+        request_sleep: None,
         request_power_off: None,
     };
 
@@ -359,6 +360,7 @@ fn acpi_pm_sci_legacy_pic_mode_raises_irq9_vector() {
 
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), sci_irq)),
+        request_sleep: None,
         request_power_off: None,
     };
 

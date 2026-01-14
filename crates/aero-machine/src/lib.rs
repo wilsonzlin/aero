@@ -5772,6 +5772,7 @@ Track progress: docs/21-smp.md\n\
                         AcpiPmConfig::default(),
                         AcpiPmCallbacks {
                             sci_irq: Box::new(PlatformIrqLine::isa(interrupts.clone(), 9)),
+                            request_sleep: None,
                             request_power_off: None,
                         },
                         clock.clone(),

@@ -169,6 +169,7 @@ fn acpi_pm_sci_delivers_to_lapic_when_ioapic_polarity_matches_madt_iso() {
             ioapic: ioapic.clone(),
             gsi: u32::from(sci_irq),
         }),
+        request_sleep: None,
         request_power_off: None,
     };
 

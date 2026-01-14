@@ -146,6 +146,7 @@ fn acpi_pm_io_snapshot_roundtrips_through_aero_snapshot_file() {
         cfg,
         AcpiPmCallbacks {
             sci_irq: Box::new(irq0.clone()),
+            request_sleep: None,
             request_power_off: None,
         },
         clock0.clone(),
@@ -213,6 +214,7 @@ fn acpi_pm_io_snapshot_roundtrips_through_aero_snapshot_file() {
             cfg,
             AcpiPmCallbacks {
                 sci_irq: Box::new(irq1.clone()),
+                request_sleep: None,
                 request_power_off: None,
             },
             clock1,

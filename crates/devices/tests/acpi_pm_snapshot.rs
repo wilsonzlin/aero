@@ -37,6 +37,7 @@ fn snapshot_restore_roundtrip_restores_registers_gpe_and_redrives_sci() {
     let sci_log0: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
     let callbacks0 = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log0.clone())),
+        request_sleep: None,
         request_power_off: None,
     };
 
@@ -68,6 +69,7 @@ fn snapshot_restore_roundtrip_restores_registers_gpe_and_redrives_sci() {
     let sci_log1: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
     let callbacks1 = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log1.clone())),
+        request_sleep: None,
         request_power_off: None,
     };
     let mut pm1 = AcpiPmIo::new_with_callbacks_and_clock(cfg, callbacks1, clock1);

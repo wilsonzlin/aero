@@ -3,7 +3,7 @@
 #[cfg(feature = "hda")]
 use aero_audio::hda_pci::HdaPciDevice;
 use aero_devices::a20_gate::{A20Gate, A20_GATE_PORT};
-use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
+use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, AcpiSleepState, SharedAcpiPmIo};
 use aero_devices::clock::ManualClock;
 use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
@@ -1006,6 +1006,7 @@ pub struct PcPlatform {
     xhci_ns_remainder: u64,
 
     reset_events: Rc<RefCell<Vec<ResetEvent>>>,
+    sleep_events: Rc<RefCell<Vec<AcpiSleepState>>>,
 }
 
 impl PcPlatform {
@@ -1385,6 +1386,7 @@ impl PcPlatform {
         let clock = ManualClock::new();
 
         let reset_events = Rc::new(RefCell::new(Vec::new()));
+        let sleep_events = Rc::new(RefCell::new(Vec::new()));
 
         PlatformInterrupts::register_imcr_ports(&mut io, interrupts.clone());
         register_pic8259_on_platform_interrupts(&mut io, interrupts.clone());
@@ -1436,6 +1438,16 @@ impl PcPlatform {
                 request_power_off: Some(Box::new({
                     let reset_events = reset_events.clone();
                     move || reset_events.borrow_mut().push(ResetEvent::PowerOff)
+                })),
+                request_sleep: Some(Box::new({
+                    let sleep_events = sleep_events.clone();
+                    move |state| {
+                        // S5 is surfaced via `ResetEvent::PowerOff`. Record all other sleep states
+                        // so embeddings can decide what to do (e.g. suspend on S3, power off on S4).
+                        if state != AcpiSleepState::S5 {
+                            sleep_events.borrow_mut().push(state);
+                        }
+                    }
                 })),
             },
             clock.clone(),
@@ -2182,6 +2194,7 @@ impl PcPlatform {
             usb_ns_remainder: 0,
             xhci_ns_remainder: 0,
             reset_events,
+            sleep_events,
         };
 
         if let Some(ehci) = pc.ehci.clone() {
@@ -2566,6 +2579,7 @@ impl PcPlatform {
 
         // Clear any reset requests that were pending before the reset was processed.
         self.reset_events.borrow_mut().clear();
+        self.sleep_events.borrow_mut().clear();
     }
 
     pub fn process_nvme(&mut self) {
@@ -2952,6 +2966,10 @@ impl PcPlatform {
 
     pub fn take_reset_events(&mut self) -> Vec<ResetEvent> {
         std::mem::take(&mut *self.reset_events.borrow_mut())
+    }
+
+    pub fn take_sleep_events(&mut self) -> Vec<AcpiSleepState> {
+        std::mem::take(&mut *self.sleep_events.borrow_mut())
     }
 }
 

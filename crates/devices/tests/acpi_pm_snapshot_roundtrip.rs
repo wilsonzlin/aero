@@ -80,6 +80,7 @@ fn acpi_pm_snapshot_roundtrip_preserves_registers_sci_and_timer() {
 
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(irq),
+        request_sleep: None,
         request_power_off: Some(Box::new(move || power_off_cb.set(power_off_cb.get() + 1))),
     };
 

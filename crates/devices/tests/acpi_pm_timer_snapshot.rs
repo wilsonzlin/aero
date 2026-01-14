@@ -41,6 +41,7 @@ fn snapshot_roundtrip_restores_pm_timer_and_registers() {
     let sci_log_1 = Rc::new(RefCell::new(Vec::new()));
     let callbacks_1 = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log_1.clone())),
+        request_sleep: None,
         request_power_off: None,
     };
 
@@ -78,6 +79,7 @@ fn snapshot_roundtrip_restores_pm_timer_and_registers() {
     let sci_log_2 = Rc::new(RefCell::new(Vec::new()));
     let callbacks_2 = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log_2.clone())),
+        request_sleep: None,
         request_power_off: None,
     };
 

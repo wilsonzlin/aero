@@ -40,6 +40,7 @@ fn snapshot_restore_redrives_sci_level() {
         cfg,
         AcpiPmCallbacks {
             sci_irq: Box::new(irq),
+            request_sleep: None,
             request_power_off: None,
         },
         clock.clone(),
@@ -59,6 +60,7 @@ fn snapshot_restore_redrives_sci_level() {
         cfg,
         AcpiPmCallbacks {
             sci_irq: Box::new(irq2.clone()),
+            request_sleep: None,
             request_power_off: None,
         },
         clock,
@@ -109,6 +111,7 @@ fn snapshot_restore_in_place_does_not_glitch_sci_level() {
         cfg,
         AcpiPmCallbacks {
             sci_irq: Box::new(irq.clone()),
+            request_sleep: None,
             request_power_off: None,
         },
         clock.clone(),
@@ -142,6 +145,7 @@ fn snapshot_restore_in_place_deasserts_sci_when_snapshot_state_has_no_pending_ev
         cfg,
         AcpiPmCallbacks {
             sci_irq: Box::new(irq.clone()),
+            request_sleep: None,
             request_power_off: None,
         },
         clock.clone(),
@@ -293,6 +297,7 @@ fn snapshot_load_does_not_trigger_s5_poweroff_callback() {
         cfg,
         AcpiPmCallbacks {
             sci_irq: Box::new(IrqLog::default()),
+            request_sleep: None,
             request_power_off: Some(Box::new(move || {
                 *power_off_calls_for_cb.borrow_mut() += 1;
             })),

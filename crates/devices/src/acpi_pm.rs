@@ -7,7 +7,9 @@
 //! - `PM_TMR` (24-bit free-running timer at 3.579545MHz) and a minimal `GPE0` block.
 //!
 //! This device also watches `PM1a_CNT.SLP_TYP/SLP_EN` and surfaces S5 shutdown
-//! requests via a host callback.
+//! requests via a host callback. It can also surface non-S5 sleep state requests
+//! (e.g. S3/S4) via a separate callback so embeddings can decide how to handle
+//! suspend/hibernate.
 //!
 //! Note: Reset via the FADT `ResetReg` (commonly port `0xCF9`) is implemented by
 //! [`crate::reset_ctrl`], not this module.
@@ -38,6 +40,18 @@ pub const PM1_STS_WAK: u16 = 1 << 15;
 
 /// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
 pub const SLP_TYP_S5: u8 = 0x05;
+
+/// Guest-requested ACPI sleep states via `PM1a_CNT.SLP_TYP/SLP_EN`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpiSleepState {
+    S1,
+    S2,
+    S3,
+    S4,
+    S5,
+    /// Chipset/firmware-specific `SLP_TYP` value not covered by the canonical S1..S5 mapping.
+    Other(u8),
+}
 
 pub const DEFAULT_PM1A_EVT_BLK: u16 = 0x0400;
 pub const DEFAULT_PM1A_CNT_BLK: u16 = 0x0404;
@@ -102,6 +116,11 @@ impl Default for AcpiPmConfig {
 pub struct AcpiPmCallbacks {
     /// Driven whenever SCI should be asserted/deasserted.
     pub sci_irq: Box<dyn IrqLine>,
+    /// Called when the guest requests an ACPI sleep state via `PM1a_CNT.SLP_TYP/SLP_EN`.
+    ///
+    /// The host is responsible for deciding what to do for each sleep state. For example, some
+    /// embeddings treat S4 as power-off, while others may want to snapshot/hibernate the VM.
+    pub request_sleep: Option<Box<dyn FnMut(AcpiSleepState)>>,
     /// Called when the guest requests S5 (soft-off).
     pub request_power_off: Option<Box<dyn FnMut()>>,
 }
@@ -116,6 +135,7 @@ impl Default for AcpiPmCallbacks {
     fn default() -> Self {
         Self {
             sci_irq: Box::new(NoIrq),
+            request_sleep: None,
             request_power_off: None,
         }
     }
@@ -317,11 +337,25 @@ impl<C: Clock> AcpiPmIo<C> {
             return;
         }
         let slp_typ = ((self.pm1_cnt & PM1_CNT_SLP_TYP_MASK) >> PM1_CNT_SLP_TYP_SHIFT) as u8;
-        if slp_typ != SLP_TYP_S5 {
-            return;
+        let sleep_state = match slp_typ {
+            1 => AcpiSleepState::S1,
+            2 => AcpiSleepState::S2,
+            3 => AcpiSleepState::S3,
+            4 => AcpiSleepState::S4,
+            5 => AcpiSleepState::S5,
+            other => AcpiSleepState::Other(other),
+        };
+
+        if let Some(cb) = self.callbacks.request_sleep.as_mut() {
+            cb(sleep_state);
         }
-        if let Some(cb) = self.callbacks.request_power_off.as_mut() {
-            cb();
+
+        // Preserve the legacy S5-only shutdown callback so existing integrations do not need to
+        // opt into the richer `request_sleep` API.
+        if sleep_state == AcpiSleepState::S5 {
+            if let Some(cb) = self.callbacks.request_power_off.as_mut() {
+                cb();
+            }
         }
     }
 

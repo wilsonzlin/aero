@@ -46,6 +46,7 @@ fn pm1_status_write_one_to_clear_and_sci_level() {
 
     let callbacks = AcpiPmCallbacks {
         sci_irq: Box::new(TestIrqLine(sci_log.clone())),
+        request_sleep: None,
         request_power_off: None,
     };
 
@@ -205,6 +206,7 @@ fn snapshot_roundtrip_preserves_pm1_gpe_sci_and_pm_timer_deterministically() {
     let irq0 = TestIrqLevel::new();
     let callbacks0 = AcpiPmCallbacks {
         sci_irq: Box::new(irq0.clone()),
+        request_sleep: None,
         request_power_off: None,
     };
 
@@ -242,6 +244,7 @@ fn snapshot_roundtrip_preserves_pm1_gpe_sci_and_pm_timer_deterministically() {
     let irq1 = TestIrqLevel::new();
     let callbacks1 = AcpiPmCallbacks {
         sci_irq: Box::new(irq1.clone()),
+        request_sleep: None,
         request_power_off: None,
     };
     let pm1 = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks(cfg, callbacks1)));
