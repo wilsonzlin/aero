@@ -854,78 +854,108 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
       {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
   };
 
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP(first)")) {
+  const auto DrawTri = [&](const char* tag) -> bool {
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    return Check(hr == S_OK, tag);
+  };
+
+  const auto ExpectFixedfuncPs = [&](auto const& expected_bytecode, const char* tag) -> bool {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound")) {
+      return false;
+    }
+    return Check(ShaderBytecodeEquals(dev->ps, expected_bytecode), tag);
+  };
+
+  // Default stage0: COLOR = TEXTURE * DIFFUSE, ALPHA = TEXTURE.
+  if (!DrawTri("DrawPrimitiveUP(first)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0ModulateTexture, "fixed-function PS bytecode (modulate/texture)")) {
     return false;
   }
 
-  // Default stage0: COLOR = TEXTURE * DIFFUSE, ALPHA = TEXTURE.
+  // Stage0: COLOR = TEXTURE * DIFFUSE, ALPHAOP = DISABLE (alpha from diffuse/current).
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 created")) {
-      return false;
-    }
-    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (default)")) {
-      return false;
-    }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
-               "default fixed-function PS bytecode (modulate/texture)")) {
-      return false;
-    }
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopDisable;
+  }
+  if (!DrawTri("DrawPrimitiveUP(second)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0ModulateDiffuse, "fixed-function PS bytecode (modulate/diffuse)")) {
+    return false;
   }
 
-  // Mutate cached stage state directly (portable tests don't have a DDI entrypoint
-  // for SetTextureStageState in the minimal header).
+  // Stage0: COLOR = TEXTURE * DIFFUSE, ALPHA = TEXTURE * DIFFUSE.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopModulate;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  }
+  if (!DrawTri("DrawPrimitiveUP(third)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsTexturedModulateVertexColor,
+                         "fixed-function PS bytecode (modulate/modulate)")) {
+    return false;
+  }
+
+  // Stage0: COLOR = TEXTURE, ALPHA = TEXTURE * DIFFUSE.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg1;
     dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
   }
-
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP(second)")) {
+  if (!DrawTri("DrawPrimitiveUP(fourth)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0TextureModulate, "fixed-function PS bytecode (texture/modulate)")) {
     return false;
   }
 
   // Stage0: COLOR = TEXTURE, ALPHA = TEXTURE.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (select texture)")) {
-      return false;
-    }
-    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (select texture)")) {
-      return false;
-    }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0TextureTexture),
-               "fixed-function PS bytecode (texture/texture)")) {
-      return false;
-    }
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  }
+  if (!DrawTri("DrawPrimitiveUP(fifth)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0TextureTexture, "fixed-function PS bytecode (texture/texture)")) {
+    return false;
+  }
+
+  // Stage0: COLOR = TEXTURE, ALPHAOP = DISABLE (alpha from diffuse/current).
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopDisable;
+  }
+  if (!DrawTri("DrawPrimitiveUP(sixth)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0TextureDiffuse, "fixed-function PS bytecode (texture/diffuse)")) {
+    return false;
   }
 
   // Stage0: COLOR = DIFFUSE, ALPHA = TEXTURE.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaDiffuse;
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
   }
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP(third)")) {
+  if (!DrawTri("DrawPrimitiveUP(seventh)")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (select diffuse)")) {
-      return false;
-    }
-    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (select diffuse)")) {
-      return false;
-    }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0DiffuseTexture),
-               "fixed-function PS bytecode (diffuse/texture)")) {
-      return false;
-    }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0DiffuseTexture, "fixed-function PS bytecode (diffuse/texture)")) {
+    return false;
   }
 
   // Stage0: COLOR = DIFFUSE, ALPHA = TEXTURE * DIFFUSE.
@@ -935,23 +965,11 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
     dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
   }
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP(fourth)")) {
+  if (!DrawTri("DrawPrimitiveUP(eighth)")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (alpha modulate)")) {
-      return false;
-    }
-    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (alpha modulate)")) {
-      return false;
-    }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0DiffuseModulate),
-               "fixed-function PS bytecode (diffuse/modulate)")) {
-      return false;
-    }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0DiffuseModulate, "fixed-function PS bytecode (diffuse/modulate)")) {
+    return false;
   }
 
   // Stage0: COLOROP=DISABLE disables the entire stage, so alpha comes from diffuse/current.
@@ -961,23 +979,11 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
     dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
   }
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP(fifth)")) {
+  if (!DrawTri("DrawPrimitiveUP(ninth)")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (disable)")) {
-      return false;
-    }
-    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (disable)")) {
-      return false;
-    }
-    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
-               "fixed-function PS bytecode (disable -> passthrough)")) {
-      return false;
-    }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsPassthroughColor, "fixed-function PS bytecode (disable -> passthrough)")) {
+    return false;
   }
 
   dev->cmd.finalize();
