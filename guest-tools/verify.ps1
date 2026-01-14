@@ -1261,7 +1261,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.26"
+         version = "2.5.27"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -2076,8 +2076,8 @@ try {
     $stateTestSign = Join-Path $outDir "testsigning.enabled-by-aero.txt"
     $stateNoIntegrity = Join-Path $outDir "nointegritychecks.enabled-by-aero.txt"
 
-    if (Test-Path $pkgList) {
-        foreach ($line in (Get-Content -Path $pkgList -ErrorAction SilentlyContinue)) {
+    if (Test-Path -LiteralPath $pkgList -PathType Leaf -ErrorAction SilentlyContinue) {
+        foreach ($line in (Get-Content -LiteralPath $pkgList -ErrorAction SilentlyContinue)) {
             $t = ("" + $line).Trim()
             if ($t.Length -eq 0) { continue }
             $gtInstalledDriverPackages += $t
@@ -2085,8 +2085,8 @@ try {
     }
 
     $installedCertThumbprints = @()
-    if (Test-Path $certList) {
-        foreach ($line in (Get-Content -Path $certList -ErrorAction SilentlyContinue)) {
+    if (Test-Path -LiteralPath $certList -PathType Leaf -ErrorAction SilentlyContinue) {
+        foreach ($line in (Get-Content -LiteralPath $certList -ErrorAction SilentlyContinue)) {
             $t = ("" + $line).Trim()
             if ($t.Length -eq 0) { continue }
             $installedCertThumbprints += $t
@@ -2095,8 +2095,8 @@ try {
 
     $installedMediaVars = @{}
     $installedMediaRaw = $null
-    if (Test-Path $installedMediaPath) {
-        $lines = @(Get-Content -Path $installedMediaPath -ErrorAction SilentlyContinue)
+    if (Test-Path -LiteralPath $installedMediaPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $lines = @(Get-Content -LiteralPath $installedMediaPath -ErrorAction SilentlyContinue)
         $installedMediaRaw = ($lines -join "`r`n")
         foreach ($line in $lines) {
             $t = ("" + $line).Trim()
@@ -2131,17 +2131,21 @@ try {
     $sum = ""
     $det = @()
 
-    $hasAny = (Test-Path $installLog) -or (Test-Path $pkgList) -or (Test-Path $certList) -or (Test-Path $installedMediaPath) -or (Test-Path $storagePreseedSkipMarker)
+    $hasAny = (Test-Path -LiteralPath $installLog -PathType Leaf -ErrorAction SilentlyContinue) -or `
+        (Test-Path -LiteralPath $pkgList -PathType Leaf -ErrorAction SilentlyContinue) -or `
+        (Test-Path -LiteralPath $certList -PathType Leaf -ErrorAction SilentlyContinue) -or `
+        (Test-Path -LiteralPath $installedMediaPath -PathType Leaf -ErrorAction SilentlyContinue) -or `
+        $storagePreseedSkipped
     if (-not $hasAny) {
         $st = "WARN"
         $sum = "No Guest Tools setup state files found under " + $outDir + " (setup.cmd may not have been run yet)."
     } else {
-        $sum = "install.log=" + (Test-Path $installLog) + ", installed-driver-packages=" + $gtInstalledDriverPackages.Count + ", installed-certs=" + $installedCertThumbprints.Count + ", installed-media=" + (Test-Path $installedMediaPath)
-        if (Test-Path $stateTestSign) { $det += "TestSigning was enabled by setup.cmd (marker file present)." }
-        if (Test-Path $stateNoIntegrity) { $det += "nointegritychecks was enabled by setup.cmd (marker file present)." }
-        if (Test-Path $storagePreseedSkipMarker) { $det += "Storage pre-seeding was skipped by setup.cmd (/skipstorage) (marker file present)." }
+        $sum = "install.log=" + (Test-Path -LiteralPath $installLog -PathType Leaf -ErrorAction SilentlyContinue) + ", installed-driver-packages=" + $gtInstalledDriverPackages.Count + ", installed-certs=" + $installedCertThumbprints.Count + ", installed-media=" + (Test-Path -LiteralPath $installedMediaPath -PathType Leaf -ErrorAction SilentlyContinue)
+        if (Test-Path -LiteralPath $stateTestSign -PathType Leaf -ErrorAction SilentlyContinue) { $det += "TestSigning was enabled by setup.cmd (marker file present)." }
+        if (Test-Path -LiteralPath $stateNoIntegrity -PathType Leaf -ErrorAction SilentlyContinue) { $det += "nointegritychecks was enabled by setup.cmd (marker file present)." }
+        if ($storagePreseedSkipped) { $det += "Storage pre-seeding was skipped by setup.cmd (/skipstorage) (marker file present)." }
 
-        if (Test-Path $installedMediaPath) {
+        if (Test-Path -LiteralPath $installedMediaPath -PathType Leaf -ErrorAction SilentlyContinue) {
             $det += ("installed-media.txt: GT_VERSION=" + $installedMediaGtVersion + ", GT_BUILD_ID=" + $installedMediaGtBuildId)
             if ($installedMediaVars.ContainsKey("manifest_path")) {
                 $det += ("installed-media.txt: manifest_path=" + ("" + $installedMediaVars["manifest_path"]))
@@ -2198,21 +2202,21 @@ try {
     $data = @{
         install_root = $outDir
         install_log_path = $installLog
-        install_log_exists = (Test-Path $installLog)
+        install_log_exists = (Test-Path -LiteralPath $installLog -PathType Leaf -ErrorAction SilentlyContinue)
         installed_driver_packages_path = $pkgList
         installed_driver_packages = $gtInstalledDriverPackages
         installed_certs_path = $certList
         installed_certs = $installedCertThumbprints
         testsigning_marker_path = $stateTestSign
-        testsigning_marker_exists = (Test-Path $stateTestSign)
+        testsigning_marker_exists = (Test-Path -LiteralPath $stateTestSign -PathType Leaf -ErrorAction SilentlyContinue)
         nointegritychecks_marker_path = $stateNoIntegrity
-        nointegritychecks_marker_exists = (Test-Path $stateNoIntegrity)
+        nointegritychecks_marker_exists = (Test-Path -LiteralPath $stateNoIntegrity -PathType Leaf -ErrorAction SilentlyContinue)
         installed_media_path = $installedMediaPath
-        installed_media_exists = (Test-Path $installedMediaPath)
+        installed_media_exists = (Test-Path -LiteralPath $installedMediaPath -PathType Leaf -ErrorAction SilentlyContinue)
         installed_media_raw = $installedMediaRaw
         installed_media_vars = $installedMediaVars
         storage_preseed_skipped_marker_path = $storagePreseedSkipMarker
-        storage_preseed_skipped_marker_exists = (Test-Path $storagePreseedSkipMarker)
+        storage_preseed_skipped_marker_exists = $storagePreseedSkipped
     }
 
     Add-Check "guest_tools_setup_state" "Guest Tools Setup State" $st $sum $data $det
