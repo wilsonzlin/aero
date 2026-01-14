@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 
 def _load_manifest(path: Path) -> dict:
@@ -69,7 +70,7 @@ def _parse_source_date_epoch(value: str, *, source: str) -> int:
         raise SystemExit(f"invalid {source} (expected integer seconds): {value!r}")
 
 
-def _resolve_source_date_epoch(cli_value: int | None) -> int:
+def _resolve_source_date_epoch(cli_value: Optional[int]) -> int:
     if cli_value is not None:
         return cli_value
     env_val = os.environ.get("SOURCE_DATE_EPOCH")

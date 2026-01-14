@@ -242,6 +242,11 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = _load_manifest(args.manifest)
+    if manifest.get("schema_version") != 1:
+        raise SystemExit(
+            "unsupported manifest schema_version "
+            f"(expected 1, got {manifest.get('schema_version')!r})"
+        )
     packages = manifest.get("packages", [])
     if not isinstance(packages, list):
         raise SystemExit(f"manifest field 'packages' must be a list: {args.manifest}")
