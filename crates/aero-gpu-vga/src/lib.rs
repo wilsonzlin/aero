@@ -1102,6 +1102,16 @@ impl VgaDevice {
         }
     }
 
+    fn crtc_offset_bytes(&self) -> Option<usize> {
+        // VGA CRTC Offset (index 0x13) gives the scanline pitch in addressable units.
+        // When byte mode is disabled, the unit is 2-byte words; otherwise it is bytes.
+        let offset = self.crtc.get(0x13).copied().unwrap_or(0) as usize;
+        if offset == 0 {
+            return None;
+        }
+        Some(if self.crtc_byte_mode() { offset } else { offset << 1 })
+    }
+
     fn ensure_buffers(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height && !self.front.is_empty() {
             return;
@@ -1292,7 +1302,9 @@ impl VgaDevice {
         self.back.fill(0);
         let width_usize = width as usize;
         let height_usize = height as usize;
-        let bytes_per_line = width_usize.div_ceil(8);
+        let bytes_per_line = self
+            .crtc_offset_bytes()
+            .unwrap_or_else(|| width_usize.div_ceil(8));
         let start = self.crtc_start_address_bytes();
 
         for y in 0..height_usize {
@@ -2487,6 +2499,38 @@ mod tests {
         dev.dirty = true;
         dev.present();
         assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[4]));
+    }
+
+    #[test]
+    fn planar_render_respects_crtc_offset_register() {
+        let mut dev = VgaDevice::new();
+
+        // Enable graphics mode while keeping chain-4 disabled so the renderer chooses the planar
+        // 4bpp path.
+        dev.attribute[0x10] |= 0x01;
+        dev.sequencer[4] = 0x00;
+
+        // Force a small resolution: 8x2.
+        dev.crtc[1] = 0;
+        dev.crtc[0x07] = 0;
+        dev.crtc[0x12] = 1;
+
+        // Enable CRTC byte mode so the offset register is interpreted in bytes.
+        dev.crtc[0x17] |= 0x40;
+        // Set the scanline pitch to 2 bytes (normally 1 byte for an 8-pixel-wide planar mode).
+        dev.crtc[0x13] = 2;
+
+        // First row leftmost pixel: color 1 (plane0 @ byte 0, bit7).
+        dev.vram[0] = 0x80;
+        // Second row leftmost pixel: color 2 (plane1 @ byte 2, bit7) due to pitch=2 bytes.
+        dev.vram[VGA_PLANE_SIZE + 2] = 0x80;
+
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_resolution(), (8, 2));
+        let fb = dev.get_framebuffer();
+        assert_eq!(fb[0], rgb_to_rgba_u32(dev.dac[1]));
+        assert_eq!(fb[8], rgb_to_rgba_u32(dev.dac[2]));
     }
 
     #[test]
