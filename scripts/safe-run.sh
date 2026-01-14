@@ -12,6 +12,13 @@
 #   AERO_MEM_LIMIT=12G    (12 GB virtual address space)
 #   AERO_NODE_TEST_MEM_LIMIT=32G  (fallback RLIMIT_AS for `node --test` when AERO_MEM_LIMIT is unset)
 #
+# Note: `cargo fuzz run` uses AddressSanitizer, which reserves a very large virtual address space
+# for shadow memory (~16 TB on x86_64). Under `RLIMIT_AS` (as used by `run_limited.sh`), the default
+# `AERO_MEM_LIMIT=12G` would cause fuzz targets to fail before executing with:
+#   "ReserveShadowMemoryRange failed ... Perhaps you're using ulimit -v".
+# `safe-run.sh` therefore disables the default address-space cap for `cargo fuzz run` unless the
+# caller explicitly sets `AERO_MEM_LIMIT`.
+#
 # Note: `node --test` can require a much higher RLIMIT_AS than other commands because Node+WASM may
 # reserve large amounts of *virtual* address space up-front (even when resident memory usage is
 # small). `safe-run.sh` automatically bumps the default for `node --test` unless `AERO_MEM_LIMIT` is
@@ -211,6 +218,17 @@ fi
 # Defaults - can be overridden via environment
 TIMEOUT="${AERO_TIMEOUT:-600}"
 MEM_LIMIT="${AERO_MEM_LIMIT:-12G}"
+
+# AddressSanitizer (used by `cargo fuzz run`) requires a huge virtual address space for its shadow
+# mappings. When the caller hasn't explicitly chosen an address-space cap, disable the default
+# limit so `safe-run.sh cargo fuzz run ...` can actually execute the fuzzer binary.
+if [[ -z "${AERO_MEM_LIMIT:-}" ]] && [[ "${1:-}" == "cargo" ]]; then
+    if [[ "${2:-}" == "fuzz" && "${3:-}" == "run" ]]; then
+        MEM_LIMIT="unlimited"
+    elif [[ "${2:-}" == +* && "${3:-}" == "fuzz" && "${4:-}" == "run" ]]; then
+        MEM_LIMIT="unlimited"
+    fi
+fi
 
 # Cargo registry cache contention can be a major slowdown when many agents share the same host
 # (cargo prints: "Blocking waiting for file lock on package cache"). Mirror the opt-in behavior of
@@ -893,7 +911,7 @@ if [[ $# -lt 1 ]]; then
     echo "" >&2
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
-    echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G)" >&2
+    echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G; for 'cargo fuzz run' safe-run defaults to 'unlimited' due to ASAN shadow memory)" >&2
     echo "  AERO_NODE_TEST_MEM_LIMIT=32G  Fallback memory limit for 'node --test' when AERO_MEM_LIMIT is unset (helps WASM-heavy Node tests under RLIMIT_AS)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1|<path>  Isolate Cargo state to ./.cargo-home (or a custom dir) to avoid registry lock contention on shared hosts" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
