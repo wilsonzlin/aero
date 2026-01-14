@@ -533,6 +533,42 @@ impl CacheMeta {
     }
 }
 
+fn downloaded_ranges_are_sane(downloaded: &RangeSet, total_size: u64, chunk_size: u64) -> bool {
+    // `downloaded` is persisted on disk as JSON and may be corrupted/tampered with. If we trust a
+    // bogus `downloaded` set with the sparse-file cache backend, we can end up reading zeros from
+    // holes in the sparse file without ever issuing HTTP range requests.
+    //
+    // Treat any semantic inconsistency as a cache invalidation signal (similar to how malformed
+    // JSON is handled in `JsonMetaStore::load`).
+    let mut prev_end = 0u64;
+    for r in downloaded.ranges() {
+        if r.is_empty() {
+            return false;
+        }
+        if r.end > total_size {
+            return false;
+        }
+        if chunk_size == 0 {
+            return false;
+        }
+        // All downloaded ranges are built from `(chunk_index * chunk_size, min(...))`, so starts
+        // should always be aligned.
+        if r.start % chunk_size != 0 {
+            return false;
+        }
+        // End must be chunk-aligned except for the final chunk, which may end at `total_size`.
+        if r.end != total_size && r.end % chunk_size != 0 {
+            return false;
+        }
+        // Ranges must be sorted and non-overlapping.
+        if r.start < prev_end {
+            return false;
+        }
+        prev_end = r.end;
+    }
+    true
+}
+
 struct JsonMetaStore {
     path: PathBuf,
 }
@@ -768,6 +804,11 @@ impl StreamingDisk {
                     && meta.chunk_size == config.options.chunk_size
                     && meta.validator == validator
                     && meta.cache_backend == Some(config.cache_backend)
+                    && downloaded_ranges_are_sane(
+                        &meta.downloaded,
+                        total_size,
+                        config.options.chunk_size,
+                    )
                     && backend_ok =>
             {
                 meta.downloaded

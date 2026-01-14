@@ -1163,6 +1163,57 @@ async fn corrupt_cache_metadata_is_treated_as_invalidation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn semantically_invalid_downloaded_ranges_in_meta_are_treated_as_invalidation() {
+    let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) = start_range_server_with_options(
+        image.clone(),
+        RangeServerOptions::new("etag-invalid-downloaded"),
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url.clone(), cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::SparseFile;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+
+    // Create the on-disk cache + metadata, but do not read any data.
+    let disk = StreamingDisk::open(config).await.unwrap();
+    drop(disk);
+
+    // Corrupt the metadata in a *valid JSON* way by inserting an out-of-bounds downloaded range
+    // while still claiming the first chunk is cached. If we trusted this, the sparse-file backend
+    // would read zeros without performing any HTTP requests.
+    let meta_path = cache_dir.path().join("streaming-cache-meta.json");
+    let raw = std::fs::read_to_string(&meta_path).unwrap();
+    let mut meta: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    meta["downloaded"]["ranges"] = serde_json::json!([
+        { "start": 0u64, "end": 1024u64 },
+        { "start": 4096u64, "end": 5120u64 },
+    ]);
+    std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap()).unwrap();
+
+    let mut config2 = StreamingDiskConfig::new(url, cache_dir.path());
+    config2.cache_backend = StreamingCacheBackend::SparseFile;
+    config2.options.chunk_size = 1024;
+    config2.options.read_ahead_chunks = 0;
+    config2.options.max_retries = 1;
+
+    let disk2 = StreamingDisk::open(config2).await.unwrap();
+    let mut buf = vec![0u8; 16];
+    disk2.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf[..], &image[0..16]);
+    assert_eq!(
+        state.counters.get_range.load(Ordering::SeqCst),
+        1,
+        "invalid downloaded ranges should invalidate cache metadata and trigger re-fetch"
+    );
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn weak_etag_does_not_break_range_fetches() {
     // RFC 9110 disallows weak validators in `If-Range`. Some servers respond with `200 OK` (full
     // representation) instead of `206 Partial Content` when clients send `If-Range: W/"..."`.
