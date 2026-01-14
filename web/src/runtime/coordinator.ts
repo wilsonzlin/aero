@@ -45,6 +45,7 @@ import {
   type CursorSetImageMessage,
   type CursorSetStateMessage,
   type AerogpuSubmitMessage,
+  type AerogpuCompleteFenceMessage,
   type WorkerInitMessage,
   type WasmReadyMessage,
 } from "./protocol";
@@ -64,9 +65,11 @@ import { precompileWasm } from "./wasm_preload";
 import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
   type GpuRuntimeCursorSetImageMessage,
   type GpuRuntimeCursorSetStateMessage,
   type GpuRuntimeSubmitAerogpuMessage,
+  type GpuRuntimeSubmitCompleteMessage,
 } from "../ipc/gpu-protocol";
 import {
   SCANOUT_FORMAT_B8G8R8X8,
@@ -82,6 +85,7 @@ import {
   wrapCursorState,
 } from "../ipc/cursor_state";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
+const MAX_PENDING_AEROGPU_SUBMISSIONS = 256;
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
@@ -299,6 +303,7 @@ export class WorkerCoordinator {
   private nextCmdSeq = 1;
   private nextSnapshotRequestId = 1;
   private nextAerogpuRequestId = 1;
+  private pendingAerogpuSubmissions: AerogpuSubmitMessage[] = [];
   private snapshotInFlight = false;
 
   private lastHeartbeatFromRing = 0;
@@ -468,6 +473,8 @@ export class WorkerCoordinator {
       this.runId += 1;
       const runId = this.runId;
       this.nextCmdSeq = 1;
+      this.nextAerogpuRequestId = 1;
+      this.pendingAerogpuSubmissions = [];
       this.workerConfigAckVersions = {};
       this.serialOutputText = "";
       this.serialOutputBytes = 0;
@@ -668,6 +675,8 @@ export class WorkerCoordinator {
     if (this.frameStateSab) new Int32Array(this.frameStateSab).fill(0);
 
     this.nextCmdSeq = 1;
+    this.nextAerogpuRequestId = 1;
+    this.pendingAerogpuSubmissions = [];
     this.workerConfigAckVersions = {};
     this.wasmStatus = {};
     this.lastHeartbeatFromRing = 0;
@@ -1980,12 +1989,14 @@ export class WorkerCoordinator {
     this.workers = {};
     this.wasmStatus = {};
     this.workerConfigAckVersions = {};
+    this.pendingAerogpuSubmissions = [];
 
     if (options.clearShared) {
       this.shared = undefined;
       this.frameStateSab = undefined;
       this.lastHeartbeatFromRing = 0;
       this.nextCmdSeq = 1;
+      this.nextAerogpuRequestId = 1;
     }
   }
 
@@ -2375,6 +2386,18 @@ export class WorkerCoordinator {
     }
 
     if (role === "gpu") {
+      if (isGpuWorkerMessageBase(data)) {
+        const maybeComplete = data as Partial<GpuRuntimeSubmitCompleteMessage>;
+        if (
+          maybeComplete.type === "submit_complete" &&
+          typeof maybeComplete.requestId === "number" &&
+          typeof maybeComplete.completedFence === "bigint"
+        ) {
+          this.forwardAerogpuFenceComplete(maybeComplete.completedFence);
+          return;
+        }
+      }
+
       if (isGpuWorkerGpuErrorMessage(data)) {
         const err = data.error as { message?: unknown; stack?: unknown } | undefined;
         const msgText = typeof err?.message === "string" ? err.message : "GPU error";
@@ -2429,6 +2452,7 @@ export class WorkerCoordinator {
 
       if (role === "gpu") {
         this.flushCursorToGpuWorker();
+        this.flushPendingAerogpuSubmissions();
       }
 
       this.maybeMarkRunning();
@@ -2719,11 +2743,29 @@ export class WorkerCoordinator {
     }
   }
 
+  private flushPendingAerogpuSubmissions(): void {
+    if (this.pendingAerogpuSubmissions.length === 0) return;
+    // Drain in FIFO order to preserve guest submission ordering.
+    const pending = this.pendingAerogpuSubmissions.splice(0, this.pendingAerogpuSubmissions.length);
+    for (const sub of pending) {
+      this.forwardAerogpuSubmit(sub);
+    }
+  }
+
   private forwardAerogpuSubmit(sub: AerogpuSubmitMessage): void {
     const gpuInfo = this.workers.gpu;
     if (!gpuInfo || gpuInfo.status.state !== "ready") {
-      // GPU worker is not ready (yet). Drop the submission; the machine/device model still
-      // maintains forward progress via fence completion semantics.
+      // GPU worker is not ready (yet). Queue until READY so we don't lose submissions during
+      // startup/restart windows (the submission bridge uses deferred fences).
+      if (this.pendingAerogpuSubmissions.length >= MAX_PENDING_AEROGPU_SUBMISSIONS) {
+        const dropped = this.pendingAerogpuSubmissions.shift();
+        if (dropped && typeof dropped.signalFence === "bigint" && dropped.signalFence !== 0n) {
+          // Fallback: if we exceed the bounded queue, complete the dropped fence immediately so the
+          // guest cannot deadlock. (Rendering correctness is best-effort in this scenario.)
+          this.forwardAerogpuFenceComplete(dropped.signalFence);
+        }
+      }
+      this.pendingAerogpuSubmissions.push(sub);
       return;
     }
 
@@ -2744,6 +2786,19 @@ export class WorkerCoordinator {
     const transfer: Transferable[] = [cmdStream];
     if (allocTable) transfer.push(allocTable);
     gpuInfo.worker.postMessage(msg, transfer);
+  }
+
+  private forwardAerogpuFenceComplete(fence: bigint): void {
+    const cpuInfo = this.workers.cpu;
+    if (!cpuInfo) return;
+    if (typeof fence !== "bigint") return;
+
+    const msg: AerogpuCompleteFenceMessage = { kind: "aerogpu.complete_fence", fence };
+    try {
+      cpuInfo.worker.postMessage(msg);
+    } catch {
+      // ignore (best-effort)
+    }
   }
 }
 

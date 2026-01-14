@@ -15,6 +15,7 @@ import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
   type AerogpuSubmitMessage,
+  type AerogpuCompleteFenceMessage,
   ErrorCode,
   MessageType,
   type ProtocolMessage,
@@ -191,6 +192,8 @@ const pendingMachineOps: PendingMachineOp[] = [];
 
 let wasmApi: WasmApi | null = null;
 let machine: InstanceType<WasmApi["Machine"]> | null = null;
+const pendingAerogpuFenceCompletions: bigint[] = [];
+let aerogpuBridgeEnabled = false;
 
 function verifyWasmSharedStateLayout(
   m: InstanceType<WasmApi["Machine"]>,
@@ -1388,10 +1391,45 @@ function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
+function processPendingAerogpuFenceCompletions(): void {
+  if (pendingAerogpuFenceCompletions.length === 0) return;
+  if (vmSnapshotPaused || machineBusy) return;
+  if (!aerogpuBridgeEnabled) {
+    // Ignore completions until the submission bridge is enabled (we enable it by draining
+    // submissions). Calling `aerogpu_complete_fence` enables bridge semantics on the WASM side,
+    // so avoid invoking it speculatively while the guest is still running under legacy
+    // immediate-fence semantics.
+    pendingAerogpuFenceCompletions.length = 0;
+    return;
+  }
+
+  const m = machine;
+  const completeFence = (m as unknown as { aerogpu_complete_fence?: unknown })?.aerogpu_complete_fence;
+  if (!m || typeof completeFence !== "function") {
+    // If the WASM build doesn't support fence completion, drop queued completions to keep memory
+    // bounded (and ensure we don't accidentally enable bridge semantics via drain).
+    pendingAerogpuFenceCompletions.length = 0;
+    return;
+  }
+
+  const fences = pendingAerogpuFenceCompletions.splice(0, pendingAerogpuFenceCompletions.length);
+  for (const fence of fences) {
+    try {
+      (completeFence as (fence: bigint) => void).call(m, fence);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function drainAerogpuSubmissions(): void {
   if (vmSnapshotPaused || machineBusy) return;
   const m = machine;
   if (!m || typeof m.aerogpu_drain_submissions !== "function") return;
+  // `aerogpu_drain_submissions()` enables the submission bridge on the WASM side, which switches
+  // AeroGPU into deferred-fence semantics. Avoid enabling it unless we can also deliver fence
+  // completions from the GPU worker.
+  if (typeof (m as unknown as { aerogpu_complete_fence?: unknown }).aerogpu_complete_fence !== "function") return;
   const st = status;
   // Avoid draining (and thus removing) submissions while the GPU worker is not ready to accept
   // them. The WASM device model maintains its own bounded queue; draining too early would drop
@@ -1401,6 +1439,7 @@ function drainAerogpuSubmissions(): void {
   let drained: unknown;
   try {
     drained = m.aerogpu_drain_submissions();
+    aerogpuBridgeEnabled = true;
   } catch {
     return;
   }
@@ -1779,6 +1818,12 @@ async function runLoop(): Promise<void> {
         }
       }
 
+      // Drain any AeroGPU fence completions forwarded from the GPU worker when safe. This ensures
+      // the guest sees forward progress once the submission bridge is enabled.
+      if (!vmSnapshotPaused && !machineBusy) {
+        processPendingAerogpuFenceCompletions();
+      }
+
       if (!running || !machine || vmSnapshotPaused || machineBusy) {
         // The run loop waits primarily on coordinator-issued commands (via the command ring),
         // but snapshot orchestration and input delivery arrive via `postMessage`. Race the ring
@@ -1952,6 +1997,17 @@ ctx.onmessage = (ev) => {
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
       virtio_input_mouse_driver_ok: () => virtioMouseOk,
     } as unknown as InstanceType<WasmApi["Machine"]>;
+    return;
+  }
+
+  const aerogpuComplete = msg as Partial<AerogpuCompleteFenceMessage>;
+  if (aerogpuComplete?.kind === "aerogpu.complete_fence") {
+    const fence = aerogpuComplete.fence;
+    if (typeof fence !== "bigint") return;
+    pendingAerogpuFenceCompletions.push(fence);
+    // Best-effort: process immediately when safe.
+    processPendingAerogpuFenceCompletions();
+    wakeRunLoop();
     return;
   }
 

@@ -236,6 +236,18 @@ export type NetTraceStatusMessage = {
   requestId: number;
 };
 
+/**
+ * AeroGPU fence completion forwarded from the GPU worker (via the coordinator) back to the CPU
+ * worker running the canonical `api.Machine`.
+ *
+ * This is used in `vmRuntime="machine"` mode to drive AeroGPU fence/IRQ forward progress when the
+ * submission bridge is enabled (external executor mode).
+ */
+export type AerogpuCompleteFenceMessage = {
+  kind: "aerogpu.complete_fence";
+  fence: bigint;
+};
+
 export type NetTracePcapngMessage = {
   kind: "net.trace.pcapng";
   requestId: number;
@@ -257,6 +269,7 @@ export type CoordinatorToWorkerPostMessage =
   | ConfigUpdateMessage
   | SetMicrophoneRingBufferMessage
   | SetAudioRingBufferMessage
+  | AerogpuCompleteFenceMessage
   | NetTraceEnableMessage
   | NetTraceDisableMessage
   | NetTraceClearMessage
