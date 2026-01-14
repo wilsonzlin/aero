@@ -13247,8 +13247,6 @@ mod tests {
                     usage: wgpu::BufferUsages::VERTEX,
                     backing: None,
                     dirty: None,
-                    #[cfg(test)]
-                    usage: wgpu::BufferUsages::VERTEX,
                 },
             );
 
