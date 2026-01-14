@@ -1798,6 +1798,7 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

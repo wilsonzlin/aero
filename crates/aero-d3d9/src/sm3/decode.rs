@@ -1802,12 +1802,6 @@ fn decode_dcl_usage(
             4 => TextureType::Texture3D,
             other => TextureType::Unknown(other),
         };
-        if !matches!(texture_type, TextureType::Texture2D | TextureType::TextureCube) {
-            return Err(DecodeError {
-                token_index: 0,
-                message: format!("unsupported sampler texture type {texture_type:?}"),
-            });
-        }
         return Ok(DclUsage::TextureType(texture_type));
     }
 
