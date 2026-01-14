@@ -186,11 +186,12 @@ Ops/features referenced by the scratchpad tasks:
 
 ## Task 401 / 402 — `TexSample` lowering/bindings + `texkill` semantics
 
-**Status:** ⚠️ Partial (core behavior implemented; non-2D sampler types remain unsupported)
+**Status:** ✅ Done
 
 **Implemented:**
 - WGSL lowering for `texld`/`texldp`/`texldd`/`texldl` (`textureSample*` variants) and bind group layout mapping for samplers/textures.
 - `texkill` lowers to D3D9 semantics: `discard` when **any component** of the operand is `< 0`, and preserves predication nesting.
+- Sampler texture types (`dcl_1d`/`dcl_2d`/`dcl_volume`/`dcl_cube`) are carried through to WGSL declarations (`texture_1d`/`texture_2d`/`texture_3d`/`texture_cube`) and coordinate dimensionality (`x`/`xy`/`xyz`) for `texld`/`texldp`/`texldd`.
 
 **Implementation (key files):**
 - `crates/aero-d3d9/src/sm3/wgsl.rs` (sampler bindings + `IrOp::TexSample` lowering + `Stmt::Discard`)
@@ -206,16 +207,16 @@ Ops/features referenced by the scratchpad tasks:
   - `wgsl_texldp_emits_projective_divide`
   - `wgsl_texldd_emits_texture_sample_grad`
   - `wgsl_vs_texld_emits_texture_sample_level`
+  - `wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord`
+  - `wgsl_dcl_cube_sampler_emits_texture_cube_and_xyz_coords`
+  - `wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords`
+  - `wgsl_dcl_cube_sampler_texldp_emits_projective_divide_xyz`
+  - `wgsl_dcl_volume_sampler_texldp_emits_projective_divide_xyz`
+  - `wgsl_dcl_cube_sampler_texldd_emits_texture_sample_grad_xyz`
+  - `wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz`
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
 
-**Remaining delta (precise):**
-- Non-`Texture2D` sampler types (`TextureCube`/`Texture3D`/`Texture1D`) are rejected today:
-  - `crates/aero-d3d9/src/sm3/wgsl.rs` errors out with “only Texture2D is supported”.
-  - `crates/aero-d3d9/src/shader.rs` also rejects non-2D `dcl_* s#` early for the legacy translator path.
-
-To fully close Task 401/402, add end-to-end support for cube/3D/1D samplers:
-- WGSL type mapping (`texture_cube`/`texture_3d`/`texture_1d`)
-- Correct coordinate dimensionality + projection rules
-- Tests proving the translation and binding layout for each sampler type
-
+**Notes:**
+- The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
+- The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` still restricts sampler types (currently supports 2D + cube only); extending that path to 1D/3D would be a separate task from 401/402.
