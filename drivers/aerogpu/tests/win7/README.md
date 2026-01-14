@@ -255,6 +255,12 @@ Packaged locations:
 Pass the full path:
 
 ```cmd
+:: If your Guest Tools ISO is mounted as X: (common), you can copy/paste this:
+:: Win7 x64:
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+:: Win7 x86:
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+
 :: Point directly at the dbgctl shipped on the Guest Tools ISO/zip (replace <GuestToolsDrive>, e.g. D).
 :: Win7 x64:
 bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
@@ -267,6 +273,8 @@ Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
 ```cmd
 :: Copy dbgctl next to the runner (into win7\bin\) and reference it with a relative path.
 :: Win7 x64 (dbgctl is still x86 and runs under WOW64):
+:: (X: is the common Guest Tools mount letter; replace if yours differs.)
+:: copy /y X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
 copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
 :: Win7 x86:
 :: copy /y <GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
