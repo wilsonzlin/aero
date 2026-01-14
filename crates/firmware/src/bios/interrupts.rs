@@ -4975,6 +4975,102 @@ mod tests {
                     },
                 ],
             },
+            Case {
+                name: "exactly PCI hole start (ECAM base + ECAM size)",
+                total_memory: 0xC000_0000,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: PCIE_ECAM_BASE - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: PCIE_ECAM_BASE,
+                        length: PCIE_ECAM_SIZE,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: 0xC000_0000,
+                        length: FOUR_GIB - 0xC000_0000,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: FOUR_GIB,
+                        length: PCIE_ECAM_SIZE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+            Case {
+                name: "4GiB",
+                total_memory: FOUR_GIB,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: PCIE_ECAM_BASE - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: PCIE_ECAM_BASE,
+                        length: PCIE_ECAM_SIZE,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: 0xC000_0000,
+                        length: FOUR_GIB - 0xC000_0000,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: FOUR_GIB,
+                        length: FOUR_GIB - PCIE_ECAM_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
         ];
 
         for case in cases {

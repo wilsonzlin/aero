@@ -146,6 +146,8 @@ fn find_device_body<'a>(aml: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
             let pkg_off = i + 2;
             if let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, pkg_off) {
                 let payload_start = pkg_off + pkg_len_bytes;
+                // `parse_pkg_length` returns the payload length (bytes following the PkgLength
+                // encoding), so the end is `payload_start + pkg_len`.
                 let payload_end = payload_start.checked_add(pkg_len)?;
                 if payload_end <= aml.len()
                     && payload_start + 4 <= payload_end
