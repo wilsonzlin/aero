@@ -74,7 +74,9 @@ async function main() {
     // Keep a small floor so the CPU worker's other demo paths (VGA staging buffer,
     // disk demo scratch, etc.) have room even though this test only asserts the
     // shared framebuffer written by WASM.
-    const guestMemoryMiB = Math.max(16, Math.ceil((requiredBytes + 1024 * 1024) / (1024 * 1024)));
+    // 8MiB is ample for the demo framebuffer region (~4.5MiB incl. offset) + a bit of scratch, and
+    // keeps Playwright/CI shared-memory pressure down.
+    const guestMemoryMiB = Math.max(8, Math.ceil((requiredBytes + 1024 * 1024) / (1024 * 1024)));
     const guestLayout = computeGuestRamLayout(guestMemoryMiB * 1024 * 1024);
     const demoLinearBaseOffsetBytes = guestLayout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
 
