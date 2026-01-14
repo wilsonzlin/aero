@@ -5,6 +5,15 @@ use aero_pci_routing as pci_routing;
 pub const DEFAULT_ACPI_ALIGNMENT: u64 = 16;
 pub const DEFAULT_ACPI_NVS_SIZE: u64 = 0x1000;
 
+// FADT `Flags` bits (ACPI 2.0+).
+//
+// Windows 7 uses these flags to decide whether to use fixed-feature PM1 status
+// bits (e.g. `PM1_STS.PWRBTN_STS`) versus looking for control-method devices in
+// the DSDT.
+pub const FADT_FLAG_PWR_BUTTON: u32 = 1 << 4;
+pub const FADT_FLAG_SLP_BUTTON: u32 = 1 << 5;
+pub const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10;
+
 /// Physical memory writing abstraction used by firmware to place tables in
 /// guest RAM.
 pub trait PhysicalMemory {
@@ -559,7 +568,10 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     out.extend_from_slice(&(0x0003u16).to_le_bytes()); // IAPC_BOOT_ARCH (legacy devices + 8042)
     out.push(0); // reserved
 
-    let flags = 0x0000_0400u32; // RESET_REG_SUP
+    // Advertise the fixed-feature power button (`PM1_STS.PWRBTN_STS`) so OSes
+    // like Windows 7 will consume that status bit and raise the corresponding
+    // input event.
+    let flags = FADT_FLAG_RESET_REG_SUP | FADT_FLAG_PWR_BUTTON;
     out.extend_from_slice(&flags.to_le_bytes());
 
     // RESET_REG + RESET_VALUE (use standard PCI reset port 0xCF9).
