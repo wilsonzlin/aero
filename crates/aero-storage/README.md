@@ -15,7 +15,7 @@ images.
 ```rust,no_run
 use aero_storage::{DiskImage, FileBackend, VirtualDisk};
 
-let backend = FileBackend::open("disk.img", false).unwrap();
+let backend = FileBackend::open_rw("disk.img").unwrap();
 let mut disk = DiskImage::open_auto(backend).unwrap();
 
 let mut sector = [0u8; 512];

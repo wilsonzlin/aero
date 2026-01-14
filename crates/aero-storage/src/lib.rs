@@ -36,7 +36,7 @@
 //! # {
 //! use aero_storage::{DiskImage, StdFileBackend, VirtualDisk};
 //!
-//! let backend = StdFileBackend::open("disk.img", false).unwrap();
+//! let backend = StdFileBackend::open_rw("disk.img").unwrap();
 //! let mut disk = DiskImage::open_auto(backend).unwrap();
 //!
 //! let mut sector = [0u8; 512];
