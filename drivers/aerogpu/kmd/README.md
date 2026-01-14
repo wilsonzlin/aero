@@ -276,7 +276,7 @@ Semantics:
 
 Related robustness:
 
-- dbgctl `DxgkDdiEscape` query ops avoid touching MMIO while the adapter is not in D0; they return cached state where possible.
+- dbgctl `DxgkDdiEscape` query ops avoid touching MMIO while the adapter is not in D0 **or** while submissions are blocked (`AcceptingSubmissions==0`, e.g. during resume/teardown windows); they return cached state where possible.
 
 This power callback is intentionally minimal: it prioritizes avoiding stuck IRQ/vblank state after resume over
 preserving in-flight rendering across a power cycle.
