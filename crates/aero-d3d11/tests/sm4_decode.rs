@@ -2061,6 +2061,12 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
     assert_eq!(OPERAND_TYPE_NULL, 13);
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
+    assert_eq!(OPCODE_SETP, 0x2c);
+    // Numeric conversion opcodes.
+    assert_eq!(OPCODE_FTOI, 0x18);
+    assert_eq!(OPCODE_FTOU, 0x19);
+    assert_eq!(OPCODE_ITOF, 0x1a);
+    assert_eq!(OPCODE_UTOF, 0x1b);
     // Integer arithmetic opcodes.
     assert_eq!(OPCODE_IABS, 0x61);
     assert_eq!(OPCODE_INEG, 0x62);
@@ -2068,6 +2074,17 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_IMAX, 0x64);
     assert_eq!(OPCODE_UMIN, 0x65);
     assert_eq!(OPCODE_UMAX, 0x66);
+    // Integer/bitwise ops.
+    assert_eq!(OPCODE_IADD, 0x1d);
+    assert_eq!(OPCODE_ISUB, 0x1e);
+    assert_eq!(OPCODE_IMUL, 0x70);
+    assert_eq!(OPCODE_AND, 0x71);
+    assert_eq!(OPCODE_OR, 0x72);
+    assert_eq!(OPCODE_XOR, 0x23);
+    assert_eq!(OPCODE_NOT, 0x24);
+    assert_eq!(OPCODE_ISHL, 0x25);
+    assert_eq!(OPCODE_ISHR, 0x26);
+    assert_eq!(OPCODE_USHR, 0x73);
     // Integer compare opcodes.
     assert_eq!(OPCODE_IEQ, 0x4d);
     assert_eq!(OPCODE_IGE, 0x4e);
