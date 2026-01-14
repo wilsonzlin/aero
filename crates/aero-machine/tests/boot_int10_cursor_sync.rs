@@ -699,6 +699,35 @@ fn boot_int10_aerogpu_cursor_updates_sync_to_vga_crtc() {
 }
 
 #[test]
+fn boot_int10_aerogpu_cursor_shape_updates_sync_to_vga_crtc() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        enable_vga: false,
+        // Keep the machine minimal/deterministic for this port-mirroring test.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Hide the cursor using CH bit5 (cursor disable).
+    let boot = build_int10_set_cursor_shape_boot_sector(0x20, 0x07);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    let (start, end, _pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x20);
+    assert_eq!(end, 0x07);
+}
+
+#[test]
 fn boot_int10_aerogpu_set_active_page_uses_that_pages_cursor_pos_for_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
