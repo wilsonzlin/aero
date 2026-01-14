@@ -403,7 +403,9 @@ Do **not** advertise features until you have test coverage and tracing proving c
 
 * Multi-sampling / MSAA.
 * `D3DFMT_A16B16G16R16F`, HDR, wide gamut.
-* Cubemaps, volume textures.
+* Cubemaps (unless you have implemented `D3DRTYPE_CUBETEXTURE` end-to-end; AeroGPU now supports cubemaps via
+  `D3DPTEXTURECAPS_CUBEMAP` and represents them as 2D array textures with `Depth == 6`).
+* Volume textures (`D3DRTYPE_VOLUME` / `D3DRTYPE_VOLUMETEXTURE`) — not supported by AeroGPU today.
 * Autogen mipmaps (`D3DUSAGE_AUTOGENMIPMAP`).
 * Advanced blend ops if you don’t implement them (`D3DBLENDOP_*` beyond ADD).
 * Query types beyond event (timestamps, occlusion).
