@@ -871,7 +871,8 @@ static void EmitBindShadersLocked(Device* dev) {
   //
   // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
   // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
-  // hosts/tools can still observe a bound GS.
+  // hosts/tools can still observe a bound GS. If mirrored, it should match the appended `gs`
+  // handle.
   cmd->reserved0 = dev->current_gs;
 }
 

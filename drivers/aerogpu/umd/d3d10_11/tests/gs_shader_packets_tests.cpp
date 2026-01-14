@@ -72,7 +72,7 @@ bool TestGeometryShaderCreateAndBindPackets() {
 
   // Encode shader bindings using the append-only `BIND_SHADERS` extension: append `{gs, hs, ds}`
   // after the stable 24-byte prefix. Mirror `gs` into the legacy `reserved0` field for best-effort
-  // compatibility with older decoders.
+  // compatibility with older decoders (if mirrored, it should match the appended `gs` handle).
   const aerogpu_handle_t bind_ex[] = {kGsHandle, kHsHandle, kDsHandle};
   auto* bind = w.append_with_payload<aerogpu_cmd_bind_shaders>(
       AEROGPU_CMD_BIND_SHADERS, bind_ex, sizeof(bind_ex));
