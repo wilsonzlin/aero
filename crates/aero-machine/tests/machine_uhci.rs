@@ -7,7 +7,9 @@ use aero_devices::usb::uhci::{regs, UhciPciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
-use aero_usb::hid::UsbHidKeyboardHandle;
+use aero_usb::hid::{
+    UsbHidConsumerControlHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidMouseHandle,
+};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use core::any::Any;
 
@@ -304,6 +306,75 @@ fn machine_synthetic_usb_hid_consumer_injection_produces_report() {
         other => panic!("expected consumer report data, got {other:?}"),
     };
     assert_eq!(report, vec![0xe9, 0x00]);
+}
+
+#[test]
+fn machine_synthetic_usb_hid_attaches_external_hub_with_expected_devices() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Keep the machine minimal/deterministic for this topology test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let m = Machine::new(cfg).unwrap();
+
+    let uhci = m.uhci().expect("UHCI device should exist");
+    let mut uhci_ref = uhci.borrow_mut();
+    let root = uhci_ref.controller_mut().hub_mut();
+
+    let mut dev0 = root
+        .port_device_mut(0)
+        .expect("expected external hub on UHCI root port 0");
+    let hub = dev0.as_hub_mut().expect("expected a hub on root port 0");
+    assert!(
+        hub.num_ports() >= 4,
+        "external hub should expose at least 4 ports for synthetic HID devices"
+    );
+
+    let kbd = hub
+        .downstream_device_mut(0)
+        .expect("expected keyboard on hub port 1")
+        .model();
+    assert!(
+        (kbd as &dyn Any).is::<UsbHidKeyboardHandle>(),
+        "expected keyboard device on hub port 1"
+    );
+
+    let mouse = hub
+        .downstream_device_mut(1)
+        .expect("expected mouse on hub port 2")
+        .model();
+    assert!(
+        (mouse as &dyn Any).is::<UsbHidMouseHandle>(),
+        "expected mouse device on hub port 2"
+    );
+
+    let gamepad = hub
+        .downstream_device_mut(2)
+        .expect("expected gamepad on hub port 3")
+        .model();
+    assert!(
+        (gamepad as &dyn Any).is::<UsbHidGamepadHandle>(),
+        "expected gamepad device on hub port 3"
+    );
+
+    let consumer = hub
+        .downstream_device_mut(3)
+        .expect("expected consumer-control on hub port 4")
+        .model();
+    assert!(
+        (consumer as &dyn Any).is::<UsbHidConsumerControlHandle>(),
+        "expected consumer-control device on hub port 4"
+    );
 }
 
 #[test]
