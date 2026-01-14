@@ -250,6 +250,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     let gs_instance_id: u32 = id.y;
 
     let primitive_count: u32 = params.counts.x;
+    let gs_instance_count: u32 = params.counts.z;
     if (primitive_id >= primitive_count) {
         return;
     }
@@ -260,40 +261,58 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // - primitive 0: `params.color` (red in tests)
     // - primitive 1+: green, to make primitive_id-dependent output easy to validate
     var c = params.color;
-    if (primitive_id != 0u) {
+    if (primitive_count == 1u) {
+        // When GS instancing is enabled (gs_instance_count > 1), tint each instance differently so
+        // tests can validate `SV_GSInstanceID` values.
+        if (gs_instance_id != 0u) {
+            c = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+        }
+    } else if (primitive_id != 0u) {
         c = vec4<f32>(0.0, 1.0, 0.0, 1.0);
     }
+
+    // Expand output storage for GS instancing by laying out per-primitive-per-instance triangles:
+    //   idx = (prim_id * gs_instance_count + gs_instance_id) * 3.
+    let base: u32 = (primitive_id * gs_instance_count + gs_instance_id) * 3u;
 
     if (primitive_count == 1u) {
         // Emit a single triangle.
         //
         // Most emulation smoke/depth tests expect a fullscreen-ish triangle so every pixel is
         // affected. Patchlist-only emulation uses a centered triangle so tests can assert that
-        // corner pixels remain untouched. Some GS-prepass smoke tests also use the centered mode.
-        if (params.counts.z != 0u) {
+        // corner pixels remain untouched.
+        //
+        // For GS instancing (`gs_instance_count > 1`), offset triangles horizontally so each
+        // instance can be observed (otherwise identical triangles would overlap).
+        if (gs_instance_count > 1u) {
+            let seg_w: f32 = 2.0 / f32(gs_instance_count);
+            let seg_center: f32 = -1.0 + (f32(gs_instance_id) + 0.5) * seg_w;
+            let scale_x: f32 = seg_w * 0.5;
+            out_vertices[base + 0u].pos = vec4<f32>(seg_center + (-0.5 * scale_x), -0.5, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(seg_center + (0.0 * scale_x), 0.5, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(seg_center + (0.5 * scale_x), -0.5, z, 1.0);
+        } else if (params.counts.w != 0u) {
             // Clockwise centered triangle (matches default `FrontFace::Cw` + back-face culling).
-            out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
-            out_vertices[1].pos = vec4<f32>(0.0, 0.5, z, 1.0);
-            out_vertices[2].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(0.0, 0.5, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(0.5, -0.5, z, 1.0);
         } else {
             // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-            out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
-            out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
-            out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(3.0, -1.0, z, 1.0);
         }
 
-        write_varyings(0u, c);
-        write_varyings(1u, c);
-        write_varyings(2u, c);
+        write_varyings(base + 0u, c);
+        write_varyings(base + 1u, c);
+        write_varyings(base + 2u, c);
 
         // Indices for indexed draws.
-        out_indices[0] = 0u;
-        out_indices[1] = 1u;
-        out_indices[2] = 2u;
+        out_indices[base + 0u] = base + 0u;
+        out_indices[base + 1u] = base + 1u;
+        out_indices[base + 2u] = base + 2u;
     } else {
         // Side-by-side triangles (used for primitive-id tests).
-        let base: u32 = primitive_id * 3u;
-
         var x0: f32 = -2.0;
         var x1: f32 = -2.0;
         if (primitive_id == 0u) {
@@ -323,7 +342,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     //
     // Only the first GS instance writes indirect args (so future GS instancing does not race).
     if (primitive_id == 0u && gs_instance_id == 0u) {
-        let count: u32 = primitive_count * 3u;
+        let count: u32 = primitive_count * gs_instance_count * 3u;
         // Placeholder counter (for eventual GS-style append/emit emulation).
         out_counter[0] = count;
         out_indirect[0] = count;
@@ -382,6 +401,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     let gs_instance_id: u32 = id.y;
 
     let primitive_count: u32 = params.counts.x;
+    let gs_instance_count: u32 = params.counts.z;
     if (primitive_id >= primitive_count) {
         return;
     }
@@ -392,38 +412,56 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // - primitive 0: `params.color` (red in tests)
     // - primitive 1+: green, to make primitive_id-dependent output easy to validate
     var c = params.color;
-    if (primitive_id != 0u) {
+    if (primitive_count == 1u) {
+        // When GS instancing is enabled (gs_instance_count > 1), tint each instance differently so
+        // tests can validate `SV_GSInstanceID` values.
+        if (gs_instance_id != 0u) {
+            c = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+        }
+    } else if (primitive_id != 0u) {
         c = vec4<f32>(0.0, 1.0, 0.0, 1.0);
     }
+
+    // Expand output storage for GS instancing by laying out per-primitive-per-instance triangles:
+    //   idx = (prim_id * gs_instance_count + gs_instance_id) * 3.
+    let base: u32 = (primitive_id * gs_instance_count + gs_instance_id) * 3u;
 
     if (primitive_count == 1u) {
         // Emit a single triangle (mirrors `GEOMETRY_PREPASS_CS_WGSL`).
         //
         // In centered mode, keep the triangle away from corners so tests can assert that some
         // pixels remain untouched.
-        if (params.counts.z != 0u) {
-            out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
-            out_vertices[1].pos = vec4<f32>(0.0, 0.5, z, 1.0);
-            out_vertices[2].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+        //
+        // For GS instancing (`gs_instance_count > 1`), offset triangles horizontally so each
+        // instance can be observed (otherwise identical triangles would overlap).
+        if (gs_instance_count > 1u) {
+            let seg_w: f32 = 2.0 / f32(gs_instance_count);
+            let seg_center: f32 = -1.0 + (f32(gs_instance_id) + 0.5) * seg_w;
+            let scale_x: f32 = seg_w * 0.5;
+            out_vertices[base + 0u].pos = vec4<f32>(seg_center + (-0.5 * scale_x), -0.5, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(seg_center + (0.0 * scale_x), 0.5, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(seg_center + (0.5 * scale_x), -0.5, z, 1.0);
+        } else if (params.counts.w != 0u) {
+            out_vertices[base + 0u].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(0.0, 0.5, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(0.5, -0.5, z, 1.0);
         } else {
             // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-            out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
-            out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
-            out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(3.0, -1.0, z, 1.0);
         }
 
-        write_varyings(0u, c);
-        write_varyings(1u, c);
-        write_varyings(2u, c);
+        write_varyings(base + 0u, c);
+        write_varyings(base + 1u, c);
+        write_varyings(base + 2u, c);
 
         // Indices for indexed draws.
-        out_indices[0] = 0u;
-        out_indices[1] = 1u;
-        out_indices[2] = 2u;
+        out_indices[base + 0u] = base + 0u;
+        out_indices[base + 1u] = base + 1u;
+        out_indices[base + 2u] = base + 2u;
     } else {
         // Side-by-side triangles (used for primitive-id tests).
-        let base: u32 = primitive_id * 3u;
-
         var x0: f32 = -2.0;
         var x1: f32 = -2.0;
         if (primitive_id == 0u) {
@@ -460,7 +498,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             + aero_vp_ia.first_vertex * aero_vp_ia.slots[0].stride_bytes;
         let _word: u32 = aero_vp_load_u32(0u, vb_base);
 
-        let count: u32 = primitive_count * 3u;
+        let count: u32 = primitive_count * gs_instance_count * 3u;
         // Placeholder counter (for eventual GS-style append/emit emulation).
         out_counter[0] = count;
         out_indirect[0] = count;
@@ -3204,6 +3242,7 @@ impl AerogpuD3d11Executor {
         gs_handle: u32,
         gs_meta: GsPrepassMetadata,
         primitive_count: u32,
+        gs_instance_count: u32,
         instance_count: u32,
         vertex_pulling_draw: VertexPullingDrawParams,
     ) -> Result<(
@@ -3542,7 +3581,8 @@ impl AerogpuD3d11Executor {
 
         // Allocate expanded output buffers for the GS prepass.
         let expanded_vertex_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_meta.max_output_vertices))
+            .checked_mul(u64::from(gs_instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_meta.max_output_vertices)))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex count overflow"))?;
         let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
             .checked_mul(expanded_vertex_count.max(1))
@@ -3553,7 +3593,8 @@ impl AerogpuD3d11Executor {
             .checked_mul(3)
             .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?;
         let expanded_index_count = u64::from(primitive_count)
-            .checked_mul(max_indices_per_prim)
+            .checked_mul(u64::from(gs_instance_count))
+            .and_then(|v| v.checked_mul(max_indices_per_prim))
             .ok_or_else(|| anyhow!("GS prepass: expanded index count overflow"))?;
         let expanded_index_size = expanded_index_count
             .checked_mul(4)
@@ -3959,23 +4000,26 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
-        if let Some(gs_handle) = self.state.gs {
-            if let Some(meta) = self.resources.gs_shaders.get(&gs_handle) {
-                if meta.instance_count > 1 {
-                    bail!(
-                        "GS emulation: geometry shader {gs_handle} declares gsinstancecount {} (GS instancing is not supported yet)",
-                        meta.instance_count
-                    );
-                }
-                if meta.prepass.is_none() {
-                    let err = meta
-                        .prepass_error
-                        .as_deref()
-                        .unwrap_or("GS translation failed");
-                    bail!("geometry shader not supported: {err}");
-                }
+        // Geometry shader instancing (`dcl_gsinstancecount` / `[instance(n)]`):
+        // - Each input primitive is processed `gs_instance_count` times.
+        // - The compute prepass treats `global_invocation_id.y` as `SV_GSInstanceID`.
+        let gs_instance_count: u32 = if let Some(gs_handle) = self.state.gs {
+            let meta = self
+                .resources
+                .gs_shaders
+                .get(&gs_handle)
+                .ok_or_else(|| anyhow!("unknown GS shader {gs_handle}"))?;
+            if meta.prepass.is_none() {
+                let err = meta
+                    .prepass_error
+                    .as_deref()
+                    .unwrap_or("GS translation failed");
+                bail!("geometry shader not supported: {err}");
             }
-        }
+            meta.instance_count.max(1)
+        } else {
+            1
+        };
 
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
@@ -4200,6 +4244,7 @@ impl AerogpuD3d11Executor {
                 gs_handle,
                 gs_meta,
                 primitive_count,
+                gs_instance_count,
                 instance_count,
                 vertex_pulling_draw,
             )?;
@@ -4208,7 +4253,8 @@ impl AerogpuD3d11Executor {
             indirect_args_alloc = args_alloc;
         } else {
             let expanded_vertex_count = u64::from(primitive_count)
-                .checked_mul(3)
+                .checked_mul(u64::from(gs_instance_count))
+                .and_then(|v| v.checked_mul(3))
                 .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
             let expanded_index_count = expanded_vertex_count;
             let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
@@ -4251,10 +4297,12 @@ impl AerogpuD3d11Executor {
             // Counts (`vec4<u32>`) for compute-based GS emulation:
             // - x: primitive_count (dispatch.x)
             // - y: instance_count (for indirect draw args)
-            // - z: placeholder mode (0 = fullscreen-ish triangle, 1 = centered triangle)
+            // - z: gs_instance_count (dispatch.y)
+            // - w: placeholder mode (0 = fullscreen-ish triangle, 1 = centered triangle)
             params_bytes[16..20].copy_from_slice(&primitive_count.to_le_bytes());
             params_bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
-            params_bytes[24..28]
+            params_bytes[24..28].copy_from_slice(&gs_instance_count.to_le_bytes());
+            params_bytes[28..32]
                 .copy_from_slice(&u32::from(centered_placeholder_triangle).to_le_bytes());
 
             // NOTE: Keep uniform buffers separate from the expansion scratch storage buffer.
@@ -4878,7 +4926,7 @@ impl AerogpuD3d11Executor {
                     }
                     pass.set_bind_group(VERTEX_PULLING_GROUP, bg, &[]);
                 }
-                pass.dispatch_workgroups(primitive_count, 1, 1);
+                pass.dispatch_workgroups(primitive_count, gs_instance_count, 1);
             }
         }
 

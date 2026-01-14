@@ -376,7 +376,14 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
             Sm4Decl::GsOutputTopology { topology } => output_topology = Some(*topology),
             Sm4Decl::GsMaxOutputVertexCount { max } => max_output_vertices = Some(*max),
-            Sm4Decl::GsInstanceCount { count } => gs_instance_count = Some(*count),
+            Sm4Decl::GsInstanceCount { count } => {
+                // Geometry shader instancing (`[instance(n)]` / `dcl_gsinstancecount`) is an SM5
+                // feature. Keep the translator resilient by accepting it regardless of module model
+                // and clamping invalid values up to 1. If the declaration appears multiple times
+                // (some toolchains are redundant), treat the largest value as authoritative.
+                let prev = gs_instance_count.unwrap_or(1);
+                gs_instance_count = Some(prev.max(*count).max(1));
+            }
             Sm4Decl::ConstantBuffer { slot, reg_count } => {
                 // Keep the largest declared size so the generated WGSL array is always big enough
                 // for any statically indexed reads (cb#[]).
@@ -2260,7 +2267,7 @@ mod tests {
     fn gs_translate_supports_primitive_id_and_gs_instance_id_sivs() {
         let module = Sm4Module {
             stage: ShaderStage::Geometry,
-            model: ShaderModel { major: 4, minor: 0 },
+            model: ShaderModel { major: 5, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
                     primitive: GsInputPrimitive::Point(1),
@@ -2269,6 +2276,7 @@ mod tests {
                     topology: GsOutputTopology::TriangleStrip(3),
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+                Sm4Decl::GsInstanceCount { count: 2 },
                 Sm4Decl::InputSiv {
                     reg: 2,
                     mask: WriteMask::X,
@@ -2338,6 +2346,10 @@ mod tests {
         assert!(
             wgsl.contains("let gs_instance_id: u32 = gs_instance_id_in;"),
             "expected gs_instance_id mapping in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("const GS_INSTANCE_COUNT: u32 = 2u;"),
+            "expected gs instance count constant in WGSL:\n{wgsl}"
         );
         assert!(
             wgsl.contains("bitcast<f32>(primitive_id)"),
