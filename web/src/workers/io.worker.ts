@@ -690,6 +690,7 @@ function flushQueuedInputBatches(): void {
 ctx.addEventListener(
   "message",
   (ev) => {
+    if (machineHostOnlyMode) return;
     if (!snapshotPaused) return;
     const data = (ev as MessageEvent<unknown>).data;
     // Input batches are queued separately so buffers can be recycled after processing.
@@ -2962,11 +2963,13 @@ let vmRuntime: string | null = null;
 let machineHostOnlyMode = false;
 let machineHostOnlyConsoleLogged = false;
 let machineHostOnlyEventLogged = false;
+const machineHostOnlyUnavailableLogged = new Set<string>();
+const MACHINE_HOST_ONLY_UNAVAILABLE_LOG_LIMIT = 64;
 
 function maybeAnnounceMachineHostOnlyMode(): void {
   if (!machineHostOnlyMode) return;
   const message =
-    "vmRuntime=machine; IO worker running in machine host-only mode (skipping guest device models + ioIpc server; disks owned by CPU worker)";
+    "vmRuntime=machine; IO worker running in machine host-only mode (skipping all guest device models + ioIpc server; devices/disks owned by CPU worker)";
   if (!machineHostOnlyConsoleLogged) {
     machineHostOnlyConsoleLogged = true;
     console.info(`[io.worker] ${message}`);
@@ -2976,6 +2979,24 @@ function maybeAnnounceMachineHostOnlyMode(): void {
     machineHostOnlyEventLogged = true;
     pushEvent({ kind: "log", level: "info", message });
   }
+}
+
+function machineHostOnlyUnavailable(feature: string): void {
+  if (!machineHostOnlyMode) return;
+  if (machineHostOnlyUnavailableLogged.has(feature)) return;
+  if (machineHostOnlyUnavailableLogged.size >= MACHINE_HOST_ONLY_UNAVAILABLE_LOG_LIMIT) return;
+  machineHostOnlyUnavailableLogged.add(feature);
+  const message = `${feature} unavailable in vmRuntime=machine host-only mode`;
+  console.warn(`[io.worker] ${message}`);
+  pushEvent({ kind: "log", level: "warn", message });
+}
+
+function machineHostOnlyMessageLabel(data: unknown): string {
+  if (!data || typeof data !== "object") return "message";
+  const rec = data as { type?: unknown; kind?: unknown };
+  if (typeof rec.type === "string") return rec.type;
+  if (typeof rec.kind === "string") return rec.kind;
+  return "message";
 }
 
 function setVmRuntimeFromConfigUpdate(update: ConfigUpdateMessage): void {
@@ -4027,6 +4048,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
 }
 
 async function initWorker(init: WorkerInitMessage): Promise<void> {
+  const hostOnly = machineHostOnlyMode;
   perf.spanBegin("worker:boot");
   try {
     // Initialize the runtime event ring early so fatal errors during WASM init
@@ -4079,13 +4101,14 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
     }
 
     let wasmInitFatal = false;
-    await perf.spanAsync("wasm:init", async () => {
-      try {
-        const { api, variant } = await initWasmForContext({
-          variant: init.wasmVariant ?? "auto",
-          module: init.wasmModule,
-          memory: init.guestMemory,
-        });
+    if (!hostOnly) {
+      await perf.spanAsync("wasm:init", async () => {
+        try {
+          const { api, variant } = await initWasmForContext({
+            variant: init.wasmVariant ?? "auto",
+            module: init.wasmModule,
+            memory: init.guestMemory,
+          });
         // Sanity-check that the coordinator-provided `guestMemory` is actually wired up as
         // the WASM module's linear memory (imported+exported memory build).
         //
@@ -4242,23 +4265,28 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             usbEhciHarnessRuntime = null;
           }
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (err instanceof WasmMemoryWiringError) {
-          console.error(`[io.worker] ${message}`);
-          // Emit a log entry in addition to the fatal panic so callers inspecting the
-          // runtime event stream (without special-casing `panic`) still see a clear,
-          // actionable error explaining why the worker is terminating.
-          pushEventBlocking({ kind: "log", level: "error", message });
-          fatal(err);
-          wasmInitFatal = true;
-          return;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (err instanceof WasmMemoryWiringError) {
+            console.error(`[io.worker] ${message}`);
+            // Emit a log entry in addition to the fatal panic so callers inspecting the
+            // runtime event stream (without special-casing `panic`) still see a clear,
+            // actionable error explaining why the worker is terminating.
+            pushEventBlocking({ kind: "log", level: "error", message });
+            fatal(err);
+            wasmInitFatal = true;
+            return;
+          }
+          console.error(`[io.worker] wasm:init failed: ${message}`);
+          pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
         }
-        console.error(`[io.worker] wasm:init failed: ${message}`);
-        pushEvent({ kind: "log", level: "error", message: `wasm:init failed: ${message}` });
-      }
-    });
-    if (wasmInitFatal) return;
+      });
+      if (wasmInitFatal) return;
+    } else {
+      // In `vmRuntime=machine` host-only mode this worker should not touch guest RAM or
+      // instantiate any guest-visible device models. Skip WASM initialization entirely.
+      maybeAnnounceMachineHostOnlyMode();
+    }
 
     perf.spanBegin("worker:init");
     try {
@@ -4307,6 +4335,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         hidInRing = null;
       }
 
+      if (!hostOnly) {
       // IRQ delivery between workers models *physical line levels* (asserted vs
       // deasserted) using discrete `irqRaise`/`irqLower` events (see
       // `docs/irq-semantics.md`).
@@ -4486,6 +4515,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       // If WASM has already finished initializing, install the WebHID passthrough bridge now that
       // we have a device manager (UHCI needs IRQ wiring + PCI registration).
       maybeInitWasmHidGuestBridge();
+      } else {
+        // Host-only stub: do not create any guest-visible device models.
+        deviceManager = null;
+      }
 
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {
@@ -4535,7 +4568,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
     perf.spanEnd("worker:boot");
   }
 
-  startIoIpcServer();
+  if (!hostOnly) {
+    startIoIpcServer();
+  }
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
@@ -4618,12 +4653,17 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
             },
           });
           return;
-        }
-        case "vm.snapshot.resume": {
-          snapshotPaused = false;
-          // The host-side microphone producer can continue writing into the mic ring buffer while
-          // the VM is snapshot-paused (the IO worker stops consuming). Re-attach the ring on
-          // resume so the WASM consumer discards any buffered/stale samples and capture starts
+          }
+          case "vm.snapshot.resume": {
+            if (machineHostOnlyMode) {
+              snapshotPaused = false;
+              ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+              return;
+            }
+            snapshotPaused = false;
+            // The host-side microphone producer can continue writing into the mic ring buffer while
+            // the VM is snapshot-paused (the IO worker stops consuming). Re-attach the ring on
+            // resume so the WASM consumer discards any buffered/stale samples and capture starts
           // from the most recent audio.
           if (micRingBuffer) {
             try {
@@ -4741,14 +4781,19 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    // Machine runtime: IO worker is a host-only stub (no guest device models, no IO IPC server).
-    // Ignore all other messages to avoid accidental guest-memory writes or wasted CPU.
-    if (machineHostOnlyMode) {
-      return;
-    }
-
     const bootDisks = normalizeSetBootDisksMessage(data);
     if (bootDisks) {
+      if (machineHostOnlyMode) {
+        // In machine runtime, disk attachment is owned by the CPU worker. Ignore boot disk
+        // open requests here so we don't steal the exclusive OPFS sync access handle.
+        if (bootDisksInitResolve) {
+          bootDisksInitResolve();
+          bootDisksInitResolve = null;
+        }
+        pendingBootDisks = null;
+        maybeAnnounceMachineHostOnlyMode();
+        return;
+      }
       pendingBootDisks = bootDisks;
       if (bootDisksInitResolve) {
         bootDisksInitResolve();
@@ -4757,6 +4802,32 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       if (started && pendingBootDisks) {
         queueDiskIo(() => applyBootDisks(pendingBootDisks!));
       }
+      return;
+    }
+
+    if (machineHostOnlyMode) {
+      // Host-only stub mode: the IO worker should not own guest-visible devices (USB/HID/audio/etc).
+      // Ignore all feature messages other than the minimal init/config/snapshot protocol.
+      if ((data as Partial<InputBatchMessage>).type === "in:input-batch") {
+        const msg = data as Partial<InputBatchMessage> & { recycle?: unknown };
+        const buffer = msg.buffer;
+        if (buffer instanceof ArrayBuffer && msg.recycle === true) {
+          const recycleMsg: InputBatchRecycleMessage = { type: "in:input-batch-recycle", buffer };
+          try {
+            ctx.postMessage(recycleMsg, [buffer]);
+          } catch {
+            try {
+              ctx.postMessage(recycleMsg);
+            } catch {
+              // ignore
+            }
+          }
+        }
+        machineHostOnlyUnavailable(machineHostOnlyMessageLabel(data));
+        return;
+      }
+
+      machineHostOnlyUnavailable(machineHostOnlyMessageLabel(data));
       return;
     }
 
