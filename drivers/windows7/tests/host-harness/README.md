@@ -1193,6 +1193,8 @@ only if you explicitly want the base image to be mutated.
     - (only when blk resize is enabled via `-WithBlkResize` / `--with-blk-resize`) `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS`
+    - (only when virtio-input binding gating is enabled via `-RequireVirtioInputBinding` / `--require-virtio-input-binding`)
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS`
     - (only when LED/statusq testing is enabled via `-WithInputLed` / `--with-input-led`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`
     - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
@@ -1235,6 +1237,7 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=...|capture=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...|xrun=...|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|devices=...|wrong_service=...|missing_service=...|problem=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|PASS/FAIL|service=...|pnp_id=...|reason=...|expected=...|actual=...|...
 ```
 
 These do not affect overall PASS/FAIL.

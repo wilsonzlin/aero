@@ -101,14 +101,23 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - The host harness can optionally validate the QEMU-emitted PCI Vendor/Device/Revision IDs via QMP (`query-pci`) before waiting for guest results:
       - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -QemuPreflightPci` (alias: `-QmpPreflightPci`)
       - Python: `invoke_aero_virtio_win7_tests.py --qemu-preflight-pci` (alias: `--qmp-preflight-pci`)
-  - PCI binding / service validation (`virtio-input-bind`):
-    - Enumerates `PCI\VEN_1AF4&DEV_1052` devnodes and validates:
+  - PCI binding / service validation (summary marker: `virtio-input-bind`):
+    - Enumerates virtio-input PCI devnodes (`PCI\VEN_1AF4&DEV_1052` modern and `PCI\VEN_1AF4&DEV_1011` transitional) and validates:
       - bound service name is `aero_virtio_input` (`SPDRP_SERVICE`)
       - ConfigManager health: `CM_Get_DevNode_Status` reports no problem (`problem==0` and no `DN_HAS_PROBLEM`)
     - Emits a machine marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>`
       - or `...|FAIL|devices=<n>|wrong_service=<n>|missing_service=<n>|problem=<n>`
     - The Win7 host harness treats this marker as required in strict/contract-v1 mode so older guest selftest binaries can't accidentally pass.
+  - PCI binding / service validation (detailed marker: `virtio-input-binding`):
+    - Emits a machine marker that includes the bound service name and PnP instance ID:
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|pnp_id=<...>|hwid0=<...>`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL|reason=<device_missing|wrong_service|driver_not_bound|device_error>|...`
+        - `reason=wrong_service` includes `expected=<svc>` and `actual=<svc>`
+        - `reason=device_error` may include `cm_problem=<n>` and `cm_status=<hex>`
+    - Host-harness gating (optional):
+      - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioInputBinding`
+      - Python: `invoke_aero_virtio_win7_tests.py --require-virtio-input-binding`
   - Read the HID report descriptor (`IOCTL_HID_GET_REPORT_DESCRIPTOR`) and sanity-check that:
     - at least one **keyboard-only** HID device exists
     - at least one **relative-mouse-only** HID device exists (X/Y reported as *Relative*)
