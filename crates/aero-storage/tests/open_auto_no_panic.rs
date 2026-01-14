@@ -220,6 +220,10 @@ fn bytes_strategy() -> impl Strategy<Value = Vec<u8>> {
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 64,
+        // This test is intended as a no-panic regression check rather than a stateful fuzzing
+        // harness. Disable proptest's failure persistence to avoid noisy warnings about not being
+        // able to locate a `lib.rs` / `main.rs` for integration tests.
+        failure_persistence: None,
         .. ProptestConfig::default()
     })]
 
