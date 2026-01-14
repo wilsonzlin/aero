@@ -392,6 +392,11 @@ async function spawnL2BackendServer(extraEnv = {}) {
     env: {
       BIND_HOST: "127.0.0.1",
       PORT: "0",
+      // Prevent per-developer env leakage from changing backend auth behavior.
+      REQUIRE_ORIGIN: "",
+      REQUIRE_TOKEN: "",
+      REQUIRE_COOKIE_NAME: "",
+      REQUIRE_COOKIE_VALUE: "",
       ...extraEnv,
     },
   });
