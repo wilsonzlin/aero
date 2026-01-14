@@ -219,18 +219,40 @@ fn dsdt_iasl_disassembly_shows_pci0_mmio_as_cacheable_readwrite_resource_produce
         return;
     }
 
-    let dsl = disassemble_dsdt_to_dsl(&AcpiConfig::default(), "default");
-    let pci0_block =
-        extract_braced_block(&dsl, "Device (PCI0)").expect("failed to locate PCI0 device block");
+    for (label, cfg) in [
+        ("ecam-disabled", AcpiConfig::default()),
+        (
+            "ecam-enabled",
+            AcpiConfig {
+                pcie_ecam_base: PCIE_ECAM_BASE,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let dsl = disassemble_dsdt_to_dsl(&cfg, label);
+        let pci0_block = extract_braced_block(&dsl, "Device (PCI0)")
+            .unwrap_or_else(|| panic!("failed to locate PCI0 device block ({label})"));
 
-    // The PCI root bridge MMIO window should disassemble as a ResourceProducer, and must be
-    // ReadWrite (not ReadOnly) for Windows 7 PCI resource allocation correctness.
-    assert!(
-        pci0_block.contains("DWordMemory (ResourceProducer"),
-        "expected PCI0._CRS MMIO window to disassemble as ResourceProducer"
-    );
-    assert!(
-        pci0_block.contains("Cacheable, ReadWrite"),
-        "expected PCI0._CRS MMIO window to disassemble as Cacheable, ReadWrite"
-    );
+        // The PCI root bridge windows should disassemble as ResourceProducer for correct
+        // OS resource allocation.
+        assert!(
+            pci0_block.contains("WordBusNumber (ResourceProducer"),
+            "expected PCI0 bus window to disassemble as ResourceProducer ({label})"
+        );
+        assert!(
+            pci0_block.contains("WordIO (ResourceProducer"),
+            "expected PCI0 I/O windows to disassemble as ResourceProducer ({label})"
+        );
+        assert!(
+            pci0_block.contains("DWordMemory (ResourceProducer"),
+            "expected PCI0 MMIO window to disassemble as ResourceProducer ({label})"
+        );
+
+        // The MMIO window must be ReadWrite (not ReadOnly) for Windows 7 PCI resource allocation
+        // correctness.
+        assert!(
+            pci0_block.contains("Cacheable, ReadWrite"),
+            "expected PCI0 MMIO window to disassemble as Cacheable, ReadWrite ({label})"
+        );
+    }
 }
