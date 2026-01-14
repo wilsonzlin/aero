@@ -2967,6 +2967,10 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
     return NDIS_STATUS_FAILURE;
   }
 
+  if (Adapter->SurpriseRemoved) {
+    return NDIS_STATUS_RESET_IN_PROGRESS;
+  }
+
   if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) == 0 || Adapter->CtrlVq.QueueSize == 0) {
     return NDIS_STATUS_NOT_SUPPORTED;
   }
@@ -2981,6 +2985,11 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
   WaitStatus = KeWaitForSingleObject(&Adapter->CtrlCmdEvent, Executive, KernelMode, FALSE, NULL);
   if (WaitStatus != STATUS_SUCCESS) {
     return NDIS_STATUS_FAILURE;
+  }
+
+  if (Adapter->SurpriseRemoved) {
+    Status = NDIS_STATUS_RESET_IN_PROGRESS;
+    goto Exit;
   }
 
   CmdBytes = sizeof(VIRTIO_NET_CTRL_HDR) + (ULONG)DataBytes;
@@ -3090,6 +3099,11 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
   for (;;) {
     LIST_ENTRY Completed;
     InitializeListHead(&Completed);
+
+    if (Adapter->SurpriseRemoved) {
+      Status = NDIS_STATUS_RESET_IN_PROGRESS;
+      goto Exit;
+    }
 
     NdisAcquireSpinLock(&Adapter->Lock);
     AerovNetCtrlCollectUsedLocked(Adapter, &Completed);
