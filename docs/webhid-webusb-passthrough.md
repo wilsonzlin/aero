@@ -152,12 +152,14 @@ Already implemented:
     - Fallback path: typed `postMessage` (`usb.action` / `usb.completion`)
 - **Worker-side WebUSB passthrough runtime (TypeScript)**
   - `WebUsbPassthroughRuntime` (`web/src/usb/webusb_passthrough_runtime.ts`) drains actions from
-    the guest-visible WebUSB passthrough device (via `UhciControllerBridge`) and applies completions.
-- **Guest-visible UHCI controller + topology wiring (TypeScript + WASM)**
-  - `web/src/io/devices/uhci.ts` exposes a guest-visible UHCI PCI function backed by the WASM
-    `UhciControllerBridge` export (including the WebUSB passthrough device on root port 1).
-  - `web/src/hid/uhci_hid_topology.ts` wires WebHID passthrough bridges into the UHCI USB topology
-    (including attaching an external hub when a `guestPath` requires it).
+    the guest-visible WebUSB passthrough device (via the selected guest USB controller bridge) and applies completions.
+- **Guest-visible USB controllers + topology wiring (TypeScript + WASM)**
+  - `web/src/io/devices/uhci.ts` / `web/src/io/devices/xhci.ts` expose guest-visible UHCI/xHCI PCI functions
+    backed by `UhciControllerBridge` / `XhciControllerBridge` WASM exports.
+  - `web/src/hid/uhci_hid_topology.ts` and `web/src/hid/xhci_hid_topology.ts` wire WebHID passthrough bridges
+    into the guest USB topology (including attaching an external hub when a `guestPath` requires it).
+  - The I/O worker feature-detects the xHCI topology exports and routes WebHID passthrough attachments to xHCI
+    when available, falling back to UHCI otherwise (`web/src/workers/io_hid_topology_mux.ts`).
 
 Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target architecture):
 
