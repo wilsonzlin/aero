@@ -2455,18 +2455,48 @@ impl AerogpuCmdRuntime {
         }
 
         {
-            let gs_cs_pipeline = self
-                .pipelines
-                .get_or_create_compute_pipeline(&self.device, gs_cs_key, |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aero-d3d11 GS-as-compute pipeline"),
-                        layout: Some(gs_pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point: "cs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            // With bounded LRU shader caches, the GS module may be evicted between shader creation
+            // and first use. Recover by re-registering its WGSL and retrying.
+            let gs_cs_pipeline = {
+                let mut recovery_attempts_remaining = 2u8;
+                loop {
+                    let pipeline_layout = gs_pipeline_layout.clone();
+                    match self.pipelines.get_or_create_compute_pipeline(
+                        &self.device,
+                        gs_cs_key.clone(),
+                        move |device, cs| {
+                            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                                label: Some("aero-d3d11 GS-as-compute pipeline"),
+                                layout: Some(pipeline_layout.as_ref()),
+                                module: cs,
+                                entry_point: "cs_main",
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            })
+                        },
+                    ) {
+                        Ok(pipeline) => break pipeline,
+                        Err(GpuError::MissingShaderModule { stage, hash })
+                            if recovery_attempts_remaining > 0
+                                && stage == ShaderStage::Compute
+                                && hash == gs.hash =>
+                        {
+                            recovery_attempts_remaining -= 1;
+                            let (rehash, _module) = self.pipelines.get_or_create_shader_module(
+                                &self.device,
+                                ShaderStage::Compute,
+                                &gs.wgsl,
+                                Some("aero-d3d11 aerogpu recovered GS prepass shader module"),
+                            );
+                            if rehash != hash {
+                                bail!(
+                                    "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                                );
+                            }
+                        }
+                        Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                    }
+                }
+            };
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aero-d3d11 GS-as-compute pass"),
                 timestamp_writes: None,
@@ -2483,18 +2513,46 @@ impl AerogpuCmdRuntime {
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
         {
-            let gs_finalize_pipeline = self
-                .pipelines
-                .get_or_create_compute_pipeline(&self.device, gs_finalize_key, |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aero-d3d11 GS finalize pipeline"),
-                        layout: Some(gs_pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point: "cs_finalize",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            let gs_finalize_pipeline = {
+                let mut recovery_attempts_remaining = 2u8;
+                loop {
+                    let pipeline_layout = gs_pipeline_layout.clone();
+                    match self.pipelines.get_or_create_compute_pipeline(
+                        &self.device,
+                        gs_finalize_key.clone(),
+                        move |device, cs| {
+                            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                                label: Some("aero-d3d11 GS finalize pipeline"),
+                                layout: Some(pipeline_layout.as_ref()),
+                                module: cs,
+                                entry_point: "cs_finalize",
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                            })
+                        },
+                    ) {
+                        Ok(pipeline) => break pipeline,
+                        Err(GpuError::MissingShaderModule { stage, hash })
+                            if recovery_attempts_remaining > 0
+                                && stage == ShaderStage::Compute
+                                && hash == gs.hash =>
+                        {
+                            recovery_attempts_remaining -= 1;
+                            let (rehash, _module) = self.pipelines.get_or_create_shader_module(
+                                &self.device,
+                                ShaderStage::Compute,
+                                &gs.wgsl,
+                                Some("aero-d3d11 aerogpu recovered GS prepass shader module"),
+                            );
+                            if rehash != hash {
+                                bail!(
+                                    "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                                );
+                            }
+                        }
+                        Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                    }
+                }
+            };
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aero-d3d11 GS finalize pass"),
                 timestamp_writes: None,
