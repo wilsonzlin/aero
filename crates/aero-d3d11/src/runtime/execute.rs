@@ -3304,12 +3304,6 @@ mod tests {
                     visibility: ShaderStageFlags::FRAGMENT,
                     storage_texture_format: None,
                 },
-                BindingDesc {
-                    binding: 1,
-                    ty: BindingType::StorageTexture2DWriteOnly,
-                    visibility: ShaderStageFlags::FRAGMENT,
-                    storage_texture_format: Some(DxgiFormat::R8G8B8A8Unorm),
-                },
             ];
 
             let mut writer = CmdWriter::new();

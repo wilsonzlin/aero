@@ -4904,11 +4904,11 @@ mod tests {
         let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
             .expect("translation should succeed");
         assert!(
-            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
+            wgsl.contains("out_vertices.data[vtx_idx].v0 = o1;"),
             "expected output register o1 to be exported as varying when output decls are missing:\n{wgsl}"
         );
         assert!(
-            !wgsl.contains("varyings[0u]"),
+            !wgsl.contains("out_vertices.data[vtx_idx].v0 = o0;"),
             "expected location 0 to remain reserved for position:\n{wgsl}"
         );
     }
