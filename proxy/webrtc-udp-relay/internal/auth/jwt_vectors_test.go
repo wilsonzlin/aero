@@ -110,7 +110,7 @@ func TestJWTVerifierVectors(t *testing.T) {
 		return time.Unix(vectors.RelayJWT.NowUnix, 0)
 	}
 
-	claims, err := verifier.VerifyAndExtractClaims(vectors.RelayJWT.Tokens.Valid.Token)
+	claims, err := verifier.verifyAndExtractClaims(vectors.RelayJWT.Tokens.Valid.Token)
 	if err != nil {
 		t.Fatalf("valid token rejected: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestJWTVerifierProtocolVectors(t *testing.T) {
 				return time.Unix(v.NowSec, 0)
 			}
 
-			claims, err := verifier.VerifyAndExtractClaims(v.Token)
+			claims, err := verifier.verifyAndExtractClaims(v.Token)
 			if v.ExpectError {
 				if err == nil {
 					t.Fatalf("expected error, got nil")

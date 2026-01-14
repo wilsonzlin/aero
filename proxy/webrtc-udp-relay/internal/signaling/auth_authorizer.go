@@ -27,7 +27,7 @@ type credentialVerifier interface {
 }
 
 type claimsVerifier interface {
-	VerifyAndExtractClaims(credential string) (auth.JWTClaims, error)
+	VerifyAndExtractSID(credential string) (string, error)
 }
 
 func NewAuthAuthorizer(cfg config.Config) (authorizer, error) {
@@ -64,11 +64,11 @@ func (a authAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (authR
 		if !ok {
 			return authResult{}, errors.New("jwt verifier does not support claims extraction")
 		}
-		claims, err := cv.VerifyAndExtractClaims(cred)
+		sid, err := cv.VerifyAndExtractSID(cred)
 		if err != nil {
 			return authResult{}, err
 		}
-		res.SessionKey = claims.SID
+		res.SessionKey = sid
 		return res, nil
 	}
 

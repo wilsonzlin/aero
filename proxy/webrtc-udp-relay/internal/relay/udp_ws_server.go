@@ -55,7 +55,7 @@ type credentialVerifier interface {
 }
 
 type claimsVerifier interface {
-	VerifyAndExtractClaims(credential string) (auth.JWTClaims, error)
+	VerifyAndExtractSID(credential string) (string, error)
 }
 
 func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg Config, pol *policy.DestinationPolicy, logger *slog.Logger) (*udpWebSocketServer, error) {
@@ -215,11 +215,11 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
 					return
 				}
-				claims, err := cv.VerifyAndExtractClaims(cred)
+				sid, err := cv.VerifyAndExtractSID(cred)
 				if err != nil {
 					verifyErr = err
 				} else {
-					sessionKey = claims.SID
+					sessionKey = sid
 				}
 			} else {
 				verifyErr = s.verifier.Verify(cred)
@@ -271,7 +271,11 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var authMsg auth.WireAuthMessage
+		var authMsg struct {
+			Type   string `json:"type"`
+			APIKey string `json:"apiKey,omitempty"`
+			Token  string `json:"token,omitempty"`
+		}
 		if err := json.Unmarshal(msg, &authMsg); err != nil {
 			incAuthFailure()
 			sendErrorAndClose(websocket.CloseUnsupportedData, "bad_message", "invalid auth message")
@@ -282,8 +286,26 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sendErrorAndClose(websocket.ClosePolicyViolation, "bad_message", "invalid auth message")
 			return
 		}
-		cred, err := auth.CredentialFromAuthMessage(s.cfg.AuthMode, authMsg)
-		if err != nil {
+		cred := ""
+		switch s.cfg.AuthMode {
+		case config.AuthModeAPIKey:
+			if authMsg.APIKey != "" {
+				cred = authMsg.APIKey
+			} else if authMsg.Token != "" {
+				// Forward/compat: allow using the token field in api_key mode for
+				// mode-agnostic clients.
+				cred = authMsg.Token
+			}
+		case config.AuthModeJWT:
+			if authMsg.Token != "" {
+				cred = authMsg.Token
+			} else if authMsg.APIKey != "" {
+				// Forward/compat: allow using the apiKey field in jwt mode for
+				// mode-agnostic clients.
+				cred = authMsg.APIKey
+			}
+		}
+		if cred == "" {
 			incAuthFailure()
 			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "missing credentials")
 			return
@@ -295,11 +317,11 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
 				return
 			}
-			claims, err := cv.VerifyAndExtractClaims(cred)
+			sid, err := cv.VerifyAndExtractSID(cred)
 			if err != nil {
 				verifyErr = err
 			} else {
-				sessionKey = claims.SID
+				sessionKey = sid
 			}
 		} else {
 			verifyErr = s.verifier.Verify(cred)

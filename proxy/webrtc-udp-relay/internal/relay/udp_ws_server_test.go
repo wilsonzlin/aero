@@ -1675,6 +1675,39 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_AuthMessage_TokenAliasInAPIKeyMode(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeAPIKey,
+		APIKey:                   "secret",
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth","token":"secret"}`)); err != nil {
+		t.Fatalf("WriteMessage auth: %v", err)
+	}
+
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+}
+
 func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeAPIKey,

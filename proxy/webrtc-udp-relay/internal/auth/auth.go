@@ -48,7 +48,7 @@ func CredentialFromRequest(mode config.AuthMode, r *http.Request) (string, error
 	if v := credentialFromHeaders(mode, r.Header); strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v), nil
 	}
-	return CredentialFromQuery(mode, r.URL.Query())
+	return credentialFromQuery(mode, r.URL.Query())
 }
 
 // credentialFromHeaders extracts credentials from HTTP headers.
@@ -106,7 +106,7 @@ func parseAuthHeader(v string) (scheme, token string) {
 	return scheme, token
 }
 
-func CredentialFromQuery(mode config.AuthMode, q url.Values) (string, error) {
+func credentialFromQuery(mode config.AuthMode, q url.Values) (string, error) {
 	switch mode {
 	case config.AuthModeNone:
 		return "", nil
@@ -128,41 +128,6 @@ func CredentialFromQuery(mode config.AuthMode, q url.Values) (string, error) {
 		// clients can use a single parameter name.
 		if apiKey := q.Get("apiKey"); apiKey != "" {
 			return apiKey, nil
-		}
-		return "", ErrMissingCredentials
-	default:
-		return "", fmt.Errorf("unsupported auth mode %q", mode)
-	}
-}
-
-type WireAuthMessage struct {
-	Type   string `json:"type"`
-	APIKey string `json:"apiKey,omitempty"`
-	Token  string `json:"token,omitempty"`
-}
-
-func CredentialFromAuthMessage(mode config.AuthMode, msg WireAuthMessage) (string, error) {
-	switch mode {
-	case config.AuthModeNone:
-		return "", nil
-	case config.AuthModeAPIKey:
-		if msg.APIKey != "" {
-			return msg.APIKey, nil
-		}
-		// Forward/compat: allow using the token field in api_key mode for
-		// mode-agnostic clients.
-		if msg.Token != "" {
-			return msg.Token, nil
-		}
-		return "", ErrMissingCredentials
-	case config.AuthModeJWT:
-		if msg.Token != "" {
-			return msg.Token, nil
-		}
-		// Forward/compat: allow using the apiKey field in jwt mode for
-		// mode-agnostic clients.
-		if msg.APIKey != "" {
-			return msg.APIKey, nil
 		}
 		return "", ErrMissingCredentials
 	default:
