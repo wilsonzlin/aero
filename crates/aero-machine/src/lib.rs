@@ -7795,12 +7795,18 @@ Track progress: docs/21-smp.md\n\
                     .as_ref()
                     .expect("use_install_media implies install_media is Some")
                     .clone();
+                // Provide both:
+                // - `disk`: a 512-byte-sector `BlockDevice` view (required by the BIOS API), and
+                // - `cdrom`: a 2048-byte-sector view for the INT 13h CD-ROM EDD path.
+                //
+                // Both handles share the same underlying ISO image.
+                let mut cdrom = iso.clone();
                 self.bios.dispatch_interrupt(
                     vector,
                     &mut self.cpu.state,
                     bus,
                     &mut iso,
-                    /* cdrom */ None,
+                    /* cdrom */ Some(&mut cdrom),
                 );
             } else {
                 self.bios.dispatch_interrupt(
