@@ -3760,9 +3760,9 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     }
 
     // We lock SubresourceIndex=0 for packed Texture2D allocations. Treat the
-    // runtime-provided Pitch/SlicePitch as applying to the first subresource
-    // only (offset==0); other subresources use our packed layout pitch.
-    const bool pitch_applies = (tex_layout->offset_bytes == 0);
+    // runtime-provided Pitch/SlicePitch as applying to mip0 subresources (same
+    // width across array layers); other mips use our packed layout pitch.
+    const bool pitch_applies = (tex_layout->mip_level == 0);
     const uint32_t lock_pitch = pitch_applies ? aerogpu_lock_pitch_bytes(lock_cb) : 0;
     if (pitch_applies) {
       LogLockPitchMismatchMaybe(res->dxgi_format, subresource, *tex_layout, map_row_pitch, lock_pitch);
