@@ -610,3 +610,54 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 200);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 2);
 }
+
+#[test]
+fn irq_ack_clears_only_requested_bits_and_recomputes_irq_level() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    // Seed multiple pending IRQ causes, then enable them.
+    dev.regs.irq_status = irq_bits::FENCE | irq_bits::ERROR;
+    dev.write(
+        mmio::IRQ_ENABLE,
+        4,
+        (irq_bits::FENCE | irq_bits::ERROR) as u64,
+    );
+    assert!(dev.irq_level());
+
+    // Clearing only one bit should leave the other pending and keep IRQ asserted.
+    dev.write(mmio::IRQ_ACK, 4, irq_bits::FENCE as u64);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+
+    dev.write(mmio::IRQ_ACK, 4, irq_bits::ERROR as u64);
+    assert_eq!(dev.regs.irq_status, 0);
+    assert!(!dev.irq_level());
+}
+
+#[test]
+fn ring_control_readback_masks_to_enable_bit_and_reset_is_write_only() {
+    let mut mem = memory::Bus::new(0x1000);
+
+    let mut dev = new_test_device(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+
+    // Writing RESET should trigger the reset path but the register itself only latches ENABLE.
+    dev.write(mmio::RING_CONTROL, 4, u64::from(u32::MAX));
+    assert_eq!(
+        dev.read(mmio::RING_CONTROL, 4) as u32,
+        ring_control::ENABLE
+    );
+    assert_eq!(dev.regs.ring_control, ring_control::ENABLE);
+
+    // Tick to drain any pending reset-side DMA work (no-op since ring/fence GPAs are unset).
+    dev.tick(&mut mem, 0);
+
+    dev.write(mmio::RING_CONTROL, 4, 0);
+    assert_eq!(dev.read(mmio::RING_CONTROL, 4) as u32, 0);
+    assert_eq!(dev.regs.ring_control, 0);
+}
