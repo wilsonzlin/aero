@@ -322,16 +322,26 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     // Ring backend stats should be visible for debugging.
     let stats = bridge.virtio_net_stats();
     assert!(!stats.is_null(), "expected stats object, got null");
-    let tx_pushed = get_bigint(&stats, "tx_pushed_frames")
-        .to_string(10)
-        .unwrap()
-        .as_string()
-        .unwrap();
-    assert_eq!(tx_pushed, "1");
-    let rx_popped = get_bigint(&stats, "rx_popped_frames")
-        .to_string(10)
-        .unwrap()
-        .as_string()
-        .unwrap();
-    assert_eq!(rx_popped, "1");
+    assert_eq!(
+        get_bigint(&stats, "tx_pushed_frames"),
+        1u64,
+        "expected tx_pushed_frames=1"
+    );
+    assert_eq!(
+        get_bigint(&stats, "tx_pushed_bytes"),
+        payload.len() as u64,
+        "expected tx_pushed_bytes to match TX payload length"
+    );
+    assert_eq!(
+        get_bigint(&stats, "rx_popped_frames"),
+        1u64,
+        "expected rx_popped_frames=1"
+    );
+    assert_eq!(
+        get_bigint(&stats, "rx_popped_bytes"),
+        rx_frame.len() as u64,
+        "expected rx_popped_bytes to match RX payload length"
+    );
+    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get");
+    assert_eq!(rx_broken.as_bool(), Some(false), "rx_broken should be false");
 }

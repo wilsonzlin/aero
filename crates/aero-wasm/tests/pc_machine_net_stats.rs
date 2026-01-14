@@ -138,12 +138,7 @@ fn pc_machine_net_stats_smoke() {
         "rx_corrupt",
     ] {
         let got = get_bigint(&stats, key);
-        let s = got
-            .to_string(10)
-            .expect("BigInt::to_string")
-            .as_string()
-            .expect("BigInt::to_string returned non-string");
-        assert_eq!(s, "0", "{key} should start at 0");
+        assert_eq!(got, 0u64, "{key} should start at 0");
     }
 
     let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken")).expect("Reflect::get");

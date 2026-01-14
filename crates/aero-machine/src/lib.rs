@@ -861,10 +861,109 @@ impl aero_mmu::MemoryBus for SystemMemory {
 /// per-CPU: each vCPU sees a different LAPIC register page at that shared address. Our core RAM/MMIO
 /// bus (`SystemMemory`) is shared across CPUs, so we intercept LAPIC MMIO accesses here and route
 /// them explicitly based on the currently executing vCPU's APIC ID.
+enum ApCpus<'a> {
+    /// Full contiguous slice of application processor cores (APIC IDs 1..=N).
+    ///
+    /// This is the common case: the currently executing CPU is the BSP (APIC ID 0), so AP state is
+    /// disjoint from the running core.
+    All(&'a mut [CpuCore]),
+    /// Application processor cores split around the currently executing AP.
+    ///
+    /// `before` covers APIC IDs `1..=before.len()`, `after` covers
+    /// `before.len()+2..=len()`. The excluded APIC ID is the currently executing AP
+    /// (`before.len()+1`) and is intentionally not accessible (to avoid aliasing the running
+    /// `&mut CpuCore`).
+    Split {
+        before: &'a mut [CpuCore],
+        after: &'a mut [CpuCore],
+    },
+}
+
+impl ApCpus<'_> {
+    fn get_mut(&mut self, idx: usize) -> Option<&mut CpuCore> {
+        match self {
+            ApCpus::All(ap_cpus) => ap_cpus.get_mut(idx),
+            ApCpus::Split { before, after } => {
+                if idx < before.len() {
+                    before.get_mut(idx)
+                } else if idx == before.len() {
+                    None
+                } else {
+                    after.get_mut(idx - before.len() - 1)
+                }
+            }
+        }
+    }
+
+    fn for_each_mut_excluding_current<F: FnMut(usize, &mut CpuCore)>(&mut self, mut f: F) {
+        match self {
+            ApCpus::All(ap_cpus) => {
+                for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+                    f(idx, cpu);
+                }
+            }
+            ApCpus::Split { before, after } => {
+                for (idx, cpu) in before.iter_mut().enumerate() {
+                    f(idx, cpu);
+                }
+                let base = before.len() + 1;
+                for (idx, cpu) in after.iter_mut().enumerate() {
+                    f(base + idx, cpu);
+                }
+            }
+        }
+    }
+
+    fn for_each_mut_excluding_index<F: FnMut(usize, &mut CpuCore)>(
+        &mut self,
+        exclude_idx: usize,
+        mut f: F,
+    ) {
+        match self {
+            ApCpus::All(ap_cpus) => {
+                if exclude_idx >= ap_cpus.len() {
+                    for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+                        f(idx, cpu);
+                    }
+                    return;
+                }
+
+                let (before, rest) = ap_cpus.split_at_mut(exclude_idx);
+                for (idx, cpu) in before.iter_mut().enumerate() {
+                    f(idx, cpu);
+                }
+                let after = &mut rest[1..];
+                let base = exclude_idx + 1;
+                for (idx, cpu) in after.iter_mut().enumerate() {
+                    f(base + idx, cpu);
+                }
+            }
+            // In the `Split` case, the excluded CPU is not accessible, so excluding an index is
+            // either redundant (if it's the current AP) or safe to handle via a skip.
+            ApCpus::Split { before, after } => {
+                for (idx, cpu) in before.iter_mut().enumerate() {
+                    if idx == exclude_idx {
+                        continue;
+                    }
+                    f(idx, cpu);
+                }
+                let base = before.len() + 1;
+                for (idx, cpu) in after.iter_mut().enumerate() {
+                    let full_idx = base + idx;
+                    if full_idx == exclude_idx {
+                        continue;
+                    }
+                    f(full_idx, cpu);
+                }
+            }
+        }
+    }
+}
+
 struct PerCpuSystemMemoryBus<'a> {
     apic_id: u8,
     interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
-    ap_cpus: &'a mut [CpuCore],
+    ap_cpus: ApCpus<'a>,
     mem: &'a mut SystemMemory,
 }
 
@@ -872,7 +971,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     fn new(
         apic_id: u8,
         interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
-        ap_cpus: &'a mut [CpuCore],
+        ap_cpus: ApCpus<'a>,
         mem: &'a mut SystemMemory,
     ) -> Self {
         Self {
@@ -1034,22 +1133,30 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     }
 
     fn reset_all_aps(&mut self) {
-        for cpu in self.ap_cpus.iter_mut() {
+        self.ap_cpus.for_each_mut_excluding_current(|idx, cpu| {
+            let apic_id = (idx + 1) as u8;
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             cpu.state.halted = true;
-        }
+            if let Some(interrupts) = &self.interrupts {
+                interrupts.borrow().reset_lapic(apic_id);
+            }
+        });
     }
 
     fn reset_all_aps_excluding_sender(&mut self) {
-        let sender_idx = self.apic_id.checked_sub(1).map(|v| v as usize);
-        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
-            if Some(idx) == sender_idx {
-                continue;
-            }
-            vcpu_init::reset_ap_vcpu_to_init_state(cpu);
-            set_cpu_apic_base_bsp_bit(cpu, false);
-            cpu.state.halted = true;
+        if let Some(sender_idx) = self.apic_id.checked_sub(1).map(|v| v as usize) {
+            self.ap_cpus.for_each_mut_excluding_index(sender_idx, |idx, cpu| {
+                let apic_id = (idx + 1) as u8;
+                vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+                set_cpu_apic_base_bsp_bit(cpu, false);
+                cpu.state.halted = true;
+                if let Some(interrupts) = &self.interrupts {
+                    interrupts.borrow().reset_lapic(apic_id);
+                }
+            });
+        } else {
+            self.reset_all_aps();
         }
     }
     fn start_ap_by_apic_id(&mut self, apic_id: u8, vector: u8) {
@@ -1071,20 +1178,20 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     }
 
     fn start_all_aps(&mut self, vector: u8) {
-        for cpu in self.ap_cpus.iter_mut() {
+        self.ap_cpus.for_each_mut_excluding_current(|_idx, cpu| {
             vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
             set_cpu_apic_base_bsp_bit(cpu, false);
-        }
+        });
     }
 
     fn start_all_aps_excluding_sender(&mut self, vector: u8) {
-        let sender_idx = self.apic_id.checked_sub(1).map(|v| v as usize);
-        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
-            if Some(idx) == sender_idx {
-                continue;
-            }
-            vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
-            set_cpu_apic_base_bsp_bit(cpu, false);
+        if let Some(sender_idx) = self.apic_id.checked_sub(1).map(|v| v as usize) {
+            self.ap_cpus.for_each_mut_excluding_index(sender_idx, |_idx, cpu| {
+                vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
+                set_cpu_apic_base_bsp_bit(cpu, false);
+            });
+        } else {
+            self.start_all_aps(vector);
         }
     }
 }
@@ -3708,7 +3815,7 @@ impl Machine {
         let mut bus = PerCpuSystemMemoryBus::new(
             apic_id,
             interrupts,
-            self.ap_cpus.as_mut_slice(),
+            ApCpus::All(self.ap_cpus.as_mut_slice()),
             &mut self.mem,
         );
         aero_mmu::MemoryBus::read_u32(&mut bus, LAPIC_MMIO_BASE + offset)
@@ -3728,7 +3835,7 @@ impl Machine {
         let mut bus = PerCpuSystemMemoryBus::new(
             apic_id,
             interrupts,
-            self.ap_cpus.as_mut_slice(),
+            ApCpus::All(self.ap_cpus.as_mut_slice()),
             &mut self.mem,
         );
         aero_mmu::MemoryBus::write_u32(&mut bus, LAPIC_MMIO_BASE + offset, value);
@@ -7691,64 +7798,44 @@ impl Machine {
         // Run each AP for a bounded number of instructions. This is intentionally a very simple
         // cooperative scheduler (BSP-driven) that is "good enough" for SMP bring-up tests like
         // INIT+SIPI.
-        //
-        // Note: `PerCpuSystemMemoryBus` needs mutable access to the AP CPU slice so it can model
-        // INIT+SIPI by mutating AP core state. To avoid aliasing the currently executing AP core
-        // (`&mut CpuCore`) with that slice borrow, we temporarily move each runnable AP out of the
-        // `Vec` while running it.
-        for idx in 0..self.ap_cpus.len() {
-            if self.ap_cpus[idx].state.halted {
+        let ap_count = self.ap_cpus.len();
+        for idx in 0..ap_count {
+            // Split the AP array so the currently executing AP (`cpu`) is disjoint from the slices
+            // stored in the per-vCPU memory bus adapter. This avoids aliasing mutable references
+            // while still allowing the bus to deliver INIT/SIPI effects to *other* APs.
+            let (before, rest) = self.ap_cpus.split_at_mut(idx);
+            let Some((cpu, after)) = rest.split_first_mut() else {
+                break;
+            };
+
+            if cpu.state.halted {
                 continue;
             }
-
-            // Temporarily move the AP out of the vector so we can hand a `&mut [CpuCore]` view of
-            // the remaining APs into the per-vCPU LAPIC routing adapter without violating Rust's
-            // aliasing rules.
-            let mut cpu = std::mem::take(&mut self.ap_cpus[idx]);
 
             // Keep the core's A20 view coherent with the chipset latch.
             cpu.state.a20_enabled = self.chipset.a20().enabled();
 
             // Wrap the shared `SystemMemory` in the per-vCPU LAPIC routing adapter.
             let apic_id = (idx as u8).saturating_add(1);
-            {
-                // Note: When executing an AP, we already hold `&mut CpuCore` for that AP. Avoid
-                // handing the per-vCPU bus a mutable slice containing the same core (which would
-                // violate Rust's aliasing rules).
-                //
-                // For now we pass an empty AP slice: AP execution can still access its LAPIC MMIO
-                // page via `interrupts`, but AP-originated INIT/SIPI that would mutate other AP
-                // cores is not modeled.
-                let mut empty_ap_cpus: [CpuCore; 0] = [];
-                let phys = PerCpuSystemMemoryBus::new(
-                    apic_id,
-                    interrupts.clone(),
-                    &mut empty_ap_cpus,
-                    &mut self.mem,
-                );
-                let mut inner = aero_cpu_core::PagingBus::new_with_io(
-                    phys,
-                    StrictIoPortBus { io: &mut self.io },
-                );
-                std::mem::swap(&mut self.mmu, inner.mmu_mut());
-                let mut bus = MachineCpuBus {
-                    a20: self.chipset.a20(),
-                    reset: self.reset_latch.clone(),
-                    inner,
-                };
+            let phys = PerCpuSystemMemoryBus::new(
+                apic_id,
+                interrupts.clone(),
+                ApCpus::Split { before, after },
+                &mut self.mem,
+            );
+            let mut inner = aero_cpu_core::PagingBus::new_with_io(
+                phys,
+                StrictIoPortBus { io: &mut self.io },
+            );
+            std::mem::swap(&mut self.mmu, inner.mmu_mut());
+            let mut bus = MachineCpuBus {
+                a20: self.chipset.a20(),
+                reset: self.reset_latch.clone(),
+                inner,
+            };
 
-                let _ = run_batch_cpu_core_with_assists(
-                    cfg,
-                    &mut self.assist,
-                    &mut cpu,
-                    &mut bus,
-                    max_insts,
-                );
-                std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
-            }
-
-            // Restore the AP core back into the `Vec`.
-            self.ap_cpus[idx] = cpu;
+            let _ = run_batch_cpu_core_with_assists(cfg, &mut self.assist, cpu, &mut bus, max_insts);
+            std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
         }
     }
 
@@ -7817,7 +7904,7 @@ impl Machine {
             let phys = PerCpuSystemMemoryBus::new(
                 0,
                 self.interrupts.clone(),
-                self.ap_cpus.as_mut_slice(),
+                ApCpus::All(self.ap_cpus.as_mut_slice()),
                 &mut self.mem,
             );
             let mut inner =
@@ -13014,7 +13101,7 @@ mod tests {
         let phys = PerCpuSystemMemoryBus::new(
             0,
             interrupts,
-            m.ap_cpus.as_mut_slice(),
+            ApCpus::All(m.ap_cpus.as_mut_slice()),
             &mut m.mem,
         );
         let inner = aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut m.io });
