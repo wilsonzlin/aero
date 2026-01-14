@@ -1797,7 +1797,7 @@ mod tests {
     }
 
     #[test]
-    fn init_ipi_records_pending_init_and_resets_destination_lapic() {
+    fn init_ipi_records_pending_init_and_resets_destination_lapic_state() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
 

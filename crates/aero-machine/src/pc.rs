@@ -50,6 +50,11 @@ pub struct PcMachineConfig {
 
     pub enable_hda: bool,
     pub enable_e1000: bool,
+    /// Enable the xHCI (USB 3.x) controller in the underlying [`PcPlatform`].
+    ///
+    /// This is disabled by default to keep the guest-visible PCI topology stable unless explicitly
+    /// requested.
+    pub enable_xhci: bool,
 }
 
 impl Default for PcMachineConfig {
@@ -60,6 +65,7 @@ impl Default for PcMachineConfig {
             smbios_uuid_seed: 0,
             enable_hda: false,
             enable_e1000: true,
+            enable_xhci: false,
         }
     }
 }
@@ -146,6 +152,7 @@ impl PcMachine {
             smbios_uuid_seed: 0,
             enable_hda: false,
             enable_e1000: false,
+            enable_xhci: false,
         })
         .expect("PcMachineConfig derived from `ram_size_bytes` should be valid")
     }
@@ -162,6 +169,7 @@ impl PcMachine {
                 smbios_uuid_seed: 0,
                 enable_hda: false,
                 enable_e1000: true,
+                enable_xhci: false,
             },
             mac,
         )
@@ -196,6 +204,7 @@ impl PcMachine {
                 cpu_count: cfg.cpu_count,
                 enable_hda: cfg.enable_hda,
                 enable_e1000: cfg.enable_e1000,
+                enable_xhci: cfg.enable_xhci,
                 mac_addr: e1000_mac_addr,
                 ..Default::default()
             },
@@ -1064,6 +1073,7 @@ mod tests {
             smbios_uuid_seed: 0,
             enable_hda: false,
             enable_e1000: false,
+            enable_xhci: false,
         })
         .expect("PcMachineConfig should be valid");
 

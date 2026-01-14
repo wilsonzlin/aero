@@ -45,6 +45,7 @@ impl PcMachine {
             smbios_uuid_seed: smbios_uuid_seed.unwrap_or(0),
             enable_hda: false,
             enable_e1000: true,
+            enable_xhci: false,
         };
 
         let inner = aero_machine::PcMachine::new_with_config(cfg)

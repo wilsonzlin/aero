@@ -1,5 +1,6 @@
 use aero_cpu_core::state::RFLAGS_IF;
 use aero_machine::{Machine, MachineConfig};
+use aero_platform::interrupts::PlatformInterruptMode;
 
 const IA32_APIC_BASE_BSP_BIT: u64 = 1 << 8;
 
@@ -11,6 +12,10 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
     cfg.enable_pc_platform = true;
 
     let mut m = Machine::new(cfg).unwrap();
+    m.platform_interrupts()
+        .expect("pc platform enabled")
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
 
     // Dirty the AP's LAPIC state so we can verify INIT resets it.
     const LAPIC_SVR_OFF: u64 = 0xF0;
