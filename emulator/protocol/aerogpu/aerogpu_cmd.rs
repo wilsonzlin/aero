@@ -1970,7 +1970,7 @@ pub fn decode_cmd_set_shader_constants_i_payload_le(
 
 /// Decode SET_SHADER_CONSTANTS_B and return the bool payload as raw u32 values.
 ///
-/// Payload encoding: `uint32_t data[bool_count]` where each element is 0 or 1.
+/// Payload encoding: `uint32_t data[bool_count][4]` (`vec4<u32>` per bool register).
 pub fn decode_cmd_set_shader_constants_b_payload_le(
     buf: &[u8],
 ) -> Result<(AerogpuCmdSetShaderConstantsB, Vec<u32>), AerogpuCmdDecodeError> {
@@ -1988,7 +1988,10 @@ pub fn decode_cmd_set_shader_constants_b_payload_le(
     let packet_len = validate_packet_len(buf, hdr)?;
 
     let bool_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-    let payload_size_bytes = (bool_count as usize)
+    let u32_count = (bool_count as usize)
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    let payload_size_bytes = u32_count
         .checked_mul(4)
         .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
     let payload_start = AerogpuCmdSetShaderConstantsB::SIZE_BYTES;
@@ -2010,9 +2013,9 @@ pub fn decode_cmd_set_shader_constants_b_payload_le(
     };
 
     let mut out = Vec::new();
-    out.try_reserve_exact(bool_count as usize)
+    out.try_reserve_exact(u32_count)
         .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
-    for i in 0..bool_count as usize {
+    for i in 0..u32_count {
         let off = payload_start + i * 4;
         out.push(u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()));
     }

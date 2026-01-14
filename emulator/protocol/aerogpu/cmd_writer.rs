@@ -1485,8 +1485,10 @@ impl AerogpuCmdWriter {
 
     /// Set D3D9-style bool shader constants.
     ///
-    /// `data` is a contiguous range of scalar bool registers, encoded as `u32` values
-    /// where each element must be either `0` or `1`.
+    /// `data` is a contiguous range of scalar bool registers, encoded as `u32` values.
+    ///
+    /// Each element is normalized to either 0 or 1 (0 => 0, non-zero => 1) and encoded in the
+    /// payload as a `vec4<u32>` with the scalar replicated across all four lanes.
     pub fn set_shader_constants_b(
         &mut self,
         stage: AerogpuShaderStage,
@@ -1504,17 +1506,11 @@ impl AerogpuCmdWriter {
         data: &[u32],
     ) {
         assert!(data.len() <= u32::MAX as usize);
-        for &v in data {
-            assert!(
-                v == 0 || v == 1,
-                "SET_SHADER_CONSTANTS_B values must be 0 or 1 (got {v})"
-            );
-        }
 
         let bool_count = data.len() as u32;
         let payload_size = data
             .len()
-            .checked_mul(4)
+            .checked_mul(16)
             .expect("SET_SHADER_CONSTANTS_B packet too large (usize overflow)");
         let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsB>()
             .checked_add(payload_size)
@@ -1540,7 +1536,12 @@ impl AerogpuCmdWriter {
 
         let payload_base = base + size_of::<AerogpuCmdSetShaderConstantsB>();
         for (i, &v) in data.iter().enumerate() {
-            self.write_u32_at(payload_base + i * 4, v);
+            let v = if v == 0 { 0 } else { 1 };
+            let reg_base = payload_base + i * 16;
+            self.write_u32_at(reg_base + 0, v);
+            self.write_u32_at(reg_base + 4, v);
+            self.write_u32_at(reg_base + 8, v);
+            self.write_u32_at(reg_base + 12, v);
         }
     }
 
