@@ -12111,7 +12111,7 @@ int wmain(int argc, wchar_t **argv) {
   ZeroMemory(&open, sizeof(open));
   open.hDc = hdc;
   NTSTATUS st = OpenAdapterFromHdcWithTimeout(&f, &open);
-  if (st != STATUS_TIMEOUT) {
+  if (InterlockedCompareExchange(&g_skip_close_adapter, 0, 0) == 0) {
     DeleteDC(hdc);
   }
   if (!NT_SUCCESS(st)) {
