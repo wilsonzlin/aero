@@ -4196,6 +4196,7 @@ async function handleVmSnapshotSaveToOpfs(
       mmu,
       guestBase,
       guestSize,
+      vramU8: vramU8 && vramSizeBytes > 0 ? vramU8.subarray(0, vramSizeBytes) : null,
       runtimes: {
         usbXhciControllerBridge: xhciControllerBridge,
         usbUhciRuntime: uhciRuntime,
@@ -4224,7 +4225,6 @@ async function handleVmSnapshotSaveToOpfs(
       },
       restoredDevices: snapshotRestoredDeviceBlobs,
       coordinatorDevices: mergedCoordinatorDevices,
-      vram: vramU8,
     });
   } finally {
     snapshotOpInFlight = false;
@@ -4250,6 +4250,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
       path,
       guestBase,
       guestSize,
+      vramU8: vramU8 && vramSizeBytes > 0 ? vramU8.subarray(0, vramSizeBytes) : null,
       runtimes: {
         usbXhciControllerBridge: xhciControllerBridge,
         usbUhciRuntime: uhciRuntime,
@@ -4270,7 +4271,6 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         },
         netStack: resolveNetStackSnapshotBridge(),
       },
-      vram: vramU8,
     });
  
     // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM

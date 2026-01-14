@@ -24,6 +24,12 @@ import {
   USB_SNAPSHOT_TAG_UHCI,
   USB_SNAPSHOT_TAG_XHCI,
 } from "./usb_snapshot_container";
+import {
+  IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES,
+  appendIoWorkerVramSnapshotDeviceBlobs,
+  ioWorkerVramSnapshotChunkIndexFromDeviceId,
+  ioWorkerVramSnapshotChunkIndexFromDeviceKind,
+} from "./io_worker_vram_snapshot";
 
 export type IoWorkerSnapshotDeviceState = { kind: string; bytes: Uint8Array };
 
@@ -1084,6 +1090,21 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   mmu: ArrayBuffer;
   guestBase: number;
   guestSize: number;
+  /**
+   * Optional BAR1 VRAM bytes (SharedArrayBuffer-backed). When present, VRAM is persisted inside the
+   * snapshot file as one or more reserved `device.<id>` blobs so WDDM scanout surfaces and AeroGPU
+   * allocations survive snapshot restore.
+   *
+   * NOTE: VRAM bytes are kept entirely inside the IO worker; they are not forwarded through the
+   * coordinator.
+   */
+  vramU8?: Uint8Array | null;
+  /**
+   * Test-only override for VRAM chunking; must be `<= 64 MiB`.
+   *
+   * Production snapshots always use 64 MiB chunks to satisfy `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
+   */
+  vramChunkBytes?: number;
   runtimes: IoWorkerSnapshotRuntimes;
   /**
    * Device blobs recovered from the most recent VM snapshot restore. These are merged into the
@@ -1128,6 +1149,12 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
       const kind = normalizeRestoredDeviceKind((dev as { kind: string }).kind);
       freshDevices.push({ kind, bytes: new Uint8Array((dev as { bytes: ArrayBuffer }).bytes) });
     }
+  }
+
+  // Persist BAR1 VRAM contents as opaque device blobs so GPU allocations and scanout surfaces
+  // survive snapshot restore.
+  if (opts.vramU8 && opts.vramU8.byteLength) {
+    appendIoWorkerVramSnapshotDeviceBlobs(freshDevices, opts.vramU8, { chunkBytes: opts.vramChunkBytes });
   }
 
   // USB snapshots are a special case: multiple controller snapshots (UHCI/EHCI/xHCI/...) are
@@ -1235,6 +1262,15 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
   path: string;
   guestBase: number;
   guestSize: number;
+  /**
+   * Optional BAR1 VRAM bytes (SharedArrayBuffer-backed). When present, VRAM device blobs stored in
+   * the snapshot are applied locally inside the IO worker and are not forwarded to the coordinator.
+   */
+  vramU8?: Uint8Array | null;
+  /**
+   * Test-only override for VRAM chunking (must match the chunk size used during save).
+   */
+  vramChunkBytes?: number;
   runtimes: IoWorkerSnapshotRuntimes;
   /**
    * Optional guest-visible GPU VRAM/BAR1 backing store.
@@ -1269,6 +1305,14 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const devicesRaw = Array.isArray(rec.devices) ? rec.devices : [];
     const devices: VmSnapshotDeviceBlob[] = [];
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
+    const vramU8 = opts.vramU8 ?? null;
+    let vramChunkBytes = (opts.vramChunkBytes ?? IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) >>> 0;
+    if (!Number.isFinite(vramChunkBytes) || vramChunkBytes <= 0) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
+    if (vramChunkBytes > IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
+    let sawVram = false;
+    let vramCleared = false;
+    let warnedNoVramBuffer = false;
+    let warnedVramTruncate = false;
     // When multiple USB blobs are present (shouldn't happen), prefer the canonical kind over legacy
     // aliases so restores are deterministic.
     const vramChunks: Uint8Array[] = [];
@@ -1294,6 +1338,47 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       }
       if (kind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) {
         vramChunks.push(e.bytes);
+        continue;
+      }
+
+      const vramChunkIndex = ioWorkerVramSnapshotChunkIndexFromDeviceKind(kind);
+      if (vramChunkIndex !== null) {
+        sawVram = true;
+        if (!vramU8) {
+          if (!warnedNoVramBuffer) {
+            warnedNoVramBuffer = true;
+            console.warn("[io.worker] Snapshot contains VRAM state but IO worker has no VRAM buffer; ignoring VRAM blobs.");
+          }
+          continue;
+        }
+
+        if (!vramCleared) {
+          // Clear first so stale scanout pixels / allocations don't persist when restoring partial
+          // VRAM snapshots (or corrupt snapshots with missing chunks).
+          vramU8.fill(0);
+          vramCleared = true;
+        }
+
+        const start = vramChunkIndex * vramChunkBytes;
+        if (start >= vramU8.byteLength) {
+          if (!warnedVramTruncate) {
+            warnedVramTruncate = true;
+            console.warn(
+              `[io.worker] Snapshot VRAM chunk ${vramChunkIndex} starts past current VRAM size; ignoring (snapshot VRAM larger than runtime VRAM?)`,
+            );
+          }
+          continue;
+        }
+
+        const maxLen = vramU8.byteLength - start;
+        const copyLen = Math.min(e.bytes.byteLength, maxLen);
+        vramU8.set(e.bytes.subarray(0, copyLen), start);
+        if (e.bytes.byteLength > maxLen && !warnedVramTruncate) {
+          warnedVramTruncate = true;
+          console.warn(
+            `[io.worker] Snapshot VRAM chunk ${vramChunkIndex} (${e.bytes.byteLength} bytes) exceeds current VRAM size; restored prefix ${copyLen} bytes.`,
+          );
+        }
         continue;
       }
       devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
@@ -1362,6 +1447,12 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       }
     }
 
+    // If the snapshot had no VRAM blobs but the runtime has a BAR1 mapping, clear it so stale
+    // scanout pixels don't persist across restore.
+    if (vramU8 && !sawVram) {
+      vramU8.fill(0);
+    }
+
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
       mmu: copyU8ToArrayBuffer(rec.mmu),
@@ -1381,6 +1472,14 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const devices: VmSnapshotDeviceBlob[] = [];
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
     const vramChunks: Uint8Array[] = [];
+    const vramU8 = opts.vramU8 ?? null;
+    let vramChunkBytes = (opts.vramChunkBytes ?? IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) >>> 0;
+    if (!Number.isFinite(vramChunkBytes) || vramChunkBytes <= 0) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
+    if (vramChunkBytes > IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
+    let sawVram = false;
+    let vramCleared = false;
+    let warnedNoVramBuffer = false;
+    let warnedVramTruncate = false;
     let usbBytes: Uint8Array | null = null;
     let i8042Bytes: Uint8Array | null = null;
     let virtioInputBytes: Uint8Array | null = null;
@@ -1396,6 +1495,45 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       const e = entry as { id?: unknown; version?: unknown; flags?: unknown; data?: unknown };
       if (typeof e.id !== "number" || typeof e.version !== "number" || typeof e.flags !== "number" || !(e.data instanceof Uint8Array)) {
         throw new Error("WASM snapshot restore returned an unexpected devices entry shape (expected {id:number,version:number,flags:number,data:Uint8Array}).");
+      }
+
+      const vramChunkIndex = ioWorkerVramSnapshotChunkIndexFromDeviceId(e.id);
+      if (vramChunkIndex !== null) {
+        sawVram = true;
+        if (!vramU8) {
+          if (!warnedNoVramBuffer) {
+            warnedNoVramBuffer = true;
+            console.warn("[io.worker] Snapshot contains VRAM state but IO worker has no VRAM buffer; ignoring VRAM blobs.");
+          }
+          continue;
+        }
+
+        if (!vramCleared) {
+          vramU8.fill(0);
+          vramCleared = true;
+        }
+
+        const start = vramChunkIndex * vramChunkBytes;
+        if (start >= vramU8.byteLength) {
+          if (!warnedVramTruncate) {
+            warnedVramTruncate = true;
+            console.warn(
+              `[io.worker] Snapshot VRAM chunk ${vramChunkIndex} starts past current VRAM size; ignoring (snapshot VRAM larger than runtime VRAM?)`,
+            );
+          }
+          continue;
+        }
+
+        const maxLen = vramU8.byteLength - start;
+        const copyLen = Math.min(e.data.byteLength, maxLen);
+        vramU8.set(e.data.subarray(0, copyLen), start);
+        if (e.data.byteLength > maxLen && !warnedVramTruncate) {
+          warnedVramTruncate = true;
+          console.warn(
+            `[io.worker] Snapshot VRAM chunk ${vramChunkIndex} (${e.data.byteLength} bytes) exceeds current VRAM size; restored prefix ${copyLen} bytes.`,
+          );
+        }
+        continue;
       }
 
       const kind = vmSnapshotDeviceIdToKind(e.id);
@@ -1457,6 +1595,10 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
           i -= 1;
         }
       }
+    }
+
+    if (vramU8 && !sawVram) {
+      vramU8.fill(0);
     }
 
     return {
