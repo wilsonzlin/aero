@@ -64,19 +64,19 @@ fn b64url_char(v: u8) -> u8 {
     }
 }
 
-fn make_noncanonical_base64url(mut s: String) -> String {
+fn make_noncanonical_base64url(s: String) -> String {
     // Flip unused bits in the last base64 quantum. This produces a string which is still comprised
     // of base64url characters, but is invalid for canonical unpadded base64url.
     let rem = s.len() % 4;
     if rem != 2 && rem != 3 {
         return s;
     }
-    let bytes = unsafe { s.as_bytes_mut() };
+    let mut bytes = s.into_bytes();
     let last = bytes.len() - 1;
     let v = b64url_val(bytes[last]).unwrap_or(0);
-    let v2 = v | 1;
-    bytes[last] = b64url_char(v2);
-    s
+    bytes[last] = b64url_char(v | 1);
+    // Safety: we started from a valid UTF-8 string and only mutated one byte to another ASCII byte.
+    String::from_utf8(bytes).expect("base64url should remain valid utf-8")
 }
 
 fn mint_session_token_b64(payload_b64: &str, secret: &[u8]) -> String {
