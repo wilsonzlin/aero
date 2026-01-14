@@ -5,6 +5,33 @@ mod util;
 
 use util::TestMemory;
 
+fn find_ext_cap(
+    xhci: &mut XhciController,
+    mem: &mut TestMemory,
+    first: u64,
+    id: u8,
+) -> Option<u64> {
+    // xHCI Extended Capabilities form a linked list. The "next" pointer is expressed in DWORDs.
+    // Keep a small iteration bound so malformed guest-visible structures cannot loop forever.
+    let mut off = first;
+    for _ in 0..32 {
+        if off == 0 {
+            return None;
+        }
+        let cap0 = xhci.mmio_read_u32(mem, off);
+        let cap_id = (cap0 & 0xff) as u8;
+        if cap_id == id {
+            return Some(off);
+        }
+        let next = ((cap0 >> 8) & 0xff) as u64;
+        if next == 0 {
+            return None;
+        }
+        off = next * 4;
+    }
+    None
+}
+
 #[test]
 fn hccparams1_xecp_points_to_extended_capabilities() {
     let mut xhci = XhciController::with_port_count(4);
@@ -34,13 +61,16 @@ fn supported_protocol_capability_usb2_matches_port_count() {
 
     let hccparams1 = xhci.mmio_read_u32(&mut mem, cap::HCCPARAMS1 as u64);
     let xecp = (((hccparams1 >> 16) & 0xffff) as u64) * 4;
+    let Some(xecp) = find_ext_cap(&mut xhci, &mut mem, xecp, EXT_CAP_ID_SUPPORTED_PROTOCOL) else {
+        panic!("missing Supported Protocol extended capability");
+    };
 
     // Extended capability header (DWORD0).
     let cap0 = xhci.mmio_read_u32(&mut mem, xecp);
     assert_eq!(
         (cap0 & 0xff) as u8,
         EXT_CAP_ID_SUPPORTED_PROTOCOL,
-        "first xECP must be a Supported Protocol capability"
+        "expected a Supported Protocol capability"
     );
     assert_eq!(
         ((cap0 >> 8) & 0xff) as u8,

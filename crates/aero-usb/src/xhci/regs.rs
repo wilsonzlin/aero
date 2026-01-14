@@ -6,7 +6,7 @@
 /// Minimal register offsets used by the controller model in [`super::XhciController`].
 ///
 /// These are absolute offsets into the controller's MMIO BAR. They are also used by the emulator's
-/// thin PCI/MMIO wrapper (`emulator::io::usb::xhci`), so keep them stable.
+/// thin PCI/MMIO wrapper (`emulator::io::usb::xhci`).
 pub const REG_CAPLENGTH_HCIVERSION: u64 = 0x00;
 pub const REG_HCSPARAMS1: u64 = 0x04;
 pub const REG_HCCPARAMS1: u64 = 0x10;
@@ -103,9 +103,9 @@ pub mod doorbell {
 
 // ---- Capability register values ----
 
-/// We expose a 0x40-byte capability register block, which leaves room for xECP structures before
-/// the operational registers region (which begins at offset 0x40 in this model).
-pub const CAPLENGTH_BYTES: u8 = 0x40;
+/// We expose a 0x50-byte capability register block, which leaves room for xECP structures before
+/// the operational registers region (which begins at offset `CAPLENGTH_BYTES` in this model).
+pub const CAPLENGTH_BYTES: u8 = 0x50;
 
 /// xHCI interface version (HCIVERSION).
 ///
@@ -138,8 +138,16 @@ pub const RTSOFF_VALUE: u32 = 0x3000;
 /// DWORDs).
 pub const EXT_CAPS_OFFSET_BYTES: u32 = 0x20;
 
+/// xHCI Extended Capability ID: USB Legacy Support.
+pub const EXT_CAP_ID_USB_LEGACY_SUPPORT: u8 = 1;
+
 /// xHCI Extended Capability ID: Supported Protocol.
 pub const EXT_CAP_ID_SUPPORTED_PROTOCOL: u8 = 2;
+
+/// USB Legacy Support: BIOS Owned Semaphore bit.
+pub const USBLEGSUP_BIOS_OWNED: u32 = 1 << 16;
+/// USB Legacy Support: OS Owned Semaphore bit.
+pub const USBLEGSUP_OS_OWNED: u32 = 1 << 24;
 
 /// Supported Protocol: Protocol name string "USB ".
 pub const PROTOCOL_NAME_USB2: u32 = u32::from_le_bytes(*b"USB ");

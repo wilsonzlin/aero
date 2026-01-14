@@ -55,11 +55,14 @@ fn xhci_controller_caplength_hciversion_reads() {
 
     assert_eq!(
         ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 4),
-        (0x0100u32 << 16) | 0x40
+        regs::CAPLENGTH_HCIVERSION
     );
 
     // Byte/word reads should match the LE layout.
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 1), 0x40);
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 1),
+        u32::from(regs::CAPLENGTH_BYTES)
+    );
     assert_eq!(
         ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 2, 2),
         0x0100

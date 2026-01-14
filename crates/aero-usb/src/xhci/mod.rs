@@ -736,11 +736,27 @@ impl XhciController {
     }
 
     fn build_ext_caps(&self) -> Vec<u32> {
+        let mut caps = Vec::new();
+
+        // USB Legacy Support Capability.
+        //
+        // Real xHCI controllers often expose this for BIOS→OS handoff. We advertise it with
+        // BIOS-owned cleared and OS-owned set so guests that probe the capability do not block.
+        //
+        // Layout:
+        // - DWORD0: header + semaphores.
+        // - DWORD1: legacy control/status (unused; all zeros).
+        let supported_protocol_offset_bytes = regs::EXT_CAPS_OFFSET_BYTES + 8;
+        let supported_protocol_offset_dwords = supported_protocol_offset_bytes / 4;
+        let usb_legsup = (regs::EXT_CAP_ID_USB_LEGACY_SUPPORT as u32)
+            | ((supported_protocol_offset_dwords as u32) << 8)
+            | regs::USBLEGSUP_OS_OWNED;
+        caps.push(usb_legsup);
+        caps.push(0);
+
         // Supported Protocol Capability for USB 2.0.
         //
         // The roothub port range is 1-based, so we expose all ports as a single USB 2.0 range.
-        let mut caps = Vec::new();
-
         let psic = 3u8; // low/full/high-speed entries.
         let header0 = (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32)
             | (0u32 << 8) // next pointer (0 => end of list)
@@ -765,19 +781,19 @@ impl XhciController {
             regs::PSIV_FULL_SPEED,
             regs::PSI_TYPE_FULL,
             12,
-            1,
+            0,
         ));
         caps.push(regs::encode_psi(
             regs::PSIV_LOW_SPEED,
             regs::PSI_TYPE_LOW,
             15,
-            0,
+            3,
         ));
         caps.push(regs::encode_psi(
             regs::PSIV_HIGH_SPEED,
             regs::PSI_TYPE_HIGH,
             48,
-            2,
+            1,
         ));
 
         caps
