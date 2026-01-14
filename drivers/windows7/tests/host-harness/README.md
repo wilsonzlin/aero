@@ -895,6 +895,7 @@ only if you explicitly want the base image to be mutated.
     - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
     - (only when wheel injection is enabled via `-WithInputWheel` / `--with-input-wheel`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS`
+    - (only when media keys injection is enabled via `-WithInputMediaKeys` / `--with-input-media-keys`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS`
     - (only when extended injection is enabled via `-WithInputEventsExtended` / `--with-input-events-extended`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS`
     - (only when extended injection is enabled via `-WithInputEventsExtended` / `--with-input-events-extended`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS`
     - (only when extended injection is enabled via `-WithInputEventsExtended` / `--with-input-events-extended`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS`
