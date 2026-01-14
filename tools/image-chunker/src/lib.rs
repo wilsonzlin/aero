@@ -1070,6 +1070,109 @@ mod tests {
     use super::*;
 
     #[test]
+    fn validate_args_rejects_non_sector_aligned_chunk_size() {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: ImageFormat::Auto,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: (SECTOR_SIZE as u64) + 1,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            no_meta: false,
+        };
+        let err = validate_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("multiple"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_args_rejects_too_large_chunk_size() {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: ImageFormat::Auto,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: MAX_CHUNK_SIZE_BYTES + (SECTOR_SIZE as u64),
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            no_meta: false,
+        };
+        let err = validate_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("too large"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_rejects_too_many_chunks() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        let image_path = dir.path().join("big.img");
+
+        // A minimal chunk size is one sector. Create a sparse file just large enough to exceed the
+        // compatibility bound without actually writing out hundreds of MB of data.
+        let size = (MAX_COMPAT_CHUNK_COUNT + 1) * (SECTOR_SIZE as u64);
+        std::fs::File::create(&image_path)
+            .with_context(|| format!("create {}", image_path.display()))?
+            .set_len(size)
+            .with_context(|| format!("set_len({size}) for {}", image_path.display()))?;
+
+        let args = PublishArgs {
+            file: image_path,
+            format: ImageFormat::Raw,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: SECTOR_SIZE as u64,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            no_meta: true,
+        };
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("exceeds the current compatibility limit"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn validate_virtual_disk_alignment_rejects_zero_size() {
         let err = validate_virtual_disk_alignment(0).expect_err("expected validation failure");
         assert!(
