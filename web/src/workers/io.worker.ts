@@ -6795,14 +6795,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     // Clear/expire the forced PS/2 scancode injection state once we leave the scancode burst.
     if (forcePs2ScancodeBurst === 2 && type !== InputEventType.KeyScancode) {
       forcePs2ScancodeBurst = 0;
-    } else if (
-      forcePs2ScancodeBurst === 1 &&
-      type !== InputEventType.KeyScancode &&
-      type !== InputEventType.HidUsage16
-    ) {
-      // Scancodes should follow immediately after the key event (optionally with an intervening
-      // Consumer Control event). If we see something else, drop the arm to avoid misapplying it to
-      // unrelated scancodes later in the batch.
+    } else if (forcePs2ScancodeBurst === 1 && type !== InputEventType.KeyScancode) {
+      // Scancodes should follow immediately after the key event. If we see something else first,
+      // drop the arm to avoid misapplying it to unrelated scancodes later in the batch.
       forcePs2ScancodeBurst = 0;
     }
     const eventTimestampUs = words[off + 1] >>> 0;
@@ -6889,9 +6884,6 @@ function handleInputBatch(buffer: ArrayBuffer): void {
               usbHid?.consumer_event?.(usageId, false);
             } catch {
               // ignore
-            }
-            if (keyboardInputBackend !== "ps2" && (i8042Wasm || i8042Ts)) {
-              forcePs2ScancodeBurst = 1;
             }
             break;
           }

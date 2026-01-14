@@ -1445,14 +1445,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     // Clear/expire the forced PS/2 scancode injection state once we leave the scancode burst.
     if (forcePs2ScancodeBurst === 2 && type !== InputEventType.KeyScancode) {
       forcePs2ScancodeBurst = 0;
-    } else if (
-      forcePs2ScancodeBurst === 1 &&
-      type !== InputEventType.KeyScancode &&
-      type !== InputEventType.HidUsage16
-    ) {
-      // Scancodes should follow immediately after the key event (optionally with an intervening
-      // Consumer Control event). If we see something else, drop the arm to avoid misapplying it to
-      // unrelated scancodes later in the batch.
+    } else if (forcePs2ScancodeBurst === 1 && type !== InputEventType.KeyScancode) {
+      // Scancodes should follow immediately after the key event. If we see something else first,
+      // drop the arm to avoid misapplying it to unrelated scancodes later in the batch.
       forcePs2ScancodeBurst = 0;
     }
     const eventTimestampUs = words[off + 1] >>> 0;
@@ -1493,6 +1488,8 @@ function handleInputBatch(buffer: ArrayBuffer): void {
             }
           }
         }
+        // Also best-effort deliver the matching PS/2 break scancodes (from subsequent `KeyScancode`
+        // events) so guests that observed the key-down via i8042 don't remain stuck.
         if (keyboardInputBackend !== "ps2") {
           forcePs2ScancodeBurst = 1;
         }
@@ -1753,9 +1750,6 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           }
         } catch {
           // ignore
-        }
-        if (keyboardInputBackend !== "ps2") {
-          forcePs2ScancodeBurst = 1;
         }
         continue;
       }
@@ -2946,15 +2940,19 @@ ctx.onmessage = (ev) => {
     const payload = msg as Partial<{
       virtioKeyboardOk: unknown;
       virtioMouseOk: unknown;
+      usbKeyboardOk?: unknown;
       enableBootDriveSpy?: unknown;
       enableNetworkSpy?: unknown;
       enableAerogpuBridge?: unknown;
+      enableInputSpy?: unknown;
     }>;
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
+    const usbKeyboardOk = payload.usbKeyboardOk === true;
     const enableBootDriveSpy = payload.enableBootDriveSpy === true;
     const enableNetworkSpy = payload.enableNetworkSpy === true;
     const enableAerogpuBridge = payload.enableAerogpuBridge !== false;
+    const enableInputSpy = payload.enableInputSpy === true;
 
     // Keep some minimal internal state so we can exercise boot-device reporting without loading WASM.
     //
@@ -2983,6 +2981,21 @@ ctx.onmessage = (ev) => {
     const dummy: any = {
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
       virtio_input_mouse_driver_ok: () => virtioMouseOk,
+      usb_hid_keyboard_configured: () => usbKeyboardOk,
+      inject_usb_hid_keyboard_usage: (_usage: number, _pressed: boolean) => {
+        // No-op: tests can still validate backend selection by toggling `usb_hid_keyboard_configured`.
+      },
+      inject_usb_hid_consumer_usage: (_usage: number, _pressed: boolean) => {
+        // No-op: used by Consumer Control events.
+      },
+      inject_key_scancode_bytes: (packed: number, len: number) => {
+        if (!enableInputSpy) return;
+        try {
+          ctx.postMessage({ kind: "__test.machine_cpu.inject_key_scancode_bytes", packed: packed >>> 0, len: len >>> 0 });
+        } catch {
+          void 0;
+        }
+      },
       run_slice: () => {
         const st = status;
         const runSliceCounterIndex = 63;

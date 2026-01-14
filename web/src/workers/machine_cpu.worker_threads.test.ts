@@ -1067,6 +1067,177 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("does not force-inject PS/2 scancodes after an unknown Consumer Control release when the USB keyboard backend is active (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({
+        kind: "__test.machine_cpu.enableDummyMachine",
+        virtioKeyboardOk: false,
+        virtioMouseOk: false,
+        usbKeyboardOk: true,
+        enableInputSpy: true,
+      });
+      await dummyReady;
+
+      let injected = false;
+      const onMessage = (msg: unknown) => {
+        if ((msg as { kind?: unknown }).kind === "__test.machine_cpu.inject_key_scancode_bytes") {
+          injected = true;
+        }
+      };
+      worker.on("message", onMessage);
+      try {
+        const nowUs = Math.round(performance.now() * 1000) >>> 0;
+
+        // 2 events: unknown consumer release (page 0x0C) + an unrelated PS/2 scancode.
+        // Regression: we should not "arm" forced PS/2 scancode delivery for consumer releases, or it can
+        // be misapplied to unrelated KeyScancode events later in the batch.
+        const buf = new ArrayBuffer((2 + 4 * 2) * 4);
+        const words = new Int32Array(buf);
+        words[0] = 2;
+        words[1] = nowUs | 0;
+
+        words[2] = InputEventType.HidUsage16;
+        words[3] = nowUs | 0;
+        words[4] = 0x000c; // usagePage=0x0c, pressed=0
+        words[5] = 0x00e9; // volume up
+
+        words[6] = InputEventType.KeyScancode;
+        words[7] = nowUs | 0;
+        words[8] = 0x1cf0; // break for make=0x1c => [0xf0, 0x1c]
+        words[9] = 2;
+
+        const recycledPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+          10_000,
+        );
+        worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+        await recycledPromise;
+
+        // Sanity-check that the worker actually considered USB viable.
+        // (Backend status is updated as a side-effect of processing the input batch.)
+        expect(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)).toBe(1); // usb
+
+        expect(injected).toBe(false);
+      } finally {
+        worker.off("message", onMessage);
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("force-injects PS/2 scancodes after an unknown keyboard key release when the USB backend is active (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({
+        kind: "__test.machine_cpu.enableDummyMachine",
+        virtioKeyboardOk: false,
+        virtioMouseOk: false,
+        usbKeyboardOk: true,
+        enableInputSpy: true,
+      });
+      await dummyReady;
+
+      const injectedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.inject_key_scancode_bytes",
+        10_000,
+      );
+
+      const nowUs = Math.round(performance.now() * 1000) >>> 0;
+
+      // Unknown KeyHidUsage release (usage=4), followed by the matching PS/2 break scancode bytes.
+      // This simulates a post-snapshot restore release where host-side held-key state was reset.
+      const buf = new ArrayBuffer((2 + 4 * 2) * 4);
+      const words = new Int32Array(buf);
+      words[0] = 2;
+      words[1] = nowUs | 0;
+
+      words[2] = InputEventType.KeyHidUsage;
+      words[3] = nowUs | 0;
+      words[4] = 0x04; // usage=4 released (unknown)
+      words[5] = 0;
+
+      words[6] = InputEventType.KeyScancode;
+      words[7] = nowUs | 0;
+      words[8] = 0x1cf0; // break for make=0x1c => [0xf0, 0x1c]
+      words[9] = 2;
+
+      const recycledPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+
+      worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+      await Promise.all([injectedPromise, recycledPromise]);
+
+      // Sanity-check that the worker actually considered USB viable (even though we forced a PS/2
+      // scancode break injection).
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)).toBe(1); // usb
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("counts clamped input batch claims as drops (dummy machine)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
