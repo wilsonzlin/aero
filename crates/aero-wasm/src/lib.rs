@@ -902,6 +902,45 @@ mod shared_guest_ram_layout_validation_tests {
         let msg = js_err_message(err);
         assert!(msg.contains("out of bounds"), "unexpected message: {msg}");
     }
+
+    #[wasm_bindgen_test]
+    fn guest_size_zero_uses_remainder_of_memory() {
+        ensure_reserved_pages();
+
+        // Ensure there is at least one wasm page beyond the reserved runtime region so the
+        // "use remainder of memory" sentinel produces a non-zero guest size.
+        let reserved_pages = (super::guest_layout::RUNTIME_RESERVED_BYTES
+            / super::guest_layout::WASM_PAGE_BYTES) as usize;
+        let cur_pages = core::arch::wasm32::memory_size(0);
+        if cur_pages <= reserved_pages {
+            let delta = reserved_pages + 1 - cur_pages;
+            let prev = core::arch::wasm32::memory_grow(0, delta);
+            assert_ne!(prev, usize::MAX, "memory.grow failed in test setup");
+        }
+
+        let mem_pages = core::arch::wasm32::memory_size(0) as u64;
+        let mem_bytes = mem_pages.saturating_mul(super::guest_layout::WASM_PAGE_BYTES);
+
+        let expected_base = super::guest_layout::align_up(
+            super::guest_layout::RUNTIME_RESERVED_BYTES,
+            super::guest_layout::WASM_PAGE_BYTES,
+        );
+        let base_u64 = if mem_bytes >= expected_base + super::guest_layout::GUEST_PCI_MMIO_BASE {
+            mem_bytes - super::guest_layout::GUEST_PCI_MMIO_BASE
+        } else {
+            expected_base
+        };
+        let base_u32: u32 = base_u64
+            .try_into()
+            .expect("guest_base fits in u32 (wasm32 linear memory)");
+
+        let expected_size = mem_bytes.saturating_sub(base_u64);
+        assert!(expected_size > 0, "expected a non-zero remainder size");
+
+        let size = validate_shared_guest_ram_layout("test", base_u32, 0)
+            .expect("expected guest_size==0 sentinel to validate");
+        assert_eq!(size, expected_size);
+    }
 }
 
 #[wasm_bindgen]
