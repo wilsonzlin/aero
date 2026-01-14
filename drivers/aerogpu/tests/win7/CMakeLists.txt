@@ -148,6 +148,11 @@ aerogpu_add_win7_test(dump_createalloc_sanity
 )
 target_link_libraries(dump_createalloc_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(map_shared_handle_stress
+  map_shared_handle_stress/main.cpp
+)
+target_link_libraries(map_shared_handle_stress PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(umd_private_sanity
   umd_private_sanity/main.cpp
 )

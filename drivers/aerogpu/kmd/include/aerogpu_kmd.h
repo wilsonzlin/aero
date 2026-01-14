@@ -38,6 +38,15 @@
 #define AEROGPU_SUBMIT_PRESENT 2u
 #define AEROGPU_SUBMIT_PAGING 3u
 
+/*
+ * Hard cap for AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE cached mappings.
+ *
+ * This escape is debug/bring-up tooling only; keep the cache bounded so hostile
+ * user-mode callers cannot pin arbitrary kernel objects or exhaust NonPagedPool
+ * via unbounded growth.
+ */
+#define AEROGPU_MAX_SHARED_HANDLE_TOKENS 1024u
+
 typedef enum _AEROGPU_ABI_KIND {
     AEROGPU_ABI_KIND_UNKNOWN = 0,
     AEROGPU_ABI_KIND_LEGACY = 1,
@@ -94,6 +103,17 @@ typedef struct _AEROGPU_META_HANDLE_ENTRY {
     ULONGLONG Handle;
     AEROGPU_SUBMISSION_META* Meta;
 } AEROGPU_META_HANDLE_ENTRY;
+
+/*
+ * Cache entry for AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE.
+ *
+ * The entry holds a referenced kernel object pointer and a stable debug token.
+ */
+typedef struct _AEROGPU_SHARED_HANDLE_TOKEN_ENTRY {
+    LIST_ENTRY ListEntry;
+    PVOID Object;
+    ULONG Token;
+} AEROGPU_SHARED_HANDLE_TOKEN_ENTRY;
 
 typedef struct _AEROGPU_SUBMISSION {
     LIST_ENTRY ListEntry;
@@ -335,6 +355,7 @@ typedef struct _AEROGPU_ADAPTER {
     LIST_ENTRY SharedHandleTokens;
     KSPIN_LOCK SharedHandleTokenLock;
     ULONG NextSharedHandleToken;
+    ULONG SharedHandleTokenCount;
 
     /* Current mode (programmed via CommitVidPn / SetVidPnSourceAddress). */
     ULONG CurrentWidth;

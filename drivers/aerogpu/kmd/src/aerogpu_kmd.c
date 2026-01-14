@@ -9,6 +9,9 @@
 #include "aerogpu_wddm_alloc.h"
 #include "aerogpu_win7_abi.h"
 
+/* See AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE. */
+extern POBJECT_TYPE* MmSectionObjectType;
+
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
 /* ---- Dbgctl READ_GPA security gating ------------------------------------ */
@@ -750,12 +753,6 @@ static VOID AeroGpuMetaHandleFreeAll(_Inout_ AEROGPU_ADAPTER* Adapter)
     }
 }
 
-typedef struct _AEROGPU_SHARED_HANDLE_TOKEN_ENTRY {
-    LIST_ENTRY ListEntry;
-    PVOID Object;
-    ULONG Token;
-} AEROGPU_SHARED_HANDLE_TOKEN_ENTRY;
-
 typedef struct _AEROGPU_PENDING_INTERNAL_SUBMISSION {
     LIST_ENTRY ListEntry;
     ULONG RingTailAfter;
@@ -805,6 +802,9 @@ static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
         if (!IsListEmpty(&Adapter->SharedHandleTokens)) {
             PLIST_ENTRY entry = RemoveHeadList(&Adapter->SharedHandleTokens);
             node = CONTAINING_RECORD(entry, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
+            if (Adapter->SharedHandleTokenCount != 0) {
+                Adapter->SharedHandleTokenCount--;
+            }
         }
         KeReleaseSpinLock(&Adapter->SharedHandleTokenLock, oldIrql);
 
@@ -816,6 +816,16 @@ static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
             ObDereferenceObject(node->Object);
         }
         ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+    }
+
+    /* Keep teardown idempotent and leave the adapter in a clean state. */
+    {
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->SharedHandleTokenLock, &oldIrql);
+        Adapter->SharedHandleTokenCount = 0;
+        Adapter->NextSharedHandleToken = 0;
+        InitializeListHead(&Adapter->SharedHandleTokens);
+        KeReleaseSpinLock(&Adapter->SharedHandleTokenLock, oldIrql);
     }
 }
 
@@ -2747,6 +2757,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->SharedHandleTokenLock);
     InitializeListHead(&adapter->SharedHandleTokens);
     adapter->NextSharedHandleToken = 0;
+    adapter->SharedHandleTokenCount = 0;
 
     adapter->CurrentWidth = 1024;
     adapter->CurrentHeight = 768;
@@ -11682,13 +11693,26 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         PVOID object = NULL;
-        NTSTATUS st = ObReferenceObjectByHandle(sharedHandle, 0, NULL, UserMode, &object, NULL);
+        /*
+         * D3D shared resource handles are expected to be section objects.
+         * Restrict the referenced type so callers cannot pin unrelated kernel
+         * objects via this debug escape.
+         */
+        NTSTATUS st = ObReferenceObjectByHandle(sharedHandle, 0, *MmSectionObjectType, UserMode, &object, NULL);
         if (!NT_SUCCESS(st)) {
             return st;
         }
 
         ULONG token = 0;
         BOOLEAN keepObjectRef = FALSE;
+        AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* newNode = NULL;
+        LIST_ENTRY evicted;
+        InitializeListHead(&evicted);
+
+        /*
+         * Fast path: lookup without allocating. Keep hot entries near the tail
+         * (LRU) so eviction preferentially drops cold objects.
+         */
         {
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->SharedHandleTokenLock, &oldIrql);
@@ -11700,24 +11724,80 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     CONTAINING_RECORD(entry, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
                 if (node->Object == object) {
                     token = node->Token;
+
+                    /* Refresh the entry's LRU position. */
+                    RemoveEntryList(&node->ListEntry);
+                    InsertTailList(&adapter->SharedHandleTokens, &node->ListEntry);
+                    break;
+                }
+            }
+
+            KeReleaseSpinLock(&adapter->SharedHandleTokenLock, oldIrql);
+        }
+
+        if (token != 0) {
+            ObDereferenceObject(object);
+            io->debug_token = (uint32_t)token;
+            return STATUS_SUCCESS;
+        }
+
+        /* Allocate outside the spin lock to avoid DISPATCH_LEVEL pool allocs. */
+        newNode = (AEROGPU_SHARED_HANDLE_TOKEN_ENTRY*)ExAllocatePoolWithTag(
+            NonPagedPool, sizeof(*newNode), AEROGPU_POOL_TAG);
+        if (!newNode) {
+            ObDereferenceObject(object);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        RtlZeroMemory(newNode, sizeof(*newNode));
+
+        {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->SharedHandleTokenLock, &oldIrql);
+
+            /* Re-check after allocating: another thread may have inserted it. */
+            for (PLIST_ENTRY entry = adapter->SharedHandleTokens.Flink;
+                 entry != &adapter->SharedHandleTokens;
+                 entry = entry->Flink) {
+                AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* node =
+                    CONTAINING_RECORD(entry, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
+                if (node->Object == object) {
+                    token = node->Token;
+                    RemoveEntryList(&node->ListEntry);
+                    InsertTailList(&adapter->SharedHandleTokens, &node->ListEntry);
                     break;
                 }
             }
 
             if (token == 0) {
-                token = ++adapter->NextSharedHandleToken;
-                if (token == 0) {
-                    token = ++adapter->NextSharedHandleToken;
+                /*
+                 * Enforce a hard cap to prevent unbounded kernel object pinning /
+                 * NonPagedPool growth under hostile input.
+                 */
+                while (adapter->SharedHandleTokenCount >= AEROGPU_MAX_SHARED_HANDLE_TOKENS) {
+                    if (IsListEmpty(&adapter->SharedHandleTokens)) {
+                        adapter->SharedHandleTokenCount = 0;
+                        break;
+                    }
+
+                    PLIST_ENTRY le = RemoveHeadList(&adapter->SharedHandleTokens);
+                    AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* old =
+                        CONTAINING_RECORD(le, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
+                    if (adapter->SharedHandleTokenCount != 0) {
+                        adapter->SharedHandleTokenCount--;
+                    }
+                    InsertTailList(&evicted, &old->ListEntry);
                 }
 
-                AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* node =
-                    (AEROGPU_SHARED_HANDLE_TOKEN_ENTRY*)ExAllocatePoolWithTag(
-                        NonPagedPool, sizeof(*node), AEROGPU_POOL_TAG);
-                if (node) {
-                    RtlZeroMemory(node, sizeof(*node));
-                    node->Object = object;
-                    node->Token = token;
-                    InsertTailList(&adapter->SharedHandleTokens, &node->ListEntry);
+                if (adapter->SharedHandleTokenCount < AEROGPU_MAX_SHARED_HANDLE_TOKENS) {
+                    token = ++adapter->NextSharedHandleToken;
+                    if (token == 0) {
+                        token = ++adapter->NextSharedHandleToken;
+                    }
+
+                    newNode->Object = object;
+                    newNode->Token = token;
+                    InsertTailList(&adapter->SharedHandleTokens, &newNode->ListEntry);
+                    adapter->SharedHandleTokenCount++;
                     keepObjectRef = TRUE;
                 } else {
                     token = 0;
@@ -11727,7 +11807,21 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             KeReleaseSpinLock(&adapter->SharedHandleTokenLock, oldIrql);
         }
 
+        /* Release evicted entries outside the spin lock. */
+        while (!IsListEmpty(&evicted)) {
+            PLIST_ENTRY le = RemoveHeadList(&evicted);
+            AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* old =
+                CONTAINING_RECORD(le, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
+            if (old->Object) {
+                ObDereferenceObject(old->Object);
+            }
+            ExFreePoolWithTag(old, AEROGPU_POOL_TAG);
+        }
+
         if (!keepObjectRef) {
+            if (newNode) {
+                ExFreePoolWithTag(newNode, AEROGPU_POOL_TAG);
+            }
             ObDereferenceObject(object);
         }
 
