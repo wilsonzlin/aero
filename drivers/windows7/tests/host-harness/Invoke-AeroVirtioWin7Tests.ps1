@@ -394,7 +394,7 @@ param(
   [Alias("WithVirtioSndBufferLimits", "EnableSndBufferLimits", "EnableVirtioSndBufferLimits", "RequireVirtioSndBufferLimits")]
   [switch]$WithSndBufferLimits,
 
-  # NOTE: `-WithVirtioInputEvents` / `-EnableVirtioInputEvents` are accepted as aliases for `-WithInputEvents`
+  # NOTE: `-WithVirtioInputEvents` / `-RequireVirtioInputEvents` / `-EnableVirtioInputEvents` are accepted as aliases for `-WithInputEvents`
   # for backwards compatibility.
 
   # Audio backend for virtio-snd.
@@ -444,7 +444,7 @@ $script:VirtioInputTabletQmpId = "aero_virtio_tablet0"
 $script:VirtioNetQmpId = "aero_virtio_net0"
 if ($VerifyVirtioSndWav) {
   if (-not $WithVirtioSnd) {
-    throw "-VerifyVirtioSndWav requires -WithVirtioSnd."
+    throw "-VerifyVirtioSndWav requires -WithVirtioSnd/-RequireVirtioSnd."
   }
   if ($VirtioSndAudioBackend -ne "wav") {
     throw "-VerifyVirtioSndWav requires -VirtioSndAudioBackend wav."
@@ -458,15 +458,15 @@ if ($VerifyVirtioSndWav) {
 }
 
 if ($RequireVirtioSndMsix -and (-not $WithVirtioSnd)) {
-  throw "-RequireVirtioSndMsix requires -WithVirtioSnd."
+  throw "-RequireVirtioSndMsix requires -WithVirtioSnd/-RequireVirtioSnd."
 }
 
 if ($WithSndBufferLimits -and (-not $WithVirtioSnd)) {
-  throw "-WithSndBufferLimits requires -WithVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
+  throw "-WithSndBufferLimits requires -WithVirtioSnd/-RequireVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
 }
 
 if ($VirtioTransitional -and $WithVirtioSnd) {
-  throw "-VirtioTransitional is incompatible with -WithVirtioSnd (virtio-snd testing requires modern-only virtio-pci + contract revision overrides)."
+  throw "-VirtioTransitional is incompatible with -WithVirtioSnd/-RequireVirtioSnd (virtio-snd testing requires modern-only virtio-pci + contract revision overrides)."
 }
 
 if ($VirtioMsixVectors -lt 0) {
@@ -497,7 +497,7 @@ if ($VirtioDisableMsix -and ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or
 }
 
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
-  throw "-VirtioSndVectors requires -WithVirtioSnd."
+  throw "-VirtioSndVectors requires -WithVirtioSnd/-RequireVirtioSnd."
 }
 
 function Resolve-AeroWin7QemuMsixVectors {
@@ -5627,7 +5627,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
           } catch {
             try { $errorsText = [string]$errors } catch { $errorsText = "<unavailable>" }
           }
-          throw "QMP input-send-event failed while injecting scroll for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra. Upgrade QEMU or omit those flags. errors=[$errorsText]"
+          throw "QMP input-send-event failed while injecting scroll for -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra. Upgrade QEMU or omit those flags. errors=[$errorsText]"
         }
       }
 
@@ -5653,7 +5653,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
         $backend = "hmp_fallback"
         $wantWheel = ([bool]$WithWheel) -or $Extended
         if ($wantWheel) {
-          throw "QMP input-send-event is required for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra, but this QEMU build does not support it. Upgrade QEMU or omit those flags."
+          throw "QMP input-send-event is required for -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra, but this QEMU build does not support it. Upgrade QEMU or omit those flags."
         }
 
         Write-Warning "QMP input-send-event is unavailable; falling back to legacy input injection (send-key / HMP mouse_move/mouse_button)."
@@ -6966,7 +6966,7 @@ try {
       )
     } catch {
       if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents, -WithNetLinkFlap, -WithBlkResize) or -QemuPreflightPci/-QmpPreflightPci: $_"
+        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents, -WithNetLinkFlap, -WithBlkResize) or -QemuPreflightPci/-QmpPreflightPci: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -7052,16 +7052,16 @@ try {
     } catch { }
 
     if ($needInputEvents -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
-      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra). Upgrade QEMU or omit input event injection."
+      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra). Upgrade QEMU or omit input event injection."
     }
     if ($needInputLeds -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
-      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLeds was enabled. Upgrade QEMU or omit input LED/statusq testing."
+      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled. Upgrade QEMU or omit input LED/statusq testing."
     }
     if ($needInputMediaKeys -and (-not $haveVirtioKbd)) {
-      throw "QEMU does not advertise virtio-keyboard-pci but -WithInputMediaKeys was enabled. Upgrade QEMU or omit media key injection."
+      throw "QEMU does not advertise virtio-keyboard-pci but -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled. Upgrade QEMU or omit media key injection."
     }
     if ($needInputLed -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
-      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLed was enabled. Upgrade QEMU or omit LED/statusq testing."
+      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLed/-WithVirtioInputLed/-RequireVirtioInputLed/-EnableVirtioInputLed was enabled. Upgrade QEMU or omit LED/statusq testing."
     }
     if (-not ($haveVirtioKbd -and $haveVirtioMouse)) {
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
@@ -7095,7 +7095,7 @@ try {
     }
     if ($needVirtioTablet) {
       if (-not $haveVirtioTablet) {
-        throw "QEMU does not advertise virtio-tablet-pci but -WithVirtioTablet/-WithInputTabletEvents/-WithTabletEvents was enabled. Upgrade QEMU or omit tablet support."
+        throw "QEMU does not advertise virtio-tablet-pci but -WithVirtioTablet/-WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled. Upgrade QEMU or omit tablet support."
       }
       $tabletArg = "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)"
       $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
@@ -7150,7 +7150,7 @@ try {
         "-device", $virtioSndDevice
       )
     } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
-      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd."
+      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd/-RequireVirtioSnd."
     }
 
     $qemuArgs = @(
@@ -7234,7 +7234,7 @@ try {
         "-device", $virtioSndDevice
       )
     } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
-      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd."
+      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd/-RequireVirtioSnd."
     }
 
     $qemuArgs = @(
@@ -8031,7 +8031,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_LEDS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds marker (PASS/FAIL/SKIP) after virtio-input completed while -WithInputLeds was enabled (guest selftest too old or missing --test-input-leds/--test-input-led)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds marker (PASS/FAIL/SKIP) after virtio-input completed while -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled (guest selftest too old or missing --test-input-leds/--test-input-led)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8059,7 +8059,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_LEDS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped (flag_not_set) but -WithInputLeds was enabled (provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
+      Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped (flag_not_set) but -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled (provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8083,7 +8083,7 @@ try {
       $details = "(reason=$reason err=$err"
       if (-not [string]::IsNullOrEmpty($writes)) { $details += " writes=$writes" }
       $details += ")"
-      Write-Host "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while -WithInputLeds was enabled $details"
+      Write-Host "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8091,7 +8091,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_EVENTS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (guest selftest too old or missing --test-input-events)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (guest selftest too old or missing --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8107,7 +8107,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (provision the guest with --test-input-events)"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (provision the guest with --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8148,7 +8148,7 @@ try {
       if (-not [string]::IsNullOrEmpty($kbdBadReports)) { $details += " kbd_bad_reports=$kbdBadReports" }
       if (-not [string]::IsNullOrEmpty($mouseBadReports)) { $details += " mouse_bad_reports=$mouseBadReports" }
       $details += ")"
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) $details"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8156,7 +8156,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_MEDIA_KEYS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputMediaKeys was enabled (guest selftest too old or missing --test-input-media-keys)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled (guest selftest too old or missing --test-input-media-keys)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8164,7 +8164,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but -WithInputMediaKeys was enabled (provision the guest with --test-input-media-keys)"
+      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled (provision the guest with --test-input-media-keys)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8194,7 +8194,7 @@ try {
       if (-not [string]::IsNullOrEmpty($volumeUpDown)) { $details += " volume_up_down=$volumeUpDown" }
       if (-not [string]::IsNullOrEmpty($volumeUpUp)) { $details += " volume_up_up=$volumeUpUp" }
       $details += ")"
-      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while -WithInputMediaKeys was enabled $details"
+      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8202,7 +8202,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_LED" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led marker (SKIP/PASS/FAIL) after virtio-input completed while -WithInputLed was enabled (guest selftest too old or missing --test-input-led)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led marker (SKIP/PASS/FAIL) after virtio-input completed while -WithInputLed/-WithVirtioInputLed/-RequireVirtioInputLed/-EnableVirtioInputLed was enabled (guest selftest too old or missing --test-input-led)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8216,9 +8216,9 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but -WithInputLed was enabled (provision the guest with --test-input-led)"
+        Write-Host "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but -WithInputLed/-WithVirtioInputLed/-RequireVirtioInputLed/-EnableVirtioInputLed was enabled (provision the guest with --test-input-led)"
       } else {
-        Write-Host "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped ($reason) but -WithInputLed was enabled"
+        Write-Host "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped ($reason) but -WithInputLed/-WithVirtioInputLed/-RequireVirtioInputLed/-EnableVirtioInputLed was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -8249,7 +8249,7 @@ try {
       if (-not [string]::IsNullOrEmpty($format)) { $details += " format=$format" }
       if (-not [string]::IsNullOrEmpty($led)) { $details += " led=$led" }
       $details += ")"
-      Write-Host "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while -WithInputLed was enabled $details"
+      Write-Host "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while -WithInputLed/-WithVirtioInputLed/-RequireVirtioInputLed/-EnableVirtioInputLed was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8273,7 +8273,7 @@ try {
       $scriptExitCode = 2
     }
     "MISSING_VIRTIO_INPUT_WHEEL" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel marker while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled (guest selftest too old or missing wheel coverage)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel marker while -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel was enabled (guest selftest too old or missing wheel coverage)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8298,7 +8298,7 @@ try {
         if ($line -match "(?:^|\|)hwheel_total=([^|\r\n]+)") { $hwheelTotal = $Matches[1] }
       }
       if ($code -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped (flag_not_set) but -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled (provision the guest with --test-input-events)"
+        Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped (flag_not_set) but -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel was enabled (provision the guest with --test-input-events)"
       } else {
         $parts = @()
         if ($code -ne "unknown") { $parts += $code }
@@ -8307,7 +8307,7 @@ try {
         if (-not [string]::IsNullOrEmpty($wheelTotal)) { $parts += "wheel_total=$wheelTotal" }
         if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $parts += "hwheel_total=$hwheelTotal" }
         $details = if ($parts.Count -gt 0) { " (" + ($parts -join " ") + ")" } else { "" }
-        Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped$details but -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled"
+        Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped$details but -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -8333,7 +8333,7 @@ try {
       if (-not [string]::IsNullOrEmpty($wheelTotal)) { $details += " wheel_total=$wheelTotal" }
       if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $details += " hwheel_total=$hwheelTotal" }
       $details += ")"
-      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled $details"
+      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8373,7 +8373,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_TABLET_EVENTS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputTabletEvents/-WithTabletEvents was enabled (guest selftest too old or missing --test-input-tablet-events/--test-tablet-events)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled (guest selftest too old or missing --test-input-tablet-events/--test-tablet-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8391,11 +8391,11 @@ try {
         elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but -WithInputTabletEvents/-WithTabletEvents was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
+        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
       } elseif ($reason -eq "no_tablet_device") {
-        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (no_tablet_device) but -WithInputTabletEvents/-WithTabletEvents was enabled (attach a virtio-tablet device with -WithVirtioTablet and ensure the guest tablet driver is installed)"
+        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (no_tablet_device) but -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled (attach a virtio-tablet device with -WithVirtioTablet and ensure the guest tablet driver is installed)"
       } else {
-        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped ($reason) but -WithInputTabletEvents/-WithTabletEvents was enabled"
+        Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped ($reason) but -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -8415,7 +8415,7 @@ try {
         elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
       }
-      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents/-WithTabletEvents was enabled (reason=$reason err=$err)"
+      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled (reason=$reason err=$err)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8801,7 +8801,7 @@ try {
         $reason = "--disable-snd"
       }
 
-      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd was enabled"
+      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8815,9 +8815,9 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but -WithVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
+        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but -WithVirtioSnd/-RequireVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
       } else {
-        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
+        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -8832,9 +8832,9 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but -WithVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
+        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but -WithVirtioSnd/-RequireVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
       } else {
-        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
+        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"

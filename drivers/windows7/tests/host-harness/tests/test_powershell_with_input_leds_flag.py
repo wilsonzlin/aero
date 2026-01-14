@@ -49,10 +49,11 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
     def test_with_input_leds_preflight_requires_keyboard_and_mouse(self) -> None:
         # virtio-input (and therefore LED/statusq validation) requires QEMU to advertise both
         # virtio-keyboard-pci and virtio-mouse-pci.
-        self.assertIn(
-            "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLeds was enabled",
-            self.text,
-        )
+        self.assertIn("QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci", self.text)
+        self.assertIn("-WithInputLeds", self.text)
+        # Include common aliases to keep the error actionable even when users invoke via alias flags.
+        self.assertIn("-WithVirtioInputLeds", self.text)
+        self.assertIn("-EnableVirtioInputLeds", self.text)
 
 
 if __name__ == "__main__":

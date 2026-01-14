@@ -45,10 +45,11 @@ class PowerShellHarnessInputLedFlagTests(unittest.TestCase):
         # In transitional mode, -WithInputLed implies virtio-input coverage, which requires both
         # virtio-keyboard-pci and virtio-mouse-pci to be present (guest selftest base virtio-input
         # test fails when either is missing).
-        self.assertIn(
-            "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLed was enabled",
-            self.text,
-        )
+        self.assertIn("QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci", self.text)
+        self.assertIn("-WithInputLed", self.text)
+        # Include common aliases to keep the error actionable even when users invoke via alias flags.
+        self.assertIn("-WithVirtioInputLed", self.text)
+        self.assertIn("-EnableVirtioInputLed", self.text)
 
 
 if __name__ == "__main__":
