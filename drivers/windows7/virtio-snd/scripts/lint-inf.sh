@@ -56,6 +56,20 @@ require_file() {
   fi
 }
 
+require_ascii_only() {
+  file="$1"
+  rel="$2"
+
+  # INFs should remain ASCII-only for maximum compatibility with older Windows
+  # tooling (including Win7-era INF parsers and Inf2Cat).
+  #
+  # `tr -d '\000-\177'` deletes all ASCII bytes, leaving only non-ASCII bytes.
+  # If anything remains, the file is not ASCII-only.
+  if tr -d '\000-\177' < "$file" | grep -q .; then
+    fail "$rel contains non-ASCII bytes; keep INFs ASCII-only"
+  fi
+}
+
 normalize_all() {
   # Lowercase, strip CRLF + whitespace to make matching robust to INF formatting.
   #
@@ -141,6 +155,7 @@ strip_leading_comment_header() {
 }
 
 require_file "$INF_CONTRACT" "inf/aero_virtio_snd.inf"
+require_ascii_only "$INF_CONTRACT" "inf/aero_virtio_snd.inf"
 
 note "checking inf/aero_virtio_snd.inf invariants..."
 
@@ -428,6 +443,7 @@ section_contains_norm \
   "inf/aero_virtio_snd.inf must seed HKR\\Parameters\\AllowPollingOnly under the hardware key"
 
 if [ -f "$INF_TRANSITIONAL" ]; then
+  require_ascii_only "$INF_TRANSITIONAL" "inf/aero-virtio-snd-legacy.inf"
   note "checking transitional INF bring-up toggle defaults..."
   section_contains_norm \
     "$INF_TRANSITIONAL" \
@@ -480,6 +496,7 @@ if [ -f "$INF_TRANSITIONAL" ]; then
 fi
 
 if [ -f "$INF_IOPORT" ]; then
+  require_ascii_only "$INF_IOPORT" "inf/aero-virtio-snd-ioport.inf"
   note "checking ioport legacy INF bring-up toggle defaults..."
   section_contains_norm \
     "$INF_IOPORT" \
@@ -562,6 +579,7 @@ elif [ -f "$INF_ALIAS_DISABLED" ]; then
 fi
 
 if [ -n "$INF_ALIAS" ]; then
+  require_ascii_only "$INF_ALIAS" "inf/$(basename "$INF_ALIAS")"
   alias_basename=$(basename "$INF_ALIAS")
   note "checking inf/$alias_basename stays in sync..."
   contract_label='inf/aero_virtio_snd.inf'
