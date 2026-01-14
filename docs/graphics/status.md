@@ -45,7 +45,7 @@ Coordination note:
 | AeroGPU sandbox device model + executor (legacy integration surface) | `[~]` | [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs) + [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs) |
 | Scanout shared-memory contracts | `[x]` | [`crates/aero-shared/src/`](../../crates/aero-shared/src/) + [`web/src/ipc/`](../../web/src/ipc/) |
 | D3D9 translation/execution (subset) | `[~]` | [`crates/aero-d3d9/`](../../crates/aero-d3d9/) + [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) + [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md) |
-| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass (minimal subset for point-list and triangle-list draws; other cases use synthetic expansion)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
+| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass (translated GS prepass supports point/line/triangle list/strip IA topologies including adjacency; other cases use synthetic expansion)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
 | Web presenters/backends (WebGPU + WebGL2) | `[x]` | [`web/src/gpu/`](../../web/src/gpu/) |
 | End-to-end Win7 WDDM + accelerated rendering in the **canonical browser machine** | `[ ]` | See [7) Critical path integration gaps](#7-current-critical-path-integration-gaps-factual) |
 
@@ -469,7 +469,7 @@ For Win7 D3D9Ex/DWM context:
 
 `crates/aero-d3d11` contains:
 
-1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus GS/HS/DS `stage_ex` plumbing; a minimal SM4 GS DXBC→WGSL compute translator exists and is executed for point-list and triangle-list draws (`Draw` and `DrawIndexed`); HS/DS translation/execution is not implemented).
+1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus GS/HS/DS `stage_ex` plumbing; a minimal SM4 GS DXBC→WGSL compute translator exists and is executed via the translated-GS prepass for a small set of IA input topologies (point/line/triangle list/strip, including adjacency); HS/DS translation/execution is not implemented).
 2. A wgpu-backed executor for the AeroGPU command stream (`aerogpu_cmd.h`).
 
 Code pointers:
@@ -487,7 +487,7 @@ Representative test pointers:
 - Compute translation/execution: [`crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs`](../../crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs), [`crates/aero-d3d11/tests/shader_translate_compute.rs`](../../crates/aero-d3d11/tests/shader_translate_compute.rs)
 - GS compute-prepass plumbing (synthetic expansion bring-up): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_primitive_id.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_primitive_id.rs)
 - GS translator unit tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
-- GS prepass execution tests (point-list and triangle-list, translated SM4 subset):
+- GS prepass execution tests (translated SM4 subset):
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs)
@@ -515,11 +515,11 @@ Known gaps / limitations (enforced by code/tests):
     - Internal-only helpers use `@binding >= BINDING_BASE_INTERNAL` (`256`) to stay disjoint from D3D register
       spaces (e.g. IA vertex pulling, expanded-draw buffers).
   - The compute prepass includes a built-in WGSL path that emits deterministic synthetic triangle geometry for bring-up/fallback (see `GEOMETRY_PREPASS_CS_WGSL`).
-  - For a small supported subset of geometry shaders with point-list and triangle-list input, the executor translates GS DXBC→WGSL compute at create time and can execute it as the prepass for point-list and triangle-list draws (`Draw` and `DrawIndexed`) (see `exec_geometry_shader_prepass_pointlist` and `exec_geometry_shader_prepass_trianglelist`):
+  - For a small supported subset of geometry shaders with supported IA input topologies (including adjacency), the executor translates GS DXBC→WGSL compute at create time and can execute it as the prepass for eligible draws (`Draw` and `DrawIndexed`) (see `exec_geometry_shader_prepass_*` in `aerogpu_cmd_executor.rs`):
     - Translator: [`crates/aero-d3d11/src/runtime/gs_translate.rs`](../../crates/aero-d3d11/src/runtime/gs_translate.rs)
     - Translator tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
     - GS input feeding (current in-tree behavior):
-      - Point-list and triangle-list prepass paths populate GS `v#[]` from **VS outputs** via a minimal
+      - Prepass paths populate GS `v#[]` from **VS outputs** via a minimal
         VS-as-compute path (vertex pulling + a small VS opcode subset). If VS-as-compute translation fails,
         draws fail unless the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
         to force IA-fill for debugging; may misrender).
@@ -528,7 +528,6 @@ Known gaps / limitations (enforced by code/tests):
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)
   - Known GS emulation gaps / next steps:
     - Broaden VS-as-compute feeding (opcode coverage + correct draw instancing semantics).
-    - Non-point GS input primitives beyond triangle list (line, strips) and adjacency topologies (`*_ADJ`) are not supported end-to-end.
     - Instanced draws (`instance_count > 1`) with GS bound are not validated; treat as unsupported until dedicated tests exist.
     - Some downlevel backends have very low per-stage storage-buffer limits (commonly `max_storage_buffers_per_shader_stage = 4`), which can block compute-prepass execution.
   - Owning doc: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
@@ -541,20 +540,19 @@ Known gaps / limitations (enforced by code/tests):
   present the appended handles are authoritative). HS/DS currently compile to minimal compute shaders
   for state tracking and are not executed. GS shaders attempt translation to a compute prepass at
   create time:
-  - If translation succeeds, only point-list and triangle-list draws (`Draw` and `DrawIndexed`) currently execute translated GS DXBC; other cases use synthetic expansion (guest GS DXBC does not execute).
+  - If translation succeeds, draws with supported IA input topologies (including adjacency) execute translated GS DXBC; other cases use synthetic expansion (guest GS DXBC does not execute).
   - If translation fails, draws with that GS bound currently return a clear “geometry shader not supported” error.
     - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, `from_aerogpu_u32_with_stage_ex`)
     - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
 - Current GS translator limitations / initial target subset (non-exhaustive):
-  - No adjacency end-to-end (`*_ADJ`)
   - No multi-stream output (`emit_stream` / `cut_stream`); only stream 0 is supported
   - Output topology (GS→WGSL compute translator): `pointlist`, `linestrip`, `triangle_strip`
     - `linestrip` is expanded into an indexed **line list**
     - `triangle_strip` is expanded into an indexed **triangle list**
-    - Note: executor wiring is still partial; the end-to-end translated-GS prepass path is currently
-      only exercised by point-list and triangle-list draws. For that path, the expanded draw topology is derived from
-      the GS output topology kind (`PointList`/`LineList`/`TriangleList`, with strips expanded to
-      lists).
+    - Note: executor wiring is still partial; the end-to-end translated-GS prepass path is only
+      exercised for the supported IA input topology subset. For that path, the expanded draw topology
+      is derived from the GS output topology kind (`PointList`/`LineList`/`TriangleList`, with strips
+      expanded to lists).
   - GS instancing (`dcl_gsinstancecount` / `[instance(n)]`, `SV_GSInstanceID`) is supported:
     - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
   - No stream-out (SO / transform feedback)
