@@ -76,6 +76,11 @@ The driver needs **at least one usable interrupt mechanism** (unless you explici
   - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
 `AERO-W7-VIRTIO` v1 still requires **INTx** compatibility as a baseline, but the driver also supports (and prefers) **MSI/MSI-X** when Windows provides message interrupts.
 
+If you want to exercise PortCls/WaveRT behavior even when virtio transport bring-up is failing (debug/bring-up only), you can force the silent null backend with:
+
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
+  - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
+
 - [ ] At least one of the following is present and functional:
   - [ ] **MSI/MSI-X** message interrupts (`CM_RESOURCE_INTERRUPT_MESSAGE`)
   - [ ] **INTx** line-based interrupts
