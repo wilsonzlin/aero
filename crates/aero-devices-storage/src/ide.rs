@@ -265,28 +265,6 @@ impl IdeChannel {
         self.status
     }
 
-    fn read_drive_address(&self) -> u8 {
-        // ATA Drive Address (DADR) register at the control-block base + 1 (e.g. 0x3F7/0x377).
-        //
-        // The ATA/ATAPI spec defines DADR as the active-low versions of the drive/head select
-        // lines:
-        //   bits 7..6: 1
-        //   bit 5: nDS1 (active low drive-select 1)
-        //   bit 4: nDS0 (active low drive-select 0)
-        //   bits 3..0: nHS3..nHS0 (active low head-select)
-        //
-        // When the selected device is absent, the bus floats high (0xFF).
-        if self.drives[self.selected].is_none() {
-            return 0xFF;
-        }
-
-        let head = self.drive_head & 0x0F;
-        let dev = self.selected as u8; // 0=master, 1=slave
-        let n_ds0 = dev;
-        let n_ds1 = dev ^ 1;
-        0xC0 | (n_ds1 << 5) | (n_ds0 << 4) | ((!head) & 0x0F)
-    }
-
     fn write_device_control(&mut self, val: u8, irq: &dyn IrqLine) {
         let prev = self.dev_ctl;
         self.dev_ctl = val;
