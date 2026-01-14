@@ -11311,6 +11311,10 @@ int wmain(int argc, wchar_t **argv) {
 
     // Skip payload arguments for options that take a single argument. This avoids falsely treating
     // literal argument values like "--json" / "--pretty" as global output flags during the pre-scan.
+    //
+    // Only skip if the next token looks like a value (not another option). This lets us still catch
+    // cases like `--size --json` where the user likely intended `--json` as a flag but forgot the
+    // `--size` value.
     if (wcscmp(a, L"--display") == 0 || wcscmp(a, L"--ring-id") == 0 || wcscmp(a, L"--timeout-ms") == 0 ||
         wcscmp(a, L"--size") == 0 || wcscmp(a, L"--out") == 0 || wcscmp(a, L"--cmd-out") == 0 ||
         wcscmp(a, L"--alloc-out") == 0 || wcscmp(a, L"--map-shared-handle") == 0 || wcscmp(a, L"--read-gpa") == 0 ||
@@ -11319,7 +11323,10 @@ int wmain(int argc, wchar_t **argv) {
         wcscmp(a, L"--count") == 0 || wcscmp(a, L"--dump-scanout-bmp") == 0 || wcscmp(a, L"--dump-scanout-png") == 0 ||
         wcscmp(a, L"--dump-cursor-bmp") == 0 || wcscmp(a, L"--dump-cursor-png") == 0) {
       if (i + 1 < argc) {
-        i += 1;
+        const wchar_t *next = argv[i + 1];
+        if (next && next[0] != L'-' && next[0] != L'/') {
+          i += 1;
+        }
       }
       continue;
     }

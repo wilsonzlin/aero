@@ -11,50 +11,57 @@ if (-not (Test-Path $DbgctlPath)) {
 function Assert-ValidJson {
   param(
     [string]$ExpectedCommand,
-    [string[]]$Args
+    [string[]]$Args,
+    [switch]$NoImplicitJson
   )
 
-  $stdout = & $DbgctlPath @Args --json 2>$null
+  $invocation = "$DbgctlPath $($Args -join ' ')"
+  if ($NoImplicitJson) {
+    $stdout = & $DbgctlPath @Args 2>$null
+  } else {
+    $stdout = & $DbgctlPath @Args --json 2>$null
+    $invocation = "$invocation --json"
+  }
   if ([string]::IsNullOrWhiteSpace($stdout)) {
-    throw "No JSON output for: $DbgctlPath $($Args -join ' ') --json"
+    throw "No JSON output for: $invocation"
   }
 
   try {
     $obj = $stdout | ConvertFrom-Json
   } catch {
-    throw "Invalid JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+    throw "Invalid JSON for: $invocation`n$stdout"
   }
 
   if (-not $obj.schema_version) {
-    throw "Missing schema_version for: $DbgctlPath $($Args -join ' ') --json"
+    throw "Missing schema_version for: $invocation"
   }
 
   if ($ExpectedCommand -and $obj.command -ne $ExpectedCommand) {
-    throw "Unexpected command in JSON for: $DbgctlPath $($Args -join ' ') --json`nExpected: $ExpectedCommand`nActual: $($obj.command)`n$stdout"
+    throw "Unexpected command in JSON for: $invocation`nExpected: $ExpectedCommand`nActual: $($obj.command)`n$stdout"
   }
 
   # Basic schema sanity for status payloads: ensure the perf section is present
   # (it may be supported:false on older KMDs, but should still exist).
   if ($ExpectedCommand -eq "status" -and -not $obj.perf) {
-    throw "Missing perf section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+    throw "Missing perf section in status JSON for: $invocation`n$stdout"
   }
 
   # When perf is supported, ensure newer nested objects exist (schema stability).
   if ($ExpectedCommand -eq "status" -and $obj.ok -and $obj.perf -and $obj.perf.supported) {
     if (-not $obj.perf.get_scanline) {
-      throw "Missing perf.get_scanline section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+      throw "Missing perf.get_scanline section in status JSON for: $invocation`n$stdout"
     }
     if (-not $obj.perf.contig_pool) {
-      throw "Missing perf.contig_pool section in status JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+      throw "Missing perf.contig_pool section in status JSON for: $invocation`n$stdout"
     }
   }
 
   if ($ExpectedCommand -eq "query-perf" -and $obj.ok) {
     if (-not $obj.get_scanline) {
-      throw "Missing get_scanline section in query-perf JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+      throw "Missing get_scanline section in query-perf JSON for: $invocation`n$stdout"
     }
     if (-not $obj.contig_pool) {
-      throw "Missing contig_pool section in query-perf JSON for: $DbgctlPath $($Args -join ' ') --json`n$stdout"
+      throw "Missing contig_pool section in query-perf JSON for: $invocation`n$stdout"
     }
   }
 }
@@ -183,6 +190,11 @@ Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "4", "--size", 
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--read-gpa", "0x0", "--size", "4", "--out", "a.bin", "--out", "b.bin")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--size", "4", "--read-gpa", "0x0", "8")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "5000", "--out", "read_gpa_chunked_test.bin")
+
+# Pre-scan robustness: if `--json` appears where another flag expected a value, dbgctl should still emit JSON
+# for the parse error (instead of only printing usage text).
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "--json", "--read-gpa", "0x0") -NoImplicitJson
+Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "--json") -NoImplicitJson
 
 # Best-effort cleanup to avoid clutter in local runs. On failure, artifacts may be left behind for debugging.
 $artifacts = @(
