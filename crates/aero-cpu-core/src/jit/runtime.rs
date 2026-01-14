@@ -216,7 +216,15 @@ impl PageVersionTracker {
     ///
     /// Pointer stability: `ptr` remains valid for the lifetime of the tracker (no reallocations).
     pub fn table_ptr_len(&mut self) -> (*mut u32, usize) {
-        (self.versions.as_ptr() as *mut u32, self.versions.len())
+        let len = self.versions.len();
+        if len == 0 {
+            // `Box<[T]>::as_ptr()` returns a non-null dangling pointer for empty slices, but JIT
+            // callers typically treat `len == 0` as "table disabled". Return a null pointer to
+            // make that intent explicit and avoid accidental dereference by embedding code.
+            (core::ptr::null_mut(), 0)
+        } else {
+            (self.versions.as_ptr() as *mut u32, len)
+        }
     }
 
     /// WASM32 helper returning the page-version table pointer + length as `u32`.
@@ -415,9 +423,9 @@ where
     /// Ensure the internal page-version table is a dense array of at least `len` `u32` entries.
     ///
     /// When exposing the table to generated JIT code (e.g. WASM inline stores / code-version
-    /// guards), the caller must size the table up-front so it does not need to grow during
-    /// execution. If the table needs to grow after its pointer has been shared with JIT code, the
-    /// pointer would change and any cached value would become stale.
+    /// guards), callers should size the table up-front (via
+    /// [`JitConfig::code_version_max_pages`]) so it covers all guest-physical pages that need
+    /// tracking. Pages outside the table behave as version 0.
     pub fn ensure_code_version_table_len(&mut self, len: usize) {
         self.page_versions.ensure_table_len(len);
     }
