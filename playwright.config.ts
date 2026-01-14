@@ -88,23 +88,40 @@ function resolveFreePort(opts: {
   return port;
 }
 
+function applyPortStartOffset(baseStart: number, maxAttempts = 32): number {
+  // Avoid port-selection races when multiple Playwright processes run concurrently (common in the
+  // Grind worker swarm and local dev when iterating on a single spec in multiple terminals).
+  //
+  // `resolveFreePort` probes and returns the first available port in a fixed range, but it cannot
+  // reserve that port; another process can claim it between the probe and Vite binding it. Spread
+  // each Playwright process into a different search range by using a PID-derived offset.
+  const stride = 100;
+  const buckets = 500;
+  const offset = (process.pid % buckets) * stride;
+  const start = baseStart + offset;
+  // Keep the scan window within the TCP port range; fall back to the base range if we would
+  // overflow.
+  if (start + maxAttempts >= 65536) return baseStart;
+  return start;
+}
+
 // Some runner environments already have common Vite ports bound (e.g. 5173/4173). Probe for an
 // available port so Playwright can still boot its web servers, and export the resolved origins
 // for tests that need to hardcode them (e.g. COOP/COEP/CSP coverage).
 const DEV_PORT = resolveFreePort({
   portEnv: 'AERO_PLAYWRIGHT_DEV_PORT',
   originEnv: 'AERO_PLAYWRIGHT_DEV_ORIGIN',
-  start: 5173,
+  start: applyPortStartOffset(5173),
 });
 const PREVIEW_PORT = resolveFreePort({
   portEnv: 'AERO_PLAYWRIGHT_PREVIEW_PORT',
   originEnv: 'AERO_PLAYWRIGHT_PREVIEW_ORIGIN',
-  start: 4173,
+  start: applyPortStartOffset(4173),
 });
 const CSP_POC_PORT = resolveFreePort({
   portEnv: 'AERO_PLAYWRIGHT_CSP_PORT',
   originEnv: 'AERO_PLAYWRIGHT_CSP_ORIGIN',
-  start: 4180,
+  start: applyPortStartOffset(4180),
 });
 const DEV_ORIGIN = process.env.AERO_PLAYWRIGHT_DEV_ORIGIN ?? `http://127.0.0.1:${DEV_PORT}`;
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? `http://127.0.0.1:${PREVIEW_PORT}`;

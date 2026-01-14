@@ -83,10 +83,21 @@ function resolveFreePort(opts: { portEnv: string; originEnv: string; start: numb
   return port;
 }
 
+function applyPortStartOffset(baseStart: number, maxAttempts = 32): number {
+  // See `playwright.config.ts`: avoid port-selection races when multiple Playwright processes run
+  // concurrently by spreading each process into a different probe range.
+  const stride = 100;
+  const buckets = 500;
+  const offset = (process.pid % buckets) * stride;
+  const start = baseStart + offset;
+  if (start + maxAttempts >= 65536) return baseStart;
+  return start;
+}
+
 const DEV_PORT = resolveFreePort({
   portEnv: 'AERO_PLAYWRIGHT_DEV_PORT',
   originEnv: 'AERO_PLAYWRIGHT_DEV_ORIGIN',
-  start: 5173,
+  start: applyPortStartOffset(5173),
 });
 const DEV_ORIGIN = process.env.AERO_PLAYWRIGHT_DEV_ORIGIN ?? `http://127.0.0.1:${DEV_PORT}`;
 process.env.AERO_PLAYWRIGHT_DEV_ORIGIN = DEV_ORIGIN;
