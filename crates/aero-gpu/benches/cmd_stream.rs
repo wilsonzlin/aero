@@ -58,6 +58,26 @@ const TRACE_COPY_BUFFER: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_cmd_copy_buffer.aerogputrace"
 ));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_BLEND_ADD: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_blend_add.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_DEPTH_TEST: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_depth_test.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_SCISSOR_TEST: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_scissor_test.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_TEXTURED_BC1_TRIANGLE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_textured_bc1_triangle.aerogputrace"
+));
 
 #[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
@@ -353,6 +373,10 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
         extract_cmd_stream_from_trace(TRACE_TEXTURED_RGBA8_SAMPLER_TRIANGLE);
     let copy_texture2d = extract_cmd_stream_from_trace(TRACE_COPY_TEXTURE2D);
     let copy_buffer = extract_cmd_stream_from_trace(TRACE_COPY_BUFFER);
+    let blend_add = extract_cmd_stream_from_trace(TRACE_BLEND_ADD);
+    let depth_test = extract_cmd_stream_from_trace(TRACE_DEPTH_TEST);
+    let scissor_test = extract_cmd_stream_from_trace(TRACE_SCISSOR_TEST);
+    let textured_bc1_triangle = extract_cmd_stream_from_trace(TRACE_TEXTURED_BC1_TRIANGLE);
     let synthetic = build_synthetic_triangle_stream(1024);
     let synthetic_payloads = build_synthetic_payload_stream();
 
@@ -367,6 +391,10 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
         ),
         ("fixture_copy_texture2d", copy_texture2d),
         ("fixture_copy_buffer", copy_buffer),
+        ("fixture_blend_add", blend_add),
+        ("fixture_depth_test", depth_test),
+        ("fixture_scissor_test", scissor_test),
+        ("fixture_textured_bc1_triangle", textured_bc1_triangle),
         ("synthetic_triangle_1024", synthetic),
         ("synthetic_payloads", synthetic_payloads),
     ] {
