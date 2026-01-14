@@ -21,6 +21,9 @@ Status:
   modern guests (or Windows 7 only when an xHCI driver is installed).
 - EHCI supports minimal async/periodic schedule walking (control/bulk + interrupt polling) and
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
+- Native builds can also expose xHCI via `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`), a PCI/MMIO
+  wrapper around `aero_usb::xhci::XhciController` that enforces PCI `COMMAND` gating (`MEM`/`BME`/
+  `INTX_DISABLE`) and supports MSI delivery (when a platform `MsiTrigger` target is provided).
 - The web runtime exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge` (wrapping
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
@@ -94,7 +97,7 @@ Native integration (wired into the PC platform behind a config flag, but not exp
 `aero_machine::Machine` by default):
 
 - Canonical PCI profile (QEMU xHCI identity): `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`)
-- Native PCI wrapper (IRQ/MSI plumbing): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
+- Native PCI wrapper (canonical PCI glue): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
 - Emulator crate glue (legacy/compat; feature-gated by `emulator/legacy-usb-xhci`): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`; tracked for deletion in [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md))
 - PC platform wiring (optional): `crates/aero-pc-platform/src/lib.rs`
   (`PcPlatformConfig.enable_xhci`, default `false`)
@@ -102,8 +105,8 @@ Native integration (wired into the PC platform behind a config flag, but not exp
 Notes:
 
 - `crates/devices/src/usb/xhci.rs` is the canonical native PCI/MMIO wrapper around
-  `aero_usb::xhci::XhciController` (BAR sizing, PCI `COMMAND` gating for MMIO/DMA/INTx, optional MSI,
-  and snapshot/restore).
+  `aero_usb::xhci::XhciController` (BAR sizing, PCI `COMMAND` gating for MMIO/DMA/INTx via
+  `COMMAND.MEM`/`COMMAND.BME`/`COMMAND.INTX_DISABLE`, optional MSI, and snapshot/restore).
 - `aero_machine::Machine` does not yet expose xHCI by default, but the shared controller model
   (`aero_usb::xhci::XhciController`) is exercised via Rust tests, the web/WASM bridge
   (`aero_wasm::XhciControllerBridge`), and native wrappers/integrations. The PC platform
@@ -127,7 +130,11 @@ differ.)
 
 Notes:
 
-- The canonical PCI identity is defined in `crates/devices/src/pci/profile.rs` as `USB_XHCI_QEMU`.
+- **Source of truth:** `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`).
+- **Identity sync points** (keep consistent):
+  - `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`) defines the canonical identity.
+  - `crates/devices/src/usb/xhci.rs` unit tests assert `XhciPciDevice` matches the profile.
+  - `web/src/io/devices/xhci.ts` mirrors the identity for the web runtime.
 - The canonical PCI profile reserves a 64KiB BAR0 even though the current controller model
   implements only a subset of the architectural register set.
 - Interrupt delivery is **platform-dependent**:
@@ -198,15 +205,16 @@ rather than a complete xHCI.
     - Runtime registers (subset): MFINDEX, and Interrupter 0 regs (IMAN/ERST/ERDP).
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
     - command ring doorbell (doorbell 0) is latched; while the controller is running it triggers
-      bounded command ring processing (`No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`) and
-      queues `Command Completion Event` TRBs.
+      bounded command ring processing (`No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`,
+      `Configure Endpoint`, `Evaluate Context`, and a minimal subset of endpoint commands) and queues
+      `Command Completion Event` TRBs.
     - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
       executor (Setup/Data/Status TRBs) when the controller is ticked.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
-  - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT + interrupter
-    pending), used to validate **INTx disable gating**.
+  - A level-triggered interrupt condition surfaced as `irq_level()` (interrupter pending; USBSTS.EINT
+    is derived), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
   - Partial slot / Address Device plumbing used by tests/harnesses:
     - resolves topology via Slot Context `RootHubPortNumber` + `RouteString`.
@@ -257,10 +265,12 @@ command/event behavior:
 
 - `XhciController::{set_command_ring,process_command_ring}`: a command ring processor that can
   consume a guest command ring (via `RingCursor`) and queue `Command Completion Event` TRBs for a
-  small subset of commands (`Enable Slot`, `Disable Slot`, `Address Device`, `No-Op`). It is used by
-  unit tests and by the guest-visible MMIO path (CRCR + doorbell 0). These events are delivered to
-  the guest only once the event ring is configured and `service_event_ring` is called (e.g. via the
-  WASM bridge `step_frames()`/`poll()` hook).
+  small subset of commands (slot + endpoint management used during bring-up, including `No-Op`,
+  `Enable Slot`, `Disable Slot`, `Address Device`, `Configure Endpoint`, `Evaluate Context`, and a
+  minimal subset of endpoint commands). It is used by unit tests and by the guest-visible MMIO path
+  (CRCR + doorbell 0). These events are delivered to the guest only once the event ring is
+  configured and `service_event_ring` is called (e.g. via the WASM bridge `step_frames()`/`poll()`
+  hook).
 - `command_ring::CommandRingProcessor`: parses a guest command ring and writes completion events into
   a guest event ring (single-segment).
   - Implemented commands (subset): `Enable Slot`, `Disable Slot`, `No-Op`, `Address Device`,
@@ -396,6 +406,10 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
   - the underlying `aero_usb::xhci::XhciController` snapshot bytes,
   - a tick counter, and
   - (when connected) the `UsbWebUsbPassthroughDevice` snapshot bytes.
+- The native PCI wrapper (`crates/devices/src/usb/xhci.rs`) snapshots as `XHCP` (version `1.1`) and stores:
+  - PCI config space (including MSI capability state),
+  - internal IRQ bookkeeping, and
+  - the underlying `aero_usb::xhci::XhciController` snapshot bytes.
 - **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
 
 Practical implication: restores are deterministic for pure-emulated devices, but passthrough devices may need re-authorization/re-attachment and may observe a transient disconnect.
@@ -407,7 +421,8 @@ Practical implication: restores are deterministic for pure-emulated devices, but
 Rust-side USB/controller/device-model tests:
 
 ```bash
-bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+cargo test -p aero-usb --locked
+cargo test -p aero-devices --locked
 ```
 
 Web runtime unit tests (includes USB broker/runtime helpers, rings, and device wrappers):
