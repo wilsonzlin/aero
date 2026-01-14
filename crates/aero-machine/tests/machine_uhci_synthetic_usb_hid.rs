@@ -132,13 +132,13 @@ fn poll_mouse_interrupt_in(m: &mut Machine) -> UsbInResult {
     let mut uhci = uhci.borrow_mut();
     let root = uhci.controller_mut().hub_mut();
     let mut dev0 = root
-        .port_device_mut(0)
+        .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
         .expect("UHCI root port 0 should have an external hub attached");
     let hub = dev0
         .as_hub_mut()
         .expect("root port 0 device should be a hub");
     let mouse = hub
-        .downstream_device_mut(1)
+        .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT - 1) as usize)
         .expect("hub port 2 should contain a mouse device");
     mouse.model_mut().handle_interrupt_in(0x81)
 }
@@ -148,13 +148,13 @@ fn poll_gamepad_interrupt_in(m: &mut Machine) -> UsbInResult {
     let mut uhci = uhci.borrow_mut();
     let root = uhci.controller_mut().hub_mut();
     let mut dev0 = root
-        .port_device_mut(0)
+        .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
         .expect("UHCI root port 0 should have an external hub attached");
     let hub = dev0
         .as_hub_mut()
         .expect("root port 0 device should be a hub");
     let gamepad = hub
-        .downstream_device_mut(2)
+        .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT - 1) as usize)
         .expect("hub port 3 should contain a gamepad device");
     gamepad.model_mut().handle_interrupt_in(0x81)
 }
@@ -345,7 +345,7 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     // consumer-control). Dynamic passthrough devices start at 5.
     {
         let dummy = aero_usb::hid::UsbHidKeyboardHandle::new();
-        let passthrough_port = Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT + 1;
+        let passthrough_port = Machine::UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT;
         m.usb_attach_at_path(
             &[Machine::UHCI_EXTERNAL_HUB_ROOT_PORT, passthrough_port],
             Box::new(dummy),

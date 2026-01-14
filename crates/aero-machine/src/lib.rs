@@ -4352,6 +4352,8 @@ impl Machine {
 
     /// UHCI root port index reserved for the external hub (synthetic HID + WebUSB passthrough).
     pub const UHCI_EXTERNAL_HUB_ROOT_PORT: u8 = 0;
+    /// UHCI root port index reserved for the guest-visible WebUSB passthrough device.
+    pub const UHCI_WEBUSB_ROOT_PORT: u8 = 1;
     /// Default downstream port count for the external hub on [`Self::UHCI_EXTERNAL_HUB_ROOT_PORT`].
     pub const UHCI_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
     /// External hub port number for the built-in USB HID keyboard.
@@ -4362,6 +4364,12 @@ impl Machine {
     pub const UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT: u8 = 3;
     /// External hub port number for the built-in USB HID consumer-control (media keys).
     pub const UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT: u8 = 4;
+    /// Number of downstream hub ports reserved for built-in synthetic HID devices.
+    pub const UHCI_SYNTHETIC_HID_HUB_PORT_COUNT: u8 = 4;
+    /// First hub port number that is safe for dynamic passthrough allocation (e.g. WebHID) without
+    /// colliding with built-in synthetic devices.
+    pub const UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT: u8 =
+        Self::UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + 1;
 
     fn validate_cfg(cfg: &MachineConfig) -> Result<(), MachineError> {
         if cfg.cpu_count == 0 {
