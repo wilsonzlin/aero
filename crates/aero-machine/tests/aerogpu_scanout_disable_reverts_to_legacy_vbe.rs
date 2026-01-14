@@ -106,8 +106,11 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
         m.vbe_lfb_base() + u64::from(y_off) * u64::from(bytes_per_scan_line) + u64::from(x_off) * 4;
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+    assert_eq!(snap.width, 1024);
+    assert_eq!(snap.height, 768);
     assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
     assert_eq!(snap.base_paddr(), expected_legacy_base);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 
     // Enable A20 so we can place the WDDM scanout buffer above 1MiB without aliasing.
     m.io_write(A20_GATE_PORT, 1, 0x02);
