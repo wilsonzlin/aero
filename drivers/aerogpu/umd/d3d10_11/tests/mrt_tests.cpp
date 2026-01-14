@@ -1093,6 +1093,164 @@ bool TestSrvBindingUnbindsAllAliasedRtvSlots() {
   return true;
 }
 
+bool TestRotateResourceIdentitiesRemapsSrvsAndViews() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  TestResource a{};
+  TestResource b{};
+  TestResource c{};
+  TestSrv srv_a{};
+  TestSrv srv_b{};
+
+  const uint32_t bind_flags = kD3D11BindRenderTarget | kD3D11BindShaderResource;
+  if (!CreateTexture2D(&dev, bind_flags, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &a) ||
+      !CreateTexture2D(&dev, bind_flags, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &b) ||
+      !CreateTexture2D(&dev, bind_flags, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &c)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &a, &srv_a) || !CreateSRV(&dev, &b, &srv_b)) {
+    return false;
+  }
+
+  // Bind SRVs to VS/PS slots 0..1.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[2] = {srv_a.hSrv, srv_b.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/2, srvs);
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/2, srvs);
+
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after initial SRV bind)")) {
+    return false;
+  }
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after initial SRV bind)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 3, "captured CREATE_TEXTURE2D handles (>=3)")) {
+    return false;
+  }
+  const aerogpu_handle_t handle_a = created[created.size() - 3];
+  const aerogpu_handle_t handle_b = created[created.size() - 2];
+  const aerogpu_handle_t handle_c = created[created.size() - 1];
+
+  // Rotate [A, B, C] so A takes B's identity and B takes C's identity.
+  D3D10DDI_HRESOURCE rotation[3] = {a.hResource, b.hResource, c.hResource};
+  dev.device_funcs.pfnRotateResourceIdentities(dev.hDevice, rotation, 3);
+
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after RotateResourceIdentities)")) {
+    return false;
+  }
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after RotateResourceIdentities)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  // SRV slots should be remapped:
+  // - slot0 was handle_a -> now handle_b
+  // - slot1 was handle_b -> now handle_c
+  const CmdLoc vs0 = FindLastSetTexture(dev.harness.last_stream.data(),
+                                       dev.harness.last_stream.size(),
+                                       AEROGPU_SHADER_STAGE_VERTEX,
+                                       /*slot=*/0);
+  const CmdLoc vs1 = FindLastSetTexture(dev.harness.last_stream.data(),
+                                       dev.harness.last_stream.size(),
+                                       AEROGPU_SHADER_STAGE_VERTEX,
+                                       /*slot=*/1);
+  const CmdLoc ps0 = FindLastSetTexture(dev.harness.last_stream.data(),
+                                       dev.harness.last_stream.size(),
+                                       AEROGPU_SHADER_STAGE_PIXEL,
+                                       /*slot=*/0);
+  const CmdLoc ps1 = FindLastSetTexture(dev.harness.last_stream.data(),
+                                       dev.harness.last_stream.size(),
+                                       AEROGPU_SHADER_STAGE_PIXEL,
+                                       /*slot=*/1);
+  if (!Check(vs0.hdr && vs1.hdr && ps0.hdr && ps1.hdr, "SET_TEXTURE present for VS/PS slots 0..1 after rotation")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(vs0.hdr)->texture == handle_b, "VS slot0 remapped to B")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(vs1.hdr)->texture == handle_c, "VS slot1 remapped to C")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(ps0.hdr)->texture == handle_b, "PS slot0 remapped to B")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(ps1.hdr)->texture == handle_c, "PS slot1 remapped to C")) {
+    return false;
+  }
+
+  // Now unbind the SRV slots and rebind using the *same SRV view handles*. The
+  // SRV view implementation should follow the rotated resource handle (view ->
+  // resource pointer), not the pre-rotation handle snapshot.
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/2, /*pViews=*/nullptr);
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/2, /*pViews=*/nullptr);
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/2, srvs);
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/2, srvs);
+
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after unbind + rebind SRV views post-rotation)")) {
+    return false;
+  }
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after rebind SRV views post-rotation)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc vs0b = FindLastSetTexture(dev.harness.last_stream.data(),
+                                        dev.harness.last_stream.size(),
+                                        AEROGPU_SHADER_STAGE_VERTEX,
+                                        /*slot=*/0);
+  const CmdLoc vs1b = FindLastSetTexture(dev.harness.last_stream.data(),
+                                        dev.harness.last_stream.size(),
+                                        AEROGPU_SHADER_STAGE_VERTEX,
+                                        /*slot=*/1);
+  const CmdLoc ps0b = FindLastSetTexture(dev.harness.last_stream.data(),
+                                        dev.harness.last_stream.size(),
+                                        AEROGPU_SHADER_STAGE_PIXEL,
+                                        /*slot=*/0);
+  const CmdLoc ps1b = FindLastSetTexture(dev.harness.last_stream.data(),
+                                        dev.harness.last_stream.size(),
+                                        AEROGPU_SHADER_STAGE_PIXEL,
+                                        /*slot=*/1);
+  if (!Check(vs0b.hdr && vs1b.hdr && ps0b.hdr && ps1b.hdr, "SET_TEXTURE present after SRV view rebind")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(vs0b.hdr)->texture == handle_b,
+             "VS slot0 rebind uses rotated handle (B)")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(vs1b.hdr)->texture == handle_c,
+             "VS slot1 rebind uses rotated handle (C)")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(ps0b.hdr)->texture == handle_b,
+             "PS slot0 rebind uses rotated handle (B)")) {
+    return false;
+  }
+  if (!Check(reinterpret_cast<const aerogpu_cmd_set_texture*>(ps1b.hdr)->texture == handle_c,
+             "PS slot1 rebind uses rotated handle (C)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_b.hSrv);
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_a.hSrv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, c.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, b.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, a.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSrvBindingUnbindsAliasedDsv() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -1286,6 +1444,7 @@ int main() {
   ok &= TestSrvBindingUnbindsOnlyAliasedRtv();
   ok &= TestSrvBindingUnbindsOnlyAliasedRtvVs();
   ok &= TestSrvBindingUnbindsAllAliasedRtvSlots();
+  ok &= TestRotateResourceIdentitiesRemapsSrvsAndViews();
   ok &= TestSrvBindingUnbindsAliasedDsv();
   ok &= TestSrvBindingUnbindsAliasedDsvVs();
   if (!ok) {

@@ -785,6 +785,10 @@ struct AeroGpuDepthStencilView {
 };
 
 struct AeroGpuShaderResourceView {
+  // Store a resource pointer so RotateResourceIdentities (swapchain-style handle
+  // rotation) does not leave this view permanently bound to the pre-rotation
+  // handle. The D3D runtime guarantees resources outlive views.
+  AeroGpuResource* resource = nullptr;
   aerogpu_handle_t texture = 0;
 };
 
@@ -4070,6 +4074,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* view = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
+  view->resource = res;
   view->texture = res->handle;
   return S_OK;
 }
@@ -5274,7 +5279,9 @@ void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     aerogpu_handle_t tex = 0;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
-      tex = view ? view->texture : 0;
+      if (view) {
+        tex = view->resource ? view->resource->handle : view->texture;
+      }
     }
     if (tex && !unbind_resource_from_outputs_locked(dev, hDevice, tex)) {
       return;
@@ -5285,7 +5292,9 @@ void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     aerogpu_handle_t tex = 0;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
-      tex = view ? view->texture : 0;
+      if (view) {
+        tex = view->resource ? view->resource->handle : view->texture;
+      }
     }
     const uint32_t slot = start_slot + i;
     if (dev->vs_srvs[slot] == tex) {
@@ -5330,7 +5339,9 @@ void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     aerogpu_handle_t tex = 0;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
-      tex = view ? view->texture : 0;
+      if (view) {
+        tex = view->resource ? view->resource->handle : view->texture;
+      }
     }
     if (tex && !unbind_resource_from_outputs_locked(dev, hDevice, tex)) {
       return;
@@ -5341,7 +5352,9 @@ void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     aerogpu_handle_t tex = 0;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
-      tex = view ? view->texture : 0;
+      if (view) {
+        tex = view->resource ? view->resource->handle : view->texture;
+      }
     }
     const uint32_t slot = start_slot + i;
     if (dev->ps_srvs[slot] == tex) {
