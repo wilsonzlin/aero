@@ -246,7 +246,7 @@ impl GuestMemory for WasmSharedGuestMemory {
     fn read_into(&self, paddr: u64, dst: &mut [u8]) -> GuestMemoryResult<()> {
         // Preserve the crate-wide convention that even zero-length reads validate `paddr` is within
         // `[0, size]` (i.e. one-past-the-end is allowed but anything larger is rejected).
-        let src = self.range_to_ptr(paddr, dst.len())?;
+        let src_addr = self.range_to_ptr(paddr, dst.len())?;
         if dst.is_empty() {
             return Ok(());
         }
@@ -256,7 +256,7 @@ impl GuestMemory for WasmSharedGuestMemory {
         {
             use core::sync::atomic::{AtomicU8, Ordering};
 
-            let src = src as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(src_addr);
             for (i, slot) in dst.iter_mut().enumerate() {
                 // Safety: `range_to_ptr` bounds-checks and `AtomicU8` has alignment 1.
                 *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
@@ -266,7 +266,8 @@ impl GuestMemory for WasmSharedGuestMemory {
         // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
         #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
         unsafe {
-            core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len());
+            let src: *const u8 = core::ptr::with_exposed_provenance(src_addr);
+            core::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), dst.len());
         }
 
         Ok(())
@@ -275,7 +276,7 @@ impl GuestMemory for WasmSharedGuestMemory {
     fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
         // Preserve the crate-wide convention that even zero-length writes validate `paddr` is
         // within `[0, size]` (i.e. one-past-the-end is allowed but anything larger is rejected).
-        let dst = self.range_to_ptr(paddr, src.len())?;
+        let dst_addr = self.range_to_ptr(paddr, src.len())?;
         if src.is_empty() {
             return Ok(());
         }
@@ -285,7 +286,7 @@ impl GuestMemory for WasmSharedGuestMemory {
         {
             use core::sync::atomic::{AtomicU8, Ordering};
 
-            let dst = dst as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(dst_addr);
             for (i, byte) in src.iter().copied().enumerate() {
                 // Safety: `range_to_ptr` bounds-checks and `AtomicU8` has alignment 1.
                 unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
@@ -295,7 +296,8 @@ impl GuestMemory for WasmSharedGuestMemory {
         // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
         #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
         unsafe {
-            core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len());
+            let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(dst_addr);
+            core::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
         }
 
         Ok(())
