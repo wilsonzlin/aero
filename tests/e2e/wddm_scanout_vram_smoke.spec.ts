@@ -30,6 +30,7 @@ test("wddm scanout smoke: presents from VRAM aperture base_paddr (BGRX->RGBA, al
       sourceHash: api.sourceHash,
       expectedSourceHash: api.expectedSourceHash,
       samples,
+      sharedDirtyCleared: api.sharedDirtyCleared ?? null,
       metrics: api.metrics ?? null,
       scanoutSourceWddm: scanout.SCANOUT_SOURCE_WDDM,
     };
@@ -55,6 +56,10 @@ test("wddm scanout smoke: presents from VRAM aperture base_paddr (BGRX->RGBA, al
   expect(result.samples.presented.topRight).toEqual([0, 255, 0, 255]);
   expect(result.samples.presented.bottomLeft).toEqual([0, 0, 255, 255]);
   expect(result.samples.presented.bottomRight).toEqual([255, 255, 255, 255]);
+
+  // WDDM ownership must clear the legacy shared-framebuffer "new frame" flag so legacy output
+  // cannot flash back after scanout handoff.
+  expect(result.sharedDirtyCleared).toBe(true);
 
   // Cursor redraw sanity: enabling the cursor must not clobber the active scanout output.
   expect(result.samples.cursor).toBeTruthy();
