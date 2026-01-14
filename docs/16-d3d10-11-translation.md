@@ -1933,7 +1933,8 @@ cargo run -p aero-d3d11 --bin dxbc_dump -- shader.dxbc
 Add new `aero-d3d11` executor tests that render to an offscreen RT and compare readback pixels:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_*.rs`
-  - Example: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
+  - Example (strip cut/restart semantics): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+  - Example (compute-prepass plumbing smoke): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
 
 Each test should:
@@ -1943,10 +1944,11 @@ Each test should:
 3. Issue a draw that exercises the expansion path.
 4. Read back the render target and compare to a tiny reference image (or a simple expected pattern).
 
-When GS support lands, update the existing “ignore GS payloads” robustness test
+When **guest GS DXBC execution** lands (not just GS object/binding plumbing), update the existing
+“ignore GS payloads” robustness test
 (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) to reflect the new behavior (GS
-is no longer ignored when bound, whether via the legacy `reserved0` slot or the extended
-`BIND_SHADERS` packet).
+payloads are no longer ignored at draw time when bound, whether via the legacy `reserved0` slot or
+the extended `BIND_SHADERS` packet).
 
 **Unit tests (non-rendering):**
 
