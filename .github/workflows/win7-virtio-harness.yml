@@ -895,6 +895,8 @@ jobs:
           blk_counters_host_marker=""
           blk_reset_host_marker=""
           blk_reset_recovery_host_marker=""
+          blk_miniport_flags_host_marker=""
+          blk_miniport_reset_recovery_host_marker=""
           qemu_stderr_line=""
           qemu_cmdline=""
           runner_line=""
@@ -950,6 +952,8 @@ jobs:
               blk_counters_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|' "${harness_log}" | tail -n 1 || true)"
               blk_reset_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|' "${harness_log}" | tail -n 1 || true)"
               blk_reset_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
+              blk_miniport_flags_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_FLAGS|' "${harness_log}" | tail -n 1 || true)"
+              blk_miniport_reset_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_RESET_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
               pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
@@ -1075,6 +1079,12 @@ jobs:
               fi
               if [[ -n "${blk_reset_recovery_host_marker}" ]]; then
                 echo "- Host virtio-blk-reset-recovery marker: \`${blk_reset_recovery_host_marker}\`"
+              fi
+              if [[ -n "${blk_miniport_flags_host_marker}" ]]; then
+                echo "- Host virtio-blk miniport flags marker: \`${blk_miniport_flags_host_marker}\`"
+              fi
+              if [[ -n "${blk_miniport_reset_recovery_host_marker}" ]]; then
+                echo "- Host virtio-blk miniport reset recovery marker: \`${blk_miniport_reset_recovery_host_marker}\`"
               fi
               if [[ -n "${net_link_flap_marker}" ]]; then
                 echo "- Guest virtio-net-link-flap marker: ${net_link_flap_marker}"

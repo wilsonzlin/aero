@@ -22,6 +22,8 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
         for marker in (
             "VIRTIO_BLK_IO|",
             "VIRTIO_BLK_RESET_RECOVERY|",
+            "VIRTIO_BLK_MINIPORT_FLAGS|",
+            "VIRTIO_BLK_MINIPORT_RESET_RECOVERY|",
             "VIRTIO_NET_LARGE|",
             "VIRTIO_NET_UDP|",
             "VIRTIO_NET_UDP_DNS|",
@@ -34,6 +36,8 @@ class Win7VirtioHarnessWorkflowJobSummaryNetBlkMarkersTests(unittest.TestCase):
         # Job summary bullet labels
         self.assertIn("Host virtio-blk I/O marker", self.text)
         self.assertIn("Host virtio-blk-reset-recovery marker", self.text)
+        self.assertIn("Host virtio-blk miniport flags marker", self.text)
+        self.assertIn("Host virtio-blk miniport reset recovery marker", self.text)
         self.assertIn("Host virtio-net-large marker", self.text)
         self.assertIn("Host virtio-net-udp marker", self.text)
         self.assertIn("Host virtio-net-udp-dns marker", self.text)
