@@ -112,6 +112,15 @@ Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits n
 hidtest.exe --selftest
 ```
 
+The selftest validates (per selected device):
+  - input report length (`HidP_GetCaps`)
+  - report descriptor length (`IOCTL_HID_GET_REPORT_DESCRIPTOR`)
+  - HID descriptor-reported report length (`IOCTL_HID_GET_DEVICE_DESCRIPTOR`)
+  - collection descriptor length (`IOCTL_HID_GET_COLLECTION_DESCRIPTOR`) **when supported**
+
+On Windows 7, `IOCTL_HID_GET_COLLECTION_DESCRIPTOR` is often not implemented by HIDCLASS; in that case the check is reported
+as `SKIP` and does not fail the selftest.
+
 Selftest output is pipe-delimited for easy serial log scraping:
 
 ```text
@@ -132,6 +141,9 @@ Machine-readable selftest output:
 ```bat
 hidtest.exe --selftest --json
 ```
+
+The JSON output includes additional fields for the optional collection descriptor check:
+  - `collectionDescLen`, `collectionDescIoctl`, `collectionDescErr`
 
 `--selftest` exits `0` on pass and `1` on fail.
 
