@@ -2915,6 +2915,19 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
         return STATUS_DEVICE_NOT_READY;
     }
 
+    /*
+     * Re-check power/submission gating under RingLock: StopDevice may have flipped these after the
+     * initial checks above but before we acquired the lock. Do not touch MMIO or ring memory if the
+     * adapter is leaving D0.
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
+        return STATUS_DEVICE_NOT_READY;
+    }
+
     ULONG head = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
     AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, head);
     head = Adapter->LegacyRingHeadIndex;
@@ -3005,6 +3018,15 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
      * buffer.
      */
     if (!AeroGpuV1SubmitPathUsable(Adapter)) {
+        KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
+        return STATUS_DEVICE_NOT_READY;
+    }
+
+    /* Re-check power/submission gating under RingLock (StopDevice race). */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
         InterlockedIncrement64(&Adapter->PerfRingPushFailures);
         return STATUS_DEVICE_NOT_READY;
