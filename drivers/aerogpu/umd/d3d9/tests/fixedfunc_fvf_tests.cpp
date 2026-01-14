@@ -3098,6 +3098,230 @@ bool TestApplyStateBlockViewportEmitsSetViewport() {
   return true;
 }
 
+bool TestApplyStateBlockStreamSourceAndIndexBufferEmitCommands() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "pfnSetIndices is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto CreateBuffer = [&](uint32_t size_bytes, const char* what, D3DDDI_HRESOURCE* out_res) -> bool {
+    if (!out_res) {
+      return false;
+    }
+    D3D9DDIARG_CREATERESOURCE create{};
+    create.type = 0u;
+    create.format = 0u;
+    create.width = 0;
+    create.height = 0;
+    create.depth = 0;
+    create.mip_levels = 1;
+    create.usage = 0;
+    create.pool = 0;
+    create.size = size_bytes;
+    create.hResource.pDrvPrivate = nullptr;
+    create.pSharedHandle = nullptr;
+    create.pPrivateDriverData = nullptr;
+    create.PrivateDriverDataSize = 0;
+    create.wddm_hAllocation = 0;
+    const HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create);
+    if (!Check(hr == S_OK, what)) {
+      return false;
+    }
+    if (!Check(create.hResource.pDrvPrivate != nullptr, "CreateResource returned handle")) {
+      return false;
+    }
+    cleanup.resources.push_back(create.hResource);
+    *out_res = create.hResource;
+    return true;
+  };
+
+  D3DDDI_HRESOURCE vb_a{};
+  D3DDDI_HRESOURCE vb_b{};
+  D3DDDI_HRESOURCE ib_a{};
+  D3DDDI_HRESOURCE ib_b{};
+  if (!CreateBuffer(/*size_bytes=*/256u, "CreateResource(vb A)", &vb_a)) {
+    return false;
+  }
+  if (!CreateBuffer(/*size_bytes=*/256u, "CreateResource(vb B)", &vb_b)) {
+    return false;
+  }
+  if (!CreateBuffer(/*size_bytes=*/64u, "CreateResource(ib A)", &ib_a)) {
+    return false;
+  }
+  if (!CreateBuffer(/*size_bytes=*/64u, "CreateResource(ib B)", &ib_b)) {
+    return false;
+  }
+
+  auto* vb_a_res = reinterpret_cast<Resource*>(vb_a.pDrvPrivate);
+  auto* vb_b_res = reinterpret_cast<Resource*>(vb_b.pDrvPrivate);
+  auto* ib_a_res = reinterpret_cast<Resource*>(ib_a.pDrvPrivate);
+  auto* ib_b_res = reinterpret_cast<Resource*>(ib_b.pDrvPrivate);
+  if (!Check(vb_a_res && vb_b_res && ib_a_res && ib_b_res, "resource pointers")) {
+    return false;
+  }
+
+  constexpr uint32_t stride = 16u;
+  constexpr uint32_t offset = 0u;
+  constexpr D3DDDIFORMAT kIndex16 = static_cast<D3DDDIFORMAT>(101);
+
+  // Start from stream/indices A.
+  HRESULT hr = cleanup.device_funcs.pfnSetStreamSource(cleanup.hDevice, /*stream=*/0, vb_a, offset, stride);
+  if (!Check(hr == S_OK, "SetStreamSource(A)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetIndices(cleanup.hDevice, ib_a, kIndex16, /*offset_bytes=*/0);
+  if (!Check(hr == S_OK, "SetIndices(A)")) {
+    return false;
+  }
+
+  // Record stream/indices B in a state block.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(stream+indices)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetStreamSource(cleanup.hDevice, /*stream=*/0, vb_b, offset, stride);
+  if (!Check(hr == S_OK, "SetStreamSource(B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetIndices(cleanup.hDevice, ib_b, kIndex16, /*offset_bytes=*/0);
+  if (!Check(hr == S_OK, "SetIndices(B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(stream+indices)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore A before applying the state block.
+  hr = cleanup.device_funcs.pfnSetStreamSource(cleanup.hDevice, /*stream=*/0, vb_a, offset, stride);
+  if (!Check(hr == S_OK, "SetStreamSource(A) restore before apply")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetIndices(cleanup.hDevice, ib_a, kIndex16, /*offset_bytes=*/0);
+  if (!Check(hr == S_OK, "SetIndices(A) restore before apply")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(stream+indices)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->streams[0].vb == vb_b_res, "ApplyStateBlock updates stream0 VB")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->streams[0].stride_bytes == stride, "ApplyStateBlock updates stream0 stride")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->streams[0].offset_bytes == offset, "ApplyStateBlock updates stream0 offset")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->index_buffer == ib_b_res, "ApplyStateBlock updates index buffer")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->index_offset_bytes == 0u, "ApplyStateBlock updates index offset")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock stream+indices)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Validate stream source command.
+  bool saw_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->start_slot != 0 || svb->buffer_count != 1) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* binding = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+        reinterpret_cast<const uint8_t*>(svb) + sizeof(aerogpu_cmd_set_vertex_buffers));
+    if (binding->buffer == vb_b_res->handle && binding->stride_bytes == stride && binding->offset_bytes == offset) {
+      saw_vb = true;
+      break;
+    }
+  }
+  if (!Check(saw_vb, "ApplyStateBlock emits SET_VERTEX_BUFFERS for stream0")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Validate index buffer command.
+  bool saw_ib = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INDEX_BUFFER)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_index_buffer)) {
+      continue;
+    }
+    const auto* sib = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(hdr);
+    if (sib->buffer == ib_b_res->handle && sib->format == AEROGPU_INDEX_FORMAT_UINT16 && sib->offset_bytes == 0u) {
+      saw_ib = true;
+      break;
+    }
+  }
+  if (!Check(saw_ib, "ApplyStateBlock emits SET_INDEX_BUFFER for expected IB")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockToleratesUnsupportedTextureStageState() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -20237,6 +20461,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockViewportEmitsSetViewport()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockStreamSourceAndIndexBufferEmitCommands()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockToleratesUnsupportedTextureStageState()) {
