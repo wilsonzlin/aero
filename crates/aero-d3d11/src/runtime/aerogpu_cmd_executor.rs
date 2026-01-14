@@ -4409,6 +4409,11 @@ impl AerogpuD3d11Executor {
             // wgpu treats `storage, read_write` buffer usage as exclusive within a compute dispatch, so
             // binding different slices of the same underlying buffer as both storage and uniform
             // triggers validation errors.
+            //
+            // `create_uniform_buffer` must not capture `&self` directly: we call back into other
+            // `&mut self` helpers later in this scope (e.g. `ensure_bound_resources_uploaded`), and
+            // having the helper hold an immutable borrow of `self.device`/`self.queue` trips the
+            // borrow checker.
             fn create_uniform_buffer(
                 device: &wgpu::Device,
                 queue: &wgpu::Queue,
