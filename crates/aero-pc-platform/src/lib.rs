@@ -2298,6 +2298,16 @@ impl PcPlatform {
         self.clock.clone()
     }
 
+    /// Host-facing helper for resuming from an ACPI sleep state.
+    ///
+    /// Sets `PM1_STS.WAK_STS` and triggers a wake source (power button) so a guest that has armed
+    /// the power button as a wake event receives an SCI.
+    pub fn acpi_wake(&mut self) {
+        let mut pm = self.acpi_pm.borrow_mut();
+        pm.set_wake_status();
+        pm.trigger_power_button();
+    }
+
     pub fn has_e1000(&self) -> bool {
         self.e1000.is_some()
     }

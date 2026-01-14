@@ -3840,6 +3840,19 @@ Track progress: docs/21-smp.md\n\
         self.acpi_pm.clone()
     }
 
+    /// Host-facing helper for resuming a guest from an ACPI sleep state.
+    ///
+    /// This sets `PM1_STS.WAK_STS` and triggers a wake source (power button) so the guest receives
+    /// an SCI when it has armed the corresponding PM1 event.
+    pub fn acpi_wake(&mut self) {
+        let Some(acpi_pm) = &self.acpi_pm else {
+            return;
+        };
+        let mut pm = acpi_pm.borrow_mut();
+        pm.set_wake_status();
+        pm.trigger_power_button();
+    }
+
     /// Returns the HPET device, if present.
     pub fn hpet(&self) -> Option<Rc<RefCell<hpet::Hpet<ManualClock>>>> {
         self.hpet.clone()

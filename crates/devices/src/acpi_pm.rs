@@ -30,6 +30,12 @@ pub const PM1_STS_PWRBTN: u16 = 1 << 8;
 /// `PM1_STS.SLPBTN_STS` (ACPI spec).
 pub const PM1_STS_SLPBTN: u16 = 1 << 9;
 
+/// `PM1_STS.WAK_STS` (ACPI spec).
+///
+/// Wake status bit indicating the system is waking from a sleep state.
+/// This is bit 15 of the 16-bit `PM1_STS` register.
+pub const PM1_STS_WAK: u16 = 1 << 15;
+
 /// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
 pub const SLP_TYP_S5: u8 = 0x05;
 
@@ -238,6 +244,15 @@ impl<C: Clock> AcpiPmIo<C> {
         self.trigger_pm1_event(PM1_STS_SLPBTN);
     }
 
+    /// Set `PM1_STS.WAK_STS` to indicate the system has woken from a sleep state.
+    ///
+    /// Note: `WAK_STS` is a status bit (RW1C). It is latched independently of `PM1_EN` and does not
+    /// have a corresponding enable bit.
+    pub fn set_wake_status(&mut self) {
+        self.pm1_sts |= PM1_STS_WAK;
+        self.update_sci();
+    }
+
     /// Inject bits into a GPE0 status byte and refresh SCI.
     pub fn trigger_gpe0(&mut self, byte_index: usize, sts_bits: u8) {
         if let Some(slot) = self.gpe0_sts.get_mut(byte_index) {
@@ -256,7 +271,10 @@ impl<C: Clock> AcpiPmIo<C> {
 
     fn update_sci(&mut self) {
         let sci_en = (self.pm1_cnt & PM1_CNT_SCI_EN) != 0;
-        let pm_pending = (self.pm1_sts & self.pm1_en) != 0;
+        // `PM1_STS.WAK_STS` is a wake-status latch (RW1C) without a corresponding enable bit and is
+        // not treated as an SCI source. (Matches QEMU/ACPICA behaviour and avoids spurious SCI
+        // assertion when guests write `0xFFFF` to PM1_EN.)
+        let pm_pending = (self.pm1_sts & self.pm1_en & !PM1_STS_WAK) != 0;
 
         let mut gpe_pending = false;
         for (sts, en) in self.gpe0_sts.iter().zip(self.gpe0_en.iter()) {

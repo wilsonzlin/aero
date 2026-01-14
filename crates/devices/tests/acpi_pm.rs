@@ -1,6 +1,6 @@
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, PM1_STS_PWRBTN, PM1_STS_SLPBTN,
-    SLP_TYP_S5,
+    PM1_STS_WAK, SLP_TYP_S5,
 };
 use aero_devices::clock::ManualClock;
 use aero_devices::irq::IrqLine;
@@ -303,4 +303,50 @@ fn snapshot_roundtrip_preserves_pm1_gpe_sci_and_pm_timer_deterministically() {
     pm0.borrow_mut().advance_ns(123_456_789);
     pm1.borrow_mut().advance_ns(123_456_789);
     assert_eq!(bus0.read(cfg.pm_tmr_blk, 4), bus1.read(cfg.pm_tmr_blk, 4));
+}
+
+#[test]
+fn wak_sts_sets_pm1_sts_bit() {
+    let cfg = AcpiPmConfig::default();
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new(cfg)));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm.clone());
+
+    assert_eq!(bus.read(cfg.pm1a_evt_blk, 2) & u32::from(PM1_STS_WAK), 0);
+    pm.borrow_mut().set_wake_status();
+    assert_ne!(bus.read(cfg.pm1a_evt_blk, 2) & u32::from(PM1_STS_WAK), 0);
+}
+
+#[test]
+fn wak_sts_does_not_assert_sci_by_itself() {
+    let cfg = AcpiPmConfig::default();
+    let clock = ManualClock::new();
+
+    let irq = TestIrqLevel::new();
+    let callbacks = AcpiPmCallbacks {
+        sci_irq: Box::new(irq.clone()),
+        request_power_off: None,
+    };
+
+    let pm = Rc::new(RefCell::new(AcpiPmIo::new_with_callbacks_and_clock(
+        cfg, callbacks, clock,
+    )));
+    let mut bus = IoPortBus::new();
+    register_acpi_pm(&mut bus, pm.clone());
+
+    // Enable all PM1 event enables (including reserved bits) so we can prove WAK_STS is ignored
+    // for SCI assertion.
+    bus.write(cfg.pm1a_evt_blk + 2, 2, 0xFFFF);
+    // ACPI enable handshake: sets SCI_EN.
+    bus.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
+    assert!(!pm.borrow().sci_level());
+    assert!(!irq.level());
+
+    pm.borrow_mut().set_wake_status();
+    assert_ne!(pm.borrow().pm1_status() & PM1_STS_WAK, 0);
+    assert!(
+        !pm.borrow().sci_level(),
+        "WAK_STS alone must not be treated as an SCI source"
+    );
+    assert!(!irq.level());
 }
