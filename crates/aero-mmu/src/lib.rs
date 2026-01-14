@@ -873,6 +873,7 @@ impl Mmu {
         }
 
         let is_exec = access.is_execute();
+        let pcid_enabled = self.pcid_enabled();
         let pcid = self.current_pcid();
         let tlb_page_sizes = self.tlb_lookup_page_sizes();
 
@@ -885,7 +886,10 @@ impl Mmu {
             }
         }
 
-        if let Some(hit) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
+        if let Some(hit) = self
+            .tlb
+            .lookup(vaddr, is_exec, pcid, pcid_enabled, tlb_page_sizes)
+        {
             let entry = hit.entry;
             #[cfg(feature = "stats")]
             {
@@ -1029,6 +1033,7 @@ impl Mmu {
         }
 
         let is_exec = access.is_execute();
+        let pcid_enabled = self.pcid_enabled();
         let pcid = self.current_pcid();
         let tlb_page_sizes = self.tlb_lookup_page_sizes();
 
@@ -1043,7 +1048,10 @@ impl Mmu {
 
         // Probe mode may consult the internal TLB, but must not update guest
         // page tables (and thus must not lazily set dirty bits on hits).
-        if let Some(hit) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
+        if let Some(hit) = self
+            .tlb
+            .lookup(vaddr, is_exec, pcid, pcid_enabled, tlb_page_sizes)
+        {
             let entry = hit.entry;
             #[cfg(feature = "stats")]
             {

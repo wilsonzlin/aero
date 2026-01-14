@@ -194,8 +194,8 @@ impl TlbEntry {
     }
 
     #[inline]
-    fn matches_pcid(&self, pcid: u16) -> bool {
-        self.valid() && (self.global() || self.pcid == pcid)
+    fn matches_pcid(&self, pcid: u16, pcid_enabled: bool) -> bool {
+        self.valid() && (!pcid_enabled || self.global() || self.pcid == pcid)
     }
 
     #[inline]
@@ -237,7 +237,13 @@ impl TlbSet {
     }
 
     #[inline]
-    fn lookup(&self, vaddr: u64, pcid: u16, page_sizes: TlbLookupPageSizes) -> Option<TlbHit<'_>> {
+    fn lookup(
+        &self,
+        vaddr: u64,
+        pcid: u16,
+        pcid_enabled: bool,
+        page_sizes: TlbLookupPageSizes,
+    ) -> Option<TlbHit<'_>> {
         // Common case: TLB contains only 4KiB entries (no large pages have been
         // inserted since the last full flush), so we can skip page-size probes
         // and the page-size compare in the way loop.
@@ -247,7 +253,7 @@ impl TlbSet {
             let set = set_index(tag);
             for way in 0..WAYS {
                 let entry = &self.entries[set][way];
-                if entry.vbase == vbase && entry.matches_pcid(pcid) {
+                if entry.vbase == vbase && entry.matches_pcid(pcid, pcid_enabled) {
                     debug_assert_eq!(entry.page_size, PageSize::Size4K);
                     return Some(TlbHit {
                         entry,
@@ -269,7 +275,7 @@ impl TlbSet {
                     let entry = &self.entries[set][way];
                     if entry.page_size == page_size
                         && entry.vbase == vbase
-                        && entry.matches_pcid(pcid)
+                        && entry.matches_pcid(pcid, pcid_enabled)
                     {
                         return Some(TlbHit {
                             entry,
@@ -552,12 +558,13 @@ impl Tlb {
         vaddr: u64,
         is_exec: bool,
         pcid: u16,
+        pcid_enabled: bool,
         page_sizes: TlbLookupPageSizes,
     ) -> Option<TlbHit<'_>> {
         if is_exec {
-            self.itlb.lookup(vaddr, pcid, page_sizes)
+            self.itlb.lookup(vaddr, pcid, pcid_enabled, page_sizes)
         } else {
-            self.dtlb.lookup(vaddr, pcid, page_sizes)
+            self.dtlb.lookup(vaddr, pcid, pcid_enabled, page_sizes)
         }
     }
 
