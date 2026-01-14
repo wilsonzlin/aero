@@ -232,6 +232,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   // lower-level harness helper and does not run a scheduler, so we run a lightweight
   // tick pump while there are pending submit requests to avoid deadlocking callers that
   // await `submitAerogpu()`.
+  let shutdownRequested = false;
   let tickPumpActive = false;
   let tickPumpRafId: number | null = null;
   let tickPumpTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -282,6 +283,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function startTickPump(): void {
+    if (shutdownRequested) return;
     if (tickPumpActive) return;
     tickPumpActive = true;
     scheduleTickPump();
@@ -428,8 +430,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     contextId = 0,
     opts?: { flags?: number; engineId?: number },
   ): Promise<GpuRuntimeSubmitCompleteMessage> {
+    if (shutdownRequested) return Promise.reject(new Error("gpu-worker shutdown"));
     return ready.then(
       () => {
+        if (shutdownRequested) return Promise.reject(new Error("gpu-worker shutdown"));
         const requestId = nextRequestId++;
         const transfer: Transferable[] = [cmdStream];
         if (allocTable) transfer.push(allocTable);
@@ -460,8 +464,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function requestScreenshot(opts?: { includeCursor?: boolean }): Promise<GpuRuntimeScreenshotResponseMessage> {
+    if (shutdownRequested) return Promise.reject(new Error("gpu-worker shutdown"));
     return ready.then(
       () => {
+        if (shutdownRequested) return Promise.reject(new Error("gpu-worker shutdown"));
         const requestId = nextRequestId++;
         const includeCursor = opts?.includeCursor === true;
         worker.postMessage({
@@ -481,8 +487,10 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   function requestPresentedScreenshot(
     opts?: { includeCursor?: boolean },
   ): Promise<GpuRuntimeScreenshotPresentedResponseMessage> {
+    if (shutdownRequested) return Promise.reject(new Error("gpu-worker shutdown"));
     return ready.then(
       () => {
+        if (shutdownRequested) return Promise.reject(new Error("gpu-worker shutdown"));
         const requestId = nextRequestId++;
         const includeCursor = opts?.includeCursor === true;
         worker.postMessage({
@@ -500,6 +508,7 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function shutdown(): void {
+    shutdownRequested = true;
     stopTickPump();
     rejectAllPending(new Error("gpu-worker shutdown"));
     worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });

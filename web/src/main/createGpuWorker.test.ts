@@ -117,5 +117,26 @@ describe("main/createGpuWorker", () => {
     handle.shutdown();
     vi.useRealTimers();
   });
-});
 
+  it("rejects submitAerogpu if shutdown races with submit registration", async () => {
+    vi.useFakeTimers();
+
+    const canvas = {
+      transferControlToOffscreen: () => ({}) as unknown as OffscreenCanvas,
+    } as unknown as HTMLCanvasElement;
+
+    const handle = createGpuWorker({ canvas, width: 2, height: 2, devicePixelRatio: 1 });
+    await handle.ready;
+
+    const submitPromise = handle.submitAerogpu(new ArrayBuffer(4), 1n);
+    handle.shutdown();
+
+    await expect(submitPromise).rejects.toThrow(/shutdown/i);
+
+    // Ensure the pump timer is cancelled and does not continue posting ticks after shutdown.
+    await vi.advanceTimersByTimeAsync(50);
+    expect(posted.some((p) => (p.message as { type?: unknown }).type === "tick")).toBe(false);
+
+    vi.useRealTimers();
+  });
+});
