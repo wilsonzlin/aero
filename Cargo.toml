@@ -126,7 +126,7 @@ exclude = [
 [dev-dependencies]
 aero-d3d9 = { path = "crates/aero-d3d9" }
 aero-d3d11 = { path = "crates/aero-d3d11" }
-aero-dxbc = { path = "crates/aero-dxbc" }
+aero-dxbc = { path = "crates/aero-dxbc", features = ["test-utils"] }
 aero-gpu = { path = "crates/aero-gpu" }
 aero-protocol = { path = "emulator/protocol" }
 anyhow = "1.0"

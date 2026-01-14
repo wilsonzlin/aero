@@ -7,14 +7,8 @@ use aero_d3d11::{
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
-fn dummy_dxbc() -> DxbcFile<'static> {
-    // Minimal DXBC container with no chunks. The translator only uses the DXBC input for
-    // diagnostics today, so this is sufficient for unit tests.
-    let bytes = dxbc_test_utils::build_container(&[]);
-    assert_eq!(bytes.len(), 32);
-    // Leak to extend lifetime for the test.
-    let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-    DxbcFile::parse(leaked).expect("dummy DXBC parse")
+fn dummy_dxbc_bytes() -> Vec<u8> {
+    dxbc_test_utils::build_container(&[])
 }
 
 fn src_imm_u32_bits(bits: u32) -> SrcOperand {
@@ -27,7 +21,8 @@ fn src_imm_u32_bits(bits: u32) -> SrcOperand {
 
 #[test]
 fn translates_structured_buffer_address_math() {
-    let dxbc = dummy_dxbc();
+    let dxbc_bytes = dummy_dxbc_bytes();
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC parse");
     let signatures = ShaderSignatures::default();
 
     let module = Sm4Module {
