@@ -1619,15 +1619,7 @@ fn translate_ds_eval(
     emit_instructions(&mut w, module, &ctx)?;
 
     w.line("");
-    for reg in 0..out_reg_count {
-        let expr = if let Some(p) = io.outputs.get(&reg) {
-            apply_sig_mask_to_vec4(&format!("o{reg}"), p.param.mask)
-        } else {
-            "vec4<f32>(0.0)".to_owned()
-        };
-        w.line(&format!("out.o{reg} = {expr};"));
-    }
-    w.line("return out;");
+    io.emit_ds_eval_return(&mut w)?;
     w.dedent();
     w.line("}");
 
@@ -3075,6 +3067,30 @@ impl IoMaps {
             let depth_var = self.ps_depth_var()?;
             let depth_expr = apply_sig_mask_to_scalar(&depth_var, depth_param.param.mask);
             w.line(&format!("out.depth = {depth_expr};"));
+        }
+        w.line("return out;");
+        Ok(())
+    }
+
+    fn emit_ds_eval_return(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
+        let out_reg_count = self
+            .outputs
+            .keys()
+            .copied()
+            .max()
+            .map(|m| m.saturating_add(1))
+            .unwrap_or(0);
+        if out_reg_count == 0 {
+            return Err(ShaderTranslateError::MissingSignature("OSGN"));
+        }
+
+        for reg in 0..out_reg_count {
+            let expr = if let Some(p) = self.outputs.get(&reg) {
+                apply_sig_mask_to_vec4(&format!("o{reg}"), p.param.mask)
+            } else {
+                "vec4<f32>(0.0)".to_owned()
+            };
+            w.line(&format!("out.o{reg} = {expr};"));
         }
         w.line("return out;");
         Ok(())
@@ -5454,10 +5470,21 @@ fn emit_instructions(
                     w.line(&format!("if ({cond}) {{"));
                     w.indent();
                     match ctx.stage {
-                        ShaderStage::Vertex | ShaderStage::Domain => ctx.io.emit_vs_return(w)?,
+                        ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
+                        ShaderStage::Domain => match ctx.io.ds_mode {
+                            DsTranslationMode::LegacyCompute => ctx.io.emit_vs_return(w)?,
+                            DsTranslationMode::Eval => ctx.io.emit_ds_eval_return(w)?,
+                        },
                         ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
-                        ShaderStage::Compute | ShaderStage::Hull => {
+                        ShaderStage::Compute => {
                             // Compute entry points return `()`.
+                            w.line("return;");
+                        }
+                        ShaderStage::Hull => {
+                            // Hull shaders are executed via compute emulation. Ensure we commit
+                            // output registers into the stage interface buffers before returning
+                            // early.
+                            ctx.io.emit_hs_commit_outputs(w);
                             w.line("return;");
                         }
                         other => return Err(ShaderTranslateError::UnsupportedStage(other)),
@@ -7035,7 +7062,11 @@ fn emit_instructions(
                 has_conditional_return = true;
 
                 match ctx.stage {
-                    ShaderStage::Vertex | ShaderStage::Domain => ctx.io.emit_vs_return(w)?,
+                    ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
+                    ShaderStage::Domain => match ctx.io.ds_mode {
+                        DsTranslationMode::LegacyCompute => ctx.io.emit_vs_return(w)?,
+                        DsTranslationMode::Eval => ctx.io.emit_ds_eval_return(w)?,
+                    },
                     ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
                     ShaderStage::Compute => {
                         // Compute entry points return `()`.
@@ -9155,6 +9186,58 @@ mod tests {
     }
 
     #[test]
+    fn ds_eval_predicated_ret_emits_aero_ds_out_return_sequence() {
+        let module = Sm4Module {
+            stage: ShaderStage::Domain,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![Sm4Inst::Predicated {
+                pred: PredicateOperand {
+                    reg: PredicateRef { index: 0 },
+                    component: 0,
+                    invert: false,
+                },
+                inner: Box::new(Sm4Inst::Ret),
+            }],
+        };
+
+        let isgn = DxbcSignature { parameters: vec![] };
+        let psgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Position", 0, 0)],
+        };
+
+        let translated = translate_ds_eval(&module, &isgn, &psgn, &osgn, None).expect("translate");
+
+        // Ensure the predicated return writes `AeroDsOut.o#` fields rather than using the VS-style
+        // `out.pos`/varying mapping (which is not valid for `AeroDsOut`).
+        let if_pos = translated
+            .wgsl
+            .find("if (p0.x) {")
+            .expect("expected predicated if guard");
+        let slice = &translated.wgsl[if_pos..];
+        let assign_pos = slice
+            .find("out.o0")
+            .expect("expected AeroDsOut register assignment in predicated return");
+        let return_pos = slice
+            .find("return out;")
+            .expect("expected return out in predicated return");
+        assert!(
+            assign_pos < return_pos,
+            "expected `out.o0 = ...;` before `return out;` in predicated return:\n{}",
+            translated.wgsl
+        );
+
+        // `translate_ds_eval` intentionally omits the `AeroDsOut` definition; the runtime wrapper
+        // provides it. Add a minimal stub + entry point so we can validate the generated code.
+        let full_wgsl = format!(
+            "struct AeroDsOut {{ o0: vec4<f32>, }}\n{}\n@compute @workgroup_size(1) fn cs_main() {{ let _tmp: AeroDsOut = ds_eval(0u, vec3<f32>(0.0, 0.0, 0.0), 0u); }}",
+            translated.wgsl
+        );
+        assert_wgsl_validates(&full_wgsl);
+    }
+
+    #[test]
     fn hs_control_point_count_emits_control_points_per_patch_constant() {
         let module = Sm4Module {
             stage: ShaderStage::Hull,
@@ -9254,5 +9337,53 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn hs_predicated_ret_commits_outputs_before_return() {
+        let module = Sm4Module {
+            stage: ShaderStage::Hull,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::InputControlPointCount { count: 1 },
+                Sm4Decl::HsOutputControlPointCount { count: 1 },
+            ],
+            instructions: vec![Sm4Inst::Predicated {
+                pred: PredicateOperand {
+                    reg: PredicateRef { index: 0 },
+                    component: 0,
+                    invert: false,
+                },
+                inner: Box::new(Sm4Inst::Ret),
+            }],
+        };
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("TEXCOORD", 0, 0)],
+        };
+        let pcsg = DxbcSignature { parameters: vec![] };
+
+        let translated = translate_hs(&module, &isgn, &osgn, &pcsg, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+
+        // The predicated return should commit output registers before returning from the compute
+        // emulation kernel (otherwise the unconditional commit at the end of the function is
+        // skipped).
+        let if_pos = translated
+            .wgsl
+            .find("if (p0.x) {")
+            .expect("expected predicated if guard");
+        let slice = &translated.wgsl[if_pos..];
+        let store_pos = slice
+            .find("hs_store_out_cp")
+            .expect("expected output commit in predicated return");
+        let return_pos = slice
+            .find("return;")
+            .expect("expected return in predicated return");
+        assert!(
+            store_pos < return_pos,
+            "expected `hs_store_out_cp` before `return;` in predicated return:\n{}",
+            translated.wgsl
+        );
     }
 }
