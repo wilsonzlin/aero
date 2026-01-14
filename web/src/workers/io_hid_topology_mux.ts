@@ -2,11 +2,20 @@ import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import type { HidTopologyManager } from "../hid/wasm_hid_guest_bridge";
 import type { XhciTopologyBridge } from "../hid/xhci_hid_topology";
 
+type XhciTopologyBridgeLike = {
+  // wasm-bindgen bridges expose `free()`, but unit tests may use plain objects without it.
+  free?: () => void;
+  attach_hub: (rootPort: number, portCount: number) => void;
+  detach_at_path: (path: number[]) => void;
+  attach_webhid_device: (path: number[], device: unknown) => void;
+  attach_usb_hid_passthrough_device: (path: number[], device: unknown) => void;
+};
+
 /**
  * Runtime check for whether an xHCI controller bridge supports the subset of
  * exports required to manage guest USB topology for HID passthrough.
  */
-export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyBridge {
+export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyBridgeLike {
   if (!value || typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
   return (
@@ -28,8 +37,11 @@ export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyB
  */
 export function createXhciTopologyBridgeShim(bridge: unknown): XhciTopologyBridge | null {
   if (!isXhciTopologyBridgeLike(bridge)) return null;
-  const obj = bridge as unknown as XhciTopologyBridge;
+  const obj = bridge as XhciTopologyBridgeLike;
+  const rawFree = (bridge as { free?: unknown }).free;
+  const freeFn = typeof rawFree === "function" ? rawFree : () => {};
   return {
+    free: () => freeFn.call(bridge),
     attach_hub: (rootPort, portCount) => obj.attach_hub.call(bridge, rootPort, portCount),
     detach_at_path: (path) => obj.detach_at_path.call(bridge, path),
     attach_webhid_device: (path, device) => obj.attach_webhid_device.call(bridge, path, device),

@@ -60,7 +60,7 @@ describe("workers/io_hid_topology_mux (xhci_hid_topology)", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any as WasmApi;
 
-    const host = { sendReport: vi.fn(), log: vi.fn(), error: vi.fn() };
+    const host = { sendReport: vi.fn(), requestFeatureReport: vi.fn(), log: vi.fn(), error: vi.fn() };
     const guest = new WasmHidGuestBridge(api, host, topologyMux);
 
     const attach: HidAttachMessage = {
@@ -91,4 +91,3 @@ describe("workers/io_hid_topology_mux (xhci_hid_topology)", () => {
     expect(xhci.detach_at_path).toHaveBeenLastCalledWith([0, 1]);
   });
 });
-
