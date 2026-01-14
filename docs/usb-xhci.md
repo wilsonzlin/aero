@@ -52,6 +52,12 @@ Regression tests:
 - `crates/aero-wasm/tests/xhci_bme_event_ring.rs` asserts that the WASM xHCI bridge only DMAs and
   drains the guest event ring when PCI `COMMAND.BME` is enabled (and that doing so asserts INTx via
   `irq_asserted()`).
+- `web/src/usb/xhci_webusb_root_port_rust_drift.test.ts` asserts that the WebUSB root port reserved
+  by the WASM xHCI bridge stays in sync with the shared web-runtime topology constants (and does not
+  collide with the “external hub” root port used for WebHID/synthetic HID devices).
+- `crates/devices/tests/xhci_msix_integration.rs` asserts MSI/MSI-X interrupt delivery semantics in
+  the native PCI wrapper (suppresses INTx when MSI-X is active, tracks PBA bits for masked vectors,
+  and gates MSI-X table/PBA MMIO on `COMMAND.MEM`).
 
 ---
 
