@@ -20,8 +20,11 @@ enum ExprKey {
 
 fn operand_key(op: Operand) -> (u8, u64) {
     match op {
-        Operand::Const(c) => (0, c),
-        Operand::Value(v) => (1, v.0 as u64),
+        // Canonicalize commutative expressions to match `const_fold`/lowering style: values first,
+        // constants last. This avoids flip-flopping operand order between passes, which can force
+        // the fixed-point optimizer to hit its max iteration count.
+        Operand::Value(v) => (0, v.0 as u64),
+        Operand::Const(c) => (1, c),
     }
 }
 
