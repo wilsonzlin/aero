@@ -638,6 +638,13 @@ impl PciConfigSpace {
         if addr < 0x04 {
             return true;
         }
+        // The Status register (0x06..=0x07) is largely read-only / RW1C on real hardware. Guests
+        // commonly perform 32-bit writes to the Command register at 0x04 and write zeros in the
+        // upper 16 bits; those writes must not clobber device-managed status bits such as the
+        // Capabilities List flag.
+        if (PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2).contains(&addr) {
+            return true;
+        }
         if addr == PCI_CAP_PTR_OFFSET {
             return true;
         }
@@ -904,6 +911,7 @@ pub trait PciDevice {
 #[cfg(test)]
 mod tests {
     use super::{PciBarDefinition, PciConfigSpace, PciDevice};
+    use crate::pci::capabilities::PCI_STATUS_CAPABILITIES_LIST;
     use crate::pci::msi::{MsiCapability, PCI_CAP_ID_MSI};
     use crate::pci::msix::{MsixCapability, PCI_CAP_ID_MSIX};
     use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
@@ -917,6 +925,32 @@ mod tests {
         assert_eq!(caps.len(), 1);
         assert_eq!(caps[0].id, PCI_CAP_ID_MSI);
         assert_eq!(caps[0].offset, 0x40);
+    }
+
+    #[test]
+    fn dword_write_to_command_does_not_clobber_status_register() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+
+        let status_before = config.read(0x06, 2) as u16;
+        assert_ne!(
+            status_before & PCI_STATUS_CAPABILITIES_LIST,
+            0,
+            "sanity check: capabilities list bit should be set after adding a capability",
+        );
+
+        // Guests may write the Command register using a 32-bit write, with zeros in the upper
+        // 16 bits. The upper half maps to the Status register, which must not be clobbered.
+        config.write(0x04, 4, 0x0000_0006); // MEM + BME
+
+        let status_after = config.read(0x06, 2) as u16;
+        assert_eq!(
+            status_after, status_before,
+            "32-bit Command writes must not overwrite the Status register"
+        );
+
+        let command_after = config.read(0x04, 2) as u16;
+        assert_eq!(command_after, 0x0006);
     }
 
     #[test]
