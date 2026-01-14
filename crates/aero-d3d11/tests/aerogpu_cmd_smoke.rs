@@ -19,6 +19,9 @@ const OPCODE_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as
 const OPCODE_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
 const OPCODE_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
 
+const OPCODE_SET_RASTERIZER_STATE: u32 = AerogpuCmdOpcode::SetRasterizerState as u32;
+const OPCODE_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
+
 const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
@@ -127,6 +130,103 @@ fn insert_viewport_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
     let total_size = bytes.len() as u32;
     bytes[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&total_size.to_le_bytes());
+}
+
+fn insert_scissor_enable_and_rect_before_first_draw(bytes: &mut Vec<u8>, width: i32, height: i32) {
+    // Insert:
+    //   SET_RASTERIZER_STATE (scissor_enable=1)
+    //   SET_SCISSOR (0,0,width,height)
+    // immediately before the first draw so the render pass starts with a clipped scissor.
+    let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
+    let mut first_draw: Option<usize> = None;
+
+    while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
+        let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+        let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+            break;
+        }
+
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+            first_draw = Some(cursor);
+            break;
+        }
+
+        cursor += size;
+    }
+
+    let draw_off = first_draw.expect("expected fixture to contain a draw packet");
+
+    let mut insert = Vec::with_capacity(32 + 24);
+
+    // SET_RASTERIZER_STATE (32 bytes).
+    //
+    // We only care about `scissor_enable`; the remaining fields are set to safe defaults.
+    insert.extend_from_slice(&OPCODE_SET_RASTERIZER_STATE.to_le_bytes());
+    insert.extend_from_slice(&32u32.to_le_bytes());
+    insert.extend_from_slice(&0u32.to_le_bytes()); // fill_mode (solid)
+    insert.extend_from_slice(&0u32.to_le_bytes()); // cull_mode (none)
+    insert.extend_from_slice(&0u32.to_le_bytes()); // front_ccw (false)
+    insert.extend_from_slice(&1u32.to_le_bytes()); // scissor_enable (true)
+    insert.extend_from_slice(&0i32.to_le_bytes()); // depth_bias
+    insert.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    // SET_SCISSOR (24 bytes).
+    insert.extend_from_slice(&OPCODE_SET_SCISSOR.to_le_bytes());
+    insert.extend_from_slice(&24u32.to_le_bytes());
+    insert.extend_from_slice(&0i32.to_le_bytes()); // x
+    insert.extend_from_slice(&0i32.to_le_bytes()); // y
+    insert.extend_from_slice(&width.to_le_bytes());
+    insert.extend_from_slice(&height.to_le_bytes());
+
+    bytes.splice(draw_off..draw_off, insert);
+}
+
+fn insert_scissor_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
+    // Find the last draw packet and the first present packet so we can insert:
+    //   SET_SCISSOR (0x0)  // reset/disable
+    //   <duplicate draw>
+    // just before present.
+    let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
+    let mut last_draw: Option<(usize, usize)> = None;
+    let mut present_offset: Option<usize> = None;
+
+    while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
+        let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+        let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+            break;
+        }
+
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+            last_draw = Some((cursor, size));
+        }
+        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+            present_offset = Some(cursor);
+            break;
+        }
+
+        cursor += size;
+    }
+
+    let (draw_off, draw_size) = last_draw.expect("expected fixture to contain a draw packet");
+    let present_off = present_offset.expect("expected fixture to contain a present packet");
+    let draw_bytes = bytes[draw_off..draw_off + draw_size].to_vec();
+
+    let mut insert = Vec::with_capacity(24 + draw_bytes.len());
+
+    // SET_SCISSOR (degenerate reset: width=0, height=0).
+    insert.extend_from_slice(&OPCODE_SET_SCISSOR.to_le_bytes());
+    insert.extend_from_slice(&24u32.to_le_bytes());
+    insert.extend_from_slice(&0i32.to_le_bytes()); // x
+    insert.extend_from_slice(&0i32.to_le_bytes()); // y
+    insert.extend_from_slice(&0i32.to_le_bytes()); // width
+    insert.extend_from_slice(&0i32.to_le_bytes()); // height
+
+    // Duplicate the last draw so the second draw should use the reset scissor.
+    insert.extend_from_slice(&draw_bytes);
+
+    bytes.splice(present_off..present_off, insert);
 }
 
 #[test]
@@ -257,6 +357,105 @@ fn aerogpu_cmd_viewport_reset_restores_default_within_pass() {
 
         // This pixel is outside the initial 32x32 viewport, so it should be the clear color after
         // the first draw. After the viewport reset + second draw, it must be red.
+        assert_eq!(px(48, 48), &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_renders_triangle_fixture_with_small_scissor() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = CMD_TRIANGLE_SM4.to_vec();
+        insert_scissor_enable_and_rect_before_first_draw(&mut stream, 32, 32);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let report = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("fixture should present a render target");
+        let (width, height) = exec.texture_size(render_target).unwrap();
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(render_target).await.unwrap();
+        let w = width as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        // Inside scissor -> red triangle.
+        assert_eq!(px(16, 16), &[255, 0, 0, 255]);
+
+        // Outside scissor -> clear color (0.1, 0.2, 0.3, 1.0) in UNORM8 (tolerate rounding).
+        assert!(
+            rgba_within(px(48, 48), [26, 51, 77, 255], 1),
+            "unexpected clear pixel {:?}",
+            px(48, 48)
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_scissor_reset_restores_default_within_pass() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = CMD_TRIANGLE_SM4.to_vec();
+        insert_scissor_reset_and_duplicate_last_draw(&mut stream);
+        insert_scissor_enable_and_rect_before_first_draw(&mut stream, 32, 32);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let report = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("fixture should present a render target");
+        let (width, height) = exec.texture_size(render_target).unwrap();
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(render_target).await.unwrap();
+        let w = width as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        // This pixel is outside the initial 32x32 scissor rect, so it should remain the clear
+        // color after the first draw. After the scissor reset + second draw, it must be red.
         assert_eq!(px(48, 48), &[255, 0, 0, 255]);
     });
 }
