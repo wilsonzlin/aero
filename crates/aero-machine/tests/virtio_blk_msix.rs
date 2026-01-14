@@ -177,4 +177,34 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
         "virtio-blk should not assert legacy INTx once MSI-X is enabled"
     );
     assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Emulate guest interrupt handling to clear the pending MSI-X delivery.
+    interrupts.borrow_mut().acknowledge(vector as u8);
+    interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(interrupts.borrow().get_pending(), None);
+
+    // Disable MSI-X via PCI config space (without BAR0 MMIO). The machine should mirror the MSI-X
+    // enable state into the transport during polling so the device falls back to legacy INTx.
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 15)));
+
+    // Re-submit the same descriptor chain.
+    m.write_physical_u8(status, 0xff);
+    m.write_physical_u16(avail + 2, 2); // idx
+    m.write_physical_u16(avail + 6, 0); // ring[1]
+
+    m.write_physical_u16(notify_addr, 0);
+    m.process_virtio_blk();
+
+    assert_eq!(m.read_physical_u16(used + 2), 2);
+    assert_eq!(m.read_physical_u8(status), 0);
+    assert!(
+        virtio_blk.borrow().irq_level(),
+        "virtio-blk should assert legacy INTx once MSI-X is disabled"
+    );
+    assert_eq!(
+        interrupts.borrow().get_pending(),
+        None,
+        "expected no MSI-X delivery once MSI-X is disabled"
+    );
 }
