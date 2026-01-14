@@ -404,11 +404,13 @@ Impact:
   - Code: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`process_aerogpu`, INT 10h scanout publishing)
   - Code: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (`take_scanout0_state_update`)
   - Tests: [`crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs`](../../crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs)
-- The GPU worker can present WDDM scanout from guest RAM when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`:
-  - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadWddmScanoutFrame`)
-  - E2E test: [`tests/e2e/wddm_scanout_smoke.spec.ts`](../../tests/e2e/wddm_scanout_smoke.spec.ts) (harness: [`web/wddm-scanout-smoke.ts`](../../web/wddm-scanout-smoke.ts))
+- The GPU worker can present WDDM scanout from either guest RAM **or** the shared VRAM aperture (BAR1 backing) when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`:
+  - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadWddmScanoutFrame` / `tryReadWddmScanoutRgba8`)
+  - E2E test (guest RAM base_paddr): [`tests/e2e/wddm_scanout_smoke.spec.ts`](../../tests/e2e/wddm_scanout_smoke.spec.ts) (harness: [`web/wddm-scanout-smoke.ts`](../../web/wddm-scanout-smoke.ts))
+  - E2E test (VRAM aperture base_paddr): [`tests/e2e/wddm_scanout_vram_smoke.spec.ts`](../../tests/e2e/wddm_scanout_vram_smoke.spec.ts) (harness: [`web/wddm-scanout-vram-smoke.ts`](../../web/wddm-scanout-vram-smoke.ts))
+  - VRAM/base-paddr contract notes: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md#7-web-runtime-implementation-notes-wasm32-browser-runtime)
 - Manual harness: [`web/wddm-scanout-debug.html`](../../web/wddm-scanout-debug.html) (interactive toggles for scanoutState source/base_paddr/pitch and BGRX X-byte alpha forcing)
-- Current limitation: `ScanoutState` is currently used as a compact "scanout pointer" and only publishes `B8G8R8X8` (BGRA is treated as compatible); unsupported scanout formats publish a deterministic disabled descriptor.
+- Current limitation: scanout presentation is currently limited to `B8G8R8X8`-compatible 32bpp layouts (`B8G8R8X8` / `B8G8R8A8` + sRGB variants); unsupported formats publish a deterministic disabled descriptor.
 
 Impact:
 
