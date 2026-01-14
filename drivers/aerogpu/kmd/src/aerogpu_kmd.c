@@ -4045,6 +4045,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                 adapter->DxgkInterface.DxgkCbQueueDpcForIsr(adapter->StartInfo.hDxgkHandle);
             }
 
+            /*
+             * Drop any per-submit metadata that was produced before the sleep transition but never
+             * consumed by a subsequent SubmitCommand call (e.g. scheduler cancellation).
+             */
+            AeroGpuMetaHandleFreeAll(adapter);
+
             while (!IsListEmpty(&pendingToFree)) {
                 PLIST_ENTRY entry = RemoveHeadList(&pendingToFree);
                 AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
@@ -4155,21 +4161,47 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             }
         }
 
+        const BOOLEAN errorLatched = AeroGpuIsDeviceErrorLatched(adapter);
+
+        /*
+         * Re-enable interrupt delivery through dxgkrnl before unmasking device IRQ generation so
+         * any immediately-pending (level-triggered) interrupt is routed to our ISR.
+         */
+        if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbEnableInterrupt) {
+            adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
+        }
+
         /* Restore IRQ enable mask (if supported). */
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
             KIRQL irqIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
             ULONG enable = adapter->InterruptRegistered ? adapter->IrqEnableMask : 0;
-            if (AeroGpuIsDeviceErrorLatched(adapter)) {
+            if (errorLatched) {
                 /*
                  * If the device has asserted IRQ_ERROR, do not re-enable ERROR delivery across
                  * resume. Keeping vsync interrupts enabled (when requested by dxgkrnl) avoids
                  * hanging vblank wait paths.
                  */
                 enable &= ~AEROGPU_IRQ_ERROR;
+            } else if (adapter->InterruptRegistered) {
+                /* Restore baseline delivery required for forward progress/diagnostics. */
+                enable |= AEROGPU_IRQ_ERROR;
+                if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                    enable |= AEROGPU_IRQ_FENCE;
+                }
+                adapter->IrqEnableMask = enable;
             }
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
             KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+
+            /*
+             * If we just resumed from a non-D0 state, clear any stale pending IRQ status bits that
+             * may have latched while IRQ generation was masked.
+             */
+            if (!errorLatched && oldState != DxgkDevicePowerStateD0 &&
+                adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+            }
         }
 
         BOOLEAN canSubmit = FALSE;
@@ -4186,11 +4218,6 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         }
         if (canSubmit) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
-        }
-
-        /* Re-enable OS-level interrupt delivery now that state is restored. */
-        if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbEnableInterrupt) {
-            adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
         }
 
         return STATUS_SUCCESS;
