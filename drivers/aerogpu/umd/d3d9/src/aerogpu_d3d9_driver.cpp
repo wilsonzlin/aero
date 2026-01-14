@@ -9453,11 +9453,6 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_xyz_tex1;
       dev->fixedfunc_vs_xyz_tex1 = nullptr;
     }
-    if (dev->fixedfunc_ps_xyz) {
-      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_xyz->handle);
-      delete dev->fixedfunc_ps_xyz;
-      dev->fixedfunc_ps_xyz = nullptr;
-    }
     if (dev->fixedfunc_vs_tex1) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_tex1->handle);
       delete dev->fixedfunc_vs_tex1;

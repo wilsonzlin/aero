@@ -951,7 +951,6 @@ struct Device {
   std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
   Shader* fixedfunc_vs = nullptr;
   Shader* fixedfunc_ps = nullptr;
-  Shader* fixedfunc_ps_xyz = nullptr;
   Shader* fixedfunc_vs_xyz_diffuse = nullptr;
   Shader* fixedfunc_vs_tex1 = nullptr;
   Shader* fixedfunc_vs_tex1_nodiffuse = nullptr;
