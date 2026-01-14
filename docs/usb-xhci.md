@@ -23,7 +23,7 @@ Status:
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
 - Native builds can also expose xHCI via `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`), a PCI/MMIO
   wrapper around `aero_usb::xhci::XhciController` that enforces PCI `COMMAND` gating (`MEM`/`BME`/
-  `INTX_DISABLE`) and supports MSI delivery (when a platform `MsiTrigger` target is provided).
+  `INTX_DISABLE`) and supports MSI/MSI-X delivery (when a platform `MsiTrigger` target is provided).
 - The web runtime exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge` (wrapping
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
