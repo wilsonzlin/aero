@@ -437,7 +437,11 @@ impl UsbHidPassthrough {
             input_report_lengths,
             output_report_lengths,
             feature_report_lengths,
-        ) = report_descriptor_report_lengths(hid_report_descriptor.as_ref());
+        ) = report_descriptor_report_lengths(
+            hid_report_descriptor.as_ref(),
+            max_packet_size,
+            has_interrupt_out,
+        );
 
         Self {
             address: 0,
@@ -1361,15 +1365,18 @@ fn build_config_descriptor(
 
 fn report_descriptor_report_lengths(
     report_descriptor_bytes: &[u8],
+    max_packet_size: u16,
+    has_interrupt_out: bool,
 ) -> ReportDescriptorReportLengths {
+    let max_packet_size = sanitize_max_packet_size(max_packet_size) as usize;
     let Ok(parsed) = report_descriptor::parse_report_descriptor(report_descriptor_bytes) else {
         let (report_ids_in_use, input_bits, output_bits, feature_bits) =
             scan_report_descriptor_bits(report_descriptor_bytes);
         return (
             report_ids_in_use,
-            bits_to_report_lengths(&input_bits),
-            bits_to_report_lengths(&output_bits),
-            bits_to_report_lengths(&feature_bits),
+            bits_to_report_lengths_input(&input_bits, max_packet_size),
+            bits_to_report_lengths_output(&output_bits, max_packet_size, has_interrupt_out),
+            bits_to_report_lengths_feature(&feature_bits),
         );
     };
 
@@ -1390,9 +1397,9 @@ fn report_descriptor_report_lengths(
 
     (
         report_ids_in_use,
-        bits_to_report_lengths(&input_bits),
-        bits_to_report_lengths(&output_bits),
-        bits_to_report_lengths(&feature_bits),
+        bits_to_report_lengths_input(&input_bits, max_packet_size),
+        bits_to_report_lengths_output(&output_bits, max_packet_size, has_interrupt_out),
+        bits_to_report_lengths_feature(&feature_bits),
     )
 }
 
@@ -1402,14 +1409,53 @@ type ReportDescriptorReportLengths = (
     BTreeMap<u8, usize>,
     BTreeMap<u8, usize>,
 );
-fn bits_to_report_lengths(bits: &BTreeMap<u8, u64>) -> BTreeMap<u8, usize> {
+
+fn bits_to_report_lengths_input(bits: &BTreeMap<u8, u64>, max_packet_size: usize) -> BTreeMap<u8, usize> {
     let mut out = BTreeMap::new();
     for (&report_id, &total_bits) in bits {
         let mut bytes = usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
         if report_id != 0 {
             bytes = bytes.saturating_add(1);
         }
+        // Input reports are delivered over an interrupt endpoint; cap to the descriptor-advertised
+        // maximum packet size to avoid allocations based on malicious/corrupted report descriptors.
+        bytes = bytes.min(max_packet_size);
         out.insert(report_id, bytes);
+    }
+    out
+}
+
+fn bits_to_report_lengths_output(
+    bits: &BTreeMap<u8, u64>,
+    max_packet_size: usize,
+    has_interrupt_out: bool,
+) -> BTreeMap<u8, usize> {
+    if has_interrupt_out {
+        // Output reports can be sent over interrupt OUT; cap to the endpoint packet size.
+        return bits_to_report_lengths_input(bits, max_packet_size);
+    }
+
+    // Without an interrupt OUT endpoint, Output reports arrive via control transfers (SET_REPORT).
+    // Cap payload size to avoid unbounded allocations from malicious/corrupted descriptors.
+    bits_to_report_lengths_payload_capped(bits, MAX_HID_SET_REPORT_BYTES)
+}
+
+fn bits_to_report_lengths_feature(bits: &BTreeMap<u8, u64>) -> BTreeMap<u8, usize> {
+    // Feature reports are transferred over the control endpoint.
+    bits_to_report_lengths_payload_capped(bits, MAX_HID_SET_REPORT_BYTES)
+}
+
+fn bits_to_report_lengths_payload_capped(
+    bits: &BTreeMap<u8, u64>,
+    max_payload_bytes: usize,
+) -> BTreeMap<u8, usize> {
+    let mut out = BTreeMap::new();
+    for (&report_id, &total_bits) in bits {
+        let payload_bytes =
+            usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
+        let payload_bytes = payload_bytes.min(max_payload_bytes);
+        let total_bytes = payload_bytes.saturating_add(usize::from(report_id != 0));
+        out.insert(report_id, total_bytes);
     }
     out
 }
@@ -2320,6 +2366,21 @@ mod tests {
         ]
     }
 
+    fn sample_report_descriptor_with_huge_reports() -> Vec<u8> {
+        vec![
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x00, // Usage (Undefined)
+            0xa1, 0x01, // Collection (Application)
+            0x85, 0x01, // Report ID (1)
+            0x75, 0x08, // Report Size (8)
+            0x97, 0x00, 0x00, 0x00, 0x80, // Report Count (0x80000000)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0x91, 0x02, // Output (Data,Var,Abs)
+            0xb1, 0x02, // Feature (Data,Var,Abs)
+            0xc0, // End Collection
+        ]
+    }
+
     #[test]
     fn descriptors_are_well_formed() {
         let report = sample_report_descriptor_with_ids();
@@ -2559,6 +2620,70 @@ mod tests {
         assert_eq!(data.len(), super::MAX_UNKNOWN_INPUT_REPORT_BYTES);
         assert_eq!(data[0], report_id);
         assert_eq!(&data[1..], &[0xaa; super::MAX_UNKNOWN_INPUT_REPORT_BYTES - 1]);
+    }
+
+    #[test]
+    fn report_descriptor_large_report_lengths_are_capped_to_prevent_huge_allocations() {
+        let report = sample_report_descriptor_with_huge_reports();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false, // no interrupt OUT; output/feature via control
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        // Descriptor defines absurdly large Input report; it should be clamped to the interrupt
+        // endpoint max packet size (64 bytes).
+        dev.push_input_report(1, &[0xaa]);
+        let UsbInResult::Data(data) = dev.handle_in_transfer(INTERRUPT_IN_EP, 4096) else {
+            panic!("expected input report data");
+        };
+        assert_eq!(data.len(), DEFAULT_MAX_PACKET_SIZE as usize);
+
+        // Output report should be capped to MAX_HID_SET_REPORT_BYTES payload bytes.
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_REPORT,
+                    w_value: (2u16 << 8) | 1u16, // Output, report ID 1
+                    w_index: 0,
+                    w_length: 1,
+                },
+                Some(&[1, 0xaa]),
+            ),
+            ControlResponse::Ack
+        );
+        let out = dev.pop_output_report().expect("expected queued output report");
+        assert_eq!(out.report_type, 2);
+        assert_eq!(out.report_id, 1);
+        assert_eq!(out.data.len(), MAX_HID_SET_REPORT_BYTES);
+
+        // Feature report reads should clamp to the same cap.
+        let setup = SetupPacket {
+            bm_request_type: 0xa1, // DeviceToHost | Class | Interface
+            b_request: HID_REQUEST_GET_REPORT,
+            w_value: (3u16 << 8) | 1u16, // Feature, report ID 1
+            w_index: 0,
+            w_length: u16::MAX,
+        };
+        assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+        let req = dev
+            .pop_feature_report_request()
+            .expect("expected host feature report request");
+        assert!(dev.complete_feature_report_request(req.request_id, req.report_id, &[0xaa]));
+        let resp = dev.handle_control_request(setup, None);
+        let ControlResponse::Data(feature) = resp else {
+            panic!("expected Data response, got {resp:?}");
+        };
+        assert_eq!(feature.len(), MAX_HID_SET_REPORT_BYTES + 1);
     }
 
     #[test]
