@@ -233,6 +233,7 @@ version = "0.1.0"
 dependencies = [
  "aero-devices",
  "aero-gpu",
+ "aero-gpu-vga",
  "aero-protocol",
  "memory",
  "pollster",

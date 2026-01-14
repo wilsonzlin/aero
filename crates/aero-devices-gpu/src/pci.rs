@@ -22,9 +22,10 @@ const PCI_COMMAND_INTX_DISABLE: u16 = 1 << 10;
 /// Size of the guest-visible legacy VGA window backing region (`0xA0000..0xBFFFF`, 128KiB).
 ///
 /// In Aero's canonical AeroGPU BAR1 layout (shared with `aero_gpu_vga` / `aero_machine`), the
-/// legacy VGA window aliases into `VRAM[0..0x20000)`. The full 4-plane VGA planar region spans
-/// `VRAM[0..0x40000)`, and the VBE packed-pixel framebuffer begins at [`VBE_LFB_OFFSET`].
-pub const LEGACY_VGA_VRAM_BYTES: u64 = 0x20_000;
+/// legacy VGA window aliases into `VRAM[0..LEGACY_VGA_VRAM_BYTES)`. The full 4-plane VGA planar
+/// region spans `VRAM[0..VBE_LFB_OFFSET)`, and the VBE packed-pixel framebuffer begins at
+/// [`VBE_LFB_OFFSET`].
+pub const LEGACY_VGA_VRAM_BYTES: u64 = aero_gpu_vga::VGA_LEGACY_MEM_LEN as u64;
 
 /// Offset within BAR1/VRAM where the VBE linear framebuffer (LFB) region begins.
 ///
@@ -35,11 +36,15 @@ pub const LEGACY_VGA_VRAM_BYTES: u64 = 0x20_000;
 /// See `docs/16-aerogpu-vga-vesa-compat.md`.
 pub const VBE_LFB_OFFSET: u64 = proto::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES as u64;
 
+const _: () = {
+    assert!(VBE_LFB_OFFSET == aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u64);
+};
+
 /// Start physical address of the legacy VGA window.
-pub const LEGACY_VGA_PADDR_BASE: u64 = 0xA_0000;
+pub const LEGACY_VGA_PADDR_BASE: u64 = aero_gpu_vga::VGA_LEGACY_MEM_START as u64;
 
 /// End physical address (exclusive) of the legacy VGA window.
-pub const LEGACY_VGA_PADDR_END: u64 = 0xC_0000;
+pub const LEGACY_VGA_PADDR_END: u64 = LEGACY_VGA_PADDR_BASE + LEGACY_VGA_VRAM_BYTES;
 
 /// PCI BAR index for the AeroGPU MMIO registers window (BAR0).
 pub const AEROGPU_PCI_BAR0_INDEX: u8 = profile::AEROGPU_BAR0_INDEX;
