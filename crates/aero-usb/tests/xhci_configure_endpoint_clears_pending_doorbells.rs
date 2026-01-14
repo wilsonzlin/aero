@@ -178,6 +178,15 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
 
     run_configure_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |_| {});
 
+    assert_eq!(
+        ctrl.slot_state(slot_id)
+            .expect("slot should remain enabled")
+            .slot_context()
+            .root_hub_port_number(),
+        1,
+        "Configure Endpoint (drop) must not clobber controller-local Slot Context topology fields"
+    );
+
     // Re-add the endpoint (guest would re-run Configure Endpoint) and ring the doorbell again. If
     // the pending bit was not cleared, this doorbell would be ignored and no DMA would occur.
     configure_interrupt_in_endpoint(
