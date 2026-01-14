@@ -718,6 +718,14 @@ impl PlatformInterrupts {
         self.lapics[0].apic_id()
     }
 
+    /// Iterate over all LAPICs in the platform.
+    ///
+    /// This is primarily used by MSI delivery logic to implement xAPIC broadcast and minimal
+    /// "logical destination" decoding.
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &Arc<LocalApic>> {
+        self.lapics.iter()
+    }
+
     /// Inject a fixed interrupt into the LAPIC whose `apic_id()` matches `apic_id`.
     ///
     /// If no LAPIC matches, the interrupt is dropped.
