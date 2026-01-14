@@ -22,8 +22,6 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/turnrest"
 )
 
-var ErrServerClosed = http.ErrServerClosed
-
 type BuildInfo struct {
 	Commit    string `json:"commit"`
 	BuildTime string `json:"buildTime"`

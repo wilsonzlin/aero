@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -143,7 +144,7 @@ func main() {
 	select {
 	case err := <-errCh:
 		sig.Close()
-		if err != nil && !errors.Is(err, httpserver.ErrServerClosed) {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server exited", "err", err)
 			os.Exit(1)
 		}
@@ -160,7 +161,7 @@ func main() {
 	}
 	sig.Close()
 
-	if err := <-errCh; err != nil && !errors.Is(err, httpserver.ErrServerClosed) {
+	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("http server exited after shutdown", "err", err)
 		os.Exit(1)
 	}
