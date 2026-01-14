@@ -419,42 +419,6 @@ struct AeroGpuAdapter {
   uint64_t completed_fence = 0;
 };
 
-static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
-  if (!out) {
-    return false;
-  }
-
-  DISPLAY_DEVICEW dd;
-  ZeroMemory(&dd, sizeof(dd));
-  dd.cb = sizeof(dd);
-
-  for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i) {
-    if ((dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0) {
-      wcsncpy(out, dd.DeviceName, CCHDEVICENAME - 1);
-      out[CCHDEVICENAME - 1] = 0;
-      return true;
-    }
-    ZeroMemory(&dd, sizeof(dd));
-    dd.cb = sizeof(dd);
-  }
-
-  ZeroMemory(&dd, sizeof(dd));
-  dd.cb = sizeof(dd);
-  for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &dd, 0); ++i) {
-    if ((dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0) {
-      wcsncpy(out, dd.DeviceName, CCHDEVICENAME - 1);
-      out[CCHDEVICENAME - 1] = 0;
-      return true;
-    }
-    ZeroMemory(&dd, sizeof(dd));
-    dd.cb = sizeof(dd);
-  }
-
-  wcsncpy(out, L"\\\\.\\DISPLAY1", CCHDEVICENAME - 1);
-  out[CCHDEVICENAME - 1] = 0;
-  return true;
-}
-
 struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
@@ -507,7 +471,7 @@ static void InitKmtAdapterHandle(AeroGpuAdapter* adapter) {
   }
 
   wchar_t displayName[CCHDEVICENAME] = {};
-  if (!GetPrimaryDisplayName(displayName)) {
+  if (!aerogpu::d3d10_11::GetPrimaryDisplayName(displayName)) {
     return;
   }
 
@@ -587,7 +551,7 @@ static bool QueryUmdPrivateFromPrimaryDisplay(aerogpu_umd_private_v1* out) {
   }
 
   wchar_t displayName[CCHDEVICENAME] = {};
-  if (!GetPrimaryDisplayName(displayName)) {
+  if (!aerogpu::d3d10_11::GetPrimaryDisplayName(displayName)) {
     return false;
   }
 
