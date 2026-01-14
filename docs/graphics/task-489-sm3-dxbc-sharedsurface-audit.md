@@ -207,6 +207,15 @@ Ops/features referenced by the scratchpad tasks:
 - `aa89e80b` — `feat(aero-d3d9/sm3): emit WGSL for TexSample ops`
 - `57aa3f8c` — `fix(sm3): preserve texkill predication and D3D9 discard semantics`
 
+**Tracking cleanup / additional coverage commits:**
+- `04c80402` — `docs(d3d9-sm3): mark TexSample/texkill tasks done`
+- `2f099e8dd` — `test(sm3): cover cube/3D sampler dcl in WGSL`
+- `1dcec36ab` — `test(sm3): add 1D sampler dcl coverage`
+- `0516665f7` — `test(sm3): cover non-2D texldp/texldd swizzles`
+- `b10bb36f3` — `docs(graphics): mark SM3 TexSample/texkill tasks 401/402 done`
+- `6617e2bc5` — `docs(graphics): cross-link SM3 shader translation task notes`
+- `5fb505938` — `docs(graphics): shorten SM3 shader translation status table`
+
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl.rs`
   - `wgsl_texld_emits_texture_sample`
