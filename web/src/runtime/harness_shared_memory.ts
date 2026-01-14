@@ -8,6 +8,7 @@ import {
 import { CURSOR_FORMAT_B8G8R8A8, CURSOR_STATE_U32_LEN, CursorStateIndex } from "../ipc/cursor_state";
 import {
   CONTROL_BYTES,
+  STATUS_OFFSET_BYTES,
   STATUS_INTS,
   StatusIndex,
   WORKER_ROLES,
@@ -62,7 +63,7 @@ export function allocateHarnessSharedMemorySegments(opts: {
   }
 
   const control = new SharedArrayBuffer(CONTROL_BYTES);
-  const status = new Int32Array(control, 0, STATUS_INTS);
+  const status = new Int32Array(control, STATUS_OFFSET_BYTES, STATUS_INTS);
   Atomics.store(status, StatusIndex.GuestBase, 0);
   Atomics.store(status, StatusIndex.GuestSize, guestRamBytes | 0);
   Atomics.store(status, StatusIndex.RuntimeReserved, 0);
@@ -112,4 +113,3 @@ export function allocateHarnessSharedMemorySegments(opts: {
     cursorStateOffsetBytes: 0,
   };
 }
-
