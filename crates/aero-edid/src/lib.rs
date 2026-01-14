@@ -52,7 +52,7 @@ impl Timing {
             && {
                 // Approximate the vertical blanking used by the synthesizer.
                 let v_active = self.height as u32;
-                let v_blank = ((v_active + 19) / 20).max(MIN_V_BLANK);
+                let v_blank = v_active.div_ceil(20).max(MIN_V_BLANK);
                 let v_total = v_active + v_blank;
                 // Horizontal frequency in kHz is v_total * refresh / 1000.
                 let h_freq_khz = ((v_total as u64) * (self.refresh_hz as u64) + 500) / 1000;
