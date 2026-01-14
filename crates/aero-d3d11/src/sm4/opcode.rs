@@ -733,10 +733,15 @@ mod tests {
             let value_str = value_str.replace('_', "");
             let value = if let Some(hex) = value_str.strip_prefix("0x") {
                 u32::from_str_radix(hex, 16).expect("invalid hex opcode const value")
-            } else {
+            } else if value_str.chars().all(|c| c.is_ascii_digit()) {
                 value_str
                     .parse::<u32>()
                     .expect("invalid decimal opcode const value")
+            } else {
+                // Some opcode IDs are intentionally aliases (e.g. `OPCODE_IFC = OPCODE_IF`) or are
+                // derived from other constants. These are not new numeric opcode assignments, so
+                // ignore them for the purposes of collision detection.
+                continue;
             };
 
             count += 1;
