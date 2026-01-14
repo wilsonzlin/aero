@@ -644,10 +644,6 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     let p1 = load_cp_reg(patch_id, 1u, 0u);
     let p2 = load_cp_reg(patch_id, 2u, 0u);
 
-    let c0 = load_cp_reg(patch_id, 0u, 1u);
-    let c1 = load_cp_reg(patch_id, 1u, 1u);
-    let c2 = load_cp_reg(patch_id, 2u, 1u);
-
     // Emit vertices.
     var local_v: u32 = 0u;
     loop {{
@@ -656,7 +652,8 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         }}
         let bary = tri_vertex_domain_location(pmeta.tess_level, local_v);
         let pos = p0 * bary.x + p1 * bary.y + p2 * bary.z;
-        let col = c0 * bary.x + c1 * bary.y + c2 * bary.z;
+        // Mirror the `ds_tri_passthrough.dxbc` fixture: encode barycentric coordinates into COLOR0.
+        let col = vec4<f32>(bary.x, bary.y, bary.z, 1.0);
 
         let out_vid = pmeta.vertex_base + local_v;
         out_vertices[out_vid].pos = pos;

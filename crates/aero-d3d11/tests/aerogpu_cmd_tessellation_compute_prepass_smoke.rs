@@ -96,19 +96,24 @@ fn aerogpu_cmd_tessellation_compute_prepass_smoke() {
         const DS: u32 = 6;
         const IL: u32 = 7;
 
-        // One triangle patch (3 control points). Use a solid color so interpolation is stable.
+        // One triangle patch (3 control points).
+        //
+        // Keep control point colors black so that if tessellation is ignored (VS->PS only) the
+        // output remains black. The current emulation path's placeholder DS encodes barycentric
+        // coordinates into COLOR0, so a successful tessellation expansion should produce non-black
+        // pixels inside the patch.
         let verts: [VertexPos3Color4; 3] = [
             VertexPos3Color4 {
                 pos: [-0.5, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0, 1.0],
+                color: [0.0, 0.0, 0.0, 1.0],
             },
             VertexPos3Color4 {
                 pos: [0.0, 0.5, 0.0],
-                color: [0.0, 1.0, 0.0, 1.0],
+                color: [0.0, 0.0, 0.0, 1.0],
             },
             VertexPos3Color4 {
                 pos: [0.5, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0, 1.0],
+                color: [0.0, 0.0, 0.0, 1.0],
             },
         ];
 
@@ -194,10 +199,6 @@ fn aerogpu_cmd_tessellation_compute_prepass_smoke() {
             .expect("readback should succeed");
         let idx = ((8usize / 2) * 8usize + (8usize / 2)) * 4;
         let center = &pixels[idx..idx + 4];
-        assert_eq!(
-            center,
-            &[0, 255, 0, 255],
-            "expected center pixel to be green"
-        );
+        assert_ne!(center, &[0, 0, 0, 255], "expected non-black center pixel");
     });
 }
