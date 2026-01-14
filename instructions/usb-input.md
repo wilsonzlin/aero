@@ -303,6 +303,11 @@ cargo test -p aero-machine --lib --locked
 # Canonical USB stack tests (catches UHCI/EHCI/xHCI regressions).
 cargo test -p aero-usb --locked
 
+# Lint: CI treats clippy warnings as errors (`-D warnings`), including in tests.
+# If you're iterating on USB/input code, running these focused checks locally can save time:
+cargo clippy -p aero-usb --tests --locked -- -D warnings
+cargo clippy -p aero-devices-input --tests --locked -- -D warnings
+
 # xHCI gotcha: transfer-ring execution is gated on `USBCMD.RUN`. If you're writing a unit test that
 # rings xHCI doorbells and expects DMA to occur, make sure to set RUN first (see existing xHCI tests
 # for the `ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN))` pattern).
