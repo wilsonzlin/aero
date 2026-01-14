@@ -1089,10 +1089,20 @@ function New-IsoFromFolder {
         Remove-Item -Force $IsoPath
     }
 
-    # Prefer the deterministic Rust ISO builder when `cargo` is available (cross-platform).
+    # Deterministic ISO creation uses the Rust ISO writer (`aero_iso`).
+    # This requires `cargo` and works cross-platform.
+    #
+    # Use `-LegacyIso` to force the legacy Windows IMAPI2 implementation (not deterministic).
     $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
-    $useRustIso = (-not $LegacyIso) -and $cargoExe
-    if ($useRustIso) {
+    if (-not $LegacyIso) {
+        if ([string]::IsNullOrWhiteSpace($cargoExe)) {
+            $msg = "ISO creation requires Rust/cargo for deterministic, cross-platform builds. Install Rust/cargo, or re-run with -NoIso."
+            if (Get-IsWindows) {
+                $msg += " (On Windows, you may pass -LegacyIso to use IMAPI2, but the ISO will not be deterministic.)"
+            }
+            throw $msg
+        }
+
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
         $manifestPath = Join-Path $repoRoot "tools/packaging/aero_packager/Cargo.toml"
         if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -1119,18 +1129,8 @@ function New-IsoFromFolder {
             throw "Deterministic ISO creation failed (cargo exit code $LASTEXITCODE)."
         }
     } else {
-        $isWindows = $false
-        try {
-            $isWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
-        } catch {
-            $isWindows = $false
-        }
-
-        if (-not $isWindows) {
-            if ($LegacyIso) {
-                throw "ISO creation with -LegacyIso requires Windows (IMAPI2). Re-run without -LegacyIso (requires cargo), or use -NoIso."
-            }
-            throw "ISO creation requires either cargo (deterministic, cross-platform) or Windows IMAPI2. Install Rust/cargo, re-run with -NoIso, or run this script on Windows."
+        if (-not (Get-IsWindows)) {
+            throw "ISO creation with -LegacyIso requires Windows (IMAPI2)."
         }
 
         $helper = Join-Path $PSScriptRoot "lib/New-IsoFile.ps1"
@@ -1533,9 +1533,8 @@ function Invoke-DeterminismSelfTest {
     $out1 = Join-Path $tempBase "run1"
     $out2 = Join-Path $tempBase "run2"
 
-    # Only test ISO determinism when we can use the deterministic Rust ISO builder (requires cargo).
-    # If cargo is unavailable, `Invoke-PackageDrivers` would fall back to IMAPI2 on Windows (which is
-    # intentionally *not* deterministic), or fail on non-Windows hosts.
+    # Only test ISO determinism when we can create an ISO (requires cargo).
+    # If cargo is unavailable, the self-test disables ISO creation via -NoIso.
     $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
     $canTestIso = -not [string]::IsNullOrWhiteSpace($cargoExe)
     $noIso = -not $canTestIso

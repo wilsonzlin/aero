@@ -8,7 +8,7 @@ param(
   [ValidateSet("auto", "minimal", "full")]
   [string]$GuestToolsProfile = "auto",
   # Also exercise the ISO-mounting code paths by creating a synthetic virtio-win ISO
-  # (via ci/lib/New-IsoFile.ps1; deterministic when cargo is available, with an IMAPI2 fallback)
+  # (via ci/lib/New-IsoFile.ps1; deterministic via the Rust ISO writer, requires cargo)
   # and running make-driver-pack.ps1 with -VirtioWinIso.
   [switch]$TestIsoMode,
   # Skip the second Guest Tools packaging run that validates wrapper defaults.

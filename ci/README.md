@@ -200,19 +200,19 @@ To intentionally write artifacts outside `<repo>/out`, pass `-AllowUnsafeOutDir`
 
 ### Deterministic ISO creation (cross-platform)
 
-When `cargo` is available, `ci/package-drivers.ps1` builds the bundle ISO using the deterministic Rust
+`ci/package-drivers.ps1` builds the bundle ISO using the deterministic Rust
 ISO writer (`tools/packaging/aero_packager`, binary: `aero_iso`). This makes the produced
 `AeroVirtIO-Win7-*.iso` **bit-identical** across runs/hosts as long as the staged bundle directory
 contents (and `SOURCE_DATE_EPOCH`, if set) are identical.
 
-- Works on Windows, Linux, and macOS (no IMAPI2 required).
-- Falls back to the legacy IMAPI2-based PowerShell implementation on Windows if `cargo` is missing.
-- Use `-LegacyIso` to force the IMAPI2 path (Windows only).
+- Requires `cargo` (Rust) and works on Windows, Linux, and macOS (no IMAPI2 required).
+- Use `-NoIso` to skip ISO creation.
+- Use `-LegacyIso` to force the legacy Windows IMAPI2 path (not deterministic).
 
 Notes:
 
-- `ci/package-drivers.ps1 -DeterminismSelfTest` checks that repeated runs produce identical `*-bundle.zip` artifacts, and (when `cargo` is available) identical `*.iso` artifacts too.
-- The legacy helper `ci/lib/New-IsoFile.ps1` also prefers the deterministic Rust ISO builder when `cargo` is available (use `-LegacyIso` to force IMAPI2).
+- `ci/package-drivers.ps1 -DeterminismSelfTest` checks that repeated runs produce identical `*-bundle.zip` artifacts, and identical `*.iso` artifacts when ISO creation is enabled.
+- The legacy helper `ci/lib/New-IsoFile.ps1` also requires `cargo` by default (use `-LegacyIso` to force IMAPI2).
 
 ### Signing policy
 
@@ -265,7 +265,7 @@ Artifacts (typical):
 - `AeroVirtIO-Win7-<version>-x86.zip`
 - `AeroVirtIO-Win7-<version>-x64.zip`
 - `AeroVirtIO-Win7-<version>-bundle.zip`
-- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; deterministic when `cargo` is available; legacy Windows IMAPI2 fallback via `-LegacyIso`)
+- `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; requires `cargo` for deterministic builds; legacy Windows IMAPI2 via `-LegacyIso`)
 - `AeroVirtIO-Win7-<version>-fat.vhd` (when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + admin; skipped unless `-FatImageStrict`)
 
 If `-Version` is not provided, the script derives a deterministic version string from git:

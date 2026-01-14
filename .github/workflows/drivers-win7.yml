@@ -667,6 +667,14 @@ jobs:
             out/certs/aero-test.cer
           if-no-files-found: error
 
+      - name: Setup Rust (for aero_packager)
+        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          cache: false
+          locked: always
+
       - name: Package artifacts (ci/package-drivers.ps1)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
         shell: pwsh
@@ -676,14 +684,6 @@ jobs:
             throw "Expected script ci\package-drivers.ps1 to exist."
           }
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci\package-drivers.ps1' -MakeFatImage
-
-      - name: Setup Rust (for aero_packager)
-        if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
-        uses: ./.github/actions/setup-rust
-        with:
-          toolchain: stable
-          cache: false
-          locked: always
 
       - name: Package Guest Tools media (ci/package-guest-tools.ps1)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
