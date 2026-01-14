@@ -112,6 +112,8 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
+    // Transfer execution is gated on USBCMD.RUN.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
@@ -183,6 +185,8 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
+    // Transfer execution is gated on USBCMD.RUN.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
