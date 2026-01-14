@@ -607,8 +607,9 @@ bool TestFvfXyzDiffuseEmitsInputLayoutAndShaders() {
     return false;
   }
 
-  // XYZ vertices are transformed by the fixed-function WVP path. The device
-  // initializes transforms to identity, so these inputs are already clip-space.
+  // XYZ vertices are transformed to clip-space by a draw-time CPU conversion
+  // path (fixed-function emulation). With identity transforms, these inputs are
+  // already clip-space.
   const VertexXyzDiffuse tri[3] = {
       {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
       {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
@@ -3290,6 +3291,7 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
     // Optional render-state setup.
     bool set_tfactor = false;
     uint32_t tfactor = 0u;
+    bool uses_tfactor = false;
 
     const void* expected_ps_bytes = nullptr;
     size_t expected_ps_size = 0;
@@ -3298,24 +3300,29 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
   const Case cases[] = {
       // Extended ops (RGB path). Keep ALPHA=TEXTURE so RGB expectations match common D3D9 usage.
       {"add", kD3dTopAdd, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
-       /*set_tfactor=*/false, 0u,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture)},
       {"subtract_tex_minus_diff", kD3dTopSubtract, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
-       /*set_tfactor=*/false, 0u,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture)},
       {"subtract_diff_minus_tex", kD3dTopSubtract, kD3dTaDiffuse, kD3dTaTexture, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
-       /*set_tfactor=*/false, 0u,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture, sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture)},
       {"modulate2x", kD3dTopModulate2x, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
-       /*set_tfactor=*/false, 0u,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture)},
       {"modulate4x", kD3dTopModulate4x, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
-       /*set_tfactor=*/false, 0u,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture)},
 
       // TFACTOR source (select arg1).
       {"tfactor_select", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
-       /*set_tfactor=*/true, 0xFF3366CCu,
+       /*set_tfactor=*/true, 0xFF3366CCu, /*uses_tfactor=*/true,
+       fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor)},
+      // Default TFACTOR is white (0xFFFFFFFF). Verify the driver uploads c0 even
+      // if the app never explicitly sets D3DRS_TEXTUREFACTOR.
+      {"tfactor_default", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/true,
        fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor)},
   };
 
@@ -3479,13 +3486,32 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       return false;
     }
 
-    // TFACTOR case: ensure the PS constant upload was emitted once (c0).
-    if (c.set_tfactor) {
+    // TFACTOR cases: ensure the PS constant upload was emitted once (c0) and
+    // contains the expected normalized RGBA value.
+    if (c.uses_tfactor) {
+      const uint32_t expected_tf = c.set_tfactor ? c.tfactor : 0xFFFFFFFFu;
+      const float expected_a = static_cast<float>((expected_tf >> 24) & 0xFFu) * (1.0f / 255.0f);
+      const float expected_r = static_cast<float>((expected_tf >> 16) & 0xFFu) * (1.0f / 255.0f);
+      const float expected_g = static_cast<float>((expected_tf >> 8) & 0xFFu) * (1.0f / 255.0f);
+      const float expected_b = static_cast<float>((expected_tf >> 0) & 0xFFu) * (1.0f / 255.0f);
+      const float expected_vec[4] = {expected_r, expected_g, expected_b, expected_a};
+
       size_t tfactor_uploads = 0;
       for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
         const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
         if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 0 || sc->vec4_count != 1) {
           continue;
+        }
+        if (!Check(hdr->size_bytes >= sizeof(*sc) + sizeof(expected_vec), "SET_SHADER_CONSTANTS_F contains payload")) {
+          return false;
+        }
+        const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+        if (!Check(std::fabs(payload[0] - expected_vec[0]) < 1e-6f &&
+                       std::fabs(payload[1] - expected_vec[1]) < 1e-6f &&
+                       std::fabs(payload[2] - expected_vec[2]) < 1e-6f &&
+                       std::fabs(payload[3] - expected_vec[3]) < 1e-6f,
+                   "TFACTOR constant payload matches expected RGBA")) {
+          return false;
         }
         ++tfactor_uploads;
       }

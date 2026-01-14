@@ -741,6 +741,7 @@ struct Device {
     // - SRCBLEND = ONE (2)
     // - DESTBLEND = ZERO (1)
     // - BLENDOP = ADD (1)
+    // - TEXTUREFACTOR = 0xFFFFFFFF (white, used by D3DTA_TFACTOR)
     // - ZENABLE = TRUE (1)
     // - ZWRITEENABLE = TRUE (1)
     // - CULLMODE = CCW (3)
@@ -748,6 +749,7 @@ struct Device {
     render_states[19] = 2u;    // D3DRS_SRCBLEND
     render_states[20] = 1u;    // D3DRS_DESTBLEND
     render_states[171] = 1u;   // D3DRS_BLENDOP
+    render_states[60] = 0xFFFFFFFFu; // D3DRS_TEXTUREFACTOR
     render_states[7] = 1u;     // D3DRS_ZENABLE
     render_states[14] = 1u;    // D3DRS_ZWRITEENABLE
     render_states[22] = 3u;    // D3DRS_CULLMODE
