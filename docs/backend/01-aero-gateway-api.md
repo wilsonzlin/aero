@@ -200,6 +200,10 @@ Relay contract:
 - The relay service is implemented by [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/).
 - WebRTC signaling schema and v1/v2 datagram framing (used by both the WebRTC DataChannel and the `GET /udp` WebSocket fallback) are specified in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../../proxy/webrtc-udp-relay/PROTOCOL.md).
 - Inbound UDP filtering: by default the relay only forwards inbound UDP from remote address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). This is safer for public deployments. If you need full-cone behavior (accept inbound UDP from any remote), set `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
+- WebRTC DataChannel DoS hardening: the relay configures pion/SCTP message-size caps to prevent malicious peers from sending extremely large WebRTC DataChannel messages that would otherwise be buffered/allocated before `DataChannel.OnMessage` runs. Relevant knobs:
+  - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP `a=max-message-size` hint; 0 = auto)
+  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (hard receive-side cap; 0 = auto; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
+- Session leak hardening: the relay closes server-side PeerConnections that never reach a connected state within `WEBRTC_SESSION_CONNECT_TIMEOUT` (default `30s`).
 - `GET /webrtc/ice` responses are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) because they may include sensitive TURN credentials (especially TURN REST ephemeral creds). Clients should not cache ICE responses beyond the lifetime of the returned credentials.
 
 #### Optional: refresh relay token (`POST /udp-relay/token`)
