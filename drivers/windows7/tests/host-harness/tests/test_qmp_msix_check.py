@@ -221,6 +221,84 @@ class QmpMsixParsingTests(unittest.TestCase):
             msg,
         )
 
+    def test_require_msix_check_unsupported_when_qmp_has_no_pci_introspection(self) -> None:
+        h = self.harness
+
+        def stub_collect(_endpoint):
+            # Simulate QMP builds that lack both `query-pci` and `human-monitor-command`.
+            return [], [], False, False
+
+        orig = h._qmp_collect_pci_msix_info
+        h._qmp_collect_pci_msix_info = stub_collect
+        try:
+            msg = h._require_virtio_msix_check_failure_message(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=1),
+                require_virtio_net_msix=True,
+                require_virtio_blk_msix=False,
+                require_virtio_snd_msix=False,
+            )
+        finally:
+            h._qmp_collect_pci_msix_info = orig
+
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: QMP_MSIX_CHECK_UNSUPPORTED:"), msg)
+
+    def test_require_msix_check_fails_when_query_throws(self) -> None:
+        h = self.harness
+
+        def stub_collect(_endpoint):
+            raise RuntimeError("boom")
+
+        orig = h._qmp_collect_pci_msix_info
+        h._qmp_collect_pci_msix_info = stub_collect
+        try:
+            msg = h._require_virtio_msix_check_failure_message(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=1),
+                require_virtio_net_msix=True,
+                require_virtio_blk_msix=False,
+                require_virtio_snd_msix=False,
+            )
+        finally:
+            h._qmp_collect_pci_msix_info = orig
+
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: QMP_MSIX_CHECK_FAILED:"), msg)
+
+    def test_require_msix_check_unsupported_when_state_unknown(self) -> None:
+        h = self.harness
+
+        # Device present, but neither query-pci nor info pci provides an enabled bit.
+        dev_id = sorted(h._VIRTIO_NET_PCI_DEVICE_IDS)[0]
+        query_infos = [
+            h._PciMsixInfo(
+                vendor_id=h._VIRTIO_PCI_VENDOR_ID,
+                device_id=dev_id,
+                bus=0,
+                slot=5,
+                function=0,
+                msix_enabled=None,
+                source="query-pci",
+            )
+        ]
+
+        def stub_collect(_endpoint):
+            return query_infos, [], True, False
+
+        orig = h._qmp_collect_pci_msix_info
+        h._qmp_collect_pci_msix_info = stub_collect
+        try:
+            msg = h._require_virtio_msix_check_failure_message(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=1),
+                require_virtio_net_msix=True,
+                require_virtio_blk_msix=False,
+                require_virtio_snd_msix=False,
+            )
+        finally:
+            h._qmp_collect_pci_msix_info = orig
+
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: QMP_MSIX_CHECK_UNSUPPORTED:"), msg)
+
 
 if __name__ == "__main__":
     unittest.main()
