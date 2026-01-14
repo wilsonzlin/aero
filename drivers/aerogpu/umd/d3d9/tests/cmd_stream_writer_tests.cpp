@@ -6830,6 +6830,216 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
 }
 
+bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSHADER hShader{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_shader = false;
+
+    ~Cleanup() {
+      if (has_shader && device_funcs.pfnDestroyShader) {
+        device_funcs.pfnDestroyShader(hDevice, hShader);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateShader != nullptr, "CreateShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyShader != nullptr, "DestroyShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShader != nullptr, "SetShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "SetShaderConstF must be available")) {
+    return false;
+  }
+
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x142u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Configure transforms so the expected WVP constants are deterministic.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+
+    auto set_identity = [](float m[16]) {
+      std::memset(m, 0, 16 * sizeof(float));
+      m[0] = 1.0f;
+      m[5] = 1.0f;
+      m[10] = 1.0f;
+      m[15] = 1.0f;
+    };
+
+    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
+    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
+    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
+
+    // Scale + translate.
+    dev->transform_matrices[256][0] = 2.0f;
+    dev->transform_matrices[256][5] = 3.0f;
+    dev->transform_matrices[256][10] = 4.0f;
+    dev->transform_matrices[256][12] = 5.0f;
+    dev->transform_matrices[256][13] = 6.0f;
+    dev->transform_matrices[256][14] = 7.0f;
+
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f};
+
+  // First draw uploads the fixed-function WVP constants and clears the dirty flag.
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP (first)")) {
+    return false;
+  }
+
+  // Bind a user VS and clobber the reserved fixed-function constant range.
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x00, 0x01, 0x02, 0x03};
+  D3D9DDI_HSHADER hShader{};
+  hr = cleanup.device_funcs.pfnCreateShader(
+      create_dev.hDevice, kD3d9ShaderStageVs, dxbc, static_cast<uint32_t>(sizeof(dxbc)), &hShader);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  cleanup.hShader = hShader;
+  cleanup.has_shader = true;
+
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, hShader);
+  if (!Check(hr == S_OK, "SetShader(VS)")) {
+    return false;
+  }
+
+  float clobber[16];
+  for (int i = 0; i < 16; ++i) {
+    clobber[i] = 99.0f;
+  }
+  hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice, kD3d9ShaderStageVs, 0, clobber, 4);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, c0..c3)")) {
+    return false;
+  }
+
+  // Clear VS -> return to fixed-function path without changing FVF.
+  D3D9DDI_HSHADER null_shader{};
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, null_shader);
+  if (!Check(hr == S_OK, "SetShader(VS=null)")) {
+    return false;
+  }
+
+  // Second draw must re-upload WVP constants (overwriting the clobber).
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP (second)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
+  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
+    return false;
+  }
+  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
+  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+    return false;
+  }
+  if (!Check(const_cmd->start_register == 0, "WVP constants start register")) {
+    return false;
+  }
+  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+    return false;
+  }
+  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
+  // WVP is uploaded as column vectors.
+  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
+    return false;
+  }
+  return true;
+}
+
 bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -15421,6 +15631,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants();
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();

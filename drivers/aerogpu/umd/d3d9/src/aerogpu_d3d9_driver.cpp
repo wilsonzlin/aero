@@ -11883,6 +11883,14 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   *user_slot = sh;
   stateblock_record_shader_locked(dev, stage, sh);
 
+  // Fixed-function bring-up path uses a reserved VS constant range for the
+  // WVP matrix. A user vertex shader may have written overlapping registers, so
+  // when the app later switches back to fixed-function (without necessarily
+  // changing FVF/decl), we must re-upload the matrix constants.
+  if (stage == kD3d9ShaderStageVs && sh && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
   // Bind exactly what the runtime requested. Fixed-function fallbacks are
   // re-bound lazily at draw time when `user_vs/user_ps` are both null.
   dev->vs = dev->user_vs;
@@ -11965,6 +11973,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   float* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
   std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(vec4_count) * 4 * sizeof(float));
   stateblock_record_shader_const_f_locked(dev, stage_norm, start_reg, pData, vec4_count);
+
+  // If the app writes to the fixed-function reserved matrix constant range,
+  // treat it as clobbered and re-upload on the next fixed-function draw.
+  if (stage_norm == kD3d9ShaderStageVs && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+    const uint32_t end_reg = start_reg + vec4_count;
+    const uint32_t ff_start = kFixedfuncMatrixStartRegister;
+    const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;
+    if (start_reg < ff_end && end_reg > ff_start) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+  }
 
   const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
