@@ -2213,6 +2213,7 @@ fn is_retryable_chunk_error(err: &anyhow::Error) -> bool {
         if msg.contains("size mismatch")
             || msg.contains("sha256 mismatch")
             || msg.contains("object not found (404)")
+            || msg.contains("unexpected Content-Encoding")
         {
             return false;
         }
@@ -4359,6 +4360,20 @@ mod tests {
         assert!(
             !is_retryable_chunk_error(&err),
             "expected missing chunk to be non-retryable; error chain was: {}",
+            error_chain_summary(&err)
+        );
+    }
+
+    #[test]
+    fn unexpected_content_encoding_is_non_retryable_even_with_context_wrapping() {
+        let err =
+            anyhow!("unexpected Content-Encoding for s3://bucket/prefix/chunks/00000000.bin: gzip");
+        let err = Err::<(), _>(err)
+            .context("GET s3://bucket/prefix/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(
+            !is_retryable_chunk_error(&err),
+            "expected content-encoding mismatch to be non-retryable; error chain was: {}",
             error_chain_summary(&err)
         );
     }
