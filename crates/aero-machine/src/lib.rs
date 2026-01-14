@@ -548,7 +548,6 @@ pub enum MachineError {
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
-    AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -5615,31 +5614,45 @@ Track progress: docs/21-smp.md\n\
 
         if let Some(kbd) = &self.virtio_input_keyboard {
             let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
-            let command = {
+            let (command, msix_enabled, msix_masked) = {
                 let mut pci_cfg = pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .map(|cfg| cfg.command())
-                    .unwrap_or(0)
+                match pci_cfg.bus_mut().device_config(bdf) {
+                    Some(cfg) => {
+                        let msix = cfg.capability::<MsixCapability>();
+                        (
+                            cfg.command(),
+                            msix.is_some_and(|msix| msix.enabled()),
+                            msix.is_some_and(|msix| msix.function_masked()),
+                        )
+                    }
+                    None => (0, false, false),
+                }
             };
             let mut dev = kbd.borrow_mut();
             dev.set_pci_command(command);
+            sync_virtio_msix_from_platform(&mut dev, msix_enabled, msix_masked);
             dev.poll_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
         }
 
         if let Some(mouse) = &self.virtio_input_mouse {
             let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
-            let command = {
+            let (command, msix_enabled, msix_masked) = {
                 let mut pci_cfg = pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .map(|cfg| cfg.command())
-                    .unwrap_or(0)
+                match pci_cfg.bus_mut().device_config(bdf) {
+                    Some(cfg) => {
+                        let msix = cfg.capability::<MsixCapability>();
+                        (
+                            cfg.command(),
+                            msix.is_some_and(|msix| msix.enabled()),
+                            msix.is_some_and(|msix| msix.function_masked()),
+                        )
+                    }
+                    None => (0, false, false),
+                }
             };
             let mut dev = mouse.borrow_mut();
             dev.set_pci_command(command);
+            sync_virtio_msix_from_platform(&mut dev, msix_enabled, msix_masked);
             dev.poll_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
         }
     }
@@ -6402,7 +6415,7 @@ Track progress: docs/21-smp.md\n\
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
                         Box::new(VirtioInput::new(VirtioInputDeviceKind::Keyboard)),
-                        Box::new(NoopVirtioInterruptSink),
+                        Box::new(VirtioMsixInterruptSink::new(interrupts.clone())),
                     )))),
                 }
             } else {
@@ -6421,7 +6434,7 @@ Track progress: docs/21-smp.md\n\
                     }
                     None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
                         Box::new(VirtioInput::new(VirtioInputDeviceKind::Mouse)),
-                        Box::new(NoopVirtioInterruptSink),
+                        Box::new(VirtioMsixInterruptSink::new(interrupts.clone())),
                     )))),
                 }
             } else {
