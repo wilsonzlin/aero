@@ -104,7 +104,8 @@ fn translates_structured_buffer_address_math() {
 
 #[test]
 fn rejects_structured_buffer_without_stride_declaration() {
-    let dxbc = dummy_dxbc();
+    let dxbc_bytes = dummy_dxbc_bytes();
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC parse");
     let signatures = ShaderSignatures::default();
 
     // Use a structured buffer instruction without declaring `dcl_resource_structured` / stride.
@@ -146,7 +147,8 @@ fn rejects_structured_buffer_without_stride_declaration() {
 
 #[test]
 fn rejects_structured_buffer_stride_not_multiple_of4() {
-    let dxbc = dummy_dxbc();
+    let dxbc_bytes = dummy_dxbc_bytes();
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC parse");
     let signatures = ShaderSignatures::default();
 
     let module = Sm4Module {
