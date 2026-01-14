@@ -464,6 +464,95 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(res.restoredDevices).toEqual([]);
   });
 
+  it("restores gpu.vram chunks best-effort when chunks are out-of-order/partial (holes remain zero)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const makeVramChunk = (data: Uint8Array, opts: { offset: number; totalLen: number; chunkIndex?: number }): Uint8Array => {
+        const headerBytes = 24;
+        const out = new Uint8Array(headerBytes + data.byteLength);
+        // "AERO"
+        out[0] = 0x41;
+        out[1] = 0x45;
+        out[2] = 0x52;
+        out[3] = 0x4f;
+        // version=1
+        out[4] = 0x01;
+        out[5] = 0x00;
+        // flags=chunkIndex
+        const chunkIndex = (opts.chunkIndex ?? 0) >>> 0;
+        out[6] = chunkIndex & 0xff;
+        out[7] = (chunkIndex >>> 8) & 0xff;
+        // magic u32 (0x01415256)
+        out[8] = 0x56;
+        out[9] = 0x52;
+        out[10] = 0x41;
+        out[11] = 0x01;
+        // total_len=u32, offset=u32, len=u32
+        const totalLen = opts.totalLen >>> 0;
+        const offset = opts.offset >>> 0;
+        const len = data.byteLength >>> 0;
+        out[12] = totalLen & 0xff;
+        out[13] = (totalLen >>> 8) & 0xff;
+        out[14] = (totalLen >>> 16) & 0xff;
+        out[15] = (totalLen >>> 24) & 0xff;
+        out[16] = offset & 0xff;
+        out[17] = (offset >>> 8) & 0xff;
+        out[18] = (offset >>> 16) & 0xff;
+        out[19] = (offset >>> 24) & 0xff;
+        out[20] = len & 0xff;
+        out[21] = (len >>> 8) & 0xff;
+        out[22] = (len >>> 16) & 0xff;
+        out[23] = (len >>> 24) & 0xff;
+        out.set(data, headerBytes);
+        return out;
+      };
+
+      const vramU8 = new Uint8Array(new SharedArrayBuffer(16));
+      vramU8.fill(0xcc);
+
+      // total_len=8 but chunk set is intentionally incomplete (offset 4..6 missing).
+      const chunkB = makeVramChunk(new Uint8Array([0, 1, 2, 3]), { totalLen: 8, offset: 0, chunkIndex: 0 });
+      const chunkA = makeVramChunk(new Uint8Array([6, 7]), { totalLen: 8, offset: 6, chunkIndex: 1 });
+      const invalidChunk = new Uint8Array([0x41, 0x45]); // truncated "AERO"
+
+      const api = {
+        vm_snapshot_restore_from_opfs: () => ({
+          cpu: new Uint8Array([0xaa]),
+          mmu: new Uint8Array([0xbb]),
+          // Provide chunks out-of-order + an invalid blob; restore should still succeed.
+          devices: [
+            { kind: `device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`, bytes: chunkA },
+            { kind: `device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`, bytes: invalidChunk },
+            { kind: `device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`, bytes: chunkB },
+          ],
+        }),
+      } as unknown as WasmApi;
+
+      const res = await restoreIoWorkerVmSnapshotFromOpfs({
+        api,
+        path: "state/test.snap",
+        guestBase: 0,
+        guestSize: 0x1000,
+        vramU8,
+        runtimes: {
+          usbXhciControllerBridge: null,
+          usbUhciRuntime: null,
+          usbUhciControllerBridge: null,
+          usbEhciControllerBridge: null,
+          netE1000: null,
+          netStack: null,
+        },
+      });
+
+      expect(Array.from(vramU8)).toEqual([0, 1, 2, 3, 0, 0, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0]);
+      expect(res.devices).toBeUndefined();
+      expect(res.restoredDevices).toEqual([]);
+      expect(warn.mock.calls.some((args) => String(args[0]).includes("Ignoring invalid gpu.vram chunk"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("clears VRAM to 0 on restore when snapshot has no gpu.vram blobs", async () => {
     const vramU8 = new Uint8Array(new SharedArrayBuffer(8));
     vramU8.fill(0xab);
