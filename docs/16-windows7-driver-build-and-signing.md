@@ -152,16 +152,17 @@ See also the examples under `drivers/_template/`:
 > Note: CI only builds/stages drivers with `ci-package.json`; drivers without it are treated as dev/test and skipped.
 >
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
->
->
+> 
+> 
 > The virtio-input driver under `drivers/windows7/virtio-input/` is revision-gated to Aero contract v1 (`...&REV_01`). The
-> canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) matches subsystem-qualified keyboard/mouse IDs
-> (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, plus a strict revision-gated generic fallback HWID
-> (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where subsystem IDs are not exposed/recognized.
-> If your tooling expects the legacy INF filename, the repo also carries a legacy filename alias INF
-> (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) which is kept byte-for-byte identical to
-> `inf/aero_virtio_input.inf` from `[Version]` onward. Avoid shipping both INFs at once (overlapping matches can cause
-> confusing driver selection). Prefer explicit `ci-package.json` `infFiles` allowlists.
+> canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is intentionally strict and **SUBSYS-gated only**
+> (`SUBSYS_0010`/`SUBSYS_0011`) for deterministic binding and distinct Device Manager names.
+> If you need an opt-in strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where subsystem IDs
+> are not exposed/recognized, enable the legacy alias INF (`inf/virtio-input.inf.disabled` → `inf/virtio-input.inf`).
+> The alias INF is allowed to differ in the models sections to provide the fallback match, but should otherwise stay in sync
+> with the canonical INF (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+> Avoid shipping both INFs at once (overlapping matches can cause confusing driver selection). Prefer explicit
+> `ci-package.json` `infFiles` allowlists.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json

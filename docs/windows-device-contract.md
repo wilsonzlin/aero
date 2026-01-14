@@ -241,15 +241,17 @@ Examples (illustrative) INF model entries:
 
  ; aero_virtio_snd.inf
    %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
- 
-   ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-     %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-     %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-     %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
- 
-   ; Note: the repo also carries a legacy filename alias INF (`virtio-input.inf.disabled`), which is kept
-   ; byte-for-byte identical to `aero_virtio_input.inf` from `[Version]` onward for compatibility with
-   ; older tooling/workflows that still reference `virtio-input.inf`.
+  
+    ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
+      %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+      %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+  
+    ; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
+      %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+  
+    ; Note: the repo also carries a legacy filename alias INF (`virtio-input.inf.disabled`) to provide an opt-in
+    ; strict generic fallback HWID match. It is expected to stay in sync with `aero_virtio_input.inf` outside the
+    ; models sections (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
