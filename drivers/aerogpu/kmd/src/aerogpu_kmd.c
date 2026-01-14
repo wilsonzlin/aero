@@ -3069,11 +3069,41 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 
         ULONG head = 0;
         if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            if (!Adapter->RingHeader) {
+            /*
+             * For v1, ring head is in system memory (ring header). Still gate on the same
+             * conditions as other MMIO/ring interactions so we don't race resume/teardown
+             * windows where the ring may be reinitialised.
+             */
+            if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+                    DxgkDevicePowerStateD0 ||
+                InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
                 KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
                 return;
             }
-            head = Adapter->RingHeader->head;
+
+            if (!Adapter->RingVa || Adapter->RingEntryCount == 0 || Adapter->RingSizeBytes < sizeof(struct aerogpu_ring_header)) {
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
+
+            const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)Adapter->RingVa;
+            const ULONG ringEntryCount = Adapter->RingEntryCount;
+            const ULONGLONG minRingBytes =
+                (ULONGLONG)sizeof(struct aerogpu_ring_header) +
+                (ULONGLONG)ringEntryCount * (ULONGLONG)sizeof(struct aerogpu_submit_desc);
+            if ((ringEntryCount & (ringEntryCount - 1)) != 0 ||
+                minRingBytes > (ULONGLONG)Adapter->RingSizeBytes ||
+                ringHeader->magic != AEROGPU_RING_MAGIC ||
+                (ringHeader->abi_version >> 16) != AEROGPU_ABI_MAJOR ||
+                ringHeader->entry_count != ringEntryCount ||
+                ringHeader->entry_stride_bytes != sizeof(struct aerogpu_submit_desc) ||
+                (ULONGLONG)ringHeader->size_bytes < minRingBytes ||
+                ringHeader->size_bytes > (uint32_t)Adapter->RingSizeBytes) {
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
+
+            head = ringHeader->head;
         } else {
             if (!Adapter->Bar0 || Adapter->RingEntryCount == 0) {
                 KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
