@@ -13,7 +13,8 @@ This document specifies the translation layer that maps D3D10/11 concepts onto *
 
 > Protocol note: **AeroGPU ABI 1.3+** (minor bump) introduces the guest↔host command-stream
 > extensions needed for D3D10/11 parity:
-> - GS/HS/DS support via `*_stage_ex` shader-stage extensions
+> - GS support via the explicit `shader_stage = GEOMETRY` encoding (and `stage_ex` extensions for HS/DS;
+>   GS also has a `stage_ex` compatibility encoding)
 > - extended `BIND_SHADERS` encoding
 > - additional primitive topologies (beyond the original D3D9-oriented subset)
 

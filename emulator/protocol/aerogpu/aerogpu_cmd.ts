@@ -266,6 +266,9 @@ export type AerogpuShaderStage = (typeof AerogpuShaderStage)[keyof typeof Aerogp
 //   - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
 //     `AerogpuShaderStageEx`.
 //
+// Note: Geometry is also representable directly via `shaderStage=Geometry` in the legacy stage enum;
+// `stage_ex` is primarily needed for HS/DS (and as a compatibility encoding for GS).
+//
 // Numeric values intentionally match DXBC program type values for non-zero types:
 //   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
 //

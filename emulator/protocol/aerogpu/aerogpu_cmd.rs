@@ -187,6 +187,9 @@ impl AerogpuShaderStage {
 ///
 /// Note: values intentionally do **not** match [`AerogpuShaderStage`] (legacy stage enum).
 ///
+/// Note: Geometry is also representable directly as [`AerogpuShaderStage::Geometry`] in the legacy
+/// stage enum; `stage_ex` is primarily needed for HS/DS (and as a compatibility encoding for GS).
+///
 /// Numeric values intentionally match DXBC program type values for non-zero types:
 ///   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
 ///

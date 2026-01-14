@@ -84,8 +84,10 @@ compute expansion prepass before the render pass.
 
 Implemented today:
 
-- **`stage_ex` bindings**: resource-binding opcodes can target GS/HS/DS binding tables without
-  clobbering compute-stage bindings (see “Resource binding model” below).
+- **GS/HS/DS bindings**: resource-binding opcodes can target GS (and future HS/DS) binding tables
+  without clobbering compute-stage bindings (see “Resource binding model” below). GS can be
+  addressed either via `shader_stage = GEOMETRY` (preferred) or via the `stage_ex` compatibility
+  encoding; HS/DS require `stage_ex`.
 - **Extended `BIND_SHADERS`**: the `BIND_SHADERS` packet can carry `gs/hs/ds` handles, and draws route
   through a dedicated “compute prepass” path when any of these stages are bound.
 - **GS DXBC execution via compute emulation (supported subset)**:
@@ -186,7 +188,7 @@ Aero’s binding model is stage-scoped. In the AeroGPU command-stream executor (
 - `@group(2)`: CS resources
 - `@group(3)`: reserved internal / emulation group (keeps the total bind-group count within WebGPU’s
   baseline `maxBindGroups >= 4` guarantee):
-  - GS/HS/DS (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
+  - GS/HS/DS resources (tracked separately from CS to avoid clobbering)
   - internal expansion helpers (vertex pulling, etc) using `@binding >= BINDING_BASE_INTERNAL` to
     avoid collisions with D3D `b#`/`t#`/`s#`/`u#` bindings.
 
@@ -244,19 +246,27 @@ Note: the full GS/HS/DS emulation pipeline will need a unified bind-group layout
 
 ### AeroGPU command stream note: `stage_ex`
 
-The AeroGPU command stream historically only had `Vertex/Pixel/Compute` stage enums.
-To bind resources for additional D3D stages (GS/HS/DS) without breaking ABI, the protocol supports a
-“stage_ex” extension (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`):
+The AeroGPU command stream has legacy `shader_stage` enums that mirror WebGPU (VS/PS/CS) and also
+includes an explicit Geometry stage (`shader_stage = GEOMETRY`).
 
-- For certain binding commands (`SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`):
+To support additional D3D programmable stages (HS/DS) without breaking ABI, some packets support a
+“stage_ex” extension that overloads the `reserved0` field when `shader_stage == COMPUTE` (see
+`emulator/protocol/aerogpu/aerogpu_cmd.rs`).
+
+- Preferred GS encoding:
+  - set `shader_stage = GEOMETRY` and `reserved0 = 0`
+  - this avoids accidentally clobbering CS bindings on hosts that do not implement `stage_ex`
+- `stage_ex` encoding (required for HS/DS; may also be used for GS for compatibility):
   - set `shader_stage = COMPUTE` (legacy value `2`)
-  - use `reserved0` as a small `stage_ex` tag (values match DXBC program types for non-zero types):
-    - `1 = Vertex`, `2 = Geometry`, `3 = Hull`, `4 = Domain`, `5 = Compute`
-  - for compatibility, `reserved0 == 0` is treated as “legacy compute” in binding packets; any
-    non-zero `stage_ex` value selects the stage encoded by `stage_ex` (commonly GS/HS/DS). (Pixel
-    shaders use the legacy `shader_stage = PIXEL` field; `0` is reserved for legacy compute.)
+  - set `reserved0` to a non-zero DXBC program type:
+    - `1 = VS`, `2 = GS`, `3 = HS`, `4 = DS`, `5 = CS`
+  - `reserved0 == 0` retains legacy compute semantics.
+  - Pixel shaders use `shader_stage = PIXEL`; `stage_ex` cannot represent Pixel because `0` is
+    reserved for legacy compute.
 
-This keeps older hosts/guests forward-compatible while letting newer versions express GS-stage bindings.
+Packets that carry a `stage_ex` selector in `reserved0` include: `SET_TEXTURE`, `SET_SAMPLERS`,
+`SET_CONSTANT_BUFFERS`, `SET_SHADER_RESOURCE_BUFFERS`, `SET_UNORDERED_ACCESS_BUFFERS`, and
+`SET_SHADER_CONSTANTS_F`.
 
 ---
 
