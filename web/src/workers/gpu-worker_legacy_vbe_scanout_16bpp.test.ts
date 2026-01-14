@@ -91,6 +91,151 @@ function writeRgb5652x2(dst: Uint8Array, pitchBytes: number): void {
 }
 
 describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
+  it("reads legacy VBE 16bpp scanout from guest RAM (expands to RGBA8)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    // Case 1: B5G6R5 2x2.
+    const rgb565Width = 2;
+    const rgb565Height = 2;
+    const rgb565PitchBytes = 8; // padded (rowBytes=4)
+    const rgb565BasePaddr = 0x1000;
+    const rgb565RequiredBytes = rgb565PitchBytes * rgb565Height;
+
+    views.guestU8.fill(0);
+    writeRgb5652x2(views.guestU8.subarray(rgb565BasePaddr, rgb565BasePaddr + rgb565RequiredBytes), rgb565PitchBytes);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+      basePaddrLo: rgb565BasePaddr >>> 0,
+      basePaddrHi: 0,
+      width: rgb565Width,
+      height: rgb565Height,
+      pitchBytes: rgb565PitchBytes,
+      format: SCANOUT_FORMAT_B5G6R5,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      });
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
+        10_000,
+      );
+
+      // Screenshot B5G6R5.
+      {
+        const requestId = 1;
+        const shotPromise = waitForWorkerMessage(
+          worker,
+          (msg) =>
+            (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+            (msg as { type?: unknown }).type === "screenshot" &&
+            (msg as { requestId?: unknown }).requestId === requestId,
+          10_000,
+        );
+        worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
+
+        const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+        expect(shot.width).toBe(rgb565Width);
+        expect(shot.height).toBe(rgb565Height);
+        expect(Array.from(new Uint8Array(shot.rgba8))).toEqual([
+          // Row 0: red, green.
+          0xff, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff,
+          // Row 1: blue, white.
+          0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ]);
+      }
+
+      // Case 2: B5G5R5A1 2x1.
+      const b5g5r5a1Width = 2;
+      const b5g5r5a1Height = 1;
+      const b5g5r5a1PitchBytes = 4;
+      const b5g5r5a1BasePaddr = 0x2000;
+
+      // Two pixels: red with alpha=1 (0xFC00), red with alpha=0 (0x7C00).
+      views.guestU8.set([0x00, 0xfc, 0x00, 0x7c], b5g5r5a1BasePaddr);
+      publishScanoutState(views.scanoutStateI32!, {
+        source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+        basePaddrLo: b5g5r5a1BasePaddr >>> 0,
+        basePaddrHi: 0,
+        width: b5g5r5a1Width,
+        height: b5g5r5a1Height,
+        pitchBytes: b5g5r5a1PitchBytes,
+        format: SCANOUT_FORMAT_B5G5R5A1,
+      });
+
+      {
+        const requestId = 2;
+        const shotPromise = waitForWorkerMessage(
+          worker,
+          (msg) =>
+            (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+            (msg as { type?: unknown }).type === "screenshot" &&
+            (msg as { requestId?: unknown }).requestId === requestId,
+          10_000,
+        );
+        worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
+
+        const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+        expect(shot.width).toBe(b5g5r5a1Width);
+        expect(shot.height).toBe(b5g5r5a1Height);
+        expect(Array.from(new Uint8Array(shot.rgba8))).toEqual([
+          // Pixel 0: A=1
+          0xff, 0x00, 0x00, 0xff,
+          // Pixel 1: A=0
+          0xff, 0x00, 0x00, 0x00,
+        ]);
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("reads B5G6R5 legacy VBE scanout from the VRAM aperture and expands to RGBA8", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
@@ -301,4 +446,3 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     }
   }, 20_000);
 });
-
