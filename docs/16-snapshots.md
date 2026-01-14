@@ -310,7 +310,9 @@ Snapshot policy (multiple controllers):
 
 - Outer `DeviceState.id = DeviceId::USB`
 - `DeviceState.data`:
-  - Legacy: raw `aero-io-snapshot` TLV blob produced by the single UHCI controller/runtime.
+  - Legacy: raw `aero-io-snapshot` TLV blob produced by a single USB controller snapshot (most
+    commonly UHCI; some older builds stored raw xHCI/EHCI snapshots here before the AUSB container
+    was introduced).
   - Multi-controller: `"AUSB"` container holding per-controller blobs (each typically an
     `aero-io-snapshot` TLV).
     - Inner `DEVICE_ID` examples:
