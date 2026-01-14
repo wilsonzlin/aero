@@ -434,7 +434,12 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 
 `aerogpu_dbgctl.exe` is assumed to be a small command-line tool shipped with the driver package that talks to the AeroGPU KMD via a **driver-private escape** path (`DxgkDdiEscape` via `D3DKMTEscape`).
 
-### 5.1 Where to find dbgctl (packaged locations)
+### 5.1 Where to find dbgctl on Guest Tools media
+
+On a default Aero Guest Tools ISO/zip mount (often `X:`), dbgctl is shipped at:
+
+- Win7 x64: `X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+- Win7 x86: `X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 
 **Packaged location (relative to the `aerogpu` driver directory / package root):**
 
