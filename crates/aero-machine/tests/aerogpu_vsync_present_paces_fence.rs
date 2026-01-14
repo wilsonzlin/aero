@@ -197,12 +197,13 @@ fn aerogpu_vsync_present_paces_fence_until_next_vblank() {
     assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
 
     // Advance time to just before the next vblank and confirm the fence is still pending.
-    let clock = m.platform_clock().expect("pc platform enabled");
     let vblank_period_ns =
         m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS));
     assert_ne!(vblank_period_ns, 0);
 
-    clock.advance_ns(u64::from(vblank_period_ns) - 1);
+    // Note: advancing the `platform_clock` alone does not tick timer devices; use the canonical
+    // `Machine::tick_platform` helper to keep AeroGPU vblank state and fence pacing coherent.
+    m.tick_platform(u64::from(vblank_period_ns) - 1);
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
@@ -214,7 +215,7 @@ fn aerogpu_vsync_present_paces_fence_until_next_vblank() {
     assert_eq!(completed_fence, 0);
 
     // Advance to the vblank edge; the vsynced present should now complete.
-    clock.advance_ns(1);
+    m.tick_platform(1);
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
@@ -522,12 +523,11 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
     assert_eq!(completed_fence, 0);
 
     // Advance to first vblank and ensure exactly one fence completes.
-    let clock = m.platform_clock().expect("pc platform enabled");
     let vblank_period_ns =
         m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS));
     assert_ne!(vblank_period_ns, 0);
 
-    clock.advance_ns(u64::from(vblank_period_ns));
+    m.tick_platform(u64::from(vblank_period_ns));
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
@@ -539,7 +539,7 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
     assert_eq!(completed_fence, signal_fence0);
 
     // Next vblank completes the second fence.
-    clock.advance_ns(u64::from(vblank_period_ns));
+    m.tick_platform(u64::from(vblank_period_ns));
     m.process_aerogpu();
     m.poll_pci_intx_lines();
 
