@@ -349,6 +349,11 @@ Multi-core enablement needs focused tests because bugs often manifest as hangs o
     2. BSP sends INIT+SIPI to start an AP.
     3. BSP sends a fixed IPI; AP observes/handles it.
 
+These tests are implemented against the minimal deterministic SMP/APIC model in:
+
+- `crates/aero-smp-model` (crate `aero_smp_model`)
+  - Tests: `crates/aero-smp-model/tests/`
+
 ## Integration Tests
 
 ### Boot Tests
