@@ -4,7 +4,7 @@ use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::USB_XHCI_QEMU;
 use aero_devices::pci::{MsiCapability, PciBdf, PciDevice};
-use aero_devices::usb::xhci::XhciPciDevice;
+use aero_devices::usb::xhci::{regs, XhciPciDevice};
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use aero_platform::interrupts::{
     InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
@@ -275,6 +275,116 @@ fn pc_platform_xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_pro
 
     // Sync once more so the canonical config space reflects the pending-bit clear.
     pc.tick(0);
+    assert_eq!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
+    );
+}
+
+#[test]
+fn pc_platform_xhci_mmio_side_effect_mirrors_msi_pending_bits_immediately() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Switch into APIC mode so MSI delivery reaches the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable BAR0 MMIO decode + bus mastering. The xHCI PCI wrapper triggers a synthetic
+    // DMA-on-RUN probe as an immediate MMIO side effect when BME is enabled, which in turn asserts
+    // an interrupt condition.
+    pci_enable_mmio(&mut pc, bdf);
+    pci_enable_bus_mastering(&mut pc, bdf);
+
+    // Program MSI, but leave the MSI address unprogrammed/invalid so delivery is blocked and the
+    // device latches its MSI pending bit.
+    let msi_cap = find_capability(&mut pc, bdf, PCI_CAP_ID_MSI)
+        .expect("xHCI should expose an MSI capability in PCI config space");
+    let base = u16::from(msi_cap);
+
+    let ctrl = pci_cfg_read_u16(&mut pc, bdf, base + 0x02);
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(
+        per_vector_masking,
+        "test requires per-vector masking support"
+    );
+    let (data_off, mask_off, pending_off) = if is_64bit {
+        (base + 0x0c, base + 0x10, base + 0x14)
+    } else {
+        (base + 0x08, base + 0x0c, base + 0x10)
+    };
+
+    let vector: u8 = 0x67;
+    // Address low/high left as 0: invalid xAPIC MSI address.
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x04, 0);
+    if is_64bit {
+        pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
+    }
+    pci_cfg_write_u16(&mut pc, bdf, data_off, u16::from(vector));
+    pci_cfg_write_u32(&mut pc, bdf, mask_off, 0); // unmask
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x02, ctrl | 1); // MSI enable
+
+    assert_eq!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "pending bit should start clear"
+    );
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    let bar0_base = pci_read_bar(&mut pc, bdf, XhciPciDevice::MMIO_BAR_INDEX).base;
+    assert_ne!(bar0_base, 0);
+
+    // Set a non-zero CRCR pointer so the xHCI controller's DMA-on-RUN probe performs a DMA read.
+    let crcr_paddr: u64 = 0x1000;
+    pc.memory.write_u32(crcr_paddr, 0);
+    pc.memory
+        .write_u32(bar0_base + regs::REG_CRCR_LO, crcr_paddr as u32);
+    pc.memory.write_u32(bar0_base + regs::REG_CRCR_HI, 0);
+
+    // Start the controller. This triggers the DMA-on-RUN probe and an interrupt attempt as an
+    // *immediate* side effect of this MMIO write. The MSI capability should latch the pending bit.
+    pc.memory
+        .write_u32(bar0_base + regs::REG_USBCMD, regs::USBCMD_RUN);
+
+    // The platform owns the canonical PCI config space, but we expect the pending bit to be
+    // mirrored back into canonical config space immediately after the MMIO write, without needing
+    // an explicit `tick`.
+    assert_ne!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to be guest-visible immediately after MMIO-triggered interrupt"
+    );
+    assert_eq!(
+        pc.interrupts.borrow().get_pending(),
+        None,
+        "MSI delivery should be blocked while the message address is invalid"
+    );
+
+    // Now program a valid MSI address and perform another MMIO write so the device services its
+    // pending bit and delivers the MSI message.
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x04, 0xfee0_0000);
+    if is_64bit {
+        pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
+    }
+    pc.memory
+        .write_u32(bar0_base + regs::REG_USBCMD, regs::USBCMD_RUN);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
+    pc.interrupts.borrow_mut().acknowledge(vector);
+    pc.interrupts.borrow_mut().eoi(vector);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
     assert_eq!(
         pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
         0,
