@@ -3887,6 +3887,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_rejects_too_large_chunk_size() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.chunk_size = MAX_CHUNK_SIZE_BYTES + SECTOR_SIZE as u64;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("--chunk-size too large"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn publish_rejects_non_sector_aligned_virtual_disk_size() -> Result<()> {
         use std::io::Write;
 
@@ -4064,6 +4088,29 @@ mod tests {
             .expect_err("expected chunkIndexWidth validation failure");
         assert!(
             err.to_string().contains("chunkIndexWidth too small"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_size_too_large() {
+        let big = MAX_CHUNK_SIZE_BYTES + SECTOR_SIZE as u64;
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: big,
+            chunk_size: big,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkSize validation failure");
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("chunksize")
+                && err.to_string().to_ascii_lowercase().contains("too large"),
             "unexpected error: {err}"
         );
     }
