@@ -66,7 +66,12 @@ async function main() {
 
   try {
     const config = {
-      guestMemoryMiB: 16,
+      // This harness only needs enough guest RAM for:
+      // - the boot sector at 0x7C00, and
+      // - the VGA text region at 0xB8000 (used to publish the deterministic VGA signature).
+      //
+      // Keep guest RAM tiny to reduce Playwright/CI shared `WebAssembly.Memory` pressure.
+      guestMemoryMiB: 1,
       // This harness boots a VGA/serial-only guest; it does not require a BAR1/VRAM aperture.
       vramMiB: 0,
       enableWorkers: true,
