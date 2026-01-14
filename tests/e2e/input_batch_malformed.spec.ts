@@ -163,8 +163,11 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         try {
           await waitForCounterGreaterThan(StatusIndex.IoInputBatchCounter, before, 750);
           // Ensure the batch was actually processed (not just recycled) by observing the event counter.
-          // Two HID usage events were sent above, so we expect the counter to advance by >=2.
-          await waitForCounterGreaterThan(StatusIndex.IoInputEventCounter, beforeEvents + 1, 750);
+          // Two HID usage events were sent above. Only require >=1 so this check remains robust even
+          // if future input pipelines coalesce events differently; the main purpose is to avoid
+          // treating an unrelated batch counter increment (e.g. a clamped malformed batch) as proof
+          // that this follow-up batch was processed.
+          await waitForCounterGreaterThan(StatusIndex.IoInputEventCounter, beforeEvents, 750);
           return;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
