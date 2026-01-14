@@ -93,6 +93,10 @@ Troubleshooting (some agent environments lose executable bits and/or tracked fix
   - `git checkout -- .` (bigger hammer), or at least:
   - `git checkout -- scripts tools/packaging/aero_packager/testdata tools/disk-streaming-browser-e2e/fixtures`
   - Non-git fallback: `find scripts -name '*.sh' -exec chmod +x {} +`
+- If Git fails with a stale auto-GC lock (e.g. `fatal: Unable to create '.git/gc.pid.lock': File exists`), remove the lock file and retry:
+  - `rm -f .git/gc.pid.lock`
+- When scripting `git commit -m ...` from a shell, avoid backticks in the commit message (they trigger command substitution). Prefer single quotes:
+  - `git commit -m 'chore: message with `code` formatting'` will *expand* the backticked section in most shells; use `git commit -m 'chore: message with code formatting'` or escape backticks.
 
 Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
 
