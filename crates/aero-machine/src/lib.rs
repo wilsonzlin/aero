@@ -5481,16 +5481,16 @@ impl Machine {
     /// - Once the guest claims AeroGPU WDDM scanout (writes a valid `SCANOUT0_*` config and
     ///   enables it), WDDM owns scanout and legacy VGA/VBE is ignored by presentation even if
     ///   legacy MMIO/PIO continues to accept writes for compatibility.
-    /// - Clearing `SCANOUT0_ENABLE` explicitly disables scanout and releases WDDM ownership so the
-    ///   host can fall back to legacy VGA/VBE.
-    /// - Device/VM reset also reverts scanout ownership back to legacy.
+    /// - Clearing `SCANOUT0_ENABLE` explicitly disables scanout (blanking), but WDDM ownership
+    ///   remains sticky (legacy output remains suppressed until reset).
+    /// - Device/VM reset reverts scanout ownership back to legacy.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
             let state = aerogpu_mmio.borrow().scanout0_state();
-            // WDDM scanout is only considered active while both the WDDM ownership claim is held and
-            // the scanout is enabled. This is defensive against inconsistent snapshot/restore
-            // state, where these flags may become out of sync.
-            if state.wddm_scanout_active && state.enable {
+            // Once the guest has claimed WDDM scanout, treat it as the authoritative scanout
+            // source until VM reset. `SCANOUT0_ENABLE=0` is a visibility toggle (blanking) and does
+            // not release ownership back to legacy VGA/VBE.
+            if state.wddm_scanout_active {
                 return ScanoutSource::Wddm;
             }
         }
@@ -5561,7 +5561,7 @@ impl Machine {
         if self.cfg.enable_aerogpu {
             // While the guest WDDM driver has claimed scanout (valid `SCANOUT0_*` + `ENABLE=1`),
             // prefer presenting that framebuffer over the VBE/text fallbacks. Disabling scanout
-            // releases the claim and allows falling back to legacy VBE/text.
+            // (`ENABLE=0`) blanks output but does not release WDDM ownership back to legacy VGA/VBE.
             if self.display_present_aerogpu_scanout() {
                 return;
             }
@@ -5895,15 +5895,18 @@ impl Machine {
             (dev.scanout0_state(), dev.cursor_snapshot())
         };
 
-        // WDDM scanout is only active while both:
-        // - the device has claimed WDDM ownership (`wddm_scanout_active`), and
-        // - the scanout is enabled (`SCANOUT0_ENABLE=1`).
-        //
-        // Explicitly disabling scanout (`SCANOUT0_ENABLE=0`) releases ownership and should allow
-        // callers to fall back to legacy VBE/text. This is also defensive against inconsistent
-        // snapshot/restore state where these flags could become out of sync.
-        if !(state.wddm_scanout_active && state.enable) {
+        // WDDM scanout is active once the device has claimed WDDM ownership. After claim, legacy
+        // VGA/VBE sources must not steal scanout back until VM reset.
+        if !state.wddm_scanout_active {
             return false;
+        }
+        if !state.enable {
+            // `SCANOUT0_ENABLE=0` is treated as a visibility toggle: blank output but do not fall
+            // back to legacy presentation paths.
+            self.display_fb.clear();
+            self.display_width = 0;
+            self.display_height = 0;
+            return true;
         }
         // Gate device-initiated scanout reads on PCI COMMAND.BME.
         let command = {

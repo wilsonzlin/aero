@@ -260,41 +260,39 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (width, height));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
-    // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until the guest explicitly
-    // disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets. Explicit disable releases WDDM
-    // ownership and allows falling back to the legacy presentation paths.
+    // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until VM reset. Disabling
+    // scanout (`SCANOUT0_ENABLE=0`) blanks output but does not release WDDM ownership.
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
         0,
     );
     m.process_aerogpu();
     m.display_present();
-    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
-    assert_eq!(m.display_resolution(), legacy_text_res);
-    let fb_before = m.display_framebuffer().to_vec();
-    assert!(!fb_before.is_empty());
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
 
-    // Legacy text memory changes should become visible again once WDDM releases scanout.
+    // Legacy text memory changes must remain suppressed while WDDM owns scanout, even when scanout
+    // is explicitly disabled (visibility toggle).
     m.write_physical(0xB8000, &vec![0u8; 0x8000]);
     m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
     m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
     m.write_physical_u8(0xB8000, b'Y');
     m.write_physical_u8(0xB8001, 0x1F);
     m.display_present();
-    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
-    assert_eq!(m.display_resolution(), legacy_text_res);
-    let fb_after = m.display_framebuffer().to_vec();
-    assert!(!fb_after.is_empty());
-    assert_ne!(fb_after, fb_before);
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
 
-    // Reset remains in legacy.
+    // Reset releases WDDM scanout ownership and reverts to legacy.
     m.reset();
     m.write_physical(0xB8000, &vec![0u8; 0x8000]);
     m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
     m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
     m.write_physical_u8(0xB8000, b'R');
     m.write_physical_u8(0xB8001, 0x1F);
-    assert_ne!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     m.display_present();
-    assert_ne!(m.display_resolution(), (0, 0));
+    assert_eq!(m.display_resolution(), legacy_text_res);
+    assert!(!m.display_framebuffer().is_empty());
 }

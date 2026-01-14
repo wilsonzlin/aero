@@ -154,18 +154,21 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer(), expected.as_slice());
 
-    // Explicit scanout disable releases WDDM scanout ownership: the machine falls back to legacy
-    // text presentation and the shared scanout descriptor reverts to the legacy source.
+    let gen_wddm = scanout_state.snapshot().generation;
+
+    // Explicit scanout disable is treated as a visibility toggle: the machine blanks output and
+    // publishes a disabled WDDM scanout descriptor so legacy VGA cannot steal scanout back.
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
     );
     m.process_aerogpu();
     m.display_present();
-    assert_eq!(m.display_resolution(), legacy_res);
-    assert!(!m.display_framebuffer().is_empty());
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
     let snap = scanout_state.snapshot();
-    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+    assert_ne!(snap.generation, gen_wddm);
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap.base_paddr(), 0);
     assert_eq!(snap.width, 0);
     assert_eq!(snap.height, 0);
