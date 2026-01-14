@@ -26,7 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
-| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind + stage bindings (host has compute-prepass scaffolding (synthetic expansion fallback; minimal SM4 GS DXBC execution for non-indexed point-list draws); see below) |
+| Geometry shaders (GS) | **Supported (partial)**: create+bind (legacy: handle in `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use appended `{gs,hs,ds}`) | **Supported (partial)**: create+bind (legacy: handle in `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use appended `{gs,hs,ds}`) | **Supported (partial)**: create+bind+stage bindings; host runs compute-prepass emulation (synthetic fallback + partial point-list GS DXBC execution) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -85,11 +85,14 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0` (should match the appended `gs`).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for broader GS compute-emulation, but today only non-indexed point-list draws can execute translated SM4 GS DXBC (other draws use synthetic expansion).
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for future GS compute-emulation, but today only non-indexed point-list draws can execute translated SM4 GS DXBC and the supported subset does not yet use textures/buffers (unsupported cases still fall back to synthetic expansion).
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; AeroGPU uses a **compute prepass + indirect draw** path when GS/HS/DS emulation is required.
     - The executor includes a deterministic synthetic-expansion compute prepass used for bring-up/fallback (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-    - A minimal GS DXBC/SM4 → WGSL compute translator exists in `crates/aero-d3d11/src/runtime/gs_translate.rs` and is partially wired into the executor: translation is attempted at `CREATE_SHADER_DXBC`, and non-indexed point-list draws can execute the translated compute prepass (see `exec_geometry_shader_prepass_pointlist`). Strip-cut/RestartStrip expansion helpers live in `crates/aero-d3d11/src/runtime/strip_to_list.rs`.
+    - A minimal SM4 GS DXBC→WGSL compute translator exists in `crates/aero-d3d11/src/runtime/gs_translate.rs` and is partially wired into the executor:
+      - `CREATE_SHADER_DXBC` attempts to translate GS DXBC into a compute prepass.
+      - Non-indexed `PointList` draws can execute the translated prepass when translation succeeds (see `exec_geometry_shader_prepass_pointlist`).
+      - Strip-cut/RestartStrip expansion helpers live in `crates/aero-d3d11/src/runtime/strip_to_list.rs`.
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding:
       - Preferred: `shader_stage = GEOMETRY`, `reserved0 = 0`
       - Compatibility (`stage_ex`): `shader_stage = COMPUTE`, `reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY`
@@ -98,7 +101,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
       - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
-    - Prototype GS translator tested subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for non-indexed point-list draws when supported):
+    - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for non-indexed point-list draws when supported):
       - Input primitives: `point` and `triangle` (non-adjacency)
       - Output: `TriangleStream` (`triangle_strip`) only (stream 0)
       - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)

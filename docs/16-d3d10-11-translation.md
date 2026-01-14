@@ -2060,9 +2060,13 @@ Each test should:
 
 Now that a minimal point-list GS DXBC execution path exists, keep the existing “ignore GS payloads”
 robustness test (`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`) using a case that
-still routes through the fallback path (e.g. a non-point-list draw, or a GS program outside the
-supported translator subset). As GS DXBC execution expands to more topologies, update the test to
-continue exercising the intended “unsupported GS must not crash” behavior.
+still routes through the fallback / unsupported path (e.g. a non-point-list draw, an indexed draw,
+or a GS program outside the supported translator subset).
+
+When guest GS DXBC execution expands beyond the current point-list subset, update that test to
+continue exercising the intended “unsupported GS must not crash” behavior (even though GS payloads
+will no longer be universally ignored at draw time when bound, whether via the legacy `reserved0`
+slot or the extended `BIND_SHADERS` packet).
 
 **Unit tests (non-rendering):**
 

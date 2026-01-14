@@ -85,7 +85,8 @@ This avoids needing to generate restart indices and keeps the draw stage in the 
 primitive topologies.
 
 Note: there is an in-progress GS→WGSL compute translator (`crates/aero-d3d11/src/runtime/gs_translate.rs`)
-which currently focuses on `triangle_strip` output; it is not yet wired into the command executor.
+which currently focuses on `triangle_strip` output; it is partially wired into the command executor for
+non-indexed `PointList` draws (other topologies still fall back to synthetic expansion).
 
 ---
 
@@ -132,7 +133,7 @@ Test pointers:
 
 - Compute prepass plumbing (synthetic expansion): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs` (and `*_primitive_id.rs`, `*_vertex_pulling.rs`, etc)
 - GS translator unit tests (standalone): `crates/aero-d3d11/tests/gs_translate.rs`
-- End-to-end point-list GS execution tests: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`, `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- End-to-end point-list GS prepass execution tests: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`, `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`, `crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`
 - DXBC tooling (opcode discovery / token shapes): `cargo run -p aero-d3d11 --bin dxbc_dump -- <gs_*.dxbc>`
 
 ---

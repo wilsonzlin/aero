@@ -830,8 +830,9 @@ struct GsPrepassMetadata {
 struct GsShaderMetadata {
     /// Geometry-shader instance count (`dcl_gsinstancecount` / `[instance(n)]`).
     ///
-    /// The WebGPU backend does not execute the GS token stream yet; we keep enough metadata to
-    /// fail fast (instead of silently misrendering) when unsupported GS instancing is requested.
+    /// The WebGPU backend only executes a small subset of the GS token stream today (point-list
+    /// compute prepass); keep enough metadata to fail fast (instead of silently misrendering) when
+    /// unsupported GS instancing is requested.
     instance_count: u32,
     /// Parsed geometry prepass parameters when the GS token stream is translateable.
     prepass: Option<GsPrepassMetadata>,

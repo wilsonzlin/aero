@@ -44,9 +44,9 @@ fn aerogpu_cmd_accepts_geometry_shader_stage_ex_plumbing() {
         };
 
         // A minimal DXBC container that parses as a geometry shader (program type 2). Even though
-        // the AeroGPU protocol can carry GS objects/bindings, the WebGPU-backed executor currently
-        // ignores non-{VS,PS,CS} stages. Ensure we accept-and-ignore the payload rather than
-        // failing with a stage-mismatch error.
+        // the AeroGPU protocol can carry GS objects/bindings, the WebGPU-backed executor only
+        // executes a small subset of GS today (point-list prepass). Ensure we accept-and-ignore
+        // unsupported GS payloads rather than failing with a stage-mismatch error.
         let gs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(2))]);
 
         let mut writer = AerogpuCmdWriter::new();
