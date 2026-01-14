@@ -5598,6 +5598,11 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     const uint32_t resolved_fmt = view_format ? view_format : res->dxgi_format;
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, resolved_fmt);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateRenderTargetView: rejecting RTV with unsupported format res_fmt=%u view_fmt=%u (handle=%u)",
+          static_cast<unsigned>(res->dxgi_format),
+          static_cast<unsigned>(view_format),
+          static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
     if (AerogpuFormatIsDepth(aer_fmt)) {
@@ -5786,6 +5791,11 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     const uint32_t resolved_fmt = view_format ? view_format : res->dxgi_format;
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, resolved_fmt);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateDepthStencilView: rejecting DSV with unsupported format res_fmt=%u view_fmt=%u (handle=%u)",
+          static_cast<unsigned>(res->dxgi_format),
+          static_cast<unsigned>(view_format),
+          static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
     if (!AerogpuFormatIsDepth(aer_fmt)) {
