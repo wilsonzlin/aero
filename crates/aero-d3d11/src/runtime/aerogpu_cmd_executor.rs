@@ -673,6 +673,15 @@ struct ShaderResource {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct GsShaderMetadata {
+    /// Geometry-shader instance count (`dcl_gsinstancecount` / `[instance(n)]`).
+    ///
+    /// The WebGPU backend does not execute the GS token stream yet; we keep enough metadata to
+    /// fail fast (instead of silently misrendering) when unsupported GS instancing is requested.
+    instance_count: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct VertexBufferBinding {
     buffer: u32,
     stride_bytes: u32,
@@ -930,6 +939,7 @@ struct AerogpuD3d11Resources {
     textures: HashMap<u32, Texture2dResource>,
     samplers: HashMap<u32, aero_gpu::bindings::samplers::CachedSampler>,
     shaders: HashMap<u32, ShaderResource>,
+    gs_shaders: HashMap<u32, GsShaderMetadata>,
     input_layouts: HashMap<u32, InputLayoutResource>,
 }
 
@@ -2878,6 +2888,17 @@ impl AerogpuD3d11Executor {
             report.commands = report.commands.saturating_add(1);
             *stream.cursor = cmd_end;
             return Ok(());
+        }
+
+        if let Some(gs_handle) = self.state.gs {
+            if let Some(meta) = self.resources.gs_shaders.get(&gs_handle) {
+                if meta.instance_count > 1 {
+                    bail!(
+                        "GS emulation: geometry shader {gs_handle} declares gsinstancecount {} (GS instancing is not supported yet)",
+                        meta.instance_count
+                    );
+                }
+            }
         }
 
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
@@ -8350,6 +8371,13 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
 
+        if stage == ShaderStage::Geometry {
+            let instance_count = sm5_gs_instance_count(&program).unwrap_or(1).max(1);
+            self.resources
+                .gs_shaders
+                .insert(shader_handle, GsShaderMetadata { instance_count });
+        }
+
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
@@ -8703,6 +8731,7 @@ impl AerogpuD3d11Executor {
         }
         let shader_handle = read_u32_le(cmd_bytes, 8)?;
         self.resources.shaders.remove(&shader_handle);
+        self.resources.gs_shaders.remove(&shader_handle);
         Ok(())
     }
 
@@ -13172,6 +13201,52 @@ fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn sm5_gs_instance_count(program: &Sm4Program) -> Option<u32> {
+    // SM5 geometry shader instancing (`dcl_gsinstancecount` / `[instance(n)]`) is encoded as a
+    // declaration opcode with a single immediate payload DWORD.
+    //
+    // Keep this token-level (rather than using the full decoder) so we can recover the instance
+    // count even if other parts of the GS token stream are not yet decodeable/translateable.
+    let declared_len = program.tokens.get(1).copied()? as usize;
+    if declared_len < 2 || declared_len > program.tokens.len() {
+        return None;
+    }
+
+    let toks = &program.tokens[..declared_len];
+    let mut i = 2usize;
+    while i < toks.len() {
+        let opcode_token = toks[i];
+        let opcode = opcode_token & sm4_opcode::OPCODE_MASK;
+        let len =
+            ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK) as usize;
+        if len == 0 || i + len > toks.len() {
+            return None;
+        }
+
+        if opcode == sm4_opcode::OPCODE_DCL_GS_INSTANCE_COUNT {
+            let inst_end = i + len;
+            let mut pos = i + 1;
+            let mut extended = (opcode_token & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
+            while extended {
+                if pos >= inst_end {
+                    return None;
+                }
+                let ext = toks[pos];
+                pos += 1;
+                extended = (ext & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
+            }
+            if pos >= inst_end {
+                return None;
+            }
+            return toks.get(pos).copied();
+        }
+
+        i += len;
+    }
+
+    None
 }
 
 fn try_translate_sm4_signature_driven(
