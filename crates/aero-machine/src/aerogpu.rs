@@ -22,6 +22,8 @@ const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
+const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+
 fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
     // AeroGPU fence page layout:
     //   u32 magic
@@ -1609,22 +1611,15 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
     }
 }
 
-impl PciDevice for AeroGpuMmioDevice {
-    fn config(&self) -> &PciConfigSpace {
-        &self.config
-    }
-
-    fn config_mut(&mut self) -> &mut PciConfigSpace {
-        &mut self.config
-    }
-}
-
 fn cmd_stream_has_vsync_present(
     mem: &mut dyn MemoryBus,
     cmd_gpa: u64,
     cmd_size_bytes: u32,
 ) -> Result<bool, ()> {
     let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| ())?;
+    if cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+        return Err(());
+    }
     if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
         return Err(());
     }
@@ -1632,6 +1627,10 @@ fn cmd_stream_has_vsync_present(
     let mut stream_hdr_bytes = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
     mem.read_physical(cmd_gpa, &mut stream_hdr_bytes);
     let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes).map_err(|_| ())?;
+
+    if stream_hdr.size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+        return Err(());
+    }
 
     let declared_size = stream_hdr.size_bytes as usize;
     if declared_size > cmd_size {
@@ -1659,7 +1658,7 @@ fn cmd_stream_has_vsync_present(
         if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
             || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
         {
-            // `flags` is always at offset 12 (hdr + scanout_id).
+            // flags is always at offset 12 (hdr + scanout_id).
             if cmd_size < 16 {
                 return Err(());
             }
@@ -1674,6 +1673,16 @@ fn cmd_stream_has_vsync_present(
     }
 
     Ok(false)
+}
+
+impl PciDevice for AeroGpuMmioDevice {
+    fn config(&self) -> &PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut PciConfigSpace {
+        &mut self.config
+    }
 }
 
 #[cfg(test)]
