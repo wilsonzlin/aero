@@ -309,6 +309,26 @@ where
         let pre_state = cpu.tier1_state().clone();
         let ram_len = usize::try_from(self.cpu_ptr).expect("cpu_ptr must be non-negative");
         let pre_ram = self.memory.data(&self.store)[..ram_len].to_vec();
+        let pre_code_versions: Option<(usize, Vec<u8>)> = {
+            let mem = self.memory.data(&self.store);
+            let cpu_base = self.cpu_ptr as usize;
+            let ptr_off = cpu_base + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize;
+            let len_off = cpu_base + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize;
+
+            let mut buf = [0u8; 4];
+            buf.copy_from_slice(&mem[len_off..len_off + 4]);
+            let table_len = u32::from_le_bytes(buf) as usize;
+            if table_len == 0 {
+                None
+            } else {
+                buf.copy_from_slice(&mem[ptr_off..ptr_off + 4]);
+                let table_ptr = u32::from_le_bytes(buf) as usize;
+                let table_bytes = table_len
+                    .checked_mul(4)
+                    .expect("code version table byte size overflow");
+                Some((table_ptr, mem[table_ptr..table_ptr + table_bytes].to_vec()))
+            }
+        };
 
         self.store.data_mut().reset();
         self.sync_cpu_to_wasm(cpu.tier1_state());
@@ -324,6 +344,11 @@ where
             self.memory
                 .write(&mut self.store, 0, &pre_ram)
                 .expect("restore guest RAM");
+            if let Some((table_ptr, table_snapshot)) = pre_code_versions {
+                self.memory
+                    .write(&mut self.store, table_ptr, &table_snapshot)
+                    .expect("restore code version table");
+            }
             *cpu.tier1_state_mut() = pre_state.clone();
 
             return JitBlockExit {
