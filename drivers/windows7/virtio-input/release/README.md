@@ -7,12 +7,12 @@ This folder documents how to produce a redistributable driver bundle once you ha
 `../scripts/package-release.ps1` creates a zip containing:
 
 - The built driver `*.sys` for the selected architecture(s)
-- The matching `*.inf` from `drivers/windows7/virtio-input/inf/` (see naming below)
-- The matching `*.cat` if present (either next to the INF, or under `-InputDir`)
+- The matching `*.inf` files from `drivers/windows7/virtio-input/inf/` (see naming below)
+  - The matching `*.cat` if present (either next to the INF, or under `-InputDir`)
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
 - Guest-side install helpers:
   - `INSTALL_CERT.cmd` (installs a test cert into `Root` + `TrustedPublisher`; requires elevation)
-  - `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf` when present; otherwise uses the per-arch INF; requires elevation)
+  - `INSTALL_DRIVER.cmd` (runs `pnputil -i -a` for `aero_virtio_input*.inf` and `aero_virtio_tablet*.inf` when present; prefers the unified INF, otherwise uses the per-arch INF; requires elevation)
 - An `INSTALL.txt` with minimal Windows 7 test-signing + “Have Disk…” install steps
 - (Optional) the public **test-signing certificate** `aero-virtio-input-test.cer` when `-IncludeTestCert` is specified
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
@@ -135,8 +135,12 @@ The private key (`*.pfx`) is **never** included.
 
 The script looks for either:
 
-- `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (unified INF), or
-- `drivers/windows7/virtio-input/inf/aero_virtio_input-<arch>.inf` (per-arch INF)
+- `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (unified keyboard/mouse INF), or
+- `drivers/windows7/virtio-input/inf/aero_virtio_input-<arch>.inf` (per-arch keyboard/mouse INF)
+
+The package may also include the optional tablet INF:
+
+- `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`
 
 ## Notes
 

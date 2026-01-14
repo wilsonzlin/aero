@@ -8,6 +8,7 @@ rem Expects:
 rem   cert\aero-virtio-input-test.pfx
 rem   inf\aero_virtio_input.sys
 rem   inf\aero_virtio_input.cat
+rem   (optional) inf\aero_virtio_tablet.cat
 rem
 rem Usage:
 rem   sign-driver.cmd [PFX_PASSWORD]
@@ -21,6 +22,7 @@ for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
 set SYS_FILE=%INF_DIR%\aero_virtio_input.sys
 set CAT_FILE=%INF_DIR%\aero_virtio_input.cat
+set TABLET_CAT_FILE=%INF_DIR%\aero_virtio_tablet.cat
 set PFX_FILE=%ROOT_DIR%\cert\aero-virtio-input-test.pfx
 
 if not exist "%PFX_FILE%" (
@@ -70,6 +72,9 @@ echo == Signing driver package ==
 echo PFX: "%PFX_FILE%"
 echo SYS: "%SYS_FILE%"
 echo CAT: "%CAT_FILE%"
+if exist "%TABLET_CAT_FILE%" (
+  echo CAT: "%TABLET_CAT_FILE%"
+)
 echo.
 
 rem For maximum Windows 7 SP1 compatibility, use SHA1 file digests for test signing.
@@ -83,6 +88,14 @@ signtool.exe sign /v /fd SHA1 /f "%PFX_FILE%" /p "%SIGN_PFX_PASS%" "%CAT_FILE%"
 if errorlevel 1 (
   echo ERROR: Failed to sign CAT.
   exit /b 1
+)
+
+if exist "%TABLET_CAT_FILE%" (
+  signtool.exe sign /v /fd SHA1 /f "%PFX_FILE%" /p "%SIGN_PFX_PASS%" "%TABLET_CAT_FILE%"
+  if errorlevel 1 (
+    echo ERROR: Failed to sign tablet CAT.
+    exit /b 1
+  )
 )
 
 echo.

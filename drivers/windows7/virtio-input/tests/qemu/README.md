@@ -273,9 +273,9 @@ QEMU_BIN=/path/to/qemu-system-x86_64 bash ./drivers/windows7/virtio-input/tests/
    - Open **Device Manager**
     - Find the new/unknown device(s) created by the virtio-input PCI functions
       - Often shows under **Other devices** as an unknown PCI device until the INF is installed.
-    - Right click → **Update Driver Software...**
-    - **Browse my computer for driver software**
-     - Point it to a directory containing `aero_virtio_input.inf` + `aero_virtio_input.sys` (and optionally `aero_virtio_tablet.inf`) (for example: `out\packages\windows7\virtio-input\x64\`)
+     - Right click → **Update Driver Software...**
+     - **Browse my computer for driver software**
+     - Point it to a directory containing `aero_virtio_input.inf` + `aero_virtio_input.sys` (and `aero_virtio_tablet.inf` for tablet/absolute-pointer devices) (for example: `out\packages\windows7\virtio-input\x64\`)
 4. Reboot when prompted.
 
 ## Verify the Windows HID stacks attach (`kbdhid.sys` / `mouhid.sys`)

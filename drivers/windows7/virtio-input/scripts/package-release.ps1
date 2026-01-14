@@ -43,8 +43,9 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:DriverId = 'aero-virtio-input'
-$script:InfBaseName = 'aero_virtio_input'
-$script:ServiceNameFallback = $script:InfBaseName
+$script:PrimaryInfBaseName = 'aero_virtio_input'
+$script:TabletInfBaseName = 'aero_virtio_tablet'
+$script:ServiceNameFallback = $script:PrimaryInfBaseName
 $script:TargetOs = 'win7'
 $script:FixedZipTimestamp = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -224,12 +225,21 @@ function Find-TestCertPath(
     throw ("Found multiple .cer files under -InputDir '{0}'. Refusing to guess which one to include. Candidates:`r`n{1}" -f $InputDirResolved, (Format-PathList $candidatePaths))
 }
 
-function Get-InfPathForArch([string]$InfDir, [ValidateSet('x86', 'amd64')] [string]$ArchValue) {
-    $archSpecific = Join-Path $InfDir ("{0}-{1}.inf" -f $script:InfBaseName, $ArchValue)
+function Get-InfPathForArch(
+    [string]$InfDir,
+    [string]$InfBaseName,
+    [ValidateSet('x86', 'amd64')] [string]$ArchValue,
+    [switch]$Optional
+) {
+    $archSpecific = Join-Path $InfDir ("{0}-{1}.inf" -f $InfBaseName, $ArchValue)
     if (Test-Path -LiteralPath $archSpecific) { return $archSpecific }
 
-    $unified = Join-Path $InfDir "$script:InfBaseName.inf"
+    $unified = Join-Path $InfDir ("{0}.inf" -f $InfBaseName)
     if (Test-Path -LiteralPath $unified) { return $unified }
+
+    if ($Optional) {
+        return $null
+    }
 
     throw ("INF not found. Expected either:`r`n  - {0}`r`n  - {1}" -f $unified, $archSpecific)
 }
@@ -417,9 +427,10 @@ function New-InstallInstructionsText(
     [ValidateSet('x86', 'amd64')] [string]$ArchValue,
     [string]$Version,
     [string]$InfLeaf,
+    [string]$TabletInfLeaf,
     [string]$SysName,
     [string]$ServiceName
- ) {
+  ) {
     $template = Get-Content -LiteralPath $TemplatePath -Raw -ErrorAction Stop
     $template = Get-NormalizedCrlfText $template
 
@@ -427,6 +438,7 @@ function New-InstallInstructionsText(
     $text = $text.Replace('{{ARCH}}', $ArchValue)
     $text = $text.Replace('{{VERSION}}', $Version)
     $text = $text.Replace('{{INF}}', $InfLeaf)
+    $text = $text.Replace('{{INF_TABLET}}', $TabletInfLeaf)
     $text = $text.Replace('{{SYS}}', $SysName)
     $text = $text.Replace('{{SERVICE}}', $ServiceName)
     return $text
@@ -441,8 +453,15 @@ function Package-OneArch(
     [string]$TestCertPath,
     [ref]$SharedVersion
 ) {
-    $infPath = Get-InfPathForArch -InfDir $InfDirResolved -ArchValue $ArchValue
+    $infPath = Get-InfPathForArch -InfDir $InfDirResolved -InfBaseName $script:PrimaryInfBaseName -ArchValue $ArchValue
+    $tabletInfPath = Get-InfPathForArch -InfDir $InfDirResolved -InfBaseName $script:TabletInfBaseName -ArchValue $ArchValue -Optional
     $driverVer = Get-DriverVerFromInf -InfPath $infPath
+    if ($null -ne $tabletInfPath) {
+        $tabletDriverVer = Get-DriverVerFromInf -InfPath $tabletInfPath
+        if ($tabletDriverVer.version -ne $driverVer.version) {
+            throw ("Version mismatch between INFs. '{0}' reports '{1}', but '{2}' reports '{3}'." -f $infPath, $driverVer.version, $tabletInfPath, $tabletDriverVer.version)
+        }
+    }
 
     if (($null -ne $SharedVersion.Value) -and ($SharedVersion.Value -ne $driverVer.version)) {
         throw ("Version mismatch between packages. Previous arch used version '{0}', but INF '{1}' reports '{2}'." -f $SharedVersion.Value, $infPath, $driverVer.version)
@@ -469,6 +488,23 @@ function Package-OneArch(
         }
     }
 
+    $tabletCatPath = $null
+    if ($null -ne $tabletInfPath) {
+        $tabletCatName = Get-CatalogFileNameFromInf -InfPath $tabletInfPath -ArchValue $ArchValue
+        if ($null -ne $tabletCatName) {
+            $tabletCatSibling = Join-Path (Split-Path -Parent $tabletInfPath) $tabletCatName
+            if (Test-Path -LiteralPath $tabletCatSibling) {
+                $tabletCatPath = $tabletCatSibling
+            }
+            else {
+                $tabletCatPath = Find-OptionalFileByName -RootDir $InputDirResolved -FileName $tabletCatName -ArchValue $ArchValue
+                if ($null -eq $tabletCatPath) {
+                    Write-Warning ("Catalog file '{0}' was referenced by tablet INF but not found; continuing without it." -f $tabletCatName)
+                }
+            }
+        }
+    }
+
     $coInstallerName = Get-WdfCoInstallerDllNameFromInf -InfPath $infPath
     $coInstallerPath = $null
     if ($null -ne $coInstallerName) {
@@ -486,11 +522,18 @@ function Package-OneArch(
 
     try {
         $infLeaf = Split-Path -Leaf $infPath
+        $tabletInfLeaf = if ($null -ne $tabletInfPath) { Split-Path -Leaf $tabletInfPath } else { '' }
         Copy-Item -LiteralPath $infPath -Destination (Join-Path $stageDir $infLeaf) -Force
+        if ($null -ne $tabletInfPath) {
+            Copy-Item -LiteralPath $tabletInfPath -Destination (Join-Path $stageDir (Split-Path -Leaf $tabletInfPath)) -Force
+        }
         Copy-Item -LiteralPath $sysPath -Destination (Join-Path $stageDir $sysName) -Force
 
         if ($null -ne $catPath) {
             Copy-Item -LiteralPath $catPath -Destination (Join-Path $stageDir (Split-Path -Leaf $catPath)) -Force
+        }
+        if ($null -ne $tabletCatPath) {
+            Copy-Item -LiteralPath $tabletCatPath -Destination (Join-Path $stageDir (Split-Path -Leaf $tabletCatPath)) -Force
         }
         if ($null -ne $coInstallerPath) {
             Copy-Item -LiteralPath $coInstallerPath -Destination (Join-Path $stageDir (Split-Path -Leaf $coInstallerPath)) -Force
@@ -507,6 +550,7 @@ function Package-OneArch(
             -ArchValue $ArchValue `
             -Version $driverVer.version `
             -InfLeaf $infLeaf `
+            -TabletInfLeaf $tabletInfLeaf `
             -SysName $sysName `
             -ServiceName $serviceName
         Write-Utf8NoBomFile -Path $installPath -Contents $installText

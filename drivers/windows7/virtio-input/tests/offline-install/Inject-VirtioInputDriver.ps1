@@ -22,7 +22,11 @@ Path to install.wim or boot.wim.
 Image index inside the WIM.
 
 .PARAMETER DriverPackageDir
-Directory containing aero_virtio_input.inf/.sys (and optionally .cat).
+Directory containing the virtio-input driver package:
+  - aero_virtio_input.inf (keyboard/mouse)
+  - aero_virtio_tablet.inf (tablet / absolute pointer)
+  - aero_virtio_input.sys
+  - optionally: aero_virtio_input.cat / aero_virtio_tablet.cat
 
 .PARAMETER MountDir
 Optional mount directory.
@@ -102,6 +106,22 @@ try {
   }
 } catch {
   # If path resolution fails, inject-driver.ps1 will emit its own validation error.
+}
+
+# Best-effort validation/warnings: injection will still proceed even if these checks fail.
+try {
+  $resolvedDriverDir = (Resolve-Path -LiteralPath $DriverPackageDir -ErrorAction Stop).Path
+
+  $tabletInf = Join-Path -Path $resolvedDriverDir -ChildPath "aero_virtio_tablet.inf"
+  $tabletCat = Join-Path -Path $resolvedDriverDir -ChildPath "aero_virtio_tablet.cat"
+
+  if (-not (Test-Path -LiteralPath $tabletInf -PathType Leaf)) {
+    Write-Warning "DriverPackageDir is missing aero_virtio_tablet.inf. Tablet/absolute-pointer virtio-input devices (SUBSYS_0012) will not bind."
+  } elseif ((-not $ForceUnsigned) -and (-not (Test-Path -LiteralPath $tabletCat -PathType Leaf))) {
+    Write-Warning "DriverPackageDir is missing aero_virtio_tablet.cat. DISM may reject the package unless you use -ForceUnsigned (test-only)."
+  }
+} catch {
+  # Best-effort only; inject-driver.ps1 will validate DriverPackageDir.
 }
 
 $mountDirProvided = -not [string]::IsNullOrWhiteSpace($MountDir)

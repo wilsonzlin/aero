@@ -6,7 +6,8 @@ Architecture: {{ARCH}}
 Version: {{VERSION}}
 
 This folder/ZIP should contain at least:
-  - {{INF}}
+  - {{INF}}              (keyboard/mouse)
+  - {{INF_TABLET}}       (tablet / absolute pointer)
   - {{SYS}}
   - manifest.json
 
@@ -40,8 +41,9 @@ Option A (pnputil, elevated):
   - If this folder contains INSTALL_DRIVER.cmd, run:
       INSTALL_DRIVER.cmd
 
-  - Or manually:
+   - Or manually:
       pnputil -i -a {{INF}}
+      pnputil -i -a {{INF_TABLET}}
 
 Option B (Device Manager -> "Have Disk..."):
 
@@ -58,6 +60,7 @@ Option B (Device Manager -> "Have Disk..."):
   In Device Manager, the virtio-input PCI function(s) should bind under "Human Interface Devices" as:
     - Aero VirtIO Keyboard
     - Aero VirtIO Mouse
+    - Aero VirtIO Tablet Device
 
 (Optional) Disable test-signing (requires reboot):
   bcdedit /set testsigning off

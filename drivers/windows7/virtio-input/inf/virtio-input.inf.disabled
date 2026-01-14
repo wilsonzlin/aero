@@ -76,7 +76,9 @@ aero_virtio_input.sys = 1
 ; QEMU virtio-input devices that should match this INF include:
 ;   - virtio-keyboard-pci
 ;   - virtio-mouse-pci
-;   - virtio-tablet-pci
+;
+; For tablet-style virtio-input devices (`virtio-tablet-pci` / EV_ABS), use the
+; separate `aero_virtio_tablet.inf` so keyboard/mouse bindings remain strict.
 ;
 ; If your device enumerates with a different DEV id, add it here.
 ; You can confirm in Device Manager -> Details -> Hardware Ids.
@@ -84,12 +86,10 @@ aero_virtio_input.sys = 1
 [Aero.NTx86]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Aero.NTamd64]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 ;------------------------------------------------------------------------------
 ; DDInstall (x86)
@@ -176,4 +176,3 @@ AeroVirtioInput.ServiceDesc = "Aero VirtIO Input KMDF HID Minidriver"
 
 AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
 AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
-AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"

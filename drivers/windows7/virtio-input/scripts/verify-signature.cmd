@@ -12,6 +12,7 @@ rem
 rem Verifies:
 rem   signtool verify /kp /v aero_virtio_input.sys
 rem   signtool verify /kp /v aero_virtio_input.cat
+rem   signtool verify /kp /v aero_virtio_tablet.cat (when present)
 
 set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
@@ -35,6 +36,7 @@ if "%PACKAGE_DIR_ARG%"=="" (
 
 set SYS_FILE=%PACKAGE_DIR%\aero_virtio_input.sys
 set CAT_FILE=%PACKAGE_DIR%\aero_virtio_input.cat
+set TABLET_CAT_FILE=%PACKAGE_DIR%\aero_virtio_tablet.cat
 
 if not exist "%PACKAGE_DIR%" (
   echo ERROR: Package directory not found: "%PACKAGE_DIR%"
@@ -73,6 +75,14 @@ signtool.exe verify /kp /v "%CAT_FILE%"
 if errorlevel 1 (
   echo ERROR: Signature verification failed for CAT: "%CAT_FILE%"
   exit /b 1
+)
+
+if exist "%TABLET_CAT_FILE%" (
+  signtool.exe verify /kp /v "%TABLET_CAT_FILE%"
+  if errorlevel 1 (
+    echo ERROR: Signature verification failed for tablet CAT: "%TABLET_CAT_FILE%"
+    exit /b 1
+  )
 )
 
 echo.

@@ -96,16 +96,16 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 ## Hardware IDs (PnP IDs)
 
-The in-tree INFs intentionally match only **Aero contract v1** hardware IDs:
+The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (revision-gated `REV_01`):
 
-- `inf/aero_virtio_input.inf`:
+- `inf/aero_virtio_input.inf` (keyboard/mouse):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
   - `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback; contract v1)
-- `inf/aero_virtio_tablet.inf`:
+- `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
 
-The subsystem-gated IDs use distinct `DeviceDesc` strings, so keyboard/mouse/tablet appear as separate named devices in
+The subsystem-gated IDs use distinct `DeviceDesc` strings, so the PCI functions appear as separate named devices in
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**).
 
 If your environment does not expose the Aero subsystem IDs (or exposes different subsystem IDs, like stock QEMU),
@@ -131,7 +131,8 @@ This performs a lightweight static check (string/regex based) over `inf/aero_vir
 
 If your emulator/QEMU build uses a different PCI device ID, update:
 
-- `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]`
+- `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]` (keyboard/mouse)
+- `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]` (tablet)
 
 To confirm the IDs on Windows 7:
 
@@ -523,6 +524,8 @@ extensions that are implemented in-tree (consumer/media keys).
 | Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
 | System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
+
+INF note: tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`). The keyboard/mouse INF intentionally matches only `SUBSYS_0010`/`SUBSYS_0011` to avoid overlap and keep contract bindings strict.
 
 Device kind / report descriptor selection:
 

@@ -7,14 +7,17 @@ rem
 rem Prerequisites:
 rem   - Inf2Cat.exe available in PATH (run from a WDK command prompt)
 rem   - inf\aero_virtio_input.inf exists
+rem   - (optional) inf\aero_virtio_tablet.inf exists
 rem   - All files referenced by the INF exist in inf\ (at minimum aero_virtio_input.sys)
 
 set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
 set INF_DIR=%ROOT_DIR%\inf
 set CONTRACT_INF=%INF_DIR%\aero_virtio_input.inf
+set TABLET_INF=%INF_DIR%\aero_virtio_tablet.inf
 set ALIAS_INF=%INF_DIR%\virtio-input.inf
 set CAT_FILE=%INF_DIR%\aero_virtio_input.cat
+set TABLET_CAT_FILE=%INF_DIR%\aero_virtio_tablet.cat
 set SYS_FILE=%INF_DIR%\aero_virtio_input.sys
 set ALIAS_INF_DISABLED=%INF_DIR%\virtio-input.inf.disabled
 
@@ -80,6 +83,7 @@ echo.
 rem Delete any existing catalog first so stale artifacts cannot satisfy the
 rem post-Inf2Cat existence check.
 if exist "%CAT_FILE%" del /f /q "%CAT_FILE%" >nul 2>nul
+if exist "%TABLET_CAT_FILE%" del /f /q "%TABLET_CAT_FILE%" >nul 2>nul
 
 Inf2Cat.exe /driver:"%INF_DIR%" /os:7_X86,7_X64 /verbose
 if errorlevel 1 (
@@ -94,7 +98,17 @@ if not exist "%CAT_FILE%" (
   exit /b 1
 )
 
+if exist "%TABLET_INF%" (
+  if not exist "%TABLET_CAT_FILE%" (
+    echo ERROR: Tablet INF is present but expected catalog not found: "%TABLET_CAT_FILE%"
+    exit /b 1
+  )
+)
+
 echo.
 echo OK: Created "%CAT_FILE%"
+if exist "%TABLET_INF%" (
+  echo OK: Created "%TABLET_CAT_FILE%"
+)
 exit /b 0
 
