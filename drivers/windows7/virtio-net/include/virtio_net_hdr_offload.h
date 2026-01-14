@@ -49,6 +49,12 @@ typedef struct _VIRTIO_NET_HDR {
 /* Portable static assert for C99/MSVC. */
 #define VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(name, cond) typedef char name[(cond) ? 1 : -1]
 VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_must_be_10_bytes, sizeof(VIRTIO_NET_HDR) == 10);
+VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_flags_offset, offsetof(VIRTIO_NET_HDR, Flags) == 0);
+VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_gso_type_offset, offsetof(VIRTIO_NET_HDR, GsoType) == 1);
+VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_hdr_len_offset, offsetof(VIRTIO_NET_HDR, HdrLen) == 2);
+VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_gso_size_offset, offsetof(VIRTIO_NET_HDR, GsoSize) == 4);
+VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_csum_start_offset, offsetof(VIRTIO_NET_HDR, CsumStart) == 6);
+VIRTIO_NET_HDR_OFFLOAD_STATIC_ASSERT(virtio_net_hdr_csum_offset_offset, offsetof(VIRTIO_NET_HDR, CsumOffset) == 8);
 
 /* virtio-net header Flags */
 #ifndef VIRTIO_NET_HDR_F_NEEDS_CSUM
