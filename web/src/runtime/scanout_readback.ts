@@ -5,7 +5,7 @@ import {
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
 } from "../ipc/scanout_state";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
-import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { AerogpuFormat, aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "../workers/scanout_swizzle.ts";
 
 export type ScanoutDescriptor = Readonly<{
@@ -155,7 +155,7 @@ export function readScanoutRgba8FromGuestRam(
       kind = "rgbx";
       break;
     default:
-      throw new Error(`Unsupported scanout format ${format}`);
+      throw new Error(`Unsupported scanout format ${aerogpuFormatToString(format)}`);
   }
 
   if (width === 0 || height === 0) {
