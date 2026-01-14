@@ -6297,10 +6297,19 @@ impl Machine {
                         let Ok(vram_off) = usize::try_from(vram_off_u64) else {
                             return false;
                         };
-                        let Some(buf_len) = pitch_usize.checked_mul(height_usize) else {
+                        // Validate that the last row we will read fits inside the VRAM backing.
+                        // We need:
+                        //   vram_off + (height-1)*pitch + row_bytes <= vram.len()
+                        let Some(last_row_off) = height_usize
+                            .checked_sub(1)
+                            .and_then(|h| h.checked_mul(pitch_usize))
+                        else {
                             return false;
                         };
-                        let Some(end) = vram_off.checked_add(buf_len) else {
+                        let Some(end) = vram_off
+                            .checked_add(last_row_off)
+                            .and_then(|off| off.checked_add(row_bytes))
+                        else {
                             return false;
                         };
                         let vram_len = aerogpu.borrow().vram.len();
@@ -6325,8 +6334,9 @@ impl Machine {
                     let vram_off = *vram_off;
                     let pitch_bytes = *pitch_bytes;
                     for y in 0..height_usize {
-                        // Bounds safety: `vram_fast` validates `vram_off + pitch_bytes*height <= vram.len()`
-                        // and `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
+                        // Bounds safety: `vram_fast` validates
+                        // `vram_off + (height-1)*pitch_bytes + row_bytes <= vram.len()` and
+                        // `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
                         let src_row_off = vram_off + y * pitch_bytes;
                         let src_row = &vram[src_row_off..src_row_off + row_bytes];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
@@ -6369,8 +6379,9 @@ impl Machine {
                     let vram_off = *vram_off;
                     let pitch_bytes = *pitch_bytes;
                     for y in 0..height_usize {
-                        // Bounds safety: `vram_fast` validates `vram_off + pitch_bytes*height <= vram.len()`
-                        // and `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
+                        // Bounds safety: `vram_fast` validates
+                        // `vram_off + (height-1)*pitch_bytes + row_bytes <= vram.len()` and
+                        // `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
                         let src_row_off = vram_off + y * pitch_bytes;
                         let src_row = &vram[src_row_off..src_row_off + row_bytes];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
@@ -6446,8 +6457,9 @@ impl Machine {
                     let vram_off = *vram_off;
                     let pitch_bytes = *pitch_bytes;
                     for y in 0..height_usize {
-                        // Bounds safety: `vram_fast` validates `vram_off + pitch_bytes*height <= vram.len()`
-                        // and `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
+                        // Bounds safety: `vram_fast` validates
+                        // `vram_off + (height-1)*pitch_bytes + row_bytes <= vram.len()` and
+                        // `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
                         let src_row_off = vram_off + y * pitch_bytes;
                         let src_row = &vram[src_row_off..src_row_off + row_bytes];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
