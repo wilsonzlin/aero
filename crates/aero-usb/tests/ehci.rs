@@ -1420,6 +1420,92 @@ fn ehci_periodic_link_budget_exceeded_sets_hse_and_halts() {
 }
 
 #[test]
+fn ehci_periodic_link_exact_budget_limit_termination_does_not_fault() {
+    // This matches the internal `MAX_PERIODIC_LINKS_PER_FRAME` constant in `ehci/schedule.rs`.
+    const LINK_COUNT: usize = 1024;
+    let mut mem = TestMemory::new(0x20000);
+    let mut c = EhciController::new();
+
+    let fl_base: u32 = 0x9000;
+    let first: u32 = 0x1000;
+
+    mem.write_u32(fl_base, first & LINK_ADDR_MASK);
+    for i in 0..LINK_COUNT {
+        let addr = first + (i as u32) * 0x20;
+        let next = if i + 1 == LINK_COUNT {
+            LINK_TERMINATE
+        } else {
+            addr + 0x20
+        };
+        // iTD dword0 is the Next Link Pointer; use iTD type (00).
+        mem.write_u32(addr + 0x00, next);
+    }
+
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_eq!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_periodic_qtd_exact_budget_limit_termination_does_not_fault() {
+    // This matches the internal `MAX_QTD_STEPS_PER_QH` constant in `ehci/schedule.rs`.
+    const QTD_COUNT: usize = 1024;
+    let mut mem = TestMemory::new(0x20000);
+    let mut c = EhciController::new();
+
+    // Use a device that ACKs OUT transfers so the controller advances through the entire qTD chain.
+    let bytes_written = Rc::new(Cell::new(0usize));
+    c.hub_mut()
+        .attach(0, Box::new(CountingOutDevice::new(bytes_written.clone())));
+    reset_port(&mut c, &mut mem, 0);
+
+    let fl_base: u32 = 0x9000;
+    let qh: u32 = 0x1000;
+    let first_qtd: u32 = 0x2000;
+
+    // Frame list entry 0 points at a single QH.
+    mem.write_u32(fl_base, (qh & LINK_ADDR_MASK) | LINK_TYPE_QH);
+
+    // Build a long chain of 0-byte active OUT qTDs. Each completes immediately and advances the QH
+    // overlay next pointer.
+    for i in 0..QTD_COUNT {
+        let addr = first_qtd + (i as u32) * 0x20;
+        let next = if i + 1 == QTD_COUNT {
+            LINK_TERMINATE
+        } else {
+            addr + 0x20
+        };
+        write_qtd(
+            &mut mem,
+            addr,
+            next,
+            qtd_token(QTD_TOKEN_PID_OUT, 0, true, false),
+            0,
+        );
+    }
+
+    let ep_char = qh_epchar(0, 1, 64);
+    write_qh(&mut mem, qh, LINK_TERMINATE, ep_char, first_qtd);
+
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_eq!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+    assert_eq!(bytes_written.get(), 0);
+}
+
+#[test]
 fn ehci_async_qtd_packet_budget_yields_without_faulting() {
     let mut mem = TestMemory::new(MEM_SIZE);
     let mut c = EhciController::new();

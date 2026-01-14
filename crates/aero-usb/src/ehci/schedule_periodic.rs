@@ -137,7 +137,13 @@ fn walk_link<M: MemoryBus + ?Sized>(
         }
     }
 
-    Err(ScheduleError::PeriodicBudgetExceeded)
+    // If the link chain naturally terminated exactly at the budget boundary, treat that as success;
+    // otherwise surface a schedule fault so `tick_1ms()` remains bounded.
+    if link.terminated() || link.addr() == 0 {
+        Ok(())
+    } else {
+        Err(ScheduleError::PeriodicBudgetExceeded)
+    }
 }
 
 fn process_qh<M: MemoryBus + ?Sized>(
@@ -200,7 +206,12 @@ fn process_qh<M: MemoryBus + ?Sized>(
         }
     }
 
-    Err(ScheduleError::QtdBudgetExceeded)
+    // If the qTD list naturally terminated exactly at the budget boundary, treat that as success.
+    if next.terminated() || next.addr() == 0 {
+        Ok(horiz)
+    } else {
+        Err(ScheduleError::QtdBudgetExceeded)
+    }
 }
 
 #[derive(Debug)]
