@@ -324,6 +324,37 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### virtio-blk StorPort recovery counters (optional gating)
+
+Newer virtio-blk miniport builds expose StorPort recovery counters via the miniport query IOCTL contract. When present,
+the guest selftest appends these counters to the virtio-blk machine marker:
+
+- `abort_srb`
+- `reset_device_srb`
+- `reset_bus_srb`
+- `pnp_srb`
+- `ioctl_reset`
+
+Example (guest marker):
+
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...|abort_srb=0|reset_device_srb=0|reset_bus_srb=0|pnp_srb=0|ioctl_reset=0`
+
+For log scraping, the host harness mirrors these into a stable host marker:
+
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...`
+
+To enforce a “no unexpected resets/aborts” policy in CI, enable:
+
+- PowerShell: `-RequireNoBlkRecovery`
+- Python: `--require-no-blk-recovery`
+
+If any counter is non-zero, the harness fails with a deterministic token:
+
+`FAIL: VIRTIO_BLK_RECOVERY_NONZERO: ...`
+
+Note: this is best-effort and only runs when the guest marker includes the counter fields (older guest binaries or
+drivers may omit them).
+
 ### virtio-snd MSI/MSI-X interrupt mode (guest-observed, optional)
 
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-snd interrupt mode/vectors:
@@ -946,6 +977,7 @@ The Python/PowerShell harnesses may also emit additional host-side markers after
 
 ```
 AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|PASS/FAIL/INFO|write_ok=...|write_bytes=...|write_mbps=...|flush_ok=...|read_ok=...|read_bytes=...|read_mbps=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|...

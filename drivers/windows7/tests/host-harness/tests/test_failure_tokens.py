@@ -102,6 +102,17 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED:"))
 
+    def test_virtio_blk_recovery_nonzero_token(self) -> None:
+        h = self.harness
+
+        msg = h._check_no_blk_recovery_requirement(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|abort_srb=0|reset_device_srb=1|reset_bus_srb=0|pnp_srb=0|ioctl_reset=0\n"
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
+
 
 if __name__ == "__main__":
     unittest.main()

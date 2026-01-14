@@ -1978,14 +1978,15 @@ function Test-AeroVirtioSndMsixMarker {
 
 function Get-AeroVirtioBlkRecoveryCounters {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
-  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
-  if ($matches.Count -eq 0) { return $null }
-
-  $line = $matches[$matches.Count - 1].Value
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return $null }
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
     $idx = $tok.IndexOf("=")
@@ -2025,10 +2026,13 @@ function Get-AeroVirtioBlkRecoveryCounters {
 
 function Try-EmitAeroVirtioBlkRecoveryMarker {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
-  $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $Tail
+  $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $Tail -SerialLogPath $SerialLogPath
   if ($null -eq $counters) { return }
 
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO"
@@ -5042,7 +5046,7 @@ try {
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkIoMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
-  Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail
+  Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpDnsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetDiagMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
@@ -5059,7 +5063,7 @@ try {
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
   if ($RequireNoBlkRecovery -and $result.Result -eq "PASS") {
-    $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $result.Tail
+    $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $result.Tail -SerialLogPath $SerialLogPath
     if ($null -ne $counters) {
       $nonzero = $false
       foreach ($k in @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")) {
