@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use aero_devices::pci::profile;
 use aero_devices::pci::PciDevice as _;
-use aero_devices_storage::ata::{AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
+use aero_devices_storage::ata::{
+    AtaDrive, ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT, ATA_STATUS_BSY, ATA_STATUS_DSC,
+    ATA_STATUS_DRDY,
+};
 use aero_devices_storage::AhciPciDevice;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::{Bus, MemoryBus};
@@ -20,6 +23,10 @@ const PORT_REG_FBU: u64 = 0x0C;
 const PORT_REG_IS: u64 = 0x10;
 const PORT_REG_IE: u64 = 0x14;
 const PORT_REG_CMD: u64 = 0x18;
+const PORT_REG_TFD: u64 = 0x20;
+const PORT_REG_SIG: u64 = 0x24;
+const PORT_REG_SSTS: u64 = 0x28;
+const PORT_REG_SCTL: u64 = 0x2C;
 const PORT_REG_CI: u64 = 0x38;
 
 const GHC_IE: u32 = 1 << 1;
@@ -30,6 +37,8 @@ const PORT_CMD_FRE: u32 = 1 << 4;
 
 const PORT_IS_DHRS: u32 = 1 << 0;
 const PORT_IS_TFES: u32 = 1 << 30;
+
+const SATA_SIG_ATA: u32 = 0x0000_0101;
 
 struct DropDetectDisk {
     inner: RawDisk<MemBackend>,
@@ -372,6 +381,63 @@ fn mmio_identify_and_read_dma_ext_via_pci_wrapper() {
     mem.read_physical(read_buf, &mut out);
     assert_eq!(&out[0..4], b"BOOT");
     assert_eq!(&out[510..512], &[0x55, 0xAA]);
+}
+
+#[test]
+fn mmio_comreset_sequence_restores_link_and_interrupts() {
+    let capacity = 8 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let mut dev = AhciPciDevice::new(1);
+    dev.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+    dev.config_mut().set_command(0x0006); // MEM + BUSMASTER
+
+    // Enable interrupts so reset completion (DHRS) asserts INTx.
+    dev.mmio_write(HBA_GHC, 4, u64::from(GHC_IE | GHC_AE));
+    dev.mmio_write(PORT_BASE + PORT_REG_IE, 4, u64::from(PORT_IS_DHRS));
+
+    // Baseline: device present and ready.
+    let ssts0 = dev.mmio_read(PORT_BASE + PORT_REG_SSTS, 4) as u32;
+    assert_eq!(ssts0 & 0xF, 3);
+    assert_eq!((ssts0 >> 4) & 0xF, 1);
+    assert_eq!((ssts0 >> 8) & 0xF, 1);
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_SIG, 4) as u32, SATA_SIG_ATA);
+    assert_eq!(
+        dev.mmio_read(PORT_BASE + PORT_REG_TFD, 4) as u32 & 0xFF,
+        u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC)
+    );
+
+    // COMRESET assert (DET=1) via a byte write (Windows commonly uses dword writes, but byte writes
+    // are valid and exercise the PCI wrapper's byte-enable merging logic).
+    dev.mmio_write(PORT_BASE + PORT_REG_SCTL, 1, 1);
+    assert!(!dev.intx_level());
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_SSTS, 4) as u32 & 0xF, 1);
+    assert_ne!(
+        dev.mmio_read(PORT_BASE + PORT_REG_TFD, 4) as u32 & u32::from(ATA_STATUS_BSY),
+        0
+    );
+
+    // COMRESET deassert (DET=0) should synchronously restore the link and raise DHRS.
+    dev.mmio_write(PORT_BASE + PORT_REG_SCTL, 1, 0);
+
+    let ssts = dev.mmio_read(PORT_BASE + PORT_REG_SSTS, 4) as u32;
+    assert_eq!(ssts & 0xF, 3);
+    assert_eq!((ssts >> 4) & 0xF, 1);
+    assert_eq!((ssts >> 8) & 0xF, 1);
+    assert_eq!(dev.mmio_read(PORT_BASE + PORT_REG_SIG, 4) as u32, SATA_SIG_ATA);
+    assert_eq!(
+        dev.mmio_read(PORT_BASE + PORT_REG_TFD, 4) as u32 & 0xFF,
+        u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC)
+    );
+    assert_ne!(
+        dev.mmio_read(PORT_BASE + PORT_REG_IS, 4) as u32 & PORT_IS_DHRS,
+        0
+    );
+    assert!(dev.intx_level());
+
+    // Clear DHRS and ensure INTx deasserts.
+    dev.mmio_write(PORT_BASE + PORT_REG_IS, 4, u64::from(PORT_IS_DHRS));
+    assert!(!dev.intx_level());
 }
 
 #[test]
