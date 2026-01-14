@@ -801,6 +801,58 @@ Foo = "Aero; Project"; comment
             )
 
 
+def _self_test_inf_parsers_ignore_comments() -> None:
+    sample_inf = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01 ; trailing comment
+
+[Install.Services]
+; AddService = ignored, 0x00000002, IgnoredSection
+AddService = foo, 0x00000002, FooSection ; trailing comment
+AddService = "bar", 0x00000002, "Section;Name" ; comment after quoted semicolon
+
+[Strings]
+Mfg = "Aero; Project"; comment
+"""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "sample.inf"
+        path.write_text(sample_inf, encoding="utf-8")
+
+        hwids = parse_inf_hardware_ids(path)
+        expected_hwid = r"PCI\VEN_1AF4&DEV_1041&REV_01"
+        if expected_hwid not in hwids:
+            fail(
+                format_error(
+                    "internal unit-test failed: parse_inf_hardware_ids did not return expected HWID:",
+                    [f"expected: {expected_hwid}", f"got: {sorted(hwids)}"],
+                )
+            )
+
+        models = parse_inf_model_entries(path)
+        if not any(e.hardware_id == expected_hwid for e in models):
+            fail(
+                format_error(
+                    "internal unit-test failed: parse_inf_model_entries did not return expected model entry:",
+                    [f"expected to find hardware_id {expected_hwid!r}", f"got entries: {[e.hardware_id for e in models]}"],
+                )
+            )
+
+        services = [s.value for s in parse_inf_addservice_entries(path)]
+        if services != ["foo", "bar"]:
+            fail(
+                format_error(
+                    "internal unit-test failed: parse_inf_addservice_entries mismatch:",
+                    [f"expected: ['foo', 'bar']", f"got:      {services!r}"],
+                )
+            )
+
+
 def _unquote_inf_token(token: str) -> str:
     token = token.strip()
     if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
@@ -2769,6 +2821,7 @@ def main() -> None:
     errors: list[str] = []
 
     _self_test_inf_inline_comment_stripping()
+    _self_test_inf_parsers_ignore_comments()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
     _self_test_parse_guest_selftest_expected_service_names()
