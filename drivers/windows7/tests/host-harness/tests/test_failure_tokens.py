@@ -134,6 +134,22 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("mouse_devices=1", msg)
         self.assertIn("irq_mode=intx", msg)
 
+    def test_virtio_input_bind_failed_token_includes_reason_and_expected_actual_when_present(self) -> None:
+        h = self.harness
+
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|reason=wrong_service|expected=aero_virtio_input|"
+            b"actual=other_service|pnp_id=PCI\\\\VEN_1AF4&DEV_1052&REV_01\\\\3&11583659&0&10|devices=1|"
+            b"wrong_service=1|missing_service=0|problem=0\n"
+        )
+        msg = h._virtio_input_bind_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_BIND_FAILED:"))
+        self.assertIn("reason=wrong_service", msg)
+        self.assertIn("expected=aero_virtio_input", msg)
+        self.assertIn("actual=other_service", msg)
+        self.assertIn("pnp_id=PCI\\\\VEN_1AF4&DEV_1052", msg)
+
     def test_virtio_snd_force_null_backend_token(self) -> None:
         h = self.harness
 

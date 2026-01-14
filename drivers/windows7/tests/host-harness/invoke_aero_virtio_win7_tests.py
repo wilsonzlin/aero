@@ -2641,6 +2641,48 @@ def _virtio_input_fail_failure_message(tail: bytes, *, marker_line: Optional[str
     )
 
 
+def _virtio_input_bind_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-input-bind marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|reason=<...>|expected=<...>|actual=<...>|pnp_id=<...>|...
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        parts: list[str] = []
+        # Keep ordering stable so CI logs are deterministic (and easy to diff).
+        for k in (
+            "reason",
+            "expected",
+            "actual",
+            "pnp_id",
+            "devices",
+            "wrong_service",
+            "missing_service",
+            "problem",
+        ):
+            v = fields.get(k, "").strip()
+            if v:
+                parts.append(f"{k}={v}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL"
+        + details
+    )
+
+
 def _virtio_net_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # virtio-net marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL|large_ok=...|...|upload_ok=...|...|msi_messages=...|irq_mode=...
@@ -6897,7 +6939,10 @@ def main() -> int:
                             )
                             if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
                                 print(
-                                    "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                    _virtio_input_bind_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_bind_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -6989,8 +7034,11 @@ def main() -> int:
                             )
                             if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
                                 print(
-                                    "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL "
-                                    "(see serial log for bound service name / ConfigManager error details)",
+                                    _virtio_input_bind_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_bind_marker_line,
+                                    )
+                                    + " (see serial log for bound service name / ConfigManager error details)",
                                     file=sys.stderr,
                                 )
                                 _print_virtio_input_bind_diagnostics(serial_log)
@@ -9206,7 +9254,10 @@ def main() -> int:
                                 )
                                 if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
                                     print(
-                                        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                        _virtio_input_bind_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_bind_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -9296,8 +9347,11 @@ def main() -> int:
                                 )
                                 if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
                                     print(
-                                        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL "
-                                        "(see serial log for bound service name / ConfigManager error details)",
+                                        _virtio_input_bind_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_bind_marker_line,
+                                        )
+                                        + " (see serial log for bound service name / ConfigManager error details)",
                                         file=sys.stderr,
                                     )
                                     _print_virtio_input_bind_diagnostics(serial_log)

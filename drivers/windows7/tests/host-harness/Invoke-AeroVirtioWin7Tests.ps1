@@ -8134,7 +8134,41 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_BIND_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL (see serial log for bound service name / ConfigManager error details)"
+      $reason = ""
+      $expected = ""
+      $actual = ""
+      $pnpId = ""
+      $devices = ""
+      $wrongService = ""
+      $missingService = ""
+      $problem = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)expected=([^|\r\n]+)") { $expected = $Matches[1] }
+        if ($line -match "(?:^|\|)actual=([^|\r\n]+)") { $actual = $Matches[1] }
+        if ($line -match "(?:^|\|)pnp_id=([^|\r\n]+)") { $pnpId = $Matches[1] }
+        if ($line -match "(?:^|\|)devices=([^|\r\n]+)") { $devices = $Matches[1] }
+        if ($line -match "(?:^|\|)wrong_service=([^|\r\n]+)") { $wrongService = $Matches[1] }
+        if ($line -match "(?:^|\|)missing_service=([^|\r\n]+)") { $missingService = $Matches[1] }
+        if ($line -match "(?:^|\|)problem=([^|\r\n]+)") { $problem = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($expected)) { $detailsParts += "expected=$expected" }
+      if (-not [string]::IsNullOrEmpty($actual)) { $detailsParts += "actual=$actual" }
+      if (-not [string]::IsNullOrEmpty($pnpId)) { $detailsParts += "pnp_id=$pnpId" }
+      if (-not [string]::IsNullOrEmpty($devices)) { $detailsParts += "devices=$devices" }
+      if (-not [string]::IsNullOrEmpty($wrongService)) { $detailsParts += "wrong_service=$wrongService" }
+      if (-not [string]::IsNullOrEmpty($missingService)) { $detailsParts += "missing_service=$missingService" }
+      if (-not [string]::IsNullOrEmpty($problem)) { $detailsParts += "problem=$problem" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+
+      Write-Host "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL$details (see serial log for bound service name / ConfigManager error details)"
       Write-AeroVirtioInputBindDiagnostics -SerialLogPath $SerialLogPath
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
