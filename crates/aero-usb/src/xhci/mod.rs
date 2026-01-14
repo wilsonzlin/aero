@@ -1202,7 +1202,8 @@ impl XhciController {
     /// low 8 bits of `value` contain the endpoint ID (DCI).
     pub fn write_doorbell(&mut self, target: u8, value: u32) {
         if target == 0 {
-            // Doorbell 0 rings the command ring.
+            // Doorbell 0 rings the command ring (command TRBs).
+            // The low bits of `value` (DB Target) are reserved for doorbell 0, so ignore it.
             let _ = value;
             self.ring_doorbell0();
             return;
@@ -2147,7 +2148,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 11;
+        const TAG_PORTS: u16 = 12;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
@@ -2183,7 +2184,7 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 11;
+        const TAG_PORTS: u16 = 12;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
