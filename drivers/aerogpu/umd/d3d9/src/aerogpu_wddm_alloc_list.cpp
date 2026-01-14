@@ -134,12 +134,16 @@ AllocationListTracker::AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
       list_capacity_(list_capacity),
       list_len_(0),
       max_allocation_list_slot_id_(max_allocation_list_slot_id) {
-  handle_to_entry_.reserve(list_capacity_);
-  alloc_id_to_handle_.reserve(list_capacity_);
-  slot_alloc_handle_.resize(list_capacity_);
-  slot_alloc_id_.resize(list_capacity_);
-  slot_share_token_.resize(list_capacity_);
-  slot_write_.resize(list_capacity_);
+  // Only allocate internal per-slot state for the effective slot-id range.
+  // WDDM 1.1 slot IDs are typically limited to 0..MaxAllocationListSlotId, even
+  // if the runtime provides a larger allocation list buffer.
+  const UINT effective_cap = list_capacity_effective();
+  handle_to_entry_.reserve(effective_cap);
+  alloc_id_to_handle_.reserve(effective_cap);
+  slot_alloc_handle_.resize(effective_cap);
+  slot_alloc_id_.resize(effective_cap);
+  slot_share_token_.resize(effective_cap);
+  slot_write_.resize(effective_cap);
 }
 
 void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
@@ -151,12 +155,13 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
 
   reset();
 
-  handle_to_entry_.reserve(list_capacity_);
-  alloc_id_to_handle_.reserve(list_capacity_);
-  slot_alloc_handle_.resize(list_capacity_);
-  slot_alloc_id_.resize(list_capacity_);
-  slot_share_token_.resize(list_capacity_);
-  slot_write_.resize(list_capacity_);
+  const UINT effective_cap = list_capacity_effective();
+  handle_to_entry_.reserve(effective_cap);
+  alloc_id_to_handle_.reserve(effective_cap);
+  slot_alloc_handle_.resize(effective_cap);
+  slot_alloc_id_.resize(effective_cap);
+  slot_share_token_.resize(effective_cap);
+  slot_write_.resize(effective_cap);
 }
 
 void AllocationListTracker::reset() {
@@ -171,12 +176,13 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_c
 
   // Preserve the current max slot id; callers can construct a new tracker if
   // they need different semantics.
-  handle_to_entry_.reserve(list_capacity_);
-  alloc_id_to_handle_.reserve(list_capacity_);
-  slot_alloc_handle_.resize(list_capacity_);
-  slot_alloc_id_.resize(list_capacity_);
-  slot_share_token_.resize(list_capacity_);
-  slot_write_.resize(list_capacity_);
+  const UINT effective_cap = list_capacity_effective();
+  handle_to_entry_.reserve(effective_cap);
+  alloc_id_to_handle_.reserve(effective_cap);
+  slot_alloc_handle_.resize(effective_cap);
+  slot_alloc_id_.resize(effective_cap);
+  slot_share_token_.resize(effective_cap);
+  slot_write_.resize(effective_cap);
 
   reset();
 }

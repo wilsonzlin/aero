@@ -149,6 +149,39 @@ void test_snapshot_independent_of_list_memory() {
   assert(snap[1].write);
 }
 
+void test_effective_capacity_clamps_to_max_slot_id() {
+  // The KMD advertises a maximum allocation-list slot-id, which can be smaller
+  // than the runtime-provided allocation list capacity. The tracker should
+  // treat the effective capacity as min(list_capacity, max_slot_id+1).
+  D3DDDI_ALLOCATIONLIST list[8] = {};
+  aerogpu::AllocationListTracker tracker(list, 8, /*max_slot_id=*/1);
+
+  assert(tracker.list_capacity() == 8);
+  assert(tracker.list_capacity_effective() == 2);
+
+  auto a0 = tracker.track_buffer_read(1, 10, 0);
+  assert(a0.status == aerogpu::AllocRefStatus::kOk);
+  auto a1 = tracker.track_buffer_read(2, 20, 0);
+  assert(a1.status == aerogpu::AllocRefStatus::kOk);
+  assert(tracker.list_len() == 2);
+  assert(list[0].AllocationListSlotId == 0);
+  assert(list[1].AllocationListSlotId == 1);
+
+  // The next unique allocation should force a split even though the runtime
+  // buffer has spare entries.
+  auto need_flush = tracker.track_buffer_read(3, 30, 0);
+  assert(need_flush.status == aerogpu::AllocRefStatus::kNeedFlush);
+
+  const auto snap = tracker.snapshot_tracked_allocations();
+  assert(snap.size() == 2);
+
+  // Replay should respect the *effective* capacity as well.
+  D3DDDI_ALLOCATIONLIST list2[8] = {};
+  tracker.rebind(list2, 8, /*max_slot_id=*/0);
+  assert(tracker.list_capacity_effective() == 1);
+  assert(!tracker.replay_tracked_allocations(snap));
+}
+
 } // namespace
 
 int main() {
@@ -156,5 +189,6 @@ int main() {
   test_mismatch_and_capacity();
   test_snapshot_and_replay();
   test_snapshot_independent_of_list_memory();
+  test_effective_capacity_clamps_to_max_slot_id();
   return 0;
 }
