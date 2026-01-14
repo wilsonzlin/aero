@@ -1,26 +1,10 @@
 mod tier1_common;
 
-use aero_jit_x86::tier1::ir::{BinOp as T1BinOp, IrInst};
-use aero_jit_x86::tier1::{discover_block_mode, translate_block, BlockLimits};
 use aero_jit_x86::tier2::interp::{run_function, RunExit, RuntimeEnv, T2State};
-use aero_jit_x86::tier2::ir::{Function, Terminator};
+use aero_jit_x86::tier2::ir::Function;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_types::Gpr;
 use tier1_common::SimpleBus;
-
-fn tier1_requests_shift_flags(code: &[u8]) -> bool {
-    let mut bus = SimpleBus::new(64);
-    bus.load(0, code);
-    let bb = discover_block_mode(&bus, 0, BlockLimits::default(), 64);
-    let ir = translate_block(&bb);
-    ir.insts.iter().any(|inst| {
-        matches!(
-            inst,
-            IrInst::BinOp { op: T1BinOp::Shl | T1BinOp::Shr | T1BinOp::Sar, flags, .. }
-                if !flags.is_empty()
-        )
-    })
-}
 
 fn run_x86(code: &[u8]) -> (Function, RunExit, T2State) {
     let mut bus = SimpleBus::new(64);
@@ -42,20 +26,6 @@ fn assert_side_exit_at_int3(exit: RunExit, code: &[u8]) {
     );
 }
 
-fn assert_deopt_at_entry(func: &Function, exit: RunExit) {
-    let entry = func.entry;
-    let block = func.block(entry);
-    assert!(
-        block.instrs.is_empty(),
-        "deopt-at-entry block must not execute any Tier-2 instructions"
-    );
-    assert!(matches!(
-        block.term,
-        Terminator::SideExit { exit_rip: 0 }
-    ));
-    assert_eq!(exit, RunExit::SideExit { next_rip: 0 });
-}
-
 #[test]
 fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
     // mov eax, 1
@@ -67,16 +37,12 @@ fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
         0xCC, // int3 (decoded as Invalid => ExitToInterpreter at RIP=8)
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        // Tier-2 does not currently implement x86 shift flag semantics, so it must deopt when the
-        // Tier-1 front-end requests flag updates for a shift instruction.
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
-    }
+    // Even when Tier-1 requests shift flag updates, Tier-2 lowers them explicitly and should not
+    // deopt.
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
 #[test]
@@ -90,14 +56,10 @@ fn tier2_masks_shift_count_for_8bit_operands_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
 #[test]
@@ -114,14 +76,10 @@ fn tier2_masks_8bit_shift_counts_to_5_bits_not_3_bits() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
 #[test]
@@ -135,14 +93,10 @@ fn tier2_masks_shift_count_for_high8_operands_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x200);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x200);
 }
 
 #[test]
@@ -158,14 +112,10 @@ fn tier2_masks_high8_shift_counts_to_5_bits_not_3_bits() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
 #[test]
@@ -179,14 +129,10 @@ fn tier2_masks_shift_count_for_32bit_shr_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000_0000);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000_0000);
 }
 
 #[test]
@@ -200,14 +146,10 @@ fn tier2_masks_shift_count_for_32bit_sar_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000_0000);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000_0000);
 }
 
 #[test]
@@ -221,14 +163,10 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
         0xCC, // int3 (decoded as Invalid => ExitToInterpreter at RIP=8)
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
 #[test]
@@ -244,14 +182,10 @@ fn tier2_masks_16bit_shift_counts_to_5_bits_not_4_bits() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
 #[test]
@@ -265,14 +199,10 @@ fn tier2_masks_shift_count_for_16bit_shr_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
 }
 
 #[test]
@@ -286,14 +216,10 @@ fn tier2_masks_shift_count_for_16bit_sar_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
 }
 
 #[test]
@@ -307,14 +233,10 @@ fn tier2_masks_shift_count_for_8bit_shr_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x40);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x40);
 }
 
 #[test]
@@ -328,14 +250,10 @@ fn tier2_masks_shift_count_for_8bit_sar_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC0);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC0);
 }
 
 #[test]
@@ -349,14 +267,10 @@ fn tier2_masks_shift_count_for_high8_shr_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
 }
 
 #[test]
@@ -370,14 +284,10 @@ fn tier2_masks_shift_count_for_high8_sar_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
 }
 
 #[test]
@@ -391,12 +301,8 @@ fn tier2_masks_shift_count_for_64bit_operands_like_x86() {
         0xCC, // int3
     ];
 
-    let want_deopt = tier1_requests_shift_flags(CODE);
     let (func, exit, state) = run_x86(CODE);
-    if want_deopt {
-        assert_deopt_at_entry(&func, exit);
-    } else {
-        assert_side_exit_at_int3(exit, CODE);
-        assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
-    }
+    assert!(!func.block(func.entry).instrs.is_empty());
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }

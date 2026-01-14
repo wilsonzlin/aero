@@ -1160,9 +1160,16 @@ mod random_traces {
         }
     }
 
-    fn gen_random_trace(rng: &mut ChaCha8Rng, instr_count: usize, code_versions: &[u32]) -> TraceIr {
+    fn gen_random_trace(
+        rng: &mut ChaCha8Rng,
+        instr_count: usize,
+        code_versions: &[u32],
+    ) -> TraceIr {
         let mut next_value: u32 = 0;
         let mut values: Vec<ValueId> = Vec::new();
+        // Keep `GuardCodeVersion` in the prologue. The verifier treats code-version guards in the
+        // body of a linear trace as a loop artifact.
+        let mut prologue: Vec<Instr> = Vec::new();
         let mut body: Vec<Instr> = Vec::new();
 
         for _ in 0..instr_count {
@@ -1270,7 +1277,7 @@ mod random_traces {
                         1
                     };
                     let exit_rip = 0x3000u64 + (rng.gen::<u16>() as u64);
-                    body.push(Instr::GuardCodeVersion {
+                    prologue.push(Instr::GuardCodeVersion {
                         page,
                         expected,
                         exit_rip,
@@ -1307,7 +1314,7 @@ mod random_traces {
                 1
             };
             let exit_rip = 0x3000u64 + (rng.gen::<u16>() as u64);
-            body.push(Instr::GuardCodeVersion {
+            prologue.push(Instr::GuardCodeVersion {
                 page,
                 expected,
                 exit_rip,
@@ -1322,7 +1329,7 @@ mod random_traces {
         }
 
         TraceIr {
-            prologue: Vec::new(),
+            prologue,
             body,
             kind: TraceKind::Linear,
         }
