@@ -593,6 +593,8 @@ VirtioStatusQReset(_In_ PVIRTIO_STATUSQ StatusQ)
 VOID
 VirtioStatusQGetRingAddresses(_In_ PVIRTIO_STATUSQ StatusQ, _Out_ UINT64* DescPa, _Out_ UINT64* AvailPa, _Out_ UINT64* UsedPa)
 {
+    PVIRTIO_STATUSQ q;
+
     if (DescPa != NULL) {
         *DescPa = 0;
     }
@@ -603,19 +605,28 @@ VirtioStatusQGetRingAddresses(_In_ PVIRTIO_STATUSQ StatusQ, _Out_ UINT64* DescPa
         *UsedPa = 0;
     }
 
-    if (StatusQ == NULL || StatusQ->Vq == NULL) {
+    q = StatusQ;
+    if (q == NULL) {
+        return;
+    }
+
+    VirtioStatusQLock(q);
+    if (q->Vq == NULL) {
+        VirtioStatusQUnlock(q);
         return;
     }
 
     if (DescPa != NULL) {
-        *DescPa = StatusQ->Vq->desc_pa;
+        *DescPa = q->Vq->desc_pa;
     }
     if (AvailPa != NULL) {
-        *AvailPa = StatusQ->Vq->avail_pa;
+        *AvailPa = q->Vq->avail_pa;
     }
     if (UsedPa != NULL) {
-        *UsedPa = StatusQ->Vq->used_pa;
+        *UsedPa = q->Vq->used_pa;
     }
+
+    VirtioStatusQUnlock(q);
 }
 
 VOID
