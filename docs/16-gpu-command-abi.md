@@ -436,10 +436,14 @@ prefer the direct encoding (`shader_stage = GEOMETRY`, `reserved0 = 0`) for GS. 
 encoding (`shader_stage = COMPUTE`, `reserved0 = 2`) may still be used for compatibility. HS/DS
 require `stage_ex`.
 
-`enum aerogpu_shader_stage_ex` values intentionally match DXBC program type values for **non-zero**
-types:
+`enum aerogpu_shader_stage_ex` numeric values intentionally align with the D3D DXBC “program type”
+numbers used in the shader version token (`Pixel=0`, `Vertex=1`, `Geometry=2`, `Hull=3`,
+`Domain=4`, `Compute=5`), but only the **non-legacy** stages are representable:
 
-- `1=vs`, `2=gs`, `3=hs`, `4=ds`, `5=cs`
+- `2=gs`, `3=hs`, `4=ds`, `5=cs` (optional alias; writers should encode Compute via `reserved0 = 0`)
+
+`stage_ex = 1` (Vertex / DXBC program type 1) is intentionally **invalid**; vertex shaders must be
+encoded via the legacy `shader_stage = VERTEX` encoding for clarity.
 
 Pixel shaders are intentionally not representable via this extension because `0` is reserved for
 legacy compute packets; pixel shaders must use the legacy `shader_stage = PIXEL` encoding.
