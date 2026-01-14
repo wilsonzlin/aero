@@ -281,6 +281,76 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 "#;
 
+// Variant of `GEOMETRY_PREPASS_CS_WGSL` that additionally performs one IA vertex-buffer load via the
+// vertex-pulling bind group (when present).
+//
+// This is a placeholder for the eventual VS-as-compute implementation: we keep the output triangle
+// identical to the non-vertex-pulling prepass, but force at least one read from the IA buffers so
+// the vertex pulling binding scheme is exercised end-to-end.
+//
+// NOTE: This WGSL is only valid when `runtime::vertex_pulling::VertexPullingLayout::wgsl_prelude()`
+// is prepended to the shader source.
+const GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL: &str = r#"
+struct ExpandedVertex {
+    pos: vec4<f32>,
+    o1: vec4<f32>,
+};
+
+struct Params {
+    color: vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
+@group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
+@group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
+@group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
+@group(0) @binding(4) var<uniform> params: Params;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x != 0u) {
+        return;
+    }
+
+    // Exercise the vertex pulling bind group by reading a single dword from the first
+    // vertex buffer slot.
+    //
+    // This is intentionally minimal: the placeholder prepass still emits a fixed fullscreen-ish
+    // triangle, but the load ensures that IA buffers can be bound as storage and accessed.
+    let base: u32 = aero_vp_ia.slots[0].base_offset_bytes
+        + aero_vp_ia.first_vertex * aero_vp_ia.slots[0].stride_bytes;
+    let _word: u32 = aero_vp_load_u32(0u, base);
+
+    let c = params.color;
+
+    // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
+    out_vertices[0].pos = vec4<f32>(-1.0, -1.0, 0.0, 1.0);
+    out_vertices[1].pos = vec4<f32>(-1.0, 3.0, 0.0, 1.0);
+    out_vertices[2].pos = vec4<f32>(3.0, -1.0, 0.0, 1.0);
+
+    out_vertices[0].o1 = c;
+    out_vertices[1].o1 = c;
+    out_vertices[2].o1 = c;
+
+    // Indices for indexed draws.
+    out_indices[0] = 0u;
+    out_indices[1] = 1u;
+    out_indices[2] = 2u;
+
+    // Placeholder counter (for eventual GS-style append/emit emulation).
+    out_counter[0] = 3u;
+
+    // Write 5 u32s so the same buffer works for both:
+    // - draw_indirect:           vertex_count, instance_count, first_vertex, first_instance
+    // - draw_indexed_indirect:   index_count, instance_count, first_index, base_vertex, first_instance
+    out_indirect[0] = 3u;
+    out_indirect[1] = 1u;
+    out_indirect[2] = 0u;
+    out_indirect[3] = 0u;
+    out_indirect[4] = 0u;
+}
+"#;
+
 const EXPANDED_DRAW_PASSTHROUGH_VS_WGSL: &str = r#"
 struct VsIn {
     @location(0) v0: vec4<f32>,
@@ -2909,8 +2979,8 @@ impl AerogpuD3d11Executor {
         }
 
         // Upload any dirty resources used by the current input assembler bindings. The
-        // placeholder compute shader does not currently read them, but the eventual GS/HS/DS
-        // emulation path will.
+        // vertex-pulling prepass reads at least one dword (and the eventual GS/HS/DS emulation path
+        // will use the full vertex pulling layout).
         let mut ia_buffers: Vec<u32> = self
             .state
             .vertex_buffers
@@ -3244,14 +3314,18 @@ impl AerogpuD3d11Executor {
             let vp_bgl = self
                 .bind_group_layout_cache
                 .get_or_create(&self.device, &vp_bgl_entries);
-
             let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("aerogpu_cmd vertex pulling bind group"),
                 layout: vp_bgl.layout.as_ref(),
                 entries: &vp_bg_entries,
             });
 
-            vertex_pulling_cs_wgsl = Some(format!("{vp_cs_prelude}\n{GEOMETRY_PREPASS_CS_WGSL}"));
+            let cs_body = if pulling.slot_count() > 0 {
+                GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL
+            } else {
+                GEOMETRY_PREPASS_CS_WGSL
+            };
+            vertex_pulling_cs_wgsl = Some(format!("{vp_cs_prelude}\n{cs_body}"));
             vertex_pulling_bgl = Some(vp_bgl);
             vertex_pulling_bg = Some(vp_bg);
         } else if opcode == OPCODE_DRAW_INDEXED {
