@@ -2991,6 +2991,13 @@ static VOID AerovNetCtrlVlanConfigureFromRegistry(_Inout_ AEROVNET_ADAPTER* Adap
 #if DBG
       DbgPrint("virtio-net-ctrl-vq|INFO|vlan_add|vid=%hu|status=0x%08x\n", VidList[I], Status);
 #endif
+      // Best-effort: stop early on failure to avoid spending an unbounded amount
+      // of time in driver start if the device doesn't support VLAN filtering or
+      // becomes unresponsive (each ctrl_vq command has a bounded but non-trivial
+      // timeout).
+      if (Status != NDIS_STATUS_SUCCESS) {
+        break;
+      }
     }
 
     return;
