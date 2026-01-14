@@ -445,7 +445,7 @@ The relay advertises an SDP `a=max-message-size` via:
 
 This should be at least:
 
-- `MAX_DATAGRAM_PAYLOAD_BYTES + 24` (worst case UDP relay frame overhead: v2 header with an IPv6 address), and
+- `MAX_DATAGRAM_PAYLOAD_BYTES + 24` (worst case UDP relay frame overhead: v2 header with an IPv6 address; `24` is `internal/udpproto.MaxFrameOverheadBytes`), and
 - `L2_MAX_MESSAGE_BYTES` (for `l2` tunnel messages).
 
 The relay also enforces a hard receive-side SCTP buffer cap via:

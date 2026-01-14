@@ -13,6 +13,10 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// v2 UDP relay framing overhead for an IPv6 destination (worst case).
+// Keep this in sync with `proxy/webrtc-udp-relay/internal/udpproto.MaxFrameOverheadBytes`.
+const UDP_RELAY_V2_IPV6_HEADER_BYTES = 24;
+
 function base64urlEncode(data) {
   const buf = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
   return buf
@@ -2542,7 +2546,7 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
 
         // v2 frame: magic (0xA2) + version (0x02) + af (0x06) + reserved (0)
         // + guest_port (u16) + remote_ip (16B) + remote_port (u16) + payload.
-        const frame = new Uint8Array(24 + payload.length);
+        const frame = new Uint8Array(UDP_RELAY_V2_IPV6_HEADER_BYTES + payload.length);
         frame[0] = 0xa2;
         frame[1] = 0x02;
         frame[2] = 0x06;
@@ -2553,7 +2557,7 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
         frame[21] = 1;
         frame[22] = (echoPort >> 8) & 0xff;
         frame[23] = echoPort & 0xff;
-        frame.set(payload, 24);
+        frame.set(payload, UDP_RELAY_V2_IPV6_HEADER_BYTES);
         dc.send(frame);
 
         const echoedFrame = await new Promise((resolve, reject) => {
@@ -2568,7 +2572,7 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
           );
         });
 
-        if (echoedFrame.length < 24) throw new Error("echoed frame too short");
+        if (echoedFrame.length < UDP_RELAY_V2_IPV6_HEADER_BYTES) throw new Error("echoed frame too short");
         if (echoedFrame[0] !== 0xa2 || echoedFrame[1] !== 0x02 || echoedFrame[2] !== 0x06 || echoedFrame[3] !== 0x00) {
           throw new Error("v2 header mismatch");
         }
@@ -2583,7 +2587,7 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
         const echoedRemotePort = (echoedFrame[22] << 8) | echoedFrame[23];
         if (echoedRemotePort !== echoPort) throw new Error("remote port mismatch");
 
-        const echoedPayload = echoedFrame.slice(24);
+        const echoedPayload = echoedFrame.slice(UDP_RELAY_V2_IPV6_HEADER_BYTES);
         const echoedText = new TextDecoder().decode(echoedPayload);
         ws.close();
         pc.close();
@@ -3574,7 +3578,7 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
         const payload = new TextEncoder().encode("hello from websocket ipv6");
         const guestPort = 10_000;
 
-        const frame = new Uint8Array(24 + payload.length);
+        const frame = new Uint8Array(UDP_RELAY_V2_IPV6_HEADER_BYTES + payload.length);
         frame[0] = 0xa2;
         frame[1] = 0x02;
         frame[2] = 0x06;
@@ -3585,7 +3589,7 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
         frame[21] = 1;
         frame[22] = (echoPort >> 8) & 0xff;
         frame[23] = echoPort & 0xff;
-        frame.set(payload, 24);
+        frame.set(payload, UDP_RELAY_V2_IPV6_HEADER_BYTES);
 
         const sendAndRecv = async (frame) =>
           await new Promise((resolve, reject) => {
@@ -3642,12 +3646,12 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
 
         const echoedFrame = await sendAndRecv(frame);
 
-        if (echoedFrame.length < 24) throw new Error("echoed frame too short");
+        if (echoedFrame.length < UDP_RELAY_V2_IPV6_HEADER_BYTES) throw new Error("echoed frame too short");
         if (echoedFrame[0] !== 0xa2 || echoedFrame[1] !== 0x02 || echoedFrame[2] !== 0x06 || echoedFrame[3] !== 0x00) {
           throw new Error("v2 header mismatch");
         }
 
-        const echoedPayload = echoedFrame.slice(24);
+        const echoedPayload = echoedFrame.slice(UDP_RELAY_V2_IPV6_HEADER_BYTES);
         const echoedText = new TextDecoder().decode(echoedPayload);
         ws.close();
         return echoedText;

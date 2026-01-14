@@ -617,7 +617,7 @@ To mitigate this, the relay configures hard caps in pion's `SettingEngine`:
 - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` / `--webrtc-datachannel-max-message-bytes` (0 = auto):
   advertised DataChannel max message size (`a=max-message-size`) used by well-behaved peers to avoid
   sending oversized messages. The default is computed as:
-  `max(MAX_DATAGRAM_PAYLOAD_BYTES + 24, L2_MAX_MESSAGE_BYTES) + 256`.
+  `max(MAX_DATAGRAM_PAYLOAD_BYTES + 24, L2_MAX_MESSAGE_BYTES) + 256` (`24` is the v2 IPv6 UDP relay frame overhead; see `internal/udpproto.MaxFrameOverheadBytes`).
 - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` / `--webrtc-sctp-max-receive-buffer-bytes` (0 = auto):
   SCTP receive buffer cap (hard receive-side buffering bound; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`).
   When set to `0` (auto), the default is `max(1048576, 2*WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES)`.
