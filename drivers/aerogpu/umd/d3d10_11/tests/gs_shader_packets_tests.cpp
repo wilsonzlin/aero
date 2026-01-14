@@ -49,6 +49,13 @@ bool TestGeometryShaderCreateAndBindPackets() {
   bind->cs = 0;
   bind->reserved0 = kGsHandle;
 
+  auto* destroy = w.append_fixed<aerogpu_cmd_destroy_shader>(AEROGPU_CMD_DESTROY_SHADER);
+  if (!Check(destroy != nullptr, "append DESTROY_SHADER")) {
+    return false;
+  }
+  destroy->shader_handle = kGsHandle;
+  destroy->reserved0 = 0;
+
   w.finalize();
   if (!Check(w.error() == aerogpu::CmdStreamError::kOk, "writer error == kOk")) {
     return false;
@@ -117,7 +124,24 @@ bool TestGeometryShaderCreateAndBindPackets() {
   }
   offset += bind_hdr->size_bytes;
 
-  return Check(offset == len, "stream ends after BIND_SHADERS");
+  // DESTROY_SHADER
+  if (!Check(offset + sizeof(aerogpu_cmd_hdr) <= len, "DESTROY_SHADER header in-bounds")) {
+    return false;
+  }
+  const auto* destroy_hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+  if (!Check(destroy_hdr->opcode == AEROGPU_CMD_DESTROY_SHADER, "DESTROY_SHADER opcode")) {
+    return false;
+  }
+  if (!Check(destroy_hdr->size_bytes == sizeof(aerogpu_cmd_destroy_shader), "DESTROY_SHADER size_bytes")) {
+    return false;
+  }
+  const auto* destroy_cmd = reinterpret_cast<const aerogpu_cmd_destroy_shader*>(destroy_hdr);
+  if (!Check(destroy_cmd->shader_handle == kGsHandle, "DESTROY_SHADER shader_handle")) {
+    return false;
+  }
+  offset += destroy_hdr->size_bytes;
+
+  return Check(offset == len, "stream ends after DESTROY_SHADER");
 }
 
 }  // namespace
