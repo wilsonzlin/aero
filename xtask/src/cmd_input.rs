@@ -216,7 +216,7 @@ Steps:
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked {aero_wasm_focused_flags}
   6. (unless --rust-only) npm -w web run test:unit -- {web_unit_test_paths}
-       (or: set --node-dir web / AERO_NODE_DIR=web to run `npm run test:unit` from `web/`)
+       (or: set --node-dir/--web-dir web / AERO_NODE_DIR=web (deprecated: AERO_WEB_DIR/WEB_DIR) to run `npm run test:unit` from `web/`)
   7. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
       (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
