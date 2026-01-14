@@ -6590,6 +6590,7 @@ impl Machine {
                     .bus_mut()
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new(lfb_base, vram_size)));
             }
+
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
                 //
@@ -8858,7 +8859,7 @@ impl snapshot::SnapshotSource for Machine {
     }
 
     fn cpu_state(&self) -> snapshot::CpuState {
-        snapshot::cpu_state_from_cpu_core(&self.cpu)
+        snapshot::cpu_state_from_cpu_core(&self.cpu.state)
     }
 
         fn cpu_states(&self) -> Vec<snapshot::VcpuSnapshot> {
@@ -8867,14 +8868,14 @@ impl snapshot::SnapshotSource for Machine {
 
         cpus.push(snapshot::VcpuSnapshot {
             apic_id: 0,
-            cpu: snapshot::cpu_state_from_cpu_core(&self.cpu),
+            cpu: snapshot::cpu_state_from_cpu_core(&self.cpu.state),
             internal_state: Vec::new(),
         });
 
         for (idx, cpu) in self.ap_cpus.iter().enumerate() {
             cpus.push(snapshot::VcpuSnapshot {
                 apic_id: (idx + 1) as u32,
-                cpu: snapshot::cpu_state_from_cpu_core(cpu),
+                cpu: snapshot::cpu_state_from_cpu_core(&cpu.state),
                 internal_state: Vec::new(),
             });
         }
@@ -8883,7 +8884,7 @@ impl snapshot::SnapshotSource for Machine {
     }
 
     fn mmu_state(&self) -> snapshot::MmuState {
-        snapshot::mmu_state_from_cpu_core(&self.cpu)
+        snapshot::mmu_state_from_cpu_core(&self.cpu.state)
     }
 
     fn mmu_states(&self) -> Vec<snapshot::VcpuMmuSnapshot> {
@@ -8892,13 +8893,13 @@ impl snapshot::SnapshotSource for Machine {
 
         mmus.push(snapshot::VcpuMmuSnapshot {
             apic_id: 0,
-            mmu: snapshot::mmu_state_from_cpu_core(&self.cpu),
+            mmu: snapshot::mmu_state_from_cpu_core(&self.cpu.state),
         });
 
         for (idx, cpu) in self.ap_cpus.iter().enumerate() {
             mmus.push(snapshot::VcpuMmuSnapshot {
                 apic_id: (idx + 1) as u32,
-                mmu: snapshot::mmu_state_from_cpu_core(cpu),
+                mmu: snapshot::mmu_state_from_cpu_core(&cpu.state),
             });
         }
 
