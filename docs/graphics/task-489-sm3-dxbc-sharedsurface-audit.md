@@ -242,6 +242,8 @@ Ops/features referenced by the scratchpad tasks:
 
 **Notes / follow-ups:**
 - The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
+- The SM3 software reference interpreter (`crates/aero-d3d9/src/sm3/software.rs`) is currently a 2D-only
+  texture sampler model; it does not emulate 1D/3D/cube sampling.
 - The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` still restricts sampler types (currently supports 2D + cube only); extending that path to 1D/3D would be a separate task from 401/402.
 - The WGSL generator does not attempt to model sampler *state* (filtering/address modes/LOD bias/etc.) directly;
   those are handled in runtime pipeline setup. Depth-compare sampling is also not modeled in the SM3 WGSL generator.

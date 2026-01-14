@@ -53,3 +53,5 @@ Sampler texture types come from `dcl_* s#` when present; when absent, samplers d
 
 - Sampler state mapping (filtering, address modes, LOD bias, etc.) is handled in the runtime pipeline setup,
   not in the SM2/SM3 WGSL generator. Comparison samplers / depth-compare sampling are not modeled here yet.
+- The SM3 **software reference interpreter** (`crates/aero-d3d9/src/sm3/software.rs`) currently only models
+  `Texture2D` sampling; it does not emulate 1D/3D/cube sampling.
