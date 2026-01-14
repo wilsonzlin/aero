@@ -158,6 +158,10 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
 
 async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta: DiskImageMetadata): Promise<void> {
   if (plan.format === "aerospar") {
+    const expectedSizeBytes =
+      typeof meta.sizeBytes === "number" && Number.isFinite(meta.sizeBytes) && meta.sizeBytes > 0
+        ? BigInt(meta.sizeBytes)
+        : undefined;
     const aerosparOpenAndSetRef =
       machine.set_disk_aerospar_opfs_open_and_set_overlay_ref ??
       (machine as unknown as { setDiskAerosparOpfsOpenAndSetOverlayRef?: unknown }).setDiskAerosparOpfsOpenAndSetOverlayRef;
@@ -179,13 +183,21 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
       machine.set_disk_opfs_existing_and_set_overlay_ref ??
       (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
     if (typeof diskExistingAndSetRef === "function" && diskExistingAndSetRef.length >= 2) {
-      await callMaybeAsync(diskExistingAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath, "aerospar"]);
+      await callMaybeAsync(diskExistingAndSetRef as (...args: unknown[]) => unknown, machine, [
+        plan.opfsPath,
+        "aerospar",
+        expectedSizeBytes,
+      ]);
       return;
     }
     const diskExisting =
       machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
     if (typeof diskExisting === "function" && diskExisting.length >= 2) {
-      await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath, "aerospar"]);
+      await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [
+        plan.opfsPath,
+        "aerospar",
+        expectedSizeBytes,
+      ]);
       setAhciPort0DiskOverlayRef(machine, plan.opfsPath, "");
       return;
     }
@@ -194,6 +206,8 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     );
   }
 
+  const expectedSizeBytes =
+    typeof meta.sizeBytes === "number" && Number.isFinite(meta.sizeBytes) && meta.sizeBytes > 0 ? BigInt(meta.sizeBytes) : undefined;
   const setPrimaryCow =
     machine.set_primary_hdd_opfs_cow ??
     (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
@@ -218,13 +232,21 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     machine.set_disk_opfs_existing_and_set_overlay_ref ??
     (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
   if (typeof diskExistingAndSetRef === "function") {
-    await callMaybeAsync(diskExistingAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
+    await callMaybeAsync(diskExistingAndSetRef as (...args: unknown[]) => unknown, machine, [
+      plan.opfsPath,
+      undefined,
+      expectedSizeBytes,
+    ]);
     return;
   }
   const diskExisting =
     machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
   if (typeof diskExisting === "function") {
-    await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
+    await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [
+      plan.opfsPath,
+      undefined,
+      expectedSizeBytes,
+    ]);
     setAhciPort0DiskOverlayRef(machine, plan.opfsPath, "");
     return;
   }

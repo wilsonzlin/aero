@@ -1547,8 +1547,19 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
             );
           }
 
+          const expectedSizeBytes =
+            typeof msg.hdd.sizeBytes === "number" && Number.isFinite(msg.hdd.sizeBytes) && msg.hdd.sizeBytes > 0
+              ? BigInt(msg.hdd.sizeBytes)
+              : undefined;
           try {
-            await maybeAwait((openViaFormat as (path: string, baseFormat: string) => unknown).call(m, plan.opfsPath, "aerospar"));
+            await maybeAwait(
+              (openViaFormat as (path: string, baseFormat: string, expectedSizeBytes?: bigint) => unknown).call(
+                m,
+                plan.opfsPath,
+                "aerospar",
+                expectedSizeBytes,
+              ),
+            );
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);

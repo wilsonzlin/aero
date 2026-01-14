@@ -167,9 +167,13 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     const meta = hddMetaAerospar();
     const plan = planMachineBootDiskAttachment(meta, "hdd");
 
-    const calls: Array<[string, string | undefined]> = [];
-    async function set_disk_opfs_existing(path: string, baseFormat?: string): Promise<void> {
-      calls.push([path, baseFormat]);
+    const calls: Array<[string, string | undefined, bigint | undefined]> = [];
+    async function set_disk_opfs_existing(
+      path: string,
+      baseFormat?: string,
+      expectedSizeBytes?: bigint,
+    ): Promise<void> {
+      calls.push([path, baseFormat, expectedSizeBytes]);
     }
     const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
 
@@ -180,7 +184,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
 
     await attachMachineBootDisk(machine, "hdd", meta);
 
-    expect(calls).toEqual([[plan.opfsPath, "aerospar"]]);
+    expect(calls).toEqual([[plan.opfsPath, "aerospar", 1024n]]);
     expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
   });
 
@@ -188,9 +192,13 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     const meta = hddMetaAerospar();
     const plan = planMachineBootDiskAttachment(meta, "hdd");
 
-    const calls: Array<[string, string | undefined]> = [];
-    async function setDiskOpfsExisting(path: string, baseFormat?: string): Promise<void> {
-      calls.push([path, baseFormat]);
+    const calls: Array<[string, string | undefined, bigint | undefined]> = [];
+    async function setDiskOpfsExisting(
+      path: string,
+      baseFormat?: string,
+      expectedSizeBytes?: bigint,
+    ): Promise<void> {
+      calls.push([path, baseFormat, expectedSizeBytes]);
     }
     const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
 
@@ -201,7 +209,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
 
     await attachMachineBootDisk(machine, "hdd", meta);
 
-    expect(calls).toEqual([[plan.opfsPath, "aerospar"]]);
+    expect(calls).toEqual([[plan.opfsPath, "aerospar", 1024n]]);
     expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
   });
 
@@ -245,7 +253,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
 
     await attachMachineBootDisk(machine, "hdd", meta);
 
-    expect(set_disk_opfs_existing_and_set_overlay_ref).toHaveBeenCalledWith(plan.opfsPath);
+    expect(set_disk_opfs_existing_and_set_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, undefined, 1024n);
     expect(set_disk_opfs_existing).not.toHaveBeenCalled();
     expect(set_ahci_port0_disk_overlay_ref).not.toHaveBeenCalled();
   });
@@ -269,7 +277,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
 
     await attachMachineBootDisk(machine, "hdd", meta);
 
-    expect(set_disk_opfs_existing).toHaveBeenCalledWith(plan.opfsPath);
+    expect(set_disk_opfs_existing).toHaveBeenCalledWith(plan.opfsPath, undefined, 1024n);
     expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
     expect(calls).toEqual(["set_disk_opfs_existing", "set_ref"]);
   });
