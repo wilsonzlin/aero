@@ -74,4 +74,44 @@ describe("io/devices/virtio_input VirtioInputPciFunction.injectMouseButtons", ()
       { code: 0x117, pressed: true }, // BTN_TASK
     ]);
   });
+
+  it("treats snapshot-restore mouseButtons cache as unknown and forces a full resync (does not drop first press)", () => {
+    const injected: Array<{ code: number; pressed: boolean }> = [];
+
+    const dev: VirtioInputPciDeviceLike = {
+      mmio_read: () => 0,
+      mmio_write: () => {},
+      poll: () => {},
+      driver_ok: () => false,
+      irq_asserted: () => false,
+      inject_key: () => {},
+      inject_rel: () => {},
+      inject_button: (btn, pressed) => injected.push({ code: btn, pressed }),
+      inject_wheel: () => {},
+      load_state: () => {},
+      free: () => {},
+    };
+
+    const fn = new VirtioInputPciFunction({
+      kind: "mouse",
+      device: dev,
+      irqSink: { raiseIrq: () => {}, lowerIrq: () => {} },
+    });
+
+    // Snapshot restore should invalidate the host-side previous-buttons cache to an "unknown" marker.
+    expect(fn.loadState(new Uint8Array([1, 2, 3]))).toBe(true);
+
+    fn.injectMouseButtons(0x01);
+
+    expect(injected).toEqual([
+      { code: 0x110, pressed: true }, // BTN_LEFT
+      { code: 0x111, pressed: false }, // BTN_RIGHT
+      { code: 0x112, pressed: false }, // BTN_MIDDLE
+      { code: 0x113, pressed: false }, // BTN_SIDE
+      { code: 0x114, pressed: false }, // BTN_EXTRA
+      { code: 0x115, pressed: false }, // BTN_FORWARD
+      { code: 0x116, pressed: false }, // BTN_BACK
+      { code: 0x117, pressed: false }, // BTN_TASK
+    ]);
+  });
 });

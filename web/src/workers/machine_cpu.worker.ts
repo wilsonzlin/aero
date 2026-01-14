@@ -466,6 +466,23 @@ function initInputDiagnosticsTelemetry(): void {
   }
 }
 
+function invalidateInputStateAfterSnapshotRestore(): void {
+  // VM snapshot restore rewinds guest time + guest device state, but host-side input held-state
+  // tracking (used to gate backend switching) is not part of the snapshot format. Reset it here so
+  // the next input batch can re-sync safely without leaving keys/buttons stuck across backends.
+  pressedKeyboardHidUsages.fill(0);
+  pressedKeyboardHidUsageCount = 0;
+  pressedConsumerUsages.fill(0);
+  pressedConsumerUsageCount = 0;
+  mouseButtonsMask = 0;
+  // Invalidate virtio mouse transition cache (see `injectVirtioMouseButtons`).
+  virtioMouseButtonsInjectedMask = -1;
+  keyboardInputBackend = "ps2";
+  mouseInputBackend = "ps2";
+  keyboardUsbOk = false;
+  mouseUsbOk = false;
+}
+
 function safeCallBool(thisArg: unknown, fn: unknown): boolean {
   if (typeof fn !== "function") return false;
   try {
@@ -484,9 +501,13 @@ function injectVirtioMouseButtons(m: unknown, nextMask: number): void {
     return;
   }
 
-  const prev = virtioMouseButtonsInjectedMask & 0xff;
+  const prevRaw = virtioMouseButtonsInjectedMask;
+  const prev = prevRaw & 0xff;
   const next = nextMask & 0xff;
-  const delta = prev ^ next;
+  // Snapshot restore can rewind guest input state without rewinding this host-side button cache.
+  // Invalidate it to a sentinel (see `invalidateInputStateAfterSnapshotRestore`) and treat it as
+  // "unknown previous state" so the first post-restore click is not dropped.
+  const delta = prevRaw === -1 ? 0xff : prev ^ next;
   if (delta === 0) {
     virtioMouseButtonsInjectedMask = next;
     return;
@@ -1276,9 +1297,32 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   const base = INPUT_BATCH_HEADER_WORDS;
   let eventLatencySumUs = 0;
   let eventLatencyMaxUsBatch = 0;
+  // When snapshot restore rewinds guest time, the host-side pressed-key tracking used to gate
+  // backend switching is not part of the snapshot. If we only observe a key-up after restore, we
+  // may need to force-deliver the PS/2 break bytes (from `KeyScancode` events) even when the
+  // keyboard backend is currently virtio/USB.
+  //
+  // State machine:
+  // - 0: inactive
+  // - 1: armed (waiting for the next KeyScancode event)
+  // - 2: active (inject all contiguous KeyScancode events, then auto-clear)
+  let forcePs2ScancodeBurst: 0 | 1 | 2 = 0;
   for (let i = 0; i < count; i += 1) {
     const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
     const type = words[off] >>> 0;
+    // Clear/expire the forced PS/2 scancode injection state once we leave the scancode burst.
+    if (forcePs2ScancodeBurst === 2 && type !== InputEventType.KeyScancode) {
+      forcePs2ScancodeBurst = 0;
+    } else if (
+      forcePs2ScancodeBurst === 1 &&
+      type !== InputEventType.KeyScancode &&
+      type !== InputEventType.HidUsage16
+    ) {
+      // Scancodes should follow immediately after the key event (optionally with an intervening
+      // Consumer Control event). If we see something else, drop the arm to avoid misapplying it to
+      // unrelated scancodes later in the batch.
+      forcePs2ScancodeBurst = 0;
+    }
     const eventTimestampUs = words[off + 1] >>> 0;
     const eventLatencyUs = u32Delta(nowUs, eventTimestampUs);
     eventLatencySumUs += eventLatencyUs;
@@ -1289,7 +1333,39 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const packed = words[off + 2] >>> 0;
       const usage = packed & 0xff;
       const pressed = ((packed >>> 8) & 1) !== 0;
+      const prevPressed = pressedKeyboardHidUsages[usage] !== 0;
       updatePressedKeyboardHidUsage(usage, pressed);
+
+      if (!pressed && !prevPressed) {
+        // Unknown key-up: best-effort clear all keyboard backends. This can happen after a VM
+        // snapshot restore, where host-side pressed-key tracking is not serialized and we may only
+        // observe the release event.
+        const injectUsb = (m as unknown as { inject_usb_hid_keyboard_usage?: unknown }).inject_usb_hid_keyboard_usage;
+        if (typeof injectUsb === "function") {
+          try {
+            (injectUsb as (usage: number, pressed: boolean) => void).call(m, usage >>> 0, false);
+          } catch {
+            // ignore
+          }
+        }
+        if (virtioKeyboardOk) {
+          const keyCode = hidUsageToLinuxKeyCode(usage);
+          if (keyCode !== null) {
+            const injectKey = (m as unknown as { inject_virtio_key?: unknown }).inject_virtio_key;
+            if (typeof injectKey === "function") {
+              try {
+                (injectKey as (linuxKey: number, pressed: boolean) => void).call(m, keyCode >>> 0, false);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+        if (keyboardInputBackend !== "ps2") {
+          forcePs2ScancodeBurst = 1;
+        }
+        continue;
+      }
       if (keyboardInputBackend === "virtio") {
         if (virtioKeyboardOk) {
           const keyCode = hidUsageToLinuxKeyCode(usage);
@@ -1318,7 +1394,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       // Only inject PS/2 scancodes when the PS/2 backend is active. Other backends
       // (virtio-input / synthetic USB HID) rely on `KeyHidUsage` events and would
       // otherwise cause duplicated input in the guest.
-      if (keyboardInputBackend !== "ps2") continue;
+      if (keyboardInputBackend !== "ps2" && forcePs2ScancodeBurst === 0) continue;
       const packed = words[off + 2] >>> 0;
       const len = Math.min(words[off + 3] >>> 0, 4);
       if (len === 0) continue;
@@ -1332,6 +1408,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         }
       } catch {
         // ignore
+      }
+      if (forcePs2ScancodeBurst === 1) {
+        forcePs2ScancodeBurst = 2;
       }
     } else if (type === InputEventType.MouseMove) {
       const dx = words[off + 2] | 0;
@@ -1449,7 +1528,35 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       }
     } else if (type === InputEventType.MouseButtons) {
       const buttons = words[off + 2] & 0xff;
+      const prevButtons = mouseButtonsMask;
       mouseButtonsMask = buttons;
+
+      if (prevButtons === 0 && buttons === 0) {
+        // Unknown "all released" snapshot: best-effort clear all mouse backends. Like keyboards,
+        // host-side held-state tracking is not part of the VM snapshot format, so after restore we
+        // may only observe the release event.
+        if (virtioMouseOk) {
+          injectVirtioMouseButtons(m, 0);
+        }
+        try {
+          if (typeof m.inject_mouse_buttons_mask === "function") {
+            m.inject_mouse_buttons_mask(0);
+          } else if (typeof m.inject_ps2_mouse_buttons === "function") {
+            m.inject_ps2_mouse_buttons(0);
+          }
+        } catch {
+          // ignore
+        }
+        const injectUsb = (m as unknown as { inject_usb_hid_mouse_buttons?: unknown }).inject_usb_hid_mouse_buttons;
+        if (typeof injectUsb === "function") {
+          try {
+            (injectUsb as (mask: number) => void).call(m, 0);
+          } catch {
+            // ignore
+          }
+        }
+        continue;
+      }
       if (mouseInputBackend === "virtio") {
         if (virtioMouseOk) {
           injectVirtioMouseButtons(m, buttons);
@@ -1487,7 +1594,39 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       // - a dedicated synthetic USB HID consumer-control device (supports the full usage ID range).
       if (usagePage !== 0x0c) continue;
 
+      const idx = usageId & 0xffff;
+      const prevPressed = idx < pressedConsumerUsages.length && pressedConsumerUsages[idx] !== 0;
       updatePressedConsumerUsage(usageId, pressed);
+
+      if (!pressed && !prevPressed) {
+        // Unknown consumer-key release after snapshot restore: best-effort clear both virtio and
+        // synthetic USB consumer-control backends.
+        if (virtioKeyboardOk) {
+          const keyCode = hidConsumerUsageToLinuxKeyCode(usageId);
+          if (keyCode !== null) {
+            const injectKey = (m as unknown as { inject_virtio_key?: unknown }).inject_virtio_key;
+            if (typeof injectKey === "function") {
+              try {
+                (injectKey as (linuxKey: number, pressed: boolean) => void).call(m, keyCode >>> 0, false);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+        try {
+          const inject = (m as unknown as { inject_usb_hid_consumer_usage?: unknown }).inject_usb_hid_consumer_usage;
+          if (typeof inject === "function") {
+            (inject as (usage: number, pressed: boolean) => void).call(m, usageId >>> 0, false);
+          }
+        } catch {
+          // ignore
+        }
+        if (keyboardInputBackend !== "ps2") {
+          forcePs2ScancodeBurst = 1;
+        }
+        continue;
+      }
 
       // Prefer virtio-input when the virtio keyboard backend is active and the usage is representable as a Linux key code.
       if (keyboardInputBackend === "virtio" && virtioKeyboardOk) {
@@ -2326,6 +2465,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
       // Publish the updated active boot device for debug/automation tooling.
       maybePostActiveBootDevice(m);
+      invalidateInputStateAfterSnapshotRestore();
       postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
       return;
     }
@@ -2350,6 +2490,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
       // Publish the updated active boot device for debug/automation tooling.
       maybePostActiveBootDevice(m);
+      invalidateInputStateAfterSnapshotRestore();
       postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
       return;
     }
@@ -2358,6 +2499,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
     // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
     // Publish the updated active boot device for debug/automation tooling.
     maybePostActiveBootDevice(m);
+    invalidateInputStateAfterSnapshotRestore();
     postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
   } catch (err) {
     const error = serializeError(err);

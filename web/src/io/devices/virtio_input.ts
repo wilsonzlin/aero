@@ -891,8 +891,12 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
 
     const next = buttonMask & 0xff;
-    const prev = this.#mouseButtons & 0xff;
-    const delta = prev ^ next;
+    const prevRaw = this.#mouseButtons;
+    const prev = prevRaw & 0xff;
+    // Snapshot restore can rewind guest state without rewinding this host-side button cache.
+    // Invalidate the cache to a sentinel (see `loadState`) and treat it as "unknown previous
+    // state" so the first post-restore update always resyncs (avoids dropped presses).
+    const delta = prevRaw === -1 ? 0xff : prev ^ next;
     if (delta === 0) return;
 
     const changes: Array<{ code: number; pressed: boolean }> = [];
@@ -958,6 +962,12 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     if (typeof load !== "function") return false;
     try {
       (load as (bytes: Uint8Array) => unknown).call(this.#dev, bytes);
+      // Snapshot restore rewinds guest time and guest input state. Invalidate the host-side mouse
+      // button cache so the next injected button mask is treated as authoritative and produces a
+      // full resync (release any stuck buttons / don't drop the first click).
+      if (this.#kind === "mouse") {
+        this.#mouseButtons = -1;
+      }
       this.#syncIrq();
       return true;
     } catch {

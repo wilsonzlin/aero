@@ -4442,6 +4442,18 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
     }
 
     snapshotRestoredDeviceBlobs = restored.restoredDevices;
+
+    // Snapshot restore rewinds guest time and restores guest device state, but host-side input
+    // batching state (pressed keys/buttons + backend selection) is not part of the snapshot format.
+    // Invalidate it here so the next input batch can re-sync safely and backend switching does not
+    // get stuck on stale held-state.
+    pressedKeyboardHidUsages.fill(0);
+    pressedKeyboardHidUsageCount = 0;
+    pressedConsumerUsages.fill(0);
+    pressedConsumerUsageCount = 0;
+    mouseButtonsMask = 0;
+    keyboardInputBackend = "ps2";
+    mouseInputBackend = "ps2";
     return { cpu: restored.cpu, mmu: restored.mmu, devices: restored.devices };
   } finally {
     snapshotOpInFlight = false;
@@ -6717,9 +6729,32 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   const base = INPUT_BATCH_HEADER_WORDS;
   let eventLatencySumUs = 0;
   let eventLatencyMaxUsBatch = 0;
+  // When snapshot restore rewinds guest time, the host-side pressed-key tracking used to gate
+  // backend switching is not part of the snapshot. If we only observe a key-up after restore, we
+  // may need to force-deliver the PS/2 break bytes (from `KeyScancode` events) even when the
+  // keyboard backend is currently virtio/USB.
+  //
+  // State machine:
+  // - 0: inactive
+  // - 1: armed (waiting for the next KeyScancode event)
+  // - 2: active (inject all contiguous KeyScancode events, then auto-clear)
+  let forcePs2ScancodeBurst: 0 | 1 | 2 = 0;
   for (let i = 0; i < count; i++) {
     const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
     const type = words[off] >>> 0;
+    // Clear/expire the forced PS/2 scancode injection state once we leave the scancode burst.
+    if (forcePs2ScancodeBurst === 2 && type !== InputEventType.KeyScancode) {
+      forcePs2ScancodeBurst = 0;
+    } else if (
+      forcePs2ScancodeBurst === 1 &&
+      type !== InputEventType.KeyScancode &&
+      type !== InputEventType.HidUsage16
+    ) {
+      // Scancodes should follow immediately after the key event (optionally with an intervening
+      // Consumer Control event). If we see something else, drop the arm to avoid misapplying it to
+      // unrelated scancodes later in the batch.
+      forcePs2ScancodeBurst = 0;
+    }
     const eventTimestampUs = words[off + 1] >>> 0;
     const eventLatencyUs = u32Delta(nowUs, eventTimestampUs);
     eventLatencySumUs += eventLatencyUs;
@@ -6731,7 +6766,36 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const packed = words[off + 2] >>> 0;
         const usage = packed & 0xff;
         const pressed = ((packed >>> 8) & 1) !== 0;
+        const prevPressed = (pressedKeyboardHidUsages[usage] ?? 0) !== 0;
         updatePressedKeyboardHidUsage(usage, pressed);
+
+        if (!pressed && !prevPressed) {
+          // Unknown key-up: best-effort clear all keyboard backends. This can happen after a VM
+          // snapshot restore, where host-side pressed-key tracking is not serialized and we may
+          // only observe the release event.
+          try {
+            usbHid?.keyboard_event(usage, false);
+          } catch {
+            // ignore
+          }
+          if (virtioKeyboardOk && virtioKeyboard) {
+            const keyCode = hidUsageToLinuxKeyCode(usage);
+            if (keyCode !== null) {
+              try {
+                virtioKeyboard.injectKey(keyCode, false);
+              } catch {
+                // ignore
+              }
+            }
+          }
+          // Also best-effort deliver the matching PS/2 break scancodes (from subsequent
+          // `KeyScancode` events) so guests that observed the key-down via i8042 don't remain stuck.
+          if (keyboardInputBackend !== "ps2" && (i8042Wasm || i8042Ts)) {
+            forcePs2ScancodeBurst = 1;
+          }
+          break;
+        }
+
         if (keyboardInputBackend === "virtio") {
           if (virtioKeyboardOk && virtioKeyboard) {
             const keyCode = hidUsageToLinuxKeyCode(usage);
@@ -6753,7 +6817,35 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // - virtio-input keyboard (media keys subset, exposed by the Win7 virtio-input driver as a Consumer Control collection), or
         // - a dedicated synthetic USB HID consumer-control device (supports the full usage ID range).
         if (usagePage === 0x0c) {
+          const idx = usageId & 0xffff;
+          const prevPressed =
+            idx < pressedConsumerUsages.length ? (pressedConsumerUsages[idx] ?? 0) !== 0 : false;
           updatePressedConsumerUsage(usageId, pressed);
+
+          if (!pressed && !prevPressed) {
+            // Unknown consumer-key release after snapshot restore: best-effort clear both virtio and
+            // synthetic USB consumer-control backends.
+            if (virtioKeyboardOk && virtioKeyboard) {
+              const keyCode = hidConsumerUsageToLinuxKeyCode(usageId);
+              if (keyCode !== null) {
+                try {
+                  virtioKeyboard.injectKey(keyCode, false);
+                } catch {
+                  // ignore
+                }
+              }
+            }
+            try {
+              usbHid?.consumer_event?.(usageId, false);
+            } catch {
+              // ignore
+            }
+            if (keyboardInputBackend !== "ps2" && (i8042Wasm || i8042Ts)) {
+              forcePs2ScancodeBurst = 1;
+            }
+            break;
+          }
+
           // Prefer virtio-input when the virtio keyboard backend is active and the usage is representable as a Linux key code.
           if (keyboardInputBackend === "virtio" && virtioKeyboardOk && virtioKeyboard) {
             const keyCode = hidConsumerUsageToLinuxKeyCode(usageId);
@@ -6799,7 +6891,33 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       }
       case InputEventType.MouseButtons: {
         const buttons = words[off + 2] & 0xff;
+        const prevButtons = mouseButtonsMask;
         mouseButtonsMask = buttons;
+
+        if (prevButtons === 0 && buttons === 0) {
+          // Unknown "all released" snapshot: best-effort clear all mouse backends. Like keyboards,
+          // host-side held-state tracking is not part of the VM snapshot format, so after restore we
+          // may only observe the release event.
+          if (i8042Wasm) {
+            i8042Wasm.injectMouseButtons(0);
+          } else if (i8042Ts) {
+            i8042Ts.injectMouseButtons(0);
+          }
+          try {
+            usbHid?.mouse_buttons(0);
+          } catch {
+            // ignore
+          }
+          if (virtioMouseOk && virtioMouse) {
+            try {
+              virtioMouse.injectMouseButtons(0);
+            } catch {
+              // ignore
+            }
+          }
+          break;
+        }
+
         if (mouseInputBackend === "virtio") {
           if (virtioMouseOk && virtioMouse) {
             virtioMouse.injectMouseButtons(buttons);
@@ -6862,11 +6980,14 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Only inject PS/2 scancodes when the PS/2 keyboard backend is active. Other backends
         // (synthetic USB HID / virtio-input) rely on `KeyHidUsage` events and would otherwise
         // cause duplicated input in the guest.
-        if (keyboardInputBackend === "ps2") {
+        if (keyboardInputBackend === "ps2" || forcePs2ScancodeBurst !== 0) {
           if (i8042Wasm) {
             i8042Wasm.injectKeyScancode(packed, len);
           } else if (i8042Ts) {
             i8042Ts.injectKeyScancodePacked(packed, len);
+          }
+          if (forcePs2ScancodeBurst === 1) {
+            forcePs2ScancodeBurst = 2;
           }
         }
         break;
