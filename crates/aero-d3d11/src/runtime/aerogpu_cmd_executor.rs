@@ -7426,7 +7426,12 @@ impl AerogpuD3d11Executor {
                     if let Some(buf) = self.resources.buffers.remove(&underlying) {
                         self.destroyed_buffers.push(buf);
                     }
-                    if let Some(tex) = self.resources.textures.remove(&underlying) {
+                    if let Some(mut tex) = self.resources.textures.remove(&underlying) {
+                        // The texture is no longer accessible to the guest, but it may still be
+                        // referenced by in-flight GPU commands. Drop any CPU shadow buffers to
+                        // avoid retaining large allocations until the next submit.
+                        tex.host_shadow = None;
+                        tex.host_shadow_valid.clear();
                         self.destroyed_textures.push(tex);
                     }
                 } else {
@@ -7492,7 +7497,9 @@ impl AerogpuD3d11Executor {
                 if let Some(buf) = self.resources.buffers.remove(&handle) {
                     self.destroyed_buffers.push(buf);
                 }
-                if let Some(tex) = self.resources.textures.remove(&handle) {
+                if let Some(mut tex) = self.resources.textures.remove(&handle) {
+                    tex.host_shadow = None;
+                    tex.host_shadow_valid.clear();
                     self.destroyed_textures.push(tex);
                 }
             } else {
