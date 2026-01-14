@@ -27,8 +27,11 @@ The WASM-facing `Machine` wrapper exposes **explicit** input injection methods f
 
 - **PS/2 via i8042** (legacy; always works)
 - **virtio-input** (paravirtualized; requires the Aero Win7 virtio-input driver; opt-in at construction time)
+- **synthetic USB HID devices behind UHCI** (keyboard + mouse + gamepad; opt-in at construction time)
 
-The production browser worker runtime can also expose browser input as **synthetic USB HID devices behind UHCI**; that path is currently driven via other `aero-wasm` exports (see [`USB HID (synthetic devices behind UHCI)`](#usb-hid-synthetic-devices-behind-uhci) below).
+To opt into the additional backends from JS, construct the machine via:
+
+- `Machine.new_with_input_backends(ramSizeBytes, enableVirtioInput, enableSyntheticUsbHid)`
 
 #### Coordinate conventions (important)
 
@@ -64,13 +67,13 @@ The production browser worker runtime can also expose browser input as **synthet
 #### Virtio-input (paravirtualized)
 
 Virtio-input is disabled by default for backwards compatibility. Enable it at construction time via
-`Machine.new_with_options` (see [`Virtio-input injection (WASM-facing)`](#virtio-input-injection-wasm-facing)).
+`Machine.new_with_input_backends` (see [`Virtio-input injection (WASM-facing)`](#virtio-input-injection-wasm-facing)).
 
 - Keyboard (Linux input key codes): `Machine.inject_virtio_key(linux_key, pressed)`
 - Mouse (relative):
-  - motion: `Machine.inject_virtio_rel(dx, dy)`
-  - buttons: `Machine.inject_virtio_button(btn, pressed)` (Linux `BTN_*` codes)
-  - wheel: `Machine.inject_virtio_wheel(delta)` (`delta > 0` = wheel up)
+  - motion: `Machine.inject_virtio_rel(dx, dy)` (alias: `Machine.inject_virtio_mouse_rel(dx, dy)`)
+  - buttons: `Machine.inject_virtio_button(btn, pressed)` (Linux `BTN_*` codes; alias: `Machine.inject_virtio_mouse_button(btn, pressed)`)
+  - wheel: `Machine.inject_virtio_wheel(delta)` (`delta > 0` = wheel up; alias: `Machine.inject_virtio_mouse_wheel(delta)`)
   - horizontal wheel: `Machine.inject_virtio_hwheel(delta)` (`delta > 0` = wheel right)
   - combined: `Machine.inject_virtio_wheel2(wheel, hwheel)` (single `SYN_REPORT`)
 
@@ -86,7 +89,16 @@ These calls are only meaningful once the guest driver has finished initializatio
 In the production browser runtime, browser keyboard/mouse/gamepad input can be exposed to the guest as
 **synthetic USB HID devices behind the UHCI external hub** (inbox Win7 drivers).
 
-JS-side input is translated into USB HID reports using the WASM export `UsbHidBridge` (not the full-system `Machine` wrapper):
+For the full-system `Machine` wrapper, synthetic USB HID injection is available via:
+
+- Keyboard (USB HID usage IDs, Usage Page 0x07): `Machine.inject_usb_hid_keyboard_usage(usage, pressed)`
+- Mouse:
+  - motion: `Machine.inject_usb_hid_mouse_move(dx, dy)` (`dy > 0` = down)
+  - buttons: `Machine.inject_usb_hid_mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
+  - wheel: `Machine.inject_usb_hid_mouse_wheel(delta)` (`delta > 0` = wheel up)
+- Gamepad: `Machine.inject_usb_hid_gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
+
+In the production worker runtime, input is typically translated into USB HID reports using the WASM export `UsbHidBridge`:
 
 - Keyboard (USB HID usage IDs, Usage Page 0x07): `UsbHidBridge.keyboard_event(usage, pressed)`
 - Mouse:
@@ -140,32 +152,22 @@ For best performance and lowest complexity on the host side, Aero also supports 
 
 To keep `new api.Machine(ramSizeBytes)` backwards-compatible, virtio-input is
 **disabled by default**. Enable it at construction time with
-`Machine.new_with_options(...)`:
+`Machine.new_with_input_backends(...)`:
 
 ```ts
-const machine = api.Machine.new_with_options(64 * 1024 * 1024, {
-  enable_virtio_input: true,
-  // Optional: disable legacy i8042 if you want to force virtio-only bring-up.
-  enable_i8042: false,
-});
+const machine = api.Machine.new_with_input_backends(64 * 1024 * 1024, true, false);
 ```
 
 Once enabled, JS callers can inject Linux `evdev`-style event codes directly:
 
 - Keyboard: `Machine.inject_virtio_key(linux_key, pressed)` (e.g. `KEY_A`)
-- Mouse movement: `Machine.inject_virtio_rel(dx, dy)` (`REL_X`/`REL_Y`)
-- Mouse buttons: `Machine.inject_virtio_button(btn, pressed)` (e.g. `BTN_LEFT`)
-- Mouse wheel: `Machine.inject_virtio_wheel(delta)` (`REL_WHEEL`)
+- Mouse movement: `Machine.inject_virtio_rel(dx, dy)` (`REL_X`/`REL_Y`; alias: `Machine.inject_virtio_mouse_rel(dx, dy)`)
+- Mouse buttons: `Machine.inject_virtio_button(btn, pressed)` (e.g. `BTN_LEFT`; alias: `Machine.inject_virtio_mouse_button(btn, pressed)`)
+- Mouse wheel: `Machine.inject_virtio_wheel(delta)` (`REL_WHEEL`; alias: `Machine.inject_virtio_mouse_wheel(delta)`)
 - Mouse horizontal wheel: `Machine.inject_virtio_hwheel(delta)` (`REL_HWHEEL`)
 - Mouse wheel (combined): `Machine.inject_virtio_wheel2(wheel, hwheel)` (`REL_WHEEL` + `REL_HWHEEL`)
 
-Driver status is exposed for routing decisions:
-
-- `Machine.virtio_input_keyboard_driver_ok()`
-- `Machine.virtio_input_mouse_driver_ok()`
-
-These return `false` when virtio-input is disabled or the guest driver has not
-completed virtio initialization (`VIRTIO_STATUS_DRIVER_OK`).
+`dy > 0` means down (Linux `REL_Y`, matches browser coordinates).
 
 The definitive virtio-input device contract for Aero (transport + queues + event
 codes) is specified in

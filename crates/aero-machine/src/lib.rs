@@ -389,6 +389,9 @@ pub struct MachineConfig {
     /// - Keyboard: `aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf` (`00:0a.0`)
     /// - Mouse: `aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf` (`00:0a.1`)
     ///
+    /// Virtio-input is the intended low-latency “fast path” for keyboard/mouse once the guest
+    /// driver is installed (see `docs/08-input-devices.md`).
+    ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_virtio_input: bool,
     /// Whether to attach an Intel PIIX3 UHCI (USB 1.1) controller at the canonical BDF
@@ -410,6 +413,17 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_xhci: bool,
+    /// Whether to attach an external USB hub behind the UHCI root hub and populate it with a fixed
+    /// set of synthetic USB HID devices (keyboard + mouse + gamepad).
+    ///
+    /// This matches the browser runtime topology described in `docs/08-input-devices.md`:
+    /// - UHCI root port 0: external hub
+    /// - hub port 1: USB HID keyboard
+    /// - hub port 2: USB HID mouse
+    /// - hub port 3: USB HID gamepad (Aero's fixed 8-byte report)
+    ///
+    /// Requires [`MachineConfig::enable_uhci`].
+    pub enable_synthetic_usb_hid: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
     /// This is the transitional standalone VGA/VBE path used for BIOS/boot display and VGA-focused
@@ -504,6 +518,7 @@ impl Default for MachineConfig {
             enable_uhci: false,
             enable_ehci: false,
             enable_xhci: false,
+            enable_synthetic_usb_hid: false,
             enable_aerogpu: false,
             enable_vga: true,
             enable_serial: true,
@@ -556,6 +571,7 @@ impl MachineConfig {
             enable_uhci: false,
             enable_ehci: false,
             enable_xhci: false,
+            enable_synthetic_usb_hid: false,
             enable_aerogpu: false,
             enable_vga: true,
             enable_serial: true,
@@ -714,6 +730,7 @@ pub enum MachineError {
     XhciRequiresPcPlatform,
     AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
+    SyntheticUsbHidRequiresUhci,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
     MultipleNicsEnabled,
@@ -766,6 +783,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::XhciRequiresPcPlatform => {
                 write!(f, "enable_xhci requires enable_pc_platform=true")
+            }
+            MachineError::SyntheticUsbHidRequiresUhci => {
+                write!(f, "enable_synthetic_usb_hid requires enable_uhci=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
@@ -1828,28 +1848,6 @@ impl PciDevice for VirtioNetPciConfigDevice {
     }
 }
 
-struct VirtioBlkPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl VirtioBlkPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::VIRTIO_BLK.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for VirtioBlkPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 struct VirtioInputKeyboardPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -1885,6 +1883,28 @@ impl VirtioInputMousePciConfigDevice {
 }
 
 impl PciDevice for VirtioInputMousePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VirtioBlkPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioBlkPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::VIRTIO_BLK.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for VirtioBlkPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
@@ -3523,6 +3543,10 @@ pub struct Machine {
     uhci: Option<Rc<RefCell<UhciPciDevice>>>,
     ehci: Option<Rc<RefCell<EhciPciDevice>>>,
     xhci: Option<Rc<RefCell<XhciPciDevice>>>,
+    /// Optional synthetic USB HID devices behind an external hub on UHCI root port 0.
+    usb_hid_keyboard: Option<aero_usb::hid::UsbHidKeyboardHandle>,
+    usb_hid_mouse: Option<aero_usb::hid::UsbHidMouseHandle>,
+    usb_hid_gamepad: Option<aero_usb::hid::UsbHidGamepadHandle>,
     /// ISA IRQ line handles used to deliver legacy IDE interrupts (IRQ14/15) without over/under-
     /// counting assertions when the machine polls device state.
     ide_irq14_line: Option<PlatformIrqLine>,
@@ -3630,7 +3654,11 @@ impl Machine {
                 return Err(MachineError::AeroGpuConflictsWithVga);
             }
         }
-        if (cfg.enable_ahci || cfg.enable_nvme || cfg.enable_ide || cfg.enable_virtio_blk)
+        if (cfg.enable_ahci
+            || cfg.enable_nvme
+            || cfg.enable_ide
+            || cfg.enable_virtio_blk
+            || cfg.enable_virtio_input)
             && !cfg.enable_pc_platform
         {
             if cfg.enable_ahci {
@@ -3642,10 +3670,13 @@ impl Machine {
             if cfg.enable_ide {
                 return Err(MachineError::IdeRequiresPcPlatform);
             }
+            if cfg.enable_virtio_input {
+                return Err(MachineError::VirtioInputRequiresPcPlatform);
+            }
             return Err(MachineError::VirtioBlkRequiresPcPlatform);
         }
-        if cfg.enable_virtio_input && !cfg.enable_pc_platform {
-            return Err(MachineError::VirtioInputRequiresPcPlatform);
+        if cfg.enable_synthetic_usb_hid && !cfg.enable_uhci {
+            return Err(MachineError::SyntheticUsbHidRequiresUhci);
         }
         if cfg.enable_uhci && !cfg.enable_pc_platform {
             return Err(MachineError::UhciRequiresPcPlatform);
@@ -3706,6 +3737,9 @@ impl Machine {
             ide: None,
             virtio_blk: None,
             uhci: None,
+            usb_hid_keyboard: None,
+            usb_hid_mouse: None,
+            usb_hid_gamepad: None,
             ehci: None,
             xhci: None,
             ide_irq14_line: None,
@@ -5136,6 +5170,21 @@ impl Machine {
             .hub_mut()
             .detach_at_path(path)
     }
+
+    /// Returns the synthetic USB HID keyboard handle, if present.
+    pub fn usb_hid_keyboard_handle(&self) -> Option<aero_usb::hid::UsbHidKeyboardHandle> {
+        self.usb_hid_keyboard.clone()
+    }
+
+    /// Returns the synthetic USB HID mouse handle, if present.
+    pub fn usb_hid_mouse_handle(&self) -> Option<aero_usb::hid::UsbHidMouseHandle> {
+        self.usb_hid_mouse.clone()
+    }
+
+    /// Returns the synthetic USB HID gamepad handle, if present.
+    pub fn usb_hid_gamepad_handle(&self) -> Option<aero_usb::hid::UsbHidGamepadHandle> {
+        self.usb_hid_gamepad.clone()
+    }
     /// Attach an ATA drive to the canonical AHCI port 0, if the AHCI controller is enabled.
     pub fn attach_ahci_drive_port0(&mut self, drive: AtaDrive) {
         self.attach_ahci_drive(0, drive);
@@ -5345,7 +5394,6 @@ impl Machine {
             .controller
             .attach_secondary_master_atapi(dev);
     }
-
     /// Attach an ISO backend as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`).
     ///
     /// This models the media as inserted (updates guest-visible tray/media state) and also updates
@@ -5405,7 +5453,7 @@ impl Machine {
     ///
     /// This is a convenience wrapper for browser/native hosts that already have the ISO contents
     /// in memory. For large ISOs, prefer a streaming/file-backed disk and call
-    /// [`Machine::attach_ide_secondary_master_iso`].
+    /// [`Machine::attach_install_media_iso_and_set_overlay_ref`].
     pub fn attach_install_media_iso_bytes(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         let disk = RawDisk::open(MemBackend::from_vec(bytes))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -5989,7 +6037,7 @@ impl Machine {
             }
 
             // virtio-input keyboard legacy INTx (level-triggered).
-            if let Some(virtio_kbd) = &self.virtio_input_keyboard {
+            if let Some(virtio_input_keyboard) = &self.virtio_input_keyboard {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
                 let pin = PciInterruptPin::IntA;
 
@@ -6006,11 +6054,10 @@ impl Machine {
                     .unwrap_or(0);
 
                 let mut level = {
-                    let mut dev = virtio_kbd.borrow_mut();
+                    let mut dev = virtio_input_keyboard.borrow_mut();
                     dev.set_pci_command(command);
                     dev.irq_level()
                 };
-
                 if (command & (1 << 10)) != 0 {
                     level = false;
                 }
@@ -6019,7 +6066,7 @@ impl Machine {
             }
 
             // virtio-input mouse legacy INTx (level-triggered).
-            if let Some(virtio_mouse) = &self.virtio_input_mouse {
+            if let Some(virtio_input_mouse) = &self.virtio_input_mouse {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
                 let pin = PciInterruptPin::IntA;
 
@@ -6036,11 +6083,10 @@ impl Machine {
                     .unwrap_or(0);
 
                 let mut level = {
-                    let mut dev = virtio_mouse.borrow_mut();
+                    let mut dev = virtio_input_mouse.borrow_mut();
                     dev.set_pci_command(command);
                     dev.irq_level()
                 };
-
                 if (command & (1 << 10)) != 0 {
                     level = false;
                 }
@@ -6567,9 +6613,9 @@ impl Machine {
         self.ps2_mouse_buttons = buttons;
     }
 
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // virtio-input (paravirtualized keyboard/mouse)
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     /// Whether the guest driver for the virtio-input keyboard has reached `DRIVER_OK`.
     ///
@@ -6589,70 +6635,6 @@ impl Machine {
             .is_some_and(|dev| dev.borrow().driver_ok())
     }
 
-    fn poll_virtio_input(&mut self) {
-        let Some(pci_cfg) = &self.pci_cfg else {
-            return;
-        };
-
-        // Polling is safe even when the guest has not enabled bus mastering; `VirtioPciDevice`
-        // gates all guest-memory DMA on COMMAND.BME.
-        let mut dma = VirtioDmaMemory::new(&mut self.mem);
-
-        const MAX_CHAINS_PER_QUEUE_PER_POLL: usize = 64;
-
-        if let Some(kbd) = &self.virtio_input_keyboard {
-            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
-            let (command, msix_enabled, msix_masked) = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                match pci_cfg.bus_mut().device_config(bdf) {
-                    Some(cfg) => {
-                        let msix = cfg.capability::<MsixCapability>();
-                        (
-                            cfg.command(),
-                            msix.is_some_and(|msix| msix.enabled()),
-                            msix.is_some_and(|msix| msix.function_masked()),
-                        )
-                    }
-                    None => (0, false, false),
-                }
-            };
-            let mut dev = kbd.borrow_mut();
-            dev.set_pci_command(command);
-            sync_virtio_msix_from_platform(&mut dev, msix_enabled, msix_masked);
-            dev.poll_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
-        }
-
-        if let Some(mouse) = &self.virtio_input_mouse {
-            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
-            let (command, msix_enabled, msix_masked) = {
-                let mut pci_cfg = pci_cfg.borrow_mut();
-                match pci_cfg.bus_mut().device_config(bdf) {
-                    Some(cfg) => {
-                        let msix = cfg.capability::<MsixCapability>();
-                        (
-                            cfg.command(),
-                            msix.is_some_and(|msix| msix.enabled()),
-                            msix.is_some_and(|msix| msix.function_masked()),
-                        )
-                    }
-                    None => (0, false, false),
-                }
-            };
-            let mut dev = mouse.borrow_mut();
-            dev.set_pci_command(command);
-            sync_virtio_msix_from_platform(&mut dev, msix_enabled, msix_masked);
-            dev.poll_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
-        }
-    }
-
-    /// Process virtio-input transport state for both keyboard and mouse functions.
-    ///
-    /// This is the same work performed by the machine in `run_slice()` and is exposed so callers
-    /// (and integration tests) can drive queue progress deterministically.
-    pub fn process_virtio_input(&mut self) {
-        self.poll_virtio_input();
-    }
-
     /// Inject a Linux input key event (`EV_KEY` + `KEY_*`) into the virtio-input keyboard device.
     ///
     /// This is a no-op when virtio-input is disabled.
@@ -6667,7 +6649,7 @@ impl Machine {
             };
             input.inject_key(linux_key, pressed);
         }
-        self.poll_virtio_input();
+        self.process_virtio_input();
     }
 
     /// Inject a Linux input relative motion event (`EV_REL` + `REL_X/REL_Y`) into the virtio-input
@@ -6685,7 +6667,7 @@ impl Machine {
             };
             input.inject_rel_move(dx, dy);
         }
-        self.poll_virtio_input();
+        self.process_virtio_input();
     }
 
     /// Inject a Linux input button event (`EV_KEY` + `BTN_*`) into the virtio-input mouse device.
@@ -6702,7 +6684,7 @@ impl Machine {
             };
             input.inject_button(btn, pressed);
         }
-        self.poll_virtio_input();
+        self.process_virtio_input();
     }
 
     /// Inject a Linux mouse wheel event (`EV_REL` + `REL_WHEEL`) into the virtio-input mouse device.
@@ -6719,7 +6701,107 @@ impl Machine {
             };
             input.inject_wheel(delta);
         }
-        self.poll_virtio_input();
+        self.process_virtio_input();
+    }
+
+    // Explicit aliases for parity with the wasm-facing API.
+    pub fn inject_virtio_mouse_rel(&mut self, dx: i32, dy: i32) {
+        self.inject_virtio_rel(dx, dy);
+    }
+
+    pub fn inject_virtio_mouse_button(&mut self, btn: u32, pressed: bool) {
+        let Ok(btn) = u16::try_from(btn) else {
+            return;
+        };
+        self.inject_virtio_button(btn, pressed);
+    }
+
+    pub fn inject_virtio_mouse_wheel(&mut self, delta: i32) {
+        self.inject_virtio_wheel(delta);
+    }
+
+    // -------------------------------------------------------------------------
+    // Synthetic USB HID injection (UHCI external hub)
+    // -------------------------------------------------------------------------
+
+    /// Inject a USB HID keyboard usage into the synthetic USB HID keyboard device (if present).
+    ///
+    /// `usage` is a USB HID usage ID from the keyboard usage page (e.g. `0x04` for `Keyboard A`).
+    pub fn inject_usb_hid_keyboard_usage(&mut self, usage: u32, pressed: bool) {
+        let Some(kbd) = &self.usb_hid_keyboard else {
+            return;
+        };
+        let Ok(usage) = u8::try_from(usage) else {
+            return;
+        };
+        if usage == 0 {
+            return;
+        }
+        kbd.key_event(usage, pressed);
+    }
+
+    /// Inject a relative mouse movement event into the synthetic USB HID mouse device (if present).
+    ///
+    /// Coordinate conventions:
+    /// - `dx > 0` is right.
+    /// - `dy > 0` is down (matches browser coordinates).
+    pub fn inject_usb_hid_mouse_move(&mut self, dx: i32, dy: i32) {
+        let Some(mouse) = &self.usb_hid_mouse else {
+            return;
+        };
+        mouse.movement(dx, dy);
+    }
+
+    /// Set the synthetic USB HID mouse button state using a bitmask matching DOM
+    /// `MouseEvent.buttons` (low 5 bits).
+    pub fn inject_usb_hid_mouse_buttons(&mut self, mask: u32) {
+        let Some(mouse) = &self.usb_hid_mouse else {
+            return;
+        };
+        let next = (mask as u8) & 0x1f;
+
+        // Note: `UsbHidMouseHandle` only exposes per-bit transitions, so we synthesize transitions
+        // by re-applying the full mask each call. The underlying device model avoids emitting a
+        // report when the bit is unchanged.
+        mouse.button_event(0x01, (next & 0x01) != 0);
+        mouse.button_event(0x02, (next & 0x02) != 0);
+        mouse.button_event(0x04, (next & 0x04) != 0);
+        mouse.button_event(0x08, (next & 0x08) != 0);
+        mouse.button_event(0x10, (next & 0x10) != 0);
+    }
+
+    /// Inject a mouse wheel delta into the synthetic USB HID mouse device (if present).
+    ///
+    /// `delta > 0` means wheel up.
+    pub fn inject_usb_hid_mouse_wheel(&mut self, delta: i32) {
+        let Some(mouse) = &self.usb_hid_mouse else {
+            return;
+        };
+        mouse.wheel(delta);
+    }
+
+    /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
+    /// present).
+    ///
+    /// This is packed as two little-endian u32 words (`a` = bytes 0..3, `b` = bytes 4..7) to match
+    /// JS/WASM call overhead constraints.
+    pub fn inject_usb_hid_gamepad_report(&mut self, a: u32, b: u32) {
+        let Some(gamepad) = &self.usb_hid_gamepad else {
+            return;
+        };
+        let mut bytes = [0u8; 8];
+        bytes[0..4].copy_from_slice(&a.to_le_bytes());
+        bytes[4..8].copy_from_slice(&b.to_le_bytes());
+
+        let report = aero_usb::hid::GamepadReport {
+            buttons: u16::from_le_bytes([bytes[0], bytes[1]]),
+            hat: bytes[2] & 0x0f,
+            x: bytes[3] as i8,
+            y: bytes[4] as i8,
+            rx: bytes[5] as i8,
+            ry: bytes[6] as i8,
+        };
+        gamepad.set_report(report);
     }
 
     /// Inject a Linux mouse horizontal wheel event (`EV_REL` + `REL_HWHEEL`) into the virtio-input
@@ -6737,7 +6819,7 @@ impl Machine {
             };
             input.inject_hwheel(delta);
         }
-        self.poll_virtio_input();
+        self.process_virtio_input();
     }
 
     /// Inject a Linux mouse vertical + horizontal wheel update into the virtio-input mouse device.
@@ -6757,7 +6839,7 @@ impl Machine {
             };
             input.inject_wheel2(wheel, hwheel);
         }
-        self.poll_virtio_input();
+        self.process_virtio_input();
     }
 
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
@@ -7334,6 +7416,37 @@ impl Machine {
             } else {
                 None
             };
+ 
+            // If enabled, attach an external USB hub with a fixed set of synthetic HID devices.
+            //
+            // This mirrors the browser runtime topology described in `docs/08-input-devices.md`.
+            if self.cfg.enable_synthetic_usb_hid {
+                let keyboard = self
+                    .usb_hid_keyboard
+                    .get_or_insert_with(aero_usb::hid::UsbHidKeyboardHandle::new)
+                    .clone();
+                let mouse = self
+                    .usb_hid_mouse
+                    .get_or_insert_with(aero_usb::hid::UsbHidMouseHandle::new)
+                    .clone();
+                let gamepad = self
+                    .usb_hid_gamepad
+                    .get_or_insert_with(aero_usb::hid::UsbHidGamepadHandle::new)
+                    .clone();
+
+                if let Some(uhci) = uhci.as_ref() {
+                    let mut hub = aero_usb::hub::UsbHubDevice::new();
+                    hub.attach(1, Box::new(keyboard));
+                    hub.attach(2, Box::new(mouse));
+                    hub.attach(3, Box::new(gamepad));
+
+                    // Attach hub to UHCI root port 0.
+                    uhci.borrow_mut()
+                        .controller_mut()
+                        .hub_mut()
+                        .attach(0, Box::new(hub));
+                }
+            }
 
             if attach_usb2_mux {
                 if let (Some(uhci), Some(ehci)) = (&uhci, &ehci) {
@@ -8445,6 +8558,72 @@ impl Machine {
         virtio_blk.borrow_mut().process_notified_queues(&mut dma);
     }
 
+    /// Allow virtio-input devices (if present) to make forward progress (DMA).
+    pub fn process_virtio_input(&mut self) {
+        let Some(pci_cfg) = self.pci_cfg.clone() else {
+            return;
+        };
+
+        if let Some(virtio) = self.virtio_input_keyboard.clone() {
+            self.process_virtio_input_device(
+                &virtio,
+                aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf,
+                &pci_cfg,
+            );
+        }
+        if let Some(virtio) = self.virtio_input_mouse.clone() {
+            self.process_virtio_input_device(
+                &virtio,
+                aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf,
+                &pci_cfg,
+            );
+        }
+    }
+
+    fn process_virtio_input_device(
+        &mut self,
+        virtio: &Rc<RefCell<VirtioPciDevice>>,
+        bdf: PciBdf,
+        pci_cfg: &SharedPciConfigPorts,
+    ) {
+        let (command, msix_enabled, msix_masked) = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            match pci_cfg.bus_mut().device_config(bdf) {
+                Some(cfg) => {
+                    let msix = cfg.capability::<MsixCapability>();
+                    (
+                        cfg.command(),
+                        msix.is_some_and(|msix| msix.enabled()),
+                        msix.is_some_and(|msix| msix.function_masked()),
+                    )
+                }
+                None => (0, false, false),
+            }
+        };
+
+        {
+            let mut virtio = virtio.borrow_mut();
+            virtio.set_pci_command(command);
+            sync_virtio_msix_from_platform(&mut virtio, msix_enabled, msix_masked);
+        }
+
+        // Respect PCI Bus Master Enable (bit 2). Virtio DMA is undefined without it.
+        if (command & (1 << 2)) == 0 {
+            return;
+        }
+
+        let mut dma = VirtioDmaMemory::new(&mut self.mem);
+        // Clamp all guest-driven work so a corrupted/malicious driver cannot cause unbounded work
+        // in a single call.
+        const MAX_CHAINS_PER_QUEUE_PER_POLL: usize = 64;
+
+        let mut virtio = virtio.borrow_mut();
+        virtio.process_notified_queues_bounded(&mut dma, MAX_CHAINS_PER_QUEUE_PER_POLL);
+        // Poll device-driven paths (host-injected input events) without consuming additional avail
+        // entries beyond the per-queue budget above.
+        virtio.poll_bounded(&mut dma, 0);
+    }
+
     /// Poll any enabled NIC + host network backend bridge once.
     ///
     /// This is safe to call even when no NIC is enabled; it will no-op.
@@ -8640,7 +8819,7 @@ impl Machine {
             self.process_nvme();
             self.process_virtio_blk();
             self.process_aerogpu();
-            self.poll_virtio_input();
+            self.process_virtio_input();
 
             self.poll_network();
             self.process_ahci();
@@ -8753,6 +8932,7 @@ impl Machine {
                     self.process_nvme();
                     self.process_virtio_blk();
                     self.process_aerogpu();
+                    self.process_virtio_input();
                     // Like storage controllers, the guest may have kicked a NIC queue immediately
                     // before executing `HLT` (e.g. E1000 TX descriptor doorbell). Poll the network
                     // bridge again here so the device can complete DMA and raise INTx to wake the
@@ -8769,6 +8949,7 @@ impl Machine {
                     self.process_nvme();
                     self.process_virtio_blk();
                     self.process_aerogpu();
+                    self.process_virtio_input();
                     self.poll_network();
                     if self.poll_platform_interrupt(MAX_QUEUED_EXTERNAL_INTERRUPTS) {
                         continue;

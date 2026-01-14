@@ -3412,6 +3412,19 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
 
     Error::new(&msg).into()
 }
+// Native-only helpers for integration tests.
+//
+// These are intentionally *not* part of the wasm-bindgen export surface.
+#[cfg(not(target_arch = "wasm32"))]
+impl Machine {
+    pub fn debug_inner(&self) -> &aero_machine::Machine {
+        &self.inner
+    }
+
+    pub fn debug_inner_mut(&mut self) -> &mut aero_machine::Machine {
+        &mut self.inner
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 fn opfs_context_error_to_js(operation: &str, path: &str, err: impl core::fmt::Display) -> JsValue {
@@ -3638,6 +3651,9 @@ impl Machine {
                     cfg.enable_xhci = v;
                 }
                 let mut enable_vga_set = false;
+                if let Some(v) = get_bool("enable_synthetic_usb_hid")? {
+                    cfg.enable_synthetic_usb_hid = v;
+                }
                 if let Some(v) = get_bool("enable_vga")? {
                     cfg.enable_vga = v;
                     enable_vga_set = true;
@@ -3665,6 +3681,30 @@ impl Machine {
             }
         }
 
+        // Synthetic HID devices are always attached behind UHCI.
+        if cfg.enable_synthetic_usb_hid {
+            cfg.enable_uhci = true;
+        }
+
+        Self::new_with_native_config(cfg)
+    }
+
+    /// Construct a canonical machine and optionally enable additional input backends.
+    ///
+    /// - PS/2 (i8042) remains enabled so early boot always works.
+    /// - virtio-input is a paravirtualized fast path (requires a guest driver).
+    /// - synthetic USB HID devices are attached behind UHCI via an external hub.
+    pub fn new_with_input_backends(
+        ram_size_bytes: u32,
+        enable_virtio_input: bool,
+        enable_synthetic_usb_hid: bool,
+    ) -> Result<Self, JsValue> {
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.enable_virtio_input = enable_virtio_input;
+        cfg.enable_synthetic_usb_hid = enable_synthetic_usb_hid;
+        if enable_synthetic_usb_hid {
+            cfg.enable_uhci = true;
+        }
         Self::new_with_native_config(cfg)
     }
 
@@ -5380,6 +5420,19 @@ impl Machine {
         self.inner.inject_virtio_wheel2(wheel, hwheel);
     }
 
+    // Newer, more explicit aliases (preferred for new code).
+    pub fn inject_virtio_mouse_rel(&mut self, dx: i32, dy: i32) {
+        self.inject_virtio_rel(dx, dy);
+    }
+
+    pub fn inject_virtio_mouse_button(&mut self, btn: u32, pressed: bool) {
+        self.inject_virtio_button(btn, pressed);
+    }
+
+    pub fn inject_virtio_mouse_wheel(&mut self, delta: i32) {
+        self.inject_virtio_wheel(delta);
+    }
+
     /// Whether the guest virtio-input keyboard driver has reached `DRIVER_OK`.
     pub fn virtio_input_keyboard_driver_ok(&self) -> bool {
         self.inner.virtio_input_keyboard_driver_ok()
@@ -5388,6 +5441,41 @@ impl Machine {
     /// Whether the guest virtio-input mouse driver has reached `DRIVER_OK`.
     pub fn virtio_input_mouse_driver_ok(&self) -> bool {
         self.inner.virtio_input_mouse_driver_ok()
+    }
+
+    // -------------------------------------------------------------------------
+    // Synthetic USB HID injection (UHCI external hub)
+    // -------------------------------------------------------------------------
+
+    /// Inject a USB HID keyboard usage into the synthetic USB HID keyboard device (if enabled).
+    pub fn inject_usb_hid_keyboard_usage(&mut self, usage: u32, pressed: bool) {
+        self.inner.inject_usb_hid_keyboard_usage(usage, pressed);
+    }
+
+    /// Inject a relative mouse movement event into the synthetic USB HID mouse device (if
+    /// enabled).
+    pub fn inject_usb_hid_mouse_move(&mut self, dx: i32, dy: i32) {
+        self.inner.inject_usb_hid_mouse_move(dx, dy);
+    }
+
+    /// Set the synthetic USB HID mouse button state (bitmask matching `MouseEvent.buttons`, low 5
+    /// bits).
+    pub fn inject_usb_hid_mouse_buttons(&mut self, mask: u32) {
+        self.inner.inject_usb_hid_mouse_buttons(mask);
+    }
+
+    /// Inject a mouse wheel delta into the synthetic USB HID mouse device (if enabled).
+    pub fn inject_usb_hid_mouse_wheel(&mut self, delta: i32) {
+        self.inner.inject_usb_hid_mouse_wheel(delta);
+    }
+
+    /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
+    /// enabled).
+    ///
+    /// This is packed as two little-endian u32 words (`a` = bytes 0..3, `b` = bytes 4..7) to match
+    /// JS/WASM call overhead constraints.
+    pub fn inject_usb_hid_gamepad_report(&mut self, a: u32, b: u32) {
+        self.inner.inject_usb_hid_gamepad_report(a, b);
     }
 
     // -------------------------------------------------------------------------

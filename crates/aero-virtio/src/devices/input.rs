@@ -526,6 +526,13 @@ impl VirtioInput {
         });
     }
 
+    /// Number of input events currently queued for delivery to the guest.
+    ///
+    /// This is primarily intended for host-side diagnostics and unit tests.
+    pub fn pending_events_len(&self) -> usize {
+        self.pending.len()
+    }
+
     pub fn kind(&self) -> VirtioInputDeviceKind {
         self.kind
     }

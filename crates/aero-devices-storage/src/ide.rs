@@ -167,6 +167,12 @@ impl IdeChannel {
     fn attach_drive(&mut self, slot: usize, drive: AtaDrive) {
         self.drives[slot] = Some(drive);
     }
+    fn selected_drive_present(&self) -> bool {
+        self.drives
+            .get(self.selected)
+            .map(|d| d.is_some())
+            .unwrap_or(false)
+    }
     fn drive_mut(&mut self) -> Option<&mut AtaDrive> {
         self.drives[self.selected].as_mut()
     }
@@ -231,12 +237,7 @@ impl IdeChannel {
         //
         // Exact semantics vary across controllers, but legacy IDE probing expects that reads
         // float high (0xFF) when the selected drive is absent.
-        if !self
-            .drives
-            .get(self.selected)
-            .map(|d| d.is_some())
-            .unwrap_or(false)
-        {
+        if !self.selected_drive_present() {
             return 0xFF;
         }
 
