@@ -11,6 +11,8 @@ use crate::sm3::types::ShaderStage;
 use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
 use std::collections::{BTreeSet, HashMap};
 
+const MAX_CONTROL_FLOW_NESTING: usize = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildError {
     pub location: crate::sm3::decode::InstructionLocation,
@@ -79,18 +81,38 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::Comment | Opcode::Dcl | Opcode::Def | Opcode::DefI | Opcode::DefB => continue,
             Opcode::End => break,
             Opcode::Nop => {}
-            Opcode::If => stack.push(Frame::If {
-                cond: build_if_cond(inst)?,
-                then_block: Block::new(),
-                else_block: None,
-                in_else: false,
-            }),
-            Opcode::Ifc => stack.push(Frame::If {
-                cond: build_ifc_cond(inst)?,
-                then_block: Block::new(),
-                else_block: None,
-                in_else: false,
-            }),
+            Opcode::If => {
+                if stack.len() - 1 >= MAX_CONTROL_FLOW_NESTING {
+                    return Err(err(
+                        inst,
+                        format!(
+                            "control flow nesting exceeds maximum {MAX_CONTROL_FLOW_NESTING} levels"
+                        ),
+                    ));
+                }
+                stack.push(Frame::If {
+                    cond: build_if_cond(inst)?,
+                    then_block: Block::new(),
+                    else_block: None,
+                    in_else: false,
+                })
+            }
+            Opcode::Ifc => {
+                if stack.len() - 1 >= MAX_CONTROL_FLOW_NESTING {
+                    return Err(err(
+                        inst,
+                        format!(
+                            "control flow nesting exceeds maximum {MAX_CONTROL_FLOW_NESTING} levels"
+                        ),
+                    ));
+                }
+                stack.push(Frame::If {
+                    cond: build_ifc_cond(inst)?,
+                    then_block: Block::new(),
+                    else_block: None,
+                    in_else: false,
+                })
+            }
             Opcode::Else => match stack.last_mut() {
                 Some(Frame::If {
                     else_block,
@@ -126,10 +148,20 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     },
                 )?;
             }
-            Opcode::Loop => stack.push(Frame::Loop {
-                init: build_loop_init(inst)?,
-                body: Block::new(),
-            }),
+            Opcode::Loop => {
+                if stack.len() - 1 >= MAX_CONTROL_FLOW_NESTING {
+                    return Err(err(
+                        inst,
+                        format!(
+                            "control flow nesting exceeds maximum {MAX_CONTROL_FLOW_NESTING} levels"
+                        ),
+                    ));
+                }
+                stack.push(Frame::Loop {
+                    init: build_loop_init(inst)?,
+                    body: Block::new(),
+                })
+            }
             Opcode::EndLoop => {
                 let frame = stack
                     .pop()
@@ -403,7 +435,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::Call | Opcode::Ret => return Err(err(inst, "call/ret not supported")),
 
             Opcode::Unknown(op) => {
-                return Err(err(inst, &format!("unsupported opcode 0x{op:04x}")))
+                return Err(err(inst, format!("unsupported opcode 0x{op:04x}")))
             }
         }
     }
@@ -1261,7 +1293,7 @@ fn build_modifiers(inst: &DecodedInstruction) -> Result<InstModifiers, BuildErro
 fn extract_dst(inst: &DecodedInstruction, idx: usize) -> Result<Dst, BuildError> {
     let dst = match inst.operands.get(idx) {
         Some(Operand::Dst(dst)) => dst,
-        _ => return Err(err(inst, &format!("missing dst operand {idx}"))),
+        _ => return Err(err(inst, format!("missing dst operand {idx}"))),
     };
     Ok(Dst {
         reg: to_ir_reg(inst, &dst.reg)?,
@@ -1272,7 +1304,7 @@ fn extract_dst(inst: &DecodedInstruction, idx: usize) -> Result<Dst, BuildError>
 fn extract_src(inst: &DecodedInstruction, idx: usize) -> Result<Src, BuildError> {
     let src = match inst.operands.get(idx) {
         Some(Operand::Src(src)) => src,
-        _ => return Err(err(inst, &format!("missing src operand {idx}"))),
+        _ => return Err(err(inst, format!("missing src operand {idx}"))),
     };
     if matches!(src.modifier, SrcModifier::Unknown(_)) {
         return Err(err(inst, "unsupported source modifier"));
@@ -1618,11 +1650,11 @@ fn to_ir_reg(
     })
 }
 
-fn err(inst: &DecodedInstruction, message: &str) -> BuildError {
+fn err(inst: &DecodedInstruction, message: impl Into<String>) -> BuildError {
     BuildError {
         location: inst.location,
         opcode: inst.opcode,
-        message: message.to_owned(),
+        message: message.into(),
     }
 }
 

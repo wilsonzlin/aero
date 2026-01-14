@@ -100,3 +100,31 @@ fn ir_snapshot_ps3_tex_ifc() {
 
     insta::assert_snapshot!(ir.to_string());
 }
+
+#[test]
+fn ir_builder_rejects_excessive_control_flow_nesting() {
+    // Deeply nested `if` blocks can cause recursive IR verification / WGSL generation to blow the
+    // Rust stack. Ensure we reject pathological nesting during IR construction.
+    let nesting = 256;
+
+    let mut tokens = Vec::new();
+    tokens.push(version_token(ShaderStage::Pixel, 3, 0));
+    for _ in 0..nesting {
+        // if c0
+        tokens.push(opcode_token(40, 1));
+        tokens.push(src_token(2, 0, 0xE4, 0));
+    }
+    for _ in 0..nesting {
+        // endif
+        tokens.push(opcode_token(43, 0));
+    }
+    tokens.push(0x0000_FFFF);
+
+    let token_bytes = to_bytes(&tokens);
+    let decoded = decode_u8_le_bytes(&token_bytes).unwrap();
+    let err = build_ir(&decoded).unwrap_err();
+    assert!(
+        err.message.contains("control flow nesting exceeds maximum"),
+        "{err}"
+    );
+}
