@@ -4721,6 +4721,11 @@ constexpr uint32_t kD3dTaTFactor = 3u;       // D3DTA_TFACTOR
 constexpr uint32_t kD3dTaComplement = 0x10u;      // D3DTA_COMPLEMENT
 constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;  // D3DTA_ALPHAREPLICATE
 
+// Fixed-function stage0 uses D3DRS_TEXTUREFACTOR by uploading it into a reserved
+// *high* pixel-shader constant register. This avoids clobbering app-provided PS
+// constants in the commonly used low range (especially c0).
+constexpr uint32_t kFixedfuncStage0TextureFactorPsRegister = 255u; // c255
+
 enum class FixedfuncStageArgSrc : uint8_t {
   Diffuse = 0,
   Texture = 1,
@@ -4759,7 +4764,7 @@ struct FixedfuncStage0Key {
   // True when the fixed-function stage state requires sampling texture0 or using
   // its alpha channel (e.g., BLENDTEXTUREALPHA).
   bool uses_texture = false;
-  // True when stage state uses D3DRS_TEXTUREFACTOR (passed to the PS as `c0`).
+  // True when stage state uses D3DRS_TEXTUREFACTOR (passed to the PS as `c255`).
   bool uses_tfactor = false;
   // False when the stage-state combination is not supported by the fixed-function
   // fallback path; callers must treat this as D3DERR_INVALIDCALL at draw time.
@@ -4940,7 +4945,6 @@ HRESULT ensure_fixedfunc_texture_factor_constant_locked(Device* dev) {
 
   // Render-state numeric value from d3d9types.h (D3DRS_TEXTUREFACTOR).
   constexpr uint32_t kD3dRsTextureFactor = 60u;
-  constexpr uint32_t kPsTextureFactorRegister = 0u; // c0 in fixed-function PS variants
 
   const uint32_t tf = (kD3dRsTextureFactor < 256) ? dev->render_states[kD3dRsTextureFactor] : 0u;
   const float a = static_cast<float>((tf >> 24) & 0xFFu) * (1.0f / 255.0f);
@@ -4949,14 +4953,14 @@ HRESULT ensure_fixedfunc_texture_factor_constant_locked(Device* dev) {
   const float b = static_cast<float>((tf >> 0) & 0xFFu) * (1.0f / 255.0f);
   const float data[4] = {r, g, b, a};
 
-  const float* cached = dev->ps_consts_f + static_cast<size_t>(kPsTextureFactorRegister) * 4u;
+  const float* cached = dev->ps_consts_f + static_cast<size_t>(kFixedfuncStage0TextureFactorPsRegister) * 4u;
   if (cached[0] == data[0] && cached[1] == data[1] && cached[2] == data[2] && cached[3] == data[3]) {
     return S_OK;
   }
 
   if (!emit_set_shader_constants_f_locked(dev,
                                           kD3d9ShaderStagePs,
-                                          kPsTextureFactorRegister,
+                                          kFixedfuncStage0TextureFactorPsRegister,
                                           data,
                                           /*vec4_count=*/1u)) {
     return E_OUTOFMEMORY;
@@ -5171,7 +5175,7 @@ uint32_t arg_src_token(const FixedfuncStageArg& arg) {
       // r0 contains texld result.
       return src_temp(/*reg=*/0, swz, mod);
     case FixedfuncStageArgSrc::TextureFactor:
-      return src_const(/*reg=*/0, swz, mod);
+      return src_const(/*reg=*/kFixedfuncStage0TextureFactorPsRegister, swz, mod);
     case FixedfuncStageArgSrc::Diffuse:
     default:
       return src_input(/*reg=*/0, swz, mod);
@@ -13844,7 +13848,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
 
   // D3DRS_TEXTUREFACTOR is consumed by the fixed-function stage0 fallback when
   // the texture combiners reference TFACTOR. Upload it into the reserved PS
-  // constant register (c0) on render-state updates so legacy apps that animate
+  // constant register (c255) on render-state updates so legacy apps that animate
   // TEXTUREFACTOR without touching stage-state still render correctly.
   constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
   if (state == kD3dRsTextureFactor && !dev->user_ps) {
@@ -15734,7 +15738,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   //
   // Also handle D3DRS_TEXTUREFACTOR updates: state blocks often include
   // TEXTUREFACTOR without changing stage state, so the fixed-function PS constant
-  // (c0) must be refreshed when needed.
+  // (c255) must be refreshed when needed.
   constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
   const bool tfactor_dirty = sb->render_state_mask.test(kD3dRsTextureFactor);
   const bool stage0_texture_dirty = sb->texture_mask.test(0);

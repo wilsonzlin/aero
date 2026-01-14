@@ -534,7 +534,7 @@ Limitations (bring-up):
   - Supported arg sources:
     - `DIFFUSE` / `CURRENT` (stage0 `CURRENT` treated as diffuse)
     - `TEXTURE` (stage0 only)
-    - `TFACTOR` (`D3DRS_TEXTUREFACTOR`; provided to the fixed-function PS as `c0` in normalized RGBA)
+    - `TFACTOR` (`D3DRS_TEXTUREFACTOR`; provided to the fixed-function PS as `c255` in normalized RGBA)
   - Supported arg modifiers for the sources above: `COMPLEMENT`, `ALPHAREPLICATE`
   - Guardrails:
     - Unsupported stage-state combinations are cached for `Get*`/state blocks, but fixed-function draws fail cleanly with `D3DERR_INVALIDCALL` (only when the fixed-function path is actually used; i.e., no user pixel shader is bound).

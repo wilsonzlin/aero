@@ -6540,7 +6540,7 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       {"tfactor_select", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
        /*set_tfactor=*/true, 0xFF3366CCu, /*uses_tfactor=*/true,
        /*expect_texld=*/false, /*expect_add=*/false, /*expect_mul=*/false},
-      // Default TFACTOR is white (0xFFFFFFFF). Verify the driver uploads c0 even
+      // Default TFACTOR is white (0xFFFFFFFF). Verify the driver uploads c255 even
       // if the app never explicitly sets D3DRS_TEXTUREFACTOR.
       {"tfactor_default", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/true,
@@ -6714,7 +6714,7 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       return false;
     }
 
-    // TFACTOR cases: ensure the PS constant upload was emitted once (c0) and
+    // TFACTOR cases: ensure the PS constant upload was emitted once (c255) and
     // contains the expected normalized RGBA value.
     if (c.uses_tfactor) {
       const uint32_t expected_tf = c.set_tfactor ? c.tfactor : 0xFFFFFFFFu;
@@ -6727,7 +6727,7 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       size_t tfactor_uploads = 0;
       for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
         const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-        if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 0 || sc->vec4_count != 1) {
+        if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 255 || sc->vec4_count != 1) {
           continue;
         }
         if (!Check(hdr->size_bytes >= sizeof(*sc) + sizeof(expected_vec), "SET_SHADER_CONSTANTS_F contains payload")) {
@@ -7492,7 +7492,7 @@ bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   };
 
   // Stage0: select TFACTOR for both color and alpha so the fixed-function PS
-  // references c0.
+  // references c255.
   if (!SetTextureStageState(/*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1, "SetTextureStageState(COLOROP=SELECTARG1)")) {
     return false;
   }
@@ -7525,7 +7525,7 @@ bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR=0xFF3366CC)")) {
     return false;
   }
-  // Setting the same value again should not re-upload c0.
+  // Setting the same value again should not re-upload c255.
   hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, tf);
   if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR=0xFF3366CC) again")) {
     return false;
@@ -7547,7 +7547,7 @@ bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   size_t uploads = 0;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 0 || sc->vec4_count != 1) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 255 || sc->vec4_count != 1) {
       continue;
     }
     const size_t need = sizeof(*sc) + sizeof(expected_vec);

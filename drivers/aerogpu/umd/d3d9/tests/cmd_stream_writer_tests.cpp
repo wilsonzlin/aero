@@ -16074,6 +16074,148 @@ bool TestFixedfuncStage0TextureStageStateRebindsPixelShader() {
   return Check(creates3 == creates2, "SetTextureStageState(TEXTURE) reuses cached shader");
 }
 
+bool TestFixedfuncTextureFactorDoesNotClobberPsConst0() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
+
+  constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
+  constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
+  constexpr uint32_t kD3dTssAlphaOp = 4u;    // D3DTSS_ALPHAOP
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;  // D3DTSS_ALPHAARG1
+
+  constexpr uint32_t kD3dTopSelectArg1 = 2u; // D3DTOP_SELECTARG1
+  constexpr uint32_t kD3dTaTFactor = 3u;     // D3DTA_TFACTOR
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "SetShaderConstF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "SetRenderState must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  const float app_ps_c0[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+  hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice, kD3d9ShaderStagePs, /*start_reg=*/0, app_ps_c0, /*vec4_count=*/1);
+  if (!Check(hr == S_OK, "SetShaderConstF(PS, c0)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyzRhw | kD3dFvfDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Stage0: use TFACTOR for both color + alpha so the fixed-function stage0 PS
+  // must reference the internal TFACTOR constant register.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTFactor);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=TFACTOR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTFactor);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG1=TFACTOR)")) {
+    return false;
+  }
+
+  // Make sure the driver must upload TEXTUREFACTOR (and not just hit the cache).
+  hr = cleanup.device_funcs.pfnSetRenderState(create_dev.hDevice, kD3dRsTextureFactor, 0xFF3366CCu);
+  if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t diffuse;
+  };
+  Vertex tri[3]{};
+  tri[0] = {0.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFFu};
+  tri[1] = {1.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFFu};
+  tri[2] = {0.0f, 1.0f, 0.5f, 1.0f, 0xFFFFFFFFu};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(std::memcmp(dev->ps_consts_f, app_ps_c0, sizeof(app_ps_c0)) == 0,
+               "fixed-function stage0 TFACTOR must not clobber app PS constant c0")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncStage0ApplyStateBlockRebindsInteropPixelShader() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -36240,6 +36382,7 @@ int main() {
   RUN_TEST(TestSetFvfIgnoresUnusedTexcoordSizeBitsForDeclCache);
   RUN_TEST(TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFixedfuncStage0TextureStageStateRebindsPixelShader);
+  RUN_TEST(TestFixedfuncTextureFactorDoesNotClobberPsConst0);
   RUN_TEST(TestFixedfuncStage0ApplyStateBlockRebindsInteropPixelShader);
   RUN_TEST(TestFixedfuncStage0ApplyStateBlockTextureBindRebindsPixelShader);
   RUN_TEST(TestVsOnlyInteropSetShaderSucceedsWhenStage0Unsupported);

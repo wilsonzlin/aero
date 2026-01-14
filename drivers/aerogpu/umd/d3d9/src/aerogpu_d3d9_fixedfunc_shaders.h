@@ -1147,7 +1147,7 @@ static constexpr uint32_t kPsStage0ModulateTexture[] = {
 // -----------------------------------------------------------------------------
 // These variants extend the bring-up stage0 texture combiner subset with a few
 // additional D3DTOP_* operations and the D3DTA_TFACTOR source (provided via PS
-// constant c0 by the UMD).
+// constant c255 by the UMD).
 //
 // Notes:
 // - These shaders intentionally avoid declarations and stick to a small set of
@@ -1637,7 +1637,7 @@ static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaModulate[] = {
 
 // ps_2_0 (stage0): COLOR = TEXTURE * TFACTOR (RGB), ALPHA = TEXTURE
 //   texld r0, t0, s0
-//   mul  r1, r0, c0        ; c0 is TFACTOR
+//   mul  r1, r0, c255      ; c255 is TFACTOR
 //   mov  r1.w, r0
 //   mov  oC0, r1
 //   end
@@ -1650,7 +1650,7 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaTexture[] = {
     0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
-    0x20E40000u, // c0.xyzw
+    0x20E400FFu, // c255.xyzw
     0x03000001u, // mov
     0x00080001u, // r1.w
     0x00E40000u, // r0.xyzw
@@ -1662,7 +1662,7 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaTexture[] = {
 
 // ps_2_0 (stage0): COLOR = TEXTURE * TFACTOR (RGB), ALPHA = DIFFUSE
 //   texld r0, t0, s0
-//   mul  r0.xyz, r0, c0
+//   mul  r0.xyz, r0, c255
 //   mov  r0.w, v0
 //   mov  oC0, r0
 //   end
@@ -1675,7 +1675,7 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaDiffuse[] = {
     0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
-    0x20E40000u, // c0.xyzw
+    0x20E400FFu, // c255.xyzw
     0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
@@ -1687,7 +1687,7 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaDiffuse[] = {
 
 // ps_2_0 (stage0): COLOR = TEXTURE * TFACTOR (RGB), ALPHA = TEXTURE * DIFFUSE
 //   texld r0, t0, s0
-//   mul  r0.xyz, r0, c0
+//   mul  r0.xyz, r0, c255
 //   mul  r0.w, r0, v0
 //   mov  oC0, r0
 //   end
@@ -1700,7 +1700,7 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaModulate[] = {
     0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
-    0x20E40000u, // c0.xyzw
+    0x20E400FFu, // c255.xyzw
     0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
@@ -1876,13 +1876,13 @@ static constexpr uint32_t kPsStage0DiffuseAlphaModulate4xTextureDiffuse[] = {
 };
 
 // ps_2_0 (stage0): COLOR = TFACTOR, ALPHA = TFACTOR
-//   mov oC0, c0
+//   mov oC0, c255
 //   end
 static constexpr uint32_t kPsStage0TextureFactor[] = {
     0xFFFF0200u, // ps_2_0
     0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
-    0x20E40000u, // c0.xyzw
+    0x20E400FFu, // c255.xyzw
     0x0000FFFFu, // end
 };
 
