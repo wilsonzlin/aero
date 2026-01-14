@@ -7473,6 +7473,29 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
 
   const bool do_smoke_test = smoke_test || require_non_silence;
   if (!do_smoke_test) {
+    // Best-effort: even if we're only checking for endpoint presence, query the
+    // shared-mode mix format so the overall virtio-snd-format marker can still
+    // surface the driver's negotiated tuple. Do not fail the test if this
+    // probing fails.
+    ComPtr<IAudioClient> probe;
+    hr = chosen->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+                          reinterpret_cast<void**>(probe.Put()));
+    if (SUCCEEDED(hr) && probe) {
+      WAVEFORMATEX* mix = nullptr;
+      HRESULT mix_hr = probe->GetMixFormat(&mix);
+      if (SUCCEEDED(mix_hr) && mix) {
+        out.mix_format = WaveFormatToString(mix);
+        log.Logf("virtio-snd: capture mix format=%s", out.mix_format.c_str());
+        CoTaskMemFree(mix);
+        mix = nullptr;
+      } else {
+        log.Logf("virtio-snd: capture GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(mix_hr));
+      }
+    } else {
+      log.Logf("virtio-snd: capture Activate(IAudioClient) for mix format failed hr=0x%08lx",
+               static_cast<unsigned long>(hr));
+    }
+
     out.ok = true;
     out.hr = S_OK;
     out.fail_reason.clear();
