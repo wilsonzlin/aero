@@ -116,6 +116,13 @@ fn ia_load_r8g8b8a8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u3
   return vec4<f32>(r, g, b, a);
 }
 
+// DXGI_FORMAT_R16_FLOAT
+fn ia_load_r16_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> f32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack2x16float(packed).x;
+}
+
 // DXGI_FORMAT_R16G16_FLOAT
 fn ia_load_r16g16_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
@@ -137,6 +144,36 @@ fn ia_load_r16g16b16a16_float(slot: u32, vertex_index: u32, element_offset_bytes
 fn ia_load_r32_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> u32 {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
   return ia_load_u32(slot, addr);
+}
+
+// DXGI_FORMAT_R32G32_UINT
+fn ia_load_r32g32_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec2<u32>(
+    ia_load_u32(slot, addr + 0u),
+    ia_load_u32(slot, addr + 4u),
+  );
+}
+
+// DXGI_FORMAT_R32G32B32_UINT
+fn ia_load_r32g32b32_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec3<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec3<u32>(
+    ia_load_u32(slot, addr + 0u),
+    ia_load_u32(slot, addr + 4u),
+    ia_load_u32(slot, addr + 8u),
+  );
+}
+
+// DXGI_FORMAT_R32G32B32A32_UINT
+fn ia_load_r32g32b32a32_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec4<u32>(
+    ia_load_u32(slot, addr + 0u),
+    ia_load_u32(slot, addr + 4u),
+    ia_load_u32(slot, addr + 8u),
+    ia_load_u32(slot, addr + 12u),
+  );
 }
 
 // DXGI_FORMAT_R16_UINT

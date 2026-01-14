@@ -65,3 +65,21 @@ impl IaMeta {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wgsl_parses_and_validates() {
+        let module =
+            naga::front::wgsl::parse_str(WGSL).expect("vertex_pulling.wgsl should parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("vertex_pulling.wgsl should validate");
+    }
+}
