@@ -1183,10 +1183,10 @@ jobs:
             if [[ -n "${input_bind_host_marker}" ]]; then
               echo "- Host virtio-input bind marker: \`${input_bind_host_marker}\`"
             fi
-            if [[ "${{ inputs.with_virtio_input_led }}" == "true" && -n "${input_led_marker}" ]]; then
+            if [[ -n "${input_led_marker}" ]]; then
               echo "- Guest virtio-input-led marker: \`${input_led_marker}\`"
             fi
-            if [[ "${{ inputs.with_virtio_input_leds }}" == "true" && -n "${input_leds_marker}" ]]; then
+            if [[ -n "${input_leds_marker}" ]]; then
               echo "- Guest virtio-input-leds marker: \`${input_leds_marker}\`"
             fi
             if [[ -n "${input_events_modifiers_marker}" ]]; then
