@@ -932,6 +932,145 @@ bool TestVsOnlyUnsupportedStage0DestroyShaderSucceedsAndRebinds() {
   return true;
 }
 
+bool TestVsOnlyUnsupportedStage0DestroyPixelShaderSucceedsAndRebinds() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Unsupported stage0 op: state-setting must succeed, but draws must fail once we
+  // return to VS-only interop (after destroying the user PS).
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) succeeds")) {
+    return false;
+  }
+
+  // Create user VS.
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  const auto* vs = reinterpret_cast<const Shader*>(hVs.pDrvPrivate);
+  const aerogpu_handle_t vs_handle = vs ? vs->handle : 0;
+
+  // Create user PS.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            kUserPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(kUserPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader(PS) returned handle")) {
+    return false;
+  }
+  const size_t ps_index = cleanup.shaders.size();
+  cleanup.shaders.push_back(hPs);
+
+  const auto* ps = reinterpret_cast<const Shader*>(hPs.pDrvPrivate);
+  const aerogpu_handle_t ps_handle = ps ? ps->handle : 0;
+
+  // Bind VS only (VS-only interop; should bind a safe fallback PS even though
+  // stage0 is unsupported).
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS) succeeds with unsupported stage0")) {
+    return false;
+  }
+
+  // Bind PS too (full programmable pipeline).
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS) succeeds")) {
+    return false;
+  }
+
+  // Reset stream so we only observe the rebind + destroy sequence.
+  dev->cmd.reset();
+
+  // Destroy the currently bound user PS. This must succeed and must rebind a
+  // non-null shader pair before emitting DESTROY_SHADER so the command stream is
+  // valid and never references a freed handle.
+  hr = cleanup.device_funcs.pfnDestroyShader(cleanup.hDevice, hPs);
+  if (!Check(hr == S_OK, "DestroyShader(PS) succeeds with unsupported stage0")) {
+    return false;
+  }
+  // Prevent CleanupDevice from destroying the same shader again.
+  cleanup.shaders[ps_index].pDrvPrivate = nullptr;
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(DestroyShader PS)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DESTROY_SHADER) >= 1, "DESTROY_SHADER emitted")) {
+    return false;
+  }
+  if (!Check(CheckNoNullShaderBinds(buf, len), "BIND_SHADERS must not bind null handles")) {
+    return false;
+  }
+
+  bool saw_bind = false;
+  aerogpu_handle_t last_vs = 0;
+  aerogpu_handle_t last_ps = 0;
+  bool saw_destroyed_ps = false;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      last_vs = bind->vs;
+      last_ps = bind->ps;
+      saw_bind = true;
+    }
+    if (hdr->opcode == AEROGPU_CMD_DESTROY_SHADER && hdr->size_bytes >= sizeof(aerogpu_cmd_destroy_shader)) {
+      const auto* destroy = reinterpret_cast<const aerogpu_cmd_destroy_shader*>(hdr);
+      if (destroy->shader_handle == ps_handle) {
+        saw_destroyed_ps = true;
+        if (!Check(saw_bind, "saw BIND_SHADERS before DESTROY_SHADER(PS)")) {
+          return false;
+        }
+        if (!Check(last_ps != ps_handle, "rebound away from user PS before destroy")) {
+          return false;
+        }
+        if (!Check(last_vs == vs_handle, "kept user VS bound when destroying PS")) {
+          return false;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+
+  return Check(saw_destroyed_ps, "saw DESTROY_SHADER for user PS handle");
+}
+
 bool TestVsOnlyUnsupportedStage0ApplyStateBlockSetShaderSucceedsDrawFails() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1893,6 +2032,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0DestroyShaderSucceedsAndRebinds()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyUnsupportedStage0DestroyPixelShaderSucceedsAndRebinds()) {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0ApplyStateBlockSetShaderSucceedsDrawFails()) {
