@@ -114,8 +114,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
-    // Transfer execution only runs while USBCMD.RUN is set.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
     let slot_id = enable.slot_id;
@@ -125,9 +123,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     slot_ctx.set_root_hub_port_number(1);
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
-
-    // Transfers only execute while the controller is running.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Queue an endpoint doorbell but do not tick: the coalescing bitmap should mark it pending.
     ctrl.ring_doorbell(slot_id, EP_ID);
@@ -147,7 +142,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick(&mut mem);
 
     let mut buf = [0u8; 8];
@@ -181,8 +175,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
-    // Transfer execution only runs while USBCMD.RUN is set.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
     let slot_id = enable.slot_id;
@@ -192,9 +184,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     slot_ctx.set_root_hub_port_number(1);
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
-
-    // Transfers only execute while the controller is running.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Ensure the output Slot Context in guest memory is populated. Deconfigure mode reads the Slot
     // Context from the output Device Context and mirrors it back into controller-local state; if we
@@ -217,7 +206,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick(&mut mem);
 
     let mut buf = [0u8; 8];
