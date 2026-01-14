@@ -717,6 +717,18 @@ def _test_options_preflight(
 
         warnings: list[str] = []
 
+        allow_credentials = _header(resp, "Access-Control-Allow-Credentials")
+        if allow_credentials is not None:
+            ac = allow_credentials.strip().lower()
+            if ac != "true":
+                warnings.append(
+                    f"unexpected Access-Control-Allow-Credentials={allow_credentials!r} (omit or use 'true')"
+                )
+            elif allow_origin == "*":
+                warnings.append(
+                    "Access-Control-Allow-Credentials=true with Allow-Origin='*' will not work for credentialed fetches"
+                )
+
         max_age = _header(resp, "Access-Control-Max-Age")
         if max_age is None:
             warnings.append("missing Access-Control-Max-Age (preflight caching recommended)")
@@ -831,6 +843,21 @@ def _test_options_preflight_if_modified_since(
                 )
 
         warnings: list[str] = []
+
+        allow_credentials = _header(resp, "Access-Control-Allow-Credentials")
+        if allow_credentials is not None:
+            ac = allow_credentials.strip().lower()
+            if ac != "true":
+                warnings.append(
+                    f"unexpected Access-Control-Allow-Credentials={allow_credentials!r} (omit or use 'true')"
+                )
+            else:
+                # If this header is present, the corresponding Allow-Origin must not be "*".
+                allow_origin_header = _header(resp, "Access-Control-Allow-Origin") or ""
+                if allow_origin_header.strip() == "*":
+                    warnings.append(
+                        "Access-Control-Allow-Credentials=true with Allow-Origin='*' will not work for credentialed fetches"
+                    )
 
         max_age = _header(resp, "Access-Control-Max-Age")
         if max_age is None:
