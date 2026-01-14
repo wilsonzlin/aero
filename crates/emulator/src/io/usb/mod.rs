@@ -1,6 +1,6 @@
 //! Emulator USB integration.
 //!
-//! The canonical USB/UHCI implementation lives in `crates/aero-usb`
+//! The canonical USB implementation lives in `crates/aero-usb`
 //! (see `docs/adr/0015-canonical-usb-stack.md`). This module keeps the emulator's
 //! `crate::io::usb` path stable by re-exporting the shared implementation and
 //! providing thin integration glue (PCI + PortIO wiring, descriptor fixups, etc).

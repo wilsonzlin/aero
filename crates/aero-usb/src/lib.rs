@@ -1,7 +1,7 @@
 //! USB subsystem building blocks: a minimal UHCI host controller model, early xHCI scaffolding,
 //! and basic USB HID devices.
 //!
-//! This crate is the canonical USB/UHCI implementation for Aero's browser/WASM runtime
+//! This crate is the canonical USB implementation for Aero's browser/WASM runtime
 //! (see `docs/adr/0015-canonical-usb-stack.md`).
 //!
 //! The main consumer is the browser-based emulator, which exposes an emulated UHCI (USB 1.1)
