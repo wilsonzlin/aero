@@ -13,6 +13,11 @@ pub struct GpuCapabilities {
     ///
     /// WebGL2 backends (wgpu's `Backend::Gl` on wasm) do not support compute.
     pub supports_compute: bool,
+    /// Whether the active backend/device can execute indirect commands (draw/dispatch) from GPU
+    /// buffers.
+    ///
+    /// This corresponds to `wgpu::DownlevelFlags::INDIRECT_EXECUTION` when using wgpu.
+    pub supports_indirect_execution: bool,
     /// Whether the active backend/device can sample BC-compressed textures (BC1/BC3/BC7).
     ///
     /// This is expected to be false on WebGL2 fallback paths and on WebGPU devices
@@ -31,6 +36,13 @@ impl GpuCapabilities {
         downlevel_flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
     }
 
+    /// Returns whether indirect execution is supported given wgpu downlevel capability flags.
+    pub fn supports_indirect_execution_from_downlevel_flags(
+        downlevel_flags: wgpu::DownlevelFlags,
+    ) -> bool {
+        downlevel_flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION)
+    }
+
     pub fn from_device(device: &wgpu::Device) -> Self {
         let limits = device.limits();
         let features = device.features();
@@ -45,6 +57,13 @@ impl GpuCapabilities {
             // `GpuCapabilities::from_device_and_adapter` (or `with_downlevel_flags`) to populate
             // this correctly.
             supports_compute: false,
+            // `wgpu::Device` does not expose downlevel capability flags, so we cannot reliably
+            // determine indirect execution support from the device alone.
+            //
+            // Callers that have access to the originating `wgpu::Adapter` should use
+            // `GpuCapabilities::from_device_and_adapter` (or `with_downlevel_flags`) to populate
+            // this correctly.
+            supports_indirect_execution: false,
             supports_bc_texture_compression: features
                 .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             timestamp_queries_supported: features.contains(wgpu::Features::TIMESTAMP_QUERY)
@@ -52,9 +71,12 @@ impl GpuCapabilities {
         }
     }
 
-    /// Returns a copy of this struct with `supports_compute` populated from wgpu downlevel flags.
+    /// Returns a copy of this struct with downlevel-dependent capability bits populated from
+    /// `wgpu::DownlevelFlags`.
     pub fn with_downlevel_flags(mut self, downlevel_flags: wgpu::DownlevelFlags) -> Self {
         self.supports_compute = Self::supports_compute_from_downlevel_flags(downlevel_flags);
+        self.supports_indirect_execution =
+            Self::supports_indirect_execution_from_downlevel_flags(downlevel_flags);
         self
     }
 
@@ -566,6 +588,20 @@ mod tests {
     }
 
     #[test]
+    fn supports_indirect_execution_is_derived_from_downlevel_flags() {
+        assert!(
+            !GpuCapabilities::supports_indirect_execution_from_downlevel_flags(
+                wgpu::DownlevelFlags::empty()
+            )
+        );
+        assert!(
+            GpuCapabilities::supports_indirect_execution_from_downlevel_flags(
+                wgpu::DownlevelFlags::INDIRECT_EXECUTION
+            )
+        );
+    }
+
+    #[test]
     fn uniform_allocation_size_is_padded_to_16() {
         #[repr(C)]
         #[derive(Clone, Copy)]
@@ -580,6 +616,7 @@ mod tests {
             min_storage_buffer_offset_alignment: 256,
             max_buffer_size: 1024 * 1024,
             supports_compute: true,
+            supports_indirect_execution: true,
             supports_bc_texture_compression: false,
             timestamp_queries_supported: false,
         };
@@ -603,6 +640,7 @@ mod tests {
             min_storage_buffer_offset_alignment: 128,
             max_buffer_size: 4096,
             supports_compute: true,
+            supports_indirect_execution: true,
             supports_bc_texture_compression: false,
             timestamp_queries_supported: false,
         };

@@ -862,11 +862,16 @@ struct AerogpuD3d11State {
     primitive_topology: CmdPrimitiveTopology,
 
     vs: Option<u32>,
+    /// Geometry shader handle when GS emulation is enabled on the guest side.
+    ///
+    /// WebGPU has no geometry shader stage; Aero emulates GS by lowering it to a compute + indirect
+    /// draw sequence. The stable AeroGPU command stream does not yet have a dedicated GS slot, so
+    /// a non-zero value may be provided via reserved fields (see `exec_bind_shaders`).
+    gs: Option<u32>,
     ps: Option<u32>,
     cs: Option<u32>,
-    // NOTE: The AeroGPU command stream does not currently expose binding slots for these stages,
-    // but future backends may emulate D3D11 GS/HS/DS using compute.
-    gs: Option<u32>,
+    // NOTE: The stable AeroGPU command stream does not currently expose binding slots for these
+    // stages, but future extensions/backends may emulate D3D11 tessellation stages using compute.
     hs: Option<u32>,
     ds: Option<u32>,
     input_layout: Option<u32>,
@@ -900,9 +905,9 @@ impl Default for AerogpuD3d11State {
             index_buffer: None,
             primitive_topology: CmdPrimitiveTopology::TriangleList,
             vs: None,
+            gs: None,
             ps: None,
             cs: None,
-            gs: None,
             hs: None,
             ds: None,
             input_layout: None,
@@ -931,7 +936,6 @@ pub struct AerogpuD3d11Executor {
     device: wgpu::Device,
     queue: wgpu::Queue,
     backend: wgpu::Backend,
-    supports_indirect: bool,
 
     resources: AerogpuD3d11Resources,
     state: AerogpuD3d11State,
@@ -1043,9 +1047,10 @@ impl AerogpuD3d11Executor {
         device: wgpu::Device,
         queue: wgpu::Queue,
         backend: wgpu::Backend,
-        caps: GpuCapabilities,
+        mut caps: GpuCapabilities,
         supports_indirect: bool,
     ) -> Self {
+        caps.supports_indirect_execution = supports_indirect;
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerogpu_cmd dummy texture"),
             size: wgpu::Extent3d {
@@ -1174,7 +1179,6 @@ impl AerogpuD3d11Executor {
             device,
             queue,
             backend,
-            supports_indirect,
             resources: AerogpuD3d11Resources::default(),
             state: AerogpuD3d11State::default(),
             shared_surfaces: SharedSurfaceTable::default(),
@@ -1252,13 +1256,8 @@ impl AerogpuD3d11Executor {
         }
         .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
-        let downlevel = adapter.get_downlevel_capabilities();
-        let supports_compute = downlevel
-            .flags
-            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
-        let supports_indirect = downlevel
-            .flags
-            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
+        let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+        let supports_indirect = downlevel_flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
         let backend = adapter.get_info().backend;
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
@@ -1273,9 +1272,7 @@ impl AerogpuD3d11Executor {
             .await
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
-        let mut caps = GpuCapabilities::from_device(&device);
-        caps.supports_compute = supports_compute;
-
+        let caps = GpuCapabilities::from_device(&device).with_downlevel_flags(downlevel_flags);
         Ok(Self::new_with_caps(
             device,
             queue,
@@ -1291,6 +1288,10 @@ impl AerogpuD3d11Executor {
 
     pub fn backend(&self) -> wgpu::Backend {
         self.backend
+    }
+
+    pub fn capabilities(&self) -> &GpuCapabilities {
+        &self.caps
     }
 
     #[doc(hidden)]
@@ -1318,12 +1319,19 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
+        let mut missing = Vec::new();
         if !self.caps.supports_compute {
-            bail!("GS/HS/DS emulation requires compute shaders; backend does not support compute");
+            missing.push("wgpu::DownlevelFlags::COMPUTE_SHADERS");
+        }
+        if !self.caps.supports_indirect_execution {
+            missing.push("wgpu::DownlevelFlags::INDIRECT_EXECUTION");
         }
 
-        if !self.supports_indirect {
-            bail!("GS/HS/DS emulation requires indirect draws; backend does not support indirect draws");
+        if !missing.is_empty() {
+            bail!(
+                "GS/HS/DS emulation requires compute shaders and indirect execution; missing {}",
+                missing.join(", ")
+            );
         }
 
         Ok(())
@@ -7873,11 +7881,11 @@ impl AerogpuD3d11Executor {
         };
 
         self.state.vs = if vs == 0 { None } else { Some(vs) };
-        self.state.ps = if ps == 0 { None } else { Some(ps) };
-        self.state.cs = if cs == 0 { None } else { Some(cs) };
         self.state.gs = if gs == 0 { None } else { Some(gs) };
         self.state.hs = if hs == 0 { None } else { Some(hs) };
         self.state.ds = if ds == 0 { None } else { Some(ds) };
+        self.state.ps = if ps == 0 { None } else { Some(ps) };
+        self.state.cs = if cs == 0 { None } else { Some(cs) };
         self.bindings.mark_all_dirty();
         Ok(())
     }
@@ -12535,20 +12543,25 @@ mod tests {
                 .execute_cmd_stream(&stream, None, &mut guest_mem)
                 .expect_err("patchlist draw should error until tessellation emulation is implemented");
             let err_str = err.to_string();
-            if !exec.caps.supports_compute {
+            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
                 assert!(
                     err_str.contains(
-                        "GS/HS/DS emulation requires compute shaders; backend does not support compute"
+                        "GS/HS/DS emulation requires compute shaders and indirect execution; missing"
                     ),
                     "unexpected error: {err:#}"
                 );
-            } else if !exec.supports_indirect {
-                assert!(
-                    err_str.contains(
-                        "GS/HS/DS emulation requires indirect draws; backend does not support indirect draws"
-                    ),
-                    "unexpected error: {err:#}"
-                );
+                if !exec.caps.supports_compute {
+                    assert!(
+                        err_str.contains("COMPUTE_SHADERS"),
+                        "unexpected error: {err:#}"
+                    );
+                }
+                if !exec.caps.supports_indirect_execution {
+                    assert!(
+                        err_str.contains("INDIRECT_EXECUTION"),
+                        "unexpected error: {err:#}"
+                    );
+                }
             } else {
                 assert!(
                     err_str.contains("patchlist topology requires tessellation emulation"),
@@ -12635,7 +12648,7 @@ mod tests {
                 }
             };
 
-            // `GpuCapabilities::from_device` currently reports supports_compute=true unconditionally.
+            // `GpuCapabilities::from_device` cannot derive compute support from the device alone.
             // `new_for_tests` must override this using adapter downlevel flags so that
             // `PipelineCache` rejects compute pipelines deterministically on downlevel backends.
             let shader_hash = 0x1234_u128;
@@ -13419,12 +13432,15 @@ fn main() {
                 .expect_err(
                     "draw should fail without compute support when GS/HS/DS emulation is required",
                 );
+            let msg = err.to_string();
             assert!(
-                err.to_string().contains(
-                    "GS/HS/DS emulation requires compute shaders; backend does not support compute"
-                ),
+                msg.contains("GS/HS/DS emulation requires compute shaders and indirect execution; missing"),
                 "unexpected error: {err:#}"
             );
+            assert!(msg.contains("COMPUTE_SHADERS"), "unexpected error: {err:#}");
+            if !exec.caps.supports_indirect_execution {
+                assert!(msg.contains("INDIRECT_EXECUTION"), "unexpected error: {err:#}");
+            }
         });
     }
 
