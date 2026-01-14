@@ -616,6 +616,7 @@ fn aerogpu_cmd_legacy_geometry_stage_bindings_update_geometry_bucket() {
         push_set_samplers(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 333, 0);
         push_set_constant_buffer(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 444, 0);
         push_set_srv_buffer(&mut stream, AerogpuShaderStage::Geometry as u32, 1, 555, 0);
+        push_set_uav_buffer(&mut stream, AerogpuShaderStage::Geometry as u32, 0, 666, 0);
 
         let stream = finish_stream(stream);
 
@@ -649,6 +650,14 @@ fn aerogpu_cmd_legacy_geometry_stage_bindings_update_geometry_bucket() {
             bindings.stage(ShaderStage::Geometry).srv_buffer(1),
             Some(BoundBuffer {
                 buffer: 555,
+                offset: 0,
+                size: None,
+            })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).uav_buffer(0),
+            Some(BoundBuffer {
+                buffer: 666,
                 offset: 0,
                 size: None,
             })

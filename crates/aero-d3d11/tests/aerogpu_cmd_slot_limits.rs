@@ -253,3 +253,50 @@ fn aerogpu_cmd_set_unordered_access_buffers_rejects_slot_out_of_range() {
         );
     });
 }
+
+#[test]
+fn aerogpu_cmd_set_unordered_access_buffers_rejects_pixel_stage() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        let start = begin_cmd(
+            &mut stream,
+            AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32,
+        );
+        stream.extend_from_slice(&1u32.to_le_bytes()); // shader_stage = pixel (unsupported for UAV buffers)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+        stream.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+                                                       // aerogpu_unordered_access_buffer_binding (16 bytes)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // buffer handle (unbind)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+        stream.extend_from_slice(&0u32.to_le_bytes()); // initial_count
+        end_cmd(&mut stream, start);
+
+        let stream = finish_stream(stream);
+        let mut guest_mem = VecGuestMemory::new(0x1000);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("expected SET_UNORDERED_ACCESS_BUFFERS to reject pixel stage");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("SET_UNORDERED_ACCESS_BUFFERS: unsupported stage"),
+            "{msg}"
+        );
+    });
+}
