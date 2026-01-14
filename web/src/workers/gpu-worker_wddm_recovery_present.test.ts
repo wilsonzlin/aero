@@ -77,8 +77,7 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
     // Publish a valid WDDM scanout descriptor pointing at a known BGRA pixel in guest RAM.
     const basePaddr = 0x1000;
     views.guestU8.fill(0);
-    // Note: the GPU worker scanout path forces alpha=255 (treats BGRA/BGRX as compatible),
-    // so the expected output is RGBA [11 22 33 ff].
+    // BGRA bytes -> RGBA 11 22 33 44 after swizzle.
     views.guestU8.set([0x33, 0x22, 0x11, 0x44], basePaddr);
 
     publishScanoutState(views.scanoutStateI32!, {
@@ -207,7 +206,7 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
         px.byteLength >= 4
           ? (((px[0] ?? 0) | ((px[1] ?? 0) << 8) | ((px[2] ?? 0) << 16) | ((px[3] ?? 0) << 24)) >>> 0)
           : 0;
-      expect(firstPixel).toBe(0xff332211);
+      expect(firstPixel).toBe(0x44332211);
     } finally {
       await worker.terminate();
     }
