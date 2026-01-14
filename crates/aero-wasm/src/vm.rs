@@ -56,12 +56,6 @@ extern "C" {
     fn js_mmio_write(addr: u64, size: u32, value: u32);
 }
 
-fn wasm_memory_byte_len() -> u64 {
-    // `memory_size(0)` returns the number of 64KiB wasm pages.
-    let pages = core::arch::wasm32::memory_size(0) as u64;
-    pages.saturating_mul(64 * 1024)
-}
-
 #[derive(Clone, Copy)]
 struct WasmPhysBus {
     guest_base: u32,
@@ -319,34 +313,7 @@ pub struct WasmVm {
 impl WasmVm {
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        if guest_base == 0 {
-            return Err(JsValue::from_str("guest_base must be non-zero"));
-        }
-
-        let mem_bytes = wasm_memory_byte_len();
-
-        // For parity with other wasm-bindgen APIs, accept `guest_size == 0` as a
-        // "use the remainder of linear memory" sentinel.
-        let guest_size_u64 = if guest_size == 0 {
-            mem_bytes.saturating_sub(guest_base as u64)
-        } else {
-            guest_size as u64
-        };
-        // Keep the *backing* guest RAM below the PCI MMIO BAR allocation window so the JS-side PCI
-        // bus never overlaps the shared wasm linear memory guest region.
-        //
-        // Note: the guest physical layout may still remap "high RAM" above 4GiB when the backing
-        // RAM size exceeds the PCIe ECAM base (PC/Q35 E820 layout).
-        let guest_size_u64 = guest_size_u64.min(crate::guest_layout::GUEST_PCI_MMIO_BASE);
-
-        let end = (guest_base as u64)
-            .checked_add(guest_size_u64)
-            .ok_or_else(|| JsValue::from_str("guest_base + guest_size overflow"))?;
-        if end > mem_bytes {
-            return Err(JsValue::from_str(&format!(
-                "guest RAM out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} wasm_mem=0x{mem_bytes:x}"
-            )));
-        }
+        let guest_size_u64 = crate::validate_shared_guest_ram_layout("WasmVm", guest_base, guest_size)?;
 
         let cpu = CpuCore::new(CpuMode::Real);
         let assist = AssistContext::default();
@@ -671,6 +638,28 @@ export function installAeroMmioTestShims() {
             .expect("prop is string")
     }
 
+    fn alloc_guest_region_bytes(min_bytes: u32) -> (u32, u32) {
+        let page_bytes = crate::guest_layout::WASM_PAGE_BYTES as u32;
+        let reserved_pages =
+            (crate::guest_layout::RUNTIME_RESERVED_BYTES / crate::guest_layout::WASM_PAGE_BYTES)
+                as u32;
+        let current_pages = core::arch::wasm32::memory_size(0) as u32;
+        if current_pages < reserved_pages {
+            let delta = reserved_pages - current_pages;
+            let prev = core::arch::wasm32::memory_grow(0, delta as usize);
+            assert_ne!(prev, usize::MAX, "wasm memory.grow failed (reserved pages)");
+        }
+
+        let pages = min_bytes.div_ceil(page_bytes).max(1);
+        let before_pages = core::arch::wasm32::memory_size(0) as u32;
+        let prev = core::arch::wasm32::memory_grow(0, pages as usize);
+        assert_ne!(prev, usize::MAX, "wasm memory.grow failed (guest pages)");
+
+        let guest_base = before_pages * page_bytes;
+        let guest_size = pages * page_bytes;
+        (guest_base, guest_size)
+    }
+
     #[wasm_bindgen_test]
     fn wasm_phys_bus_routes_out_of_ram_accesses_to_mmio() {
         installAeroMmioTestShims();
@@ -843,9 +832,9 @@ export function installAeroMmioTestShims() {
         installAeroMmioTestShims();
 
         // Allocate enough guest RAM to include the 1MiB alias boundary.
-        let mut guest = vec![0u8; 2 * 1024 * 1024];
-        let guest_base = guest.as_mut_ptr() as u32;
-        let guest_size = guest.len() as u32;
+        let (guest_base, guest_size) = alloc_guest_region_bytes(2 * 1024 * 1024);
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
 
         // Place distinct bytes at physical 0x0 and 0x1_00000.
         guest[0x0000_0000] = 0x11;

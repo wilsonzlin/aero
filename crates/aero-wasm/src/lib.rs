@@ -668,6 +668,79 @@ pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
     }
 }
 
+/// Validate that a `guest_base`/`guest_size` mapping provided by the JS host
+/// matches the wasm-side shared guest RAM layout contract.
+///
+/// This is a defensive check used by wasm-bindgen "machine" constructors that
+/// directly dereference guest physical memory via raw pointers into the module's
+/// linear memory.
+///
+/// Without this validation, a mismatched coordinator/runtime can construct a VM
+/// whose guest RAM overlaps the Rust runtime heap (UB) or extends past the end
+/// of the imported `WebAssembly.Memory` (OOB traps/UB).
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn validate_shared_guest_ram_layout(
+    api: &str,
+    guest_base: u32,
+    guest_size: u32,
+) -> Result<u64, JsValue> {
+    let expected_base = guest_layout::align_up(
+        guest_layout::RUNTIME_RESERVED_BYTES,
+        guest_layout::WASM_PAGE_BYTES,
+    );
+    let guest_base_u64 = u64::from(guest_base);
+
+    // Validate that guest RAM begins after the reserved runtime region and is
+    // page-aligned (wasm linear memory is addressed in 64KiB pages).
+    if guest_base_u64 < expected_base {
+        return Err(js_error(&format!(
+            "{api}: invalid guest_base=0x{guest_base:x}. Guest RAM must begin at or above the reserved runtime region end (expected >= 0x{expected_base:x}).\n\
+This usually means the JS coordinator's shared-guest-memory layout constants are out of sync with this WASM build.\n\
+Fix: ensure `web/src/runtime/shared_layout.ts` matches `crates/aero-wasm/src/guest_layout.rs` and rebuild both together."
+        )));
+    }
+    if guest_base_u64 % guest_layout::WASM_PAGE_BYTES != 0 {
+        return Err(js_error(&format!(
+            "{api}: invalid guest_base=0x{guest_base:x}. guest_base must be 64KiB-aligned (wasm page size)."
+        )));
+    }
+
+    // Resolve the effective guest size.
+    //
+    // Historical note: some wasm-bindgen APIs accept `guest_size == 0` as a
+    // "use the remainder of linear memory" sentinel. The web coordinator
+    // always passes an explicit `guest_size`, but keep supporting `0` for
+    // tests/harnesses while still validating the resulting mapping.
+    let mem_pages = core::arch::wasm32::memory_size(0) as u64;
+    let mem_bytes = mem_pages.saturating_mul(guest_layout::WASM_PAGE_BYTES);
+    let guest_size_u64 = if guest_size == 0 {
+        mem_bytes.saturating_sub(guest_base_u64)
+    } else {
+        u64::from(guest_size)
+    };
+
+    // The shared guest RAM layout reserves the high PCI MMIO window; guest RAM
+    // must not extend into that region.
+    if guest_size_u64 > guest_layout::GUEST_PCI_MMIO_BASE {
+        return Err(js_error(&format!(
+            "{api}: invalid guest_size=0x{guest_size_u64:x}. Guest RAM must be <= 0x{mmio_base:x} (GUEST_PCI_MMIO_BASE) so PCI MMIO BARs never overlap guest RAM.",
+            mmio_base = guest_layout::GUEST_PCI_MMIO_BASE
+        )));
+    }
+
+    let end = guest_base_u64
+        .checked_add(guest_size_u64)
+        .ok_or_else(|| js_error(&format!("{api}: guest_base + guest_size overflow")))?;
+    if end > mem_bytes {
+        return Err(js_error(&format!(
+            "{api}: guest RAM mapping out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} end=0x{end:x} wasm_mem=0x{mem_bytes:x}.\n\
+Fix: ensure the imported WebAssembly.Memory is created with byteLength >= guest_base + guest_size (and that the coordinator/WASM agree on the layout)."
+        )));
+    }
+
+    Ok(guest_size_u64)
+}
+
 #[cfg(all(test, target_arch = "wasm32"))]
 mod guest_ram_layout_tests {
     use super::*;
@@ -682,6 +755,85 @@ mod guest_ram_layout_tests {
             layout.guest_size(),
             guest_layout::GUEST_PCI_MMIO_BASE as u32
         );
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod shared_guest_ram_layout_validation_tests {
+    use super::validate_shared_guest_ram_layout;
+
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn js_err_message(err: wasm_bindgen::JsValue) -> String {
+        if let Some(e) = err.dyn_ref::<js_sys::Error>() {
+            return e.message().into();
+        }
+        if let Some(s) = err.as_string() {
+            return s;
+        }
+        "<non-string js error>".to_string()
+    }
+
+    fn ensure_reserved_pages() {
+        let reserved_pages =
+            (super::guest_layout::RUNTIME_RESERVED_BYTES / super::guest_layout::WASM_PAGE_BYTES)
+                as usize;
+        let cur = core::arch::wasm32::memory_size(0);
+        if cur < reserved_pages {
+            let delta = reserved_pages - cur;
+            let prev = core::arch::wasm32::memory_grow(0, delta);
+            assert_ne!(prev, usize::MAX, "memory.grow failed in test setup");
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn rejects_guest_base_below_runtime_reserved() {
+        ensure_reserved_pages();
+        let err = validate_shared_guest_ram_layout("test", 0x10000, 0x10000)
+            .expect_err("expected validation error");
+        let msg = js_err_message(err);
+        assert!(
+            msg.contains("invalid guest_base"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn rejects_unaligned_guest_base() {
+        ensure_reserved_pages();
+        let base = super::guest_layout::RUNTIME_RESERVED_BYTES as u32 + 1;
+        let err =
+            validate_shared_guest_ram_layout("test", base, super::guest_layout::WASM_PAGE_BYTES as u32)
+                .expect_err("expected validation error");
+        let msg = js_err_message(err);
+        assert!(msg.contains("64KiB-aligned"), "unexpected message: {msg}");
+    }
+
+    #[wasm_bindgen_test]
+    fn rejects_guest_size_overlapping_mmio_window() {
+        ensure_reserved_pages();
+        let base = super::guest_layout::RUNTIME_RESERVED_BYTES as u32;
+        let too_big = (super::guest_layout::GUEST_PCI_MMIO_BASE as u64 + 0x1_0000) as u32;
+        let err = validate_shared_guest_ram_layout("test", base, too_big)
+            .expect_err("expected validation error");
+        let msg = js_err_message(err);
+        assert!(msg.contains("GUEST_PCI_MMIO_BASE"), "unexpected message: {msg}");
+    }
+
+    #[wasm_bindgen_test]
+    fn rejects_guest_ram_mapping_past_end_of_memory() {
+        ensure_reserved_pages();
+        let base = super::guest_layout::RUNTIME_RESERVED_BYTES as u32;
+        let mem_pages = core::arch::wasm32::memory_size(0) as u64;
+        let mem_bytes = mem_pages.saturating_mul(super::guest_layout::WASM_PAGE_BYTES);
+        let available = mem_bytes.saturating_sub(u64::from(base));
+        // Choose a size that is in the valid MMIO-clamped range but extends past the current memory.
+        let size = (available + 0x1_0000).min(super::guest_layout::GUEST_PCI_MMIO_BASE) as u32;
+        let err = validate_shared_guest_ram_layout("test", base, size)
+            .expect_err("expected validation error");
+        let msg = js_err_message(err);
+        assert!(msg.contains("out of bounds"), "unexpected message: {msg}");
     }
 }
 
