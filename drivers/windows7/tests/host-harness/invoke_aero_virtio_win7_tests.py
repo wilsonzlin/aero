@@ -5038,6 +5038,12 @@ def main() -> int:
                 if qemu_path.exists() and qemu_path.is_dir():
                     print(f"ERROR: qemu system binary path is a directory: {qemu_path}", file=sys.stderr)
                     return 2
+                if not qemu_path.exists():
+                    if args.dry_run:
+                        print(f"WARNING: qemu system binary not found: {qemu_path}", file=sys.stderr)
+                    else:
+                        print(f"ERROR: qemu system binary not found: {qemu_path}", file=sys.stderr)
+                        return 2
             except Exception:
                 pass
     need_blk_reset = bool(getattr(args, "with_blk_reset", False))
