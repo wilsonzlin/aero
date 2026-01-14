@@ -349,20 +349,52 @@ impl AhciPciDevice {
 
 impl PciDevice for AhciPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if offset == AHCI_ABAR_CFG_OFFSET && size == 4 {
-            if self.abar_probe {
-                return !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0;
-            }
-            return self.abar;
+        if !matches!(size, 1 | 2 | 4) {
+            return 0;
         }
+        let Some(end) = offset.checked_add(size as u16) else {
+            return 0;
+        };
+        if end as usize > 256 {
+            return 0;
+        }
+
+        let bar_off = AHCI_ABAR_CFG_OFFSET;
+        let bar_end = bar_off + 4;
+        let overlaps_bar = offset < bar_end && end > bar_off;
+
+        if overlaps_bar {
+            let mask = !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0;
+            let bar_val = if self.abar_probe { mask } else { self.abar };
+
+            let mut out = 0u32;
+            for i in 0..size {
+                let byte_off = offset + i as u16;
+                let byte = if (bar_off..bar_end).contains(&byte_off) {
+                    let shift = u32::from(byte_off - bar_off) * 8;
+                    (bar_val >> shift) & 0xFF
+                } else {
+                    self.config.read(byte_off, 1) & 0xFF
+                };
+                out |= byte << (8 * i);
+            }
+            return out;
+        }
+
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
         let bar_off = AHCI_ABAR_CFG_OFFSET;
         let Some(end) = offset.checked_add(size as u16) else {
             return;
         };
+        if end as usize > 256 {
+            return;
+        }
         let overlaps_bar = offset < bar_off + 4 && end > bar_off;
 
         if overlaps_bar {
@@ -415,5 +447,34 @@ impl MmioDevice for AhciPciDevice {
         let bme = self.bus_master_enabled();
         self.controller
             .with_process_on_mmio(bme, |ctl| ctl.mmio_write(mem, offset, size, value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::storage::disk::MemDisk;
+
+    #[test]
+    fn abar_probe_subword_reads_return_mask_bytes() {
+        let disk = Box::new(MemDisk::new(16));
+        let controller = AhciController::new(disk);
+        let mut dev = AhciPciDevice::new(controller, 0);
+
+        dev.config_write(AHCI_ABAR_CFG_OFFSET, 4, 0xffff_ffff);
+        let mask = dev.config_read(AHCI_ABAR_CFG_OFFSET, 4);
+        assert_eq!(mask, !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xffff_fff0);
+
+        // Subword reads should return bytes from the probe mask (not the raw config bytes, which
+        // are cleared during probing).
+        assert_eq!(dev.config_read(AHCI_ABAR_CFG_OFFSET, 1), mask & 0xFF);
+        assert_eq!(
+            dev.config_read(AHCI_ABAR_CFG_OFFSET + 1, 1),
+            (mask >> 8) & 0xFF
+        );
+        assert_eq!(
+            dev.config_read(AHCI_ABAR_CFG_OFFSET + 2, 2),
+            (mask >> 16) & 0xFFFF
+        );
     }
 }
