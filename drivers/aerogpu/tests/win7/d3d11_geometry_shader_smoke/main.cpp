@@ -291,6 +291,24 @@ static int RunD3D11GeometryShaderSmoke(int argc, char** argv) {
     return reporter.Fail("failed to compile pixel shader: %s", shader_err.c_str());
   }
 
+  if (dump) {
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_geometry_shader_smoke_vs.dxbc",
+                    &vs_bytes[0],
+                    (UINT)vs_bytes.size());
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_geometry_shader_smoke_gs.dxbc",
+                    &gs_bytes[0],
+                    (UINT)gs_bytes.size());
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_geometry_shader_smoke_ps.dxbc",
+                    &ps_bytes[0],
+                    (UINT)ps_bytes.size());
+  }
+
   ComPtr<ID3D11VertexShader> vs;
   hr = device->CreateVertexShader(&vs_bytes[0], vs_bytes.size(), NULL, vs.put());
   if (FAILED(hr)) {
