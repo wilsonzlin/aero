@@ -7227,6 +7227,43 @@ mod reattach_restored_disks_from_opfs_tests {
     }
 
     #[wasm_bindgen_test(async)]
+    async fn reattach_restored_primary_hdd_base_only_from_opfs_is_ok_when_opfs_available() {
+        // Creating OPFS sync access handles is worker-only and not universally available in all
+        // wasm-bindgen-test runtimes. Skip gracefully when unsupported.
+        let base0 = unique_path("reattach-base0-base-only", "img");
+        let disk_size = 4096u64;
+        match create_raw_file(&base0, disk_size).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_raw_file({base0:?}) failed: {e:?}"),
+        }
+
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // Simulate snapshot restore populating `restored_disk_overlays` for the canonical primary HDD.
+        m.inner.restore_disk_overlays(DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: aero_machine::Machine::DISK_ID_PRIMARY_HDD,
+                base_image: base0.clone(),
+                overlay_image: String::new(),
+            }],
+        });
+
+        m.reattach_restored_disks_from_opfs()
+            .await
+            .expect("reattach should succeed when referenced OPFS base disk exists");
+
+        // Ensure the shared disk backend now reflects the reattached disk bytes.
+        let mut disk = m.inner.shared_disk();
+        assert_eq!(disk.capacity_bytes(), disk_size);
+        let mut buf = [0u8; 4];
+        disk.read_at(0, &mut buf)
+            .expect("read from reattached shared disk should succeed");
+        assert_eq!(buf, [0xA5, 0x5A, 0x01, 0x02]);
+    }
+
+    #[wasm_bindgen_test(async)]
     async fn reattach_restored_disks_from_opfs_attaches_when_opfs_available() {
         // Creating OPFS sync access handles is worker-only and not universally available in all
         // wasm-bindgen-test runtimes. Skip gracefully when unsupported.
