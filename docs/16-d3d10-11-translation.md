@@ -855,8 +855,8 @@ For each row `r = 0..(T - 1)`:
 - Emit the “lower-left” triangle for `c = 0..(T - r - 1)`:
   - `a = idx(r, c)`
   - `b = idx(r, c + 1)`
- - `c0 = idx(r + 1, c)`
- - triangle = `(a, b, c0)`
+  - `c0 = idx(r + 1, c)`
+  - triangle = `(a, b, c0)`
 - Emit the “upper-right” triangle for `c = 0..(T - r - 2)`:
   - `a = idx(r, c + 1)`
   - `b = idx(r + 1, c + 1)`
@@ -1049,8 +1049,8 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Usage (indices): `STORAGE | INDEX`
     - Index element type (baseline): `u32` (`wgpu::IndexFormat::Uint32`). A future optimization may
       choose `u16` when the expanded vertex count is known to fit.
-    - Capacity sizing: derived from tess factors. For P2a tri-domain integer tessellation, see
-      “Tessellation sizing” above (`V_total`, `I_total`).
+    - Capacity sizing: derived from tess factors. For P2a tri-domain and P2b quad-domain integer
+      tessellation, see “Tessellation sizing” above (`V_total`, `I_total`).
 
 3. **GS-out (`gs_out_vertices`, `gs_out_indices`)**
     - Purpose: stores post-GS vertices + indices suitable for final rasterization.
@@ -1309,13 +1309,17 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         - `global_invocation_id.y` = `instance_id`
         - `global_invocation_id.z` = `domain_vertex_id` (`0..V_patch_max`)
         - Early-return if `domain_vertex_id >= tess_patch_state[patch_instance_id].vertex_count`.
-      - Writes `tess_out_vertices` + `tess_out_indices` (index generation may be a separate pass),
-        then writes final `indirect_args` via the standard finalize step.
+      - Writes `tess_out_vertices` + `tess_out_indices` (index generation may be a separate pass).
+      - If **no GS** is bound, write final `indirect_args` via the standard finalize step.
+      - If a **GS** is bound, treat `tess_out_*` as an intermediate stream and proceed to the GS
+        phase; the final `indirect_args` must be written for the GS output stream instead.
 
 3. **GS (optional): geometry shader emulation**
     - Trigger: `gs != 0` or adjacency topology.
     - Reads primitive inputs from the previous stage output (`vs_out` for no tessellation,
       otherwise `tess_out_vertices` + `tess_out_indices`).
+    - If the draw ran a tessellation phase, the runtime should reset `counters` + `indirect_args`
+      before starting GS allocation (since GS writes a new output stream into `gs_out_*`).
     - Dispatch shape (for `SV_PrimitiveID` / `SV_GSInstanceID`):
       - Use a 2D grid where:
         - `global_invocation_id.x` = input `primitive_id` in `0..input_prim_count`
@@ -1586,6 +1590,21 @@ Note: `atomicAdd` will still increment the counter even in the overflow case. Th
 the finalize step MUST turn the indirect draw count(s) into 0 when `overflow != 0`, so the render
 pass deterministically draws nothing.
 
+**Multi-phase expansion note (tess → GS)**
+
+The `counters` buffer represents the allocation state for a *single* output stream at a time (the
+stream whose `{out_*_count, overflow}` will be consumed by the subsequent indirect-draw finalize
+step). If a draw runs multiple expansion phases that each allocate into different output buffers
+(e.g. tessellation allocates `tess_out_*` and then a GS allocates `gs_out_*`), the runtime MUST:
+
+- reset `counters` (and clear the relevant `indirect_args` struct) before starting the next
+  allocation phase, and
+- run the indirect-args finalize step only for the **final** output stream that will be rendered.
+
+Implementations may choose to simplify this by rejecting “HS/DS + GS” combined pipelines for initial
+bring-up (as described in the P2 limitations section), but the general pipeline shape should follow
+the rules above when supported.
+
 **`tess_patch_state` layout (concrete; `@binding(274)`)**
 
 Tessellation requires per-patch state that is produced by the HS patch-constant pass and then
@@ -1670,7 +1689,9 @@ Indexing rule (same as `tess_patch_state`):
 
 **Initialization requirements**
 
-Before running expansion for a draw, the runtime MUST initialize the per-draw scratch state:
+Before running expansion for a draw (and before starting any additional allocation phase within the
+same draw, e.g. tessellation followed by GS), the runtime MUST initialize the relevant scratch
+state:
 
 - Zero `counters` (all fields, including atomics).
 - Zero the relevant `indirect_args` struct (so a failed/overflowed expansion deterministically draws
