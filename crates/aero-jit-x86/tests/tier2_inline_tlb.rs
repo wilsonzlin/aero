@@ -43,6 +43,10 @@ fn write_u64_le(bytes: &mut [u8], off: usize, val: u64) {
     bytes[off..off + 8].copy_from_slice(&val.to_le_bytes());
 }
 
+fn write_u32_le(bytes: &mut [u8], off: usize, val: u32) {
+    bytes[off..off + 4].copy_from_slice(&val.to_le_bytes());
+}
+
 fn write_cpu_rip(bytes: &mut [u8], cpu_ptr: usize, rip: u64) {
     write_u64_le(bytes, cpu_ptr + abi::CPU_RIP_OFF as usize, rip);
 }
@@ -429,6 +433,93 @@ fn run_trace(
     (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())
 }
 
+fn run_trace_with_code_version_table(
+    trace: &TraceIr,
+    ram: Vec<u8>,
+    cpu_ptr: u64,
+    ram_size: u64,
+    table_ptr: u32,
+    table: &[u32],
+) -> (u64, Vec<u8>, [u64; 16], HostState) {
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let table_ptr_usize = table_ptr as usize;
+    assert!(
+        table_ptr_usize
+            .checked_add(table.len().saturating_mul(4))
+            .is_some_and(|end| end <= cpu_ptr_usize),
+        "code version table must live within guest RAM for this test"
+    );
+    assert!(
+        table_ptr_usize.is_multiple_of(4),
+        "code version table must be 4-byte aligned"
+    );
+
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    // RAM at `ram_base = 0`.
+    assert!(ram.len() <= cpu_ptr as usize, "ram must fit before cpu_ptr");
+    mem[..ram.len()].copy_from_slice(&ram);
+
+    // Install the page-version table in guest RAM (at `table_ptr`) and point the Tier-2 ctx fields
+    // at it.
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+        table_ptr,
+    );
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+        table.len() as u32,
+    );
+    for (idx, v) in table.iter().copied().enumerate() {
+        write_u32_le(&mut mem, table_ptr_usize + idx * 4, v);
+    }
+
+    // CPU state at `cpu_ptr`, JIT context immediately following.
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let ctx = JitContext {
+        ram_base: 0,
+        tlb_salt: 0x1234_5678_9abc_def0,
+    };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    let pages = (total_len.div_ceil(65_536)) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap() as u64;
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let mut gpr = [0u64; 16];
+    for (dst, off) in gpr.iter_mut().zip(abi::CPU_GPR_OFF.iter()) {
+        *dst = read_u64_le(&got_mem, cpu_ptr_usize + (*off as usize));
+    }
+
+    (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())
+}
+
 #[test]
 fn tier2_inline_tlb_same_page_access_hits_and_caches() {
     let trace = TraceIr {
@@ -477,6 +568,60 @@ fn tier2_inline_tlb_same_page_access_hits_and_caches() {
     assert_eq!(got_ram[0x1000], 0xAB);
     assert_eq!(read_u32_le(&got_ram, 0x1004), 0x1234_5678);
 
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_cross_page_store_uses_slow_helper() {
+    let addr = PAGE_SIZE - 2;
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(addr),
+            src: Operand::Const(0xDDCC_BBAA),
+            width: Width::W32,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let (_ret, got_ram, _gpr, host) = run_trace(&trace, ram, cpu_ptr, 0x20_000);
+
+    assert_eq!(read_u32_le(&got_ram, addr as usize), 0xDDCC_BBAA);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier2_inline_tlb_store_bumps_code_version_table_on_unshared_memory() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x10),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let table_ptr: u32 = 0x1000;
+    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        table_ptr,
+        &[u32::MAX],
+    );
+
+    assert_eq!(got_ram[0x10], 0xAB);
+    assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 0);
     assert_eq!(host.mmu_translate_calls, 1);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
