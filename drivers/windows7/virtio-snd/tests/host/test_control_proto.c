@@ -527,6 +527,19 @@ static void test_pcm_format_rate_selection(void)
     TEST_ASSERT(rate == VIRTIO_SND_PCM_RATE_48000);
 
     /*
+     * 8-bit PCM should map to U8 (Windows uses unsigned 8-bit PCM).
+     *
+     * Ensure this selects U8 when available instead of falling back to the
+     * contract-v1 baseline.
+     */
+    formats = VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_U8) | VIRTIO_SND_PCM_FMT_MASK_S16;
+    rates = VIRTIO_SND_PCM_RATE_MASK_44100 | VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/8, /*hz=*/44100, /*float=*/FALSE, &fmt, &rate);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(fmt == VIRTIO_SND_PCM_FMT_U8);
+    TEST_ASSERT(rate == VIRTIO_SND_PCM_RATE_44100);
+
+    /*
      * Unsupported request falls back to the contract-v1 baseline (S16/48kHz),
      * as long as it is present in the supported masks.
      */
@@ -546,6 +559,28 @@ static void test_pcm_format_rate_selection(void)
     rates = VIRTIO_SND_PCM_RATE_MASK_48000;
     status = VirtioSndPcmSelectFormatRate(formats, rates, /*bits=*/16, /*hz=*/48000, /*float=*/FALSE, &fmt, &rate);
     TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+}
+
+static void test_pcm_format_to_bytes_mapping(void)
+{
+    USHORT bytes;
+    USHORT bits;
+    BOOLEAN ok;
+
+    bytes = 0;
+    bits = 0;
+    ok = VirtioSndPcmFormatToBytes(VIRTIO_SND_PCM_FMT_S24, &bytes, &bits);
+    TEST_ASSERT(ok);
+    TEST_ASSERT(bytes == 4u);
+    /* S24 in virtio-snd is 24 valid bits stored in a 32-bit container. */
+    TEST_ASSERT(bits == 32u);
+
+    bytes = 123;
+    bits = 456;
+    ok = VirtioSndPcmFormatToBytes(0xFFu, &bytes, &bits);
+    TEST_ASSERT(!ok);
+    TEST_ASSERT(bytes == 0u);
+    TEST_ASSERT(bits == 0u);
 }
 
 static void test_pcm_set_params_req_multi_format(void)
@@ -574,6 +609,7 @@ int main(void)
     test_pcm_info_resp_unaligned_buffer();
     test_pcm_format_selection_matrix();
     test_pcm_format_rate_selection();
+    test_pcm_format_to_bytes_mapping();
     test_pcm_set_params_req_multi_format();
 
     printf("virtiosnd_control_proto_tests: PASS\n");

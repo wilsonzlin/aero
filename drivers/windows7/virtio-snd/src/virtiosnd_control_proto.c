@@ -219,6 +219,16 @@ VirtioSndPcmFormatToBytes(UCHAR Format, USHORT* BytesPerSample, USHORT* BitsPerS
         bytes = 2;
         bits = 16;
         break;
+    case VIRTIO_SND_PCM_FMT_S24:
+    case VIRTIO_SND_PCM_FMT_U24:
+        /*
+         * virtio-snd PCM format codes are based on ALSA `snd_pcm_format_t`. In ALSA,
+         * S24/U24 correspond to 24-bit samples stored in a 32-bit container
+         * (`SNDRV_PCM_FORMAT_S24_LE` / `SNDRV_PCM_FORMAT_U24_LE`).
+         */
+        bytes = 4;
+        bits = 32;
+        break;
     case VIRTIO_SND_PCM_FMT_S32:
     case VIRTIO_SND_PCM_FMT_U32:
     case VIRTIO_SND_PCM_FMT_FLOAT:
@@ -326,7 +336,12 @@ VirtioSndPcmBitsToFormat(USHORT BitsPerSample, BOOLEAN IsFloat, UCHAR* Format)
 
     switch (BitsPerSample) {
     case 8u:
-        *Format = (UCHAR)VIRTIO_SND_PCM_FMT_S8;
+        /*
+         * Windows PCM uses unsigned 8-bit samples (WAVE_FORMAT_PCM). Use U8 so
+         * the negotiation helper matches the WaveRT miniport's supported format
+         * set.
+         */
+        *Format = (UCHAR)VIRTIO_SND_PCM_FMT_U8;
         return TRUE;
     case 16u:
         *Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
