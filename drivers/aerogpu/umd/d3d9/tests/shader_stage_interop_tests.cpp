@@ -35,10 +35,15 @@ constexpr uint32_t kFvfUnsupportedXyz = kD3dFvfXyz;
 
 // D3DTSS_* texture stage state IDs (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
+constexpr uint32_t kD3dTssColorArg1 = 2u;
+constexpr uint32_t kD3dTssAlphaOp = 4u;
 // D3DTEXTUREOP values (from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;
+constexpr uint32_t kD3dTopSelectArg1 = 2u;
 // Intentionally unsupported by the fixed-function stage0 subset.
 constexpr uint32_t kD3dTopAddSigned2x = 9u; // D3DTOP_ADDSIGNED2X
+// D3DTA_* source selector values (from d3d9types.h).
+constexpr uint32_t kD3dTaSpecular = 4u; // D3DTA_SPECULAR (unsupported by stage0 subset)
 
 // D3DRS_* render state IDs (from d3d9types.h).
 constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
@@ -802,6 +807,118 @@ bool TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails() {
 
   // Ensure we observed a bind that included the user VS handle (interop path binds
   // user VS + internal PS).
+  bool saw_user_vs_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (bind->vs == vs_handle) {
+        saw_user_vs_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle");
+}
+
+bool TestVsOnlyUnsupportedStage0ArgStateSetShaderSucceedsDrawFails() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Configure an unsupported stage0 argument source (SPECULAR).
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1) succeeds")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorArg1, kD3dTaSpecular);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=SPECULAR) succeeds")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=DISABLE) succeeds")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  auto* vs = reinterpret_cast<Shader*>(hVs.pDrvPrivate);
+  const aerogpu_handle_t vs_handle = vs ? vs->handle : 0;
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS) succeeds even when stage0 arg is unsupported")) {
+    return false;
+  }
+
+  const size_t baseline = dev->cmd.bytes_used();
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFF0000FFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP(VS-only, unsupported stage0 arg) returns INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(dev->cmd.bytes_used() == baseline, "unsupported draw emits no new commands")) {
+    return false;
+  }
+
+  // Restore a supported stage0 op and ensure draws recover.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE) succeeds (recover)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only, recovered stage0) succeeds")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only: unsupported stage0 arg then DISABLE)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 1, "exactly one DRAW opcode emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) == 0, "no DRAW_INDEXED opcodes emitted")) {
+    return false;
+  }
+  if (!Check(CheckNoNullShaderBinds(buf, len), "BIND_SHADERS must not bind null handles")) {
+    return false;
+  }
+
   bool saw_user_vs_bind = false;
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   const size_t stream_len = StreamBytesUsed(buf, len);
@@ -2029,6 +2146,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyUnsupportedStage0ArgStateSetShaderSucceedsDrawFails()) {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0DestroyShaderSucceedsAndRebinds()) {
