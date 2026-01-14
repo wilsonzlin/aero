@@ -6,8 +6,8 @@ WebGPU render pipeline.
 
 This document describes:
 
-- what is **implemented today** (command-stream plumbing, binding model, compute-prepass scaffolding + current limitations; prototype GS DXBC→WGSL translator exists but is not wired into the executor), and
-- the **next steps** (wire up GS DXBC translation + bytecode execution, then expand opcode/topology coverage, system values, etc).
+- what is **implemented today** (command-stream plumbing, binding model, compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for point-list draws), and
+- the **next steps** (expand GS DXBC execution beyond point-list draws, implement VS-as-compute to feed GS inputs, then grow opcode/topology coverage, system values, etc).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 >
