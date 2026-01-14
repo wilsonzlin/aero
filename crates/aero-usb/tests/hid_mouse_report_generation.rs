@@ -231,6 +231,40 @@ fn configuration_does_not_replay_unconfigured_wheel_events() {
 }
 
 #[test]
+fn configuration_enqueues_held_button_without_triggering_remote_wakeup() {
+    let mut mouse = UsbHidMouse::new();
+
+    // Enable remote wakeup via SET_FEATURE(DEVICE_REMOTE_WAKEUP) then suspend the device so we
+    // can assert that SET_CONFIGURATION does not fabricate a wake event.
+    assert_eq!(
+        mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00, // HostToDevice | Standard | Device
+                b_request: 0x03,       // SET_FEATURE
+                w_value: 1,            // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+    mouse.set_suspended(true);
+
+    mouse.button_event(0x01, true); // left
+    assert!(poll_interrupt_in(&mut mouse).is_none());
+
+    configure_mouse(&mut mouse);
+    assert!(
+        !mouse.poll_remote_wakeup(),
+        "configuration should not surface the held-state report as a remote wakeup event"
+    );
+
+    let report = poll_interrupt_in(&mut mouse).expect("expected held-button report after config");
+    assert_eq!(parse_report(&report), (0x01, 0, 0, Some(0), Some(0)));
+}
+
+#[test]
 fn boot_protocol_side_buttons_are_ignored() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);

@@ -630,6 +630,10 @@ impl UsbDeviceModel for UsbHidMouse {
                                 hwheel: 0,
                             });
                         }
+                        // Enqueueing the held-button report above is a host-driven configuration
+                        // transition, not a user-driven wake event; do not surface it as remote
+                        // wakeup activity.
+                        self.remote_wakeup_pending = false;
                     }
                     ControlResponse::Ack
                 }

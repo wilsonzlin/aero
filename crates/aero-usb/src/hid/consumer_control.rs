@@ -488,6 +488,9 @@ impl UsbDeviceModel for UsbHidConsumerControl {
                         self.remote_wakeup_pending = false;
                         self.last_report = ConsumerControlReport { usage: 0 }.to_bytes();
                         self.enqueue_current_report();
+                        // Enqueueing the held-state report above is a host configuration transition,
+                        // not a user-triggered wake event.
+                        self.remote_wakeup_pending = false;
                     }
                     ControlResponse::Ack
                 }
@@ -780,6 +783,22 @@ pub(super) static HID_REPORT_DESCRIPTOR: [u8; 23] = [
 mod tests {
     use super::*;
 
+    fn configure(dev: &mut UsbHidConsumerControl) {
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_CONFIGURATION,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+    }
+
     #[test]
     fn pressed_usages_is_bounded() {
         let mut dev = UsbHidConsumerControl::new();
@@ -795,6 +814,39 @@ mod tests {
         assert_eq!(
             dev.pressed_usages.last().copied(),
             Some((MAX_PRESSED_USAGES as u16) + 10)
+        );
+    }
+
+    #[test]
+    fn configuration_enqueues_held_usage_without_triggering_remote_wakeup() {
+        let mut dev = UsbHidConsumerControl::new();
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00, // HostToDevice | Standard | Device
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        dev.set_suspended(true);
+
+        dev.consumer_event(0x00e9, true); // VolumeUp
+        assert_eq!(dev.handle_in_transfer(INTERRUPT_IN_EP, 2), UsbInResult::Nak);
+
+        configure(&mut dev);
+        assert!(
+            !dev.poll_remote_wakeup(),
+            "configuration should not surface the held-state report as a remote wakeup event"
+        );
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 2),
+            UsbInResult::Data(vec![0xe9, 0x00])
         );
     }
 

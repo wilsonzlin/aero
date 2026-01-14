@@ -616,6 +616,9 @@ impl UsbDeviceModel for UsbHidGamepad {
                         }
                         .to_bytes();
                         self.enqueue_current_report();
+                        // Enqueueing the held-state report above is part of the host configuration
+                        // transition. Do not treat it as input activity for remote wakeup.
+                        self.remote_wakeup_pending = false;
                     }
                     ControlResponse::Ack
                 }
@@ -1041,6 +1044,39 @@ mod tests {
         assert_eq!(pad.handle_in_transfer(INTERRUPT_IN_EP, 8), UsbInResult::Nak);
 
         configure_gamepad(&mut pad);
+        assert_eq!(
+            pad.handle_in_transfer(INTERRUPT_IN_EP, 8),
+            UsbInResult::Data(vec![0x01, 0x00, 0x08, 0, 0, 0, 0, 0])
+        );
+    }
+
+    #[test]
+    fn configuration_enqueues_held_state_without_triggering_remote_wakeup() {
+        let mut pad = UsbHidGamepad::new();
+
+        assert_eq!(
+            pad.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00, // HostToDevice | Standard | Device
+                    b_request: USB_REQUEST_SET_FEATURE,
+                    w_value: USB_FEATURE_DEVICE_REMOTE_WAKEUP,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+        pad.set_suspended(true);
+
+        pad.button_event(1, true);
+        assert_eq!(pad.handle_in_transfer(INTERRUPT_IN_EP, 8), UsbInResult::Nak);
+
+        configure_gamepad(&mut pad);
+        assert!(
+            !pad.poll_remote_wakeup(),
+            "configuration should not surface the held-state report as a remote wakeup event"
+        );
         assert_eq!(
             pad.handle_in_transfer(INTERRUPT_IN_EP, 8),
             UsbInResult::Data(vec![0x01, 0x00, 0x08, 0, 0, 0, 0, 0])
