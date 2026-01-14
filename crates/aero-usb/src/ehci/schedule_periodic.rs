@@ -6,7 +6,9 @@ use crate::visited_set::VisitedSet;
 use crate::SetupPacket;
 
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
-use super::schedule::{addr_add, ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH};
+use super::schedule::{
+    addr_add, ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH,
+};
 use super::RootHub;
 
 // -----------------------------------
@@ -94,9 +96,7 @@ pub(crate) fn process_periodic_frame<M: MemoryBus + ?Sized>(
     let frame = (frindex >> 3) & 0x3ff;
     let microframe = (frindex & 0x7) as u8;
 
-    let entry_off = frame
-        .checked_mul(4)
-        .ok_or(ScheduleError::AddressOverflow)?;
+    let entry_off = frame.checked_mul(4).ok_or(ScheduleError::AddressOverflow)?;
     let entry_addr = addr_add(periodiclistbase, entry_off)?;
     let link = LinkPointer(ctx.mem.read_u32(entry_addr));
     walk_link(ctx, link, microframe)
@@ -197,8 +197,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             QtdProgress::Nak => return Ok(horiz),
             QtdProgress::Advanced { stop } => {
                 // Advance the QH overlay "Next qTD Pointer" so software sees forward progress.
-                ctx.mem
-                    .write_u32(addr_add(qh_addr, 0x10)?, next_ptr);
+                ctx.mem.write_u32(addr_add(qh_addr, 0x10)?, next_ptr);
                 next = QtdPointer(next_ptr);
                 if stop {
                     return Ok(horiz);

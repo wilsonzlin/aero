@@ -149,4 +149,3 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_is_not_write_only
     guest.read_into(buf_bad, &mut bad_buf);
     assert_eq!(&bad_buf, &[0xAAu8; 8]);
 }
-

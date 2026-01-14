@@ -5,8 +5,7 @@ use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
     AerogpuShaderStageEx, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;

@@ -10916,16 +10916,16 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
         };
 
         let (strip_pipeline_ptr, list_pipeline_ptr, wgpu_slot_to_d3d_slot) = {
-                let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
-                    get_or_create_render_pipeline_for_state(
-                        &self.device,
-                        &mut self.pipeline_cache,
-                        pipeline_layout.as_ref(),
-                        &mut self.resources,
-                        &self.state,
-                        layout_key.clone(),
-                        None,
-                    )?;
+            let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
+                get_or_create_render_pipeline_for_state(
+                    &self.device,
+                    &mut self.pipeline_cache,
+                    pipeline_layout.as_ref(),
+                    &mut self.resources,
+                    &self.state,
+                    layout_key.clone(),
+                    None,
+                )?;
             let strip_ptr = pipeline as *const wgpu::RenderPipeline;
             let list_ptr = if let Some(list_state) = list_state.as_ref() {
                 let (_pipeline_key, pipeline, _mapping) = get_or_create_render_pipeline_for_state(

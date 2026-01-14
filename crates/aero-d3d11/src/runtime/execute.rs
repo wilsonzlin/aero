@@ -529,7 +529,9 @@ impl D3D11Runtime {
         // When required by the underlying wgpu backend (notably wgpu-gl), keep a CPU shadow of
         // index buffers so we can emulate primitive restart by rewriting strips into list indices.
         let shadow = if self.emulate_strip_restart && usage.contains(BufferUsage::INDEX) {
-            usize::try_from(size).ok().map(|shadow_len| vec![0u8; shadow_len])
+            usize::try_from(size)
+                .ok()
+                .map(|shadow_len| vec![0u8; shadow_len])
         } else {
             None
         };
@@ -1765,13 +1767,13 @@ impl D3D11Runtime {
                 usize::try_from(size),
             ) {
                 let shadow_src_end =
-                    shadow_src_start
-                        .checked_add(shadow_size)
-                        .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range overflows usize"))?;
+                    shadow_src_start.checked_add(shadow_size).ok_or_else(|| {
+                        anyhow!("CopyBufferToBuffer src shadow range overflows usize")
+                    })?;
                 let shadow_dst_end =
-                    shadow_dst_start
-                        .checked_add(shadow_size)
-                        .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range overflows usize"))?;
+                    shadow_dst_start.checked_add(shadow_size).ok_or_else(|| {
+                        anyhow!("CopyBufferToBuffer dst shadow range overflows usize")
+                    })?;
 
                 if src == dst {
                     let dst_buf = self
@@ -1800,7 +1802,9 @@ impl D3D11Runtime {
                         (Some(bytes), Some(dst_shadow)) => {
                             dst_shadow
                                 .get_mut(shadow_dst_start..shadow_dst_end)
-                                .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range out of bounds"))?
+                                .ok_or_else(|| {
+                                    anyhow!("CopyBufferToBuffer dst shadow range out of bounds")
+                                })?
                                 .copy_from_slice(&bytes);
                         }
                         _ => {
@@ -2091,8 +2095,7 @@ impl D3D11Runtime {
                             pipeline.topology,
                             wgpu::PrimitiveTopology::LineStrip
                                 | wgpu::PrimitiveTopology::TriangleStrip
-                        )
-                    {
+                        ) {
                         let index_buf = resources
                             .buffers
                             .get(&index.buffer)

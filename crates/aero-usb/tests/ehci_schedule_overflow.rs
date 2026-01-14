@@ -84,7 +84,7 @@ fn ehci_async_qh_overlay_addr_overflow_sets_hse_and_halts_without_wrapping() {
     mem.write_u32(u64::from(QTD_ADDR), 1); // NEXT=terminate
     mem.write_u32(u64::from(QTD_ADDR) + 0x04, 1); // ALT_NEXT=terminate
     mem.write_u32(u64::from(QTD_ADDR) + 0x08, 0); // TOKEN (inactive)
-    // Buffer pointer 0..4 (values don't matter for the overflow case).
+                                                  // Buffer pointer 0..4 (values don't matter for the overflow case).
     mem.write_u32(u64::from(QTD_ADDR) + 0x0c, 0x3000);
     mem.write_u32(u64::from(QTD_ADDR) + 0x10, 0x4000);
     mem.write_u32(u64::from(QTD_ADDR) + 0x14, 0x5000);

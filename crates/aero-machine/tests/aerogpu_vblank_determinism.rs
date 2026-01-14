@@ -1,5 +1,5 @@
-use aero_machine::{Machine, MachineConfig};
 use aero_devices_gpu::vblank::period_ns_from_hz;
+use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use pretty_assertions::assert_eq;
 

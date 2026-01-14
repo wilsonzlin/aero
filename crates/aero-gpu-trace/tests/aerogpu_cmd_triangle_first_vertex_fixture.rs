@@ -147,4 +147,3 @@ fn aerogpu_cmd_triangle_first_vertex_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

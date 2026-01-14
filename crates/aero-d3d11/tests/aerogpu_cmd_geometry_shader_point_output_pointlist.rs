@@ -148,7 +148,10 @@ fn build_gs_pointlist_maxvertexcount2_emit2_dxbc(pos: [f32; 2]) -> Vec<u8> {
                 // - point = 1
                 // - line_strip = 2
                 // - triangle_strip = 3
-                assert!(len >= 2, "dcl_outputtopology should include an immediate payload");
+                assert!(
+                    len >= 2,
+                    "dcl_outputtopology should include an immediate payload"
+                );
                 tokens[i + 1] = 1;
                 patched_topology = true;
             }

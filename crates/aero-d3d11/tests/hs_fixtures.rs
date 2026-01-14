@@ -66,16 +66,12 @@ fn parses_and_translates_sm5_hs_fixture() {
         translated.wgsl
     );
     assert!(
-        translated
-            .wgsl
-            .contains("hs_in: HsRegBuffer;"),
+        translated.wgsl.contains("hs_in: HsRegBuffer;"),
         "expected HS translation to declare hs_in as HsRegBuffer:\n{}",
         translated.wgsl
     );
     assert!(
-        translated
-            .wgsl
-            .contains("hs_out_cp: HsRegBuffer;"),
+        translated.wgsl.contains("hs_out_cp: HsRegBuffer;"),
         "expected HS translation to declare hs_out_cp as HsRegBuffer:\n{}",
         translated.wgsl
     );

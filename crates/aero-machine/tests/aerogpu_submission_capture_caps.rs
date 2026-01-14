@@ -304,4 +304,3 @@ fn aerogpu_submission_capture_alloc_table_header_size_over_max_is_rejected() {
         0
     );
 }
-

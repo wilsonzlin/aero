@@ -380,10 +380,7 @@ impl AeroGpuLegacyPciDevice {
 
         // Class code: display controller (0x03) / VGA-compatible (0x00).
         config_space.set_u8(0x09, protocol_pci::AEROGPU_PCI_PROG_IF);
-        config_space.set_u8(
-            0x0a,
-            protocol_pci::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
-        );
+        config_space.set_u8(0x0a, protocol_pci::AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE);
         config_space.set_u8(
             0x0b,
             protocol_pci::AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,

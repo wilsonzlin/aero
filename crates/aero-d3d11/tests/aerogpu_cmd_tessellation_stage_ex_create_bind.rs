@@ -57,7 +57,10 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
         w.create_shader_dxbc_ex(DS_SHADER, AerogpuShaderStageEx::Domain, &ds_dxbc);
 
         // Bind HS/DS via the extended BIND_SHADERS payload (`{gs, hs, ds}`).
-        w.bind_shaders_ex(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ CS_SHADER, /*gs=*/ 0, /*hs=*/ HS_SHADER, /*ds=*/ DS_SHADER);
+        w.bind_shaders_ex(
+            /*vs=*/ 0, /*ps=*/ 0, /*cs=*/ CS_SHADER, /*gs=*/ 0,
+            /*hs=*/ HS_SHADER, /*ds=*/ DS_SHADER,
+        );
 
         let cb = |buffer: u32| AerogpuConstantBufferBinding {
             buffer,
@@ -134,7 +137,10 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
             Some(BoundTexture { texture: 204 })
         );
 
-        assert_eq!(bindings.stage(ShaderStage::Hull).constant_buffer(1), expect_cb(102));
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).constant_buffer(1),
+            expect_cb(102)
+        );
         assert_eq!(
             bindings.stage(ShaderStage::Hull).texture(0),
             Some(BoundTexture { texture: 202 })
@@ -150,4 +156,3 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
         );
     });
 }
-

@@ -5334,11 +5334,10 @@ mod tests {
             ],
         };
 
-        let wgsl = translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
-            &module, "cs_main",
-        )
-        .expect("translation should succeed")
-        .wgsl;
+        let wgsl =
+            translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(&module, "cs_main")
+                .expect("translation should succeed")
+                .wgsl;
 
         assert!(
             wgsl.contains("varyings: array<vec4<f32>, 32>"),

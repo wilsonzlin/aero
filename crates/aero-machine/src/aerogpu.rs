@@ -534,7 +534,8 @@ impl AeroGpuMmioDevice {
                     "aerogpu.exec_state.pending_submissions.cmd_stream",
                 ));
             }
-            if pending_submissions_bytes.saturating_add(cmd_len) > MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES
+            if pending_submissions_bytes.saturating_add(cmd_len)
+                > MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES
             {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "aerogpu.exec_state.pending_submissions.total_bytes",

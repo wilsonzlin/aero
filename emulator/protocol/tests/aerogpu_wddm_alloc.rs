@@ -1,7 +1,8 @@
 use aero_protocol::aerogpu::aerogpu_wddm_alloc::{
     AerogpuWddmAllocKind, AerogpuWddmAllocPriv, AerogpuWddmAllocPrivAny, AerogpuWddmAllocPrivV2,
     AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE, AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED,
-    AEROGPU_WDDM_ALLOC_PRIV_MAGIC, AEROGPU_WDDM_ALLOC_PRIV_VERSION, AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
+    AEROGPU_WDDM_ALLOC_PRIV_MAGIC, AEROGPU_WDDM_ALLOC_PRIV_VERSION,
+    AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 };
 
 fn write_u32_le(buf: &mut [u8], off: usize, v: u32) {
@@ -136,4 +137,3 @@ fn decode_wddm_alloc_priv_any_validates_magic_and_version() {
         );
     }
 }
-

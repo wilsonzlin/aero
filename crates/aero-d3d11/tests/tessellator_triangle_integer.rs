@@ -201,11 +201,7 @@ fn triangle_integer_domain_location_matches_integer_barycentrics() {
         for v in 0..vc {
             let ijk = tri_integer_vertex_ijk(n, v);
             let loc = tri_vertex_domain_location(n, v);
-            let expected = [
-                ijk.i as f32 * inv,
-                ijk.j as f32 * inv,
-                ijk.k as f32 * inv,
-            ];
+            let expected = [ijk.i as f32 * inv, ijk.j as f32 * inv, ijk.k as f32 * inv];
 
             for c in 0..3 {
                 assert!(

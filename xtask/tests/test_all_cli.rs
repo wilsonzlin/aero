@@ -15,4 +15,3 @@ fn test_all_help_mentions_node_dir_aliases() {
         .stdout(predicate::str::contains("AERO_WEB_DIR"))
         .stdout(predicate::str::contains("WEB_DIR"));
 }
-

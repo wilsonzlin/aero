@@ -1,7 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices_gpu::backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend,
 };
 use aero_machine::{Machine, MachineConfig};
 use memory::MemoryBus;
@@ -77,11 +78,12 @@ fn aerogpu_backend_scanout_is_presented_via_machine_display_present() {
     .unwrap();
 
     let mmio = m.aerogpu_mmio().expect("aerogpu enabled");
-    mmio.borrow_mut().set_backend(Box::new(FakeScanoutBackend::with_solid_rgba8(
-        2,
-        2,
-        [1, 2, 3, 255],
-    )));
+    mmio.borrow_mut()
+        .set_backend(Box::new(FakeScanoutBackend::with_solid_rgba8(
+            2,
+            2,
+            [1, 2, 3, 255],
+        )));
 
     m.display_present();
     assert_eq!(m.display_resolution(), (2, 2));

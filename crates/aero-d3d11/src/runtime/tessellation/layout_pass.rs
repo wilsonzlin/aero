@@ -271,10 +271,7 @@ mod tests {
         let mut clamped_any = false;
 
         for patch_id in 0..params.patch_count as usize {
-            let factors = hs_tess_factors
-                .get(patch_id)
-                .copied()
-                .unwrap_or([0.0; 4]);
+            let factors = hs_tess_factors.get(patch_id).copied().unwrap_or([0.0; 4]);
             let initial_level = derive_tess_level_cpu(factors);
 
             let rem_vertices = if total_vertices >= params.max_vertices {

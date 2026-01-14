@@ -302,8 +302,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
         // Load and process the qTD within the same budget iteration so that the qTD step budget
         // corresponds to the number of qTDs observed (rather than counting an extra iteration just
         // to populate the QH overlay).
-        let mut cur_qtd =
-            ctx.mem.read_u32(addr_add(qh_addr, QH_CUR_QTD)?) & LINK_ADDR_MASK;
+        let mut cur_qtd = ctx.mem.read_u32(addr_add(qh_addr, QH_CUR_QTD)?) & LINK_ADDR_MASK;
         if cur_qtd == 0 {
             let next = QtdLink(ctx.mem.read_u32(addr_add(qh_addr, QH_NEXT_QTD)?));
             if next.terminated() {
@@ -354,9 +353,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
 
         let mut overlay_bufs = [0u32; 5];
         for (i, buf) in overlay_bufs.iter_mut().enumerate() {
-            *buf = ctx
-                .mem
-                .read_u32(addr_add(qh_addr, QH_BUF0 + i as u32 * 4)?);
+            *buf = ctx.mem.read_u32(addr_add(qh_addr, QH_BUF0 + i as u32 * 4)?);
         }
         let mut cursor = QtdCursor::from_token_and_bufs(token, overlay_bufs);
 
