@@ -509,6 +509,13 @@ Notes:
   endpoint formats Windows selected (useful for debugging non-contract devices and audio routing issues):
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
   - The host harness mirrors this into `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|...` for log scraping/CI.
+- The virtio-snd section also emits an informational `eventq` counter marker (`virtio-snd-eventq`) when a virtio-snd
+  topology interface is available:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|parsed=...|pcm_period=...|xrun=...|...`
+  - Contract v1 defines no required `eventq` messages and the Win7 driver remains timer-driven by default. If a device
+    emits standard virtio-snd PCM events (`PCM_PERIOD_ELAPSED` / `PCM_XRUN`), the driver may use them as best-effort
+    enhancements (extra WaveRT wakeups / XRUN recovery hints). These counters are diagnostic only and are not required
+    for PASS/FAIL.
 
 ## Building
 
