@@ -34,7 +34,7 @@ Related docs:
 
 - USB HID device/report details: [`docs/usb-hid.md`](./usb-hid.md)
 - EHCI (USB 2.0) controller bring-up + contract: [`docs/usb-ehci.md`](./usb-ehci.md)
-- WebUSB passthrough (currently UHCI-focused, but the async “pending → NAK” pattern applies to any controller): [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
+- WebUSB passthrough (supports UHCI and, when available, EHCI/xHCI; the async “pending → NAK” pattern applies to any controller): [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
 - Canonical PCI layout + INTx routing: [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md)
 - IRQ line semantics in the web runtime: [`docs/irq-semantics.md`](./irq-semantics.md)
 
@@ -151,14 +151,17 @@ Notes:
   `XhciControllerBridge` (`attach_hub`, `detach_at_path`, `attach_webhid_device`,
   `attach_usb_hid_passthrough_device`). The I/O worker routes WebHID passthrough devices to xHCI
   when these exports are present (falling back to UHCI otherwise).
-- WebUSB passthrough exists today primarily via UHCI; it can also be routed via xHCI in the web
-  runtime when `XhciControllerBridge` exports the WebUSB hotplug/action API (`set_connected`,
-  `drain_actions`, `push_completion`, `reset`). The I/O worker prefers xHCI deterministically when
-  available, but it remains bring-up quality until doorbell-driven xHCI ring execution is
-  implemented. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
+- WebUSB passthrough supports both legacy UHCI (full-speed view) and high-speed controllers. When
+  the WASM build exports the WebUSB passthrough hooks on xHCI/EHCI bridges (`set_connected`,
+  `drain_actions`, `push_completion`, `reset`), the I/O worker deterministically prefers xHCI (then
+  EHCI) for guest-visible WebUSB passthrough and disables the UHCI-only
+  `OTHER_SPEED_CONFIGURATION` descriptor translation. Otherwise it falls back to the UHCI-based
+  passthrough path. As of today, the xHCI controller model remains bring-up quality until
+  doorbell-driven ring execution and full transfer scheduling are implemented. See
+  [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) are still expected to attach
-  behind UHCI when available (Windows 7 compatibility), with xHCI used as a fallback for WASM builds
-  that omit UHCI.
+  behind UHCI when available (Windows 7 compatibility), with EHCI/xHCI used as a fallback for WASM
+  builds that omit UHCI.
 - The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---

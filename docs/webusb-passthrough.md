@@ -588,10 +588,11 @@ guest **EHCI/xHCI** controller (high-speed view), the host executor must **not**
 In EHCI/xHCI mode the guest expects the device’s **high-speed** descriptors as-is, and any
 UHCI-oriented fixups would produce incorrect endpoint packet sizes/intervals.
 
-### EHCI/xHCI mode: guest is high-speed (planned)
+### EHCI/xHCI mode: guest is high-speed
 
-Once EHCI/xHCI passthrough is implemented (see [ADR 0015](./adr/0015-canonical-usb-stack.md) for the
-canonical stack selection), the intended behavior is:
+When a passthrough device is attached to a guest **EHCI/xHCI** controller (supported in the web
+runtime when the WASM build exports the required WebUSB passthrough hooks on those controller
+bridges), the intended behavior is:
 
 - EHCI controller model design/contract: [`docs/usb-ehci.md`](./usb-ehci.md)
 - xHCI controller model design/contract: [`docs/usb-xhci.md`](./usb-xhci.md)
