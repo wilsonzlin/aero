@@ -52,6 +52,14 @@ const MAX_SYNTH_SIGNATURE_PARAMS: usize = 16;
 const MAX_SIGNATURE_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_SIGNATURE_ENTRIES: usize = 256;
 
+/// Reflection parsing (`RDEF`/`RD11`) can allocate entry tables and strings based on declared
+/// counts/offsets. Keep chunk sizes and declared entry counts bounded when running the full
+/// translation pipeline on raw DXBC inputs.
+const MAX_RDEF_CHUNK_BYTES: usize = 32 * 1024;
+const MAX_RDEF_CONSTANT_BUFFERS: usize = 128;
+const MAX_RDEF_RESOURCES: usize = 512;
+const MAX_RDEF_VARIABLES_PER_CBUFFER: usize = 512;
+
 /// Cap IR sizes before attempting WGSL generation to avoid pathological string allocations.
 const MAX_TRANSLATE_DECLS: usize = 4 * 1024;
 const MAX_TRANSLATE_INSTRUCTIONS: usize = 4 * 1024;
@@ -611,6 +619,57 @@ fn should_parse_signature_chunk(bytes: &[u8]) -> bool {
     signature_param_count(bytes).unwrap_or(0) <= MAX_SIGNATURE_ENTRIES
 }
 
+fn should_parse_rdef_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_RDEF_CHUNK_BYTES {
+        return false;
+    }
+    if bytes.len() < 28 {
+        // Truncated headers fail quickly without allocations; still safe to try.
+        return true;
+    }
+
+    let cb_count = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let cb_offset = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let rb_count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+
+    if cb_count > MAX_RDEF_CONSTANT_BUFFERS || rb_count > MAX_RDEF_RESOURCES {
+        return false;
+    }
+
+    // Scan per-cbuffer var counts so a single small chunk can't request huge allocations.
+    if cb_count > 0 {
+        let cb_desc_len = 24usize;
+        let table_bytes = match cb_count.checked_mul(cb_desc_len) {
+            Some(v) => v,
+            None => return false,
+        };
+        let table_end = match cb_offset.checked_add(table_bytes) {
+            Some(v) => v,
+            None => return false,
+        };
+        if table_end <= bytes.len() {
+            for i in 0..cb_count {
+                let entry = cb_offset + i * cb_desc_len;
+                let var_count_off = entry + 4;
+                if var_count_off + 4 > bytes.len() {
+                    break;
+                }
+                let var_count = u32::from_le_bytes([
+                    bytes[var_count_off],
+                    bytes[var_count_off + 1],
+                    bytes[var_count_off + 2],
+                    bytes[var_count_off + 3],
+                ]) as usize;
+                if var_count > MAX_RDEF_VARIABLES_PER_CBUFFER {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
 fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
     // `DxbcFile::parse` validates every chunk offset in a loop; pre-filter absurd `chunk_count`
     // values once the DXBC magic is present so a valid header can't force pathological parse time.
@@ -695,7 +754,25 @@ fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
     } else {
         Default::default()
     };
-    let _ = aero_d3d11::translate_sm4_module_to_wgsl(&dxbc, &module, &signatures);
+
+    // `translate_sm4_module_to_wgsl` may parse `RDEF`/`RD11` for reflection. If any reflection
+    // chunk looks too large to parse within our fuzzing limits, translate using a minimal DXBC
+    // container instead (so we still exercise the translation path without risking large
+    // allocations from reflection parsing).
+    let safe_for_rdef = dxbc.chunks().take(chunk_count).all(|chunk| {
+        !matches!(
+            chunk.fourcc.0,
+            [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1']
+        ) || should_parse_rdef_chunk(chunk.data)
+    });
+    if safe_for_rdef {
+        let _ = aero_d3d11::translate_sm4_module_to_wgsl(&dxbc, &module, &signatures);
+    } else {
+        let minimal_bytes = dxbc_test_utils::build_container(&[]);
+        if let Ok(minimal_dxbc) = DxbcFile::parse(&minimal_bytes) {
+            let _ = aero_d3d11::translate_sm4_module_to_wgsl(&minimal_dxbc, &module, &signatures);
+        }
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
