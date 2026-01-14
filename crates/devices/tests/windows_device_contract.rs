@@ -141,7 +141,7 @@ fn inf_body_from_first_section(contents: &str) -> &str {
     let mut offset = 0;
     for line in contents.split_inclusive('\n') {
         let trimmed =
-            line.trim_start_matches(|c: char| matches!(c, '\0' | ' ' | '\t' | '\r' | '\n'));
+            line.trim_start_matches(['\0', ' ', '\t', '\r', '\n']);
         if trimmed.is_empty() {
             offset += line.len();
             continue;
