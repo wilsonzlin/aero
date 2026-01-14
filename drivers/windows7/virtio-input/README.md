@@ -107,7 +107,7 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (revision-gated `REV_01`):
 
-- `inf/aero_virtio_input.inf` (keyboard/mouse; SUBSYS-only):
+- `inf/aero_virtio_input.inf` (keyboard/mouse; **SUBSYS-only**):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
 - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
