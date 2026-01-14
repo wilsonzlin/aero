@@ -41,6 +41,7 @@ import {
   HIGH_RAM_START,
   LOW_RAM_END,
   StatusIndex,
+  STATUS_INTS,
   createSharedMemoryViews,
   guestPaddrToRamOffset,
   guestRangeInBounds,
@@ -3982,32 +3983,21 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       perf.spanBegin("worker:init");
       try {
         role = init.role ?? "io";
-        const segments = {
-          control: init.controlSab!,
-          guestMemory: init.guestMemory!,
-          ioIpc: init.ioIpcSab!,
-          vram: init.vram,
-          sharedFramebuffer: init.sharedFramebuffer!,
-          sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
-          scanoutState: init.scanoutState,
-          scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
-          cursorState: init.cursorState,
-          cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
-        };
-        ioIpcSab = segments.ioIpc;
+        const control = init.controlSab!;
+        ioIpcSab = init.ioIpcSab!;
 
-        // Establish the shared status view so we can publish READY without touching guest RAM.
-        const views = createSharedMemoryViews(segments);
-        status = views.status;
-        guestU8 = views.guestU8;
-        guestLayout = views.guestLayout;
-        guestBase = views.guestLayout.guest_base >>> 0;
-        guestSize = views.guestLayout.guest_size >>> 0;
-        sharedFramebuffer = { sab: segments.sharedFramebuffer, offsetBytes: segments.sharedFramebufferOffsetBytes ?? 0 };
+        // Host-only mode must not touch guest RAM. Avoid creating any typed array views into
+        // `guestMemory.buffer` (even read-only ones); only map the small control/status region.
+        status = new Int32Array(control, 0, STATUS_INTS);
+        guestU8 = new Uint8Array(0);
+        guestLayout = null;
+        guestBase = 0;
+        guestSize = 0;
+        sharedFramebuffer = null;
 
         const regions = ringRegionsForWorker(role);
-        commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
-        eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+        commandRing = new RingBuffer(control, regions.command.byteOffset);
+        eventRing = new RingBuffer(control, regions.event.byteOffset);
 
         pushEvent({ kind: "log", level: "info", message: "worker ready (machine runtime host-only)" });
 
