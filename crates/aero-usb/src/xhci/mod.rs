@@ -3385,8 +3385,7 @@ impl XhciController {
 
             // When a transfer results in an endpoint halt (STALL/TRB error), reflect that into the
             // guest Endpoint Context so software can observe the halted state and issue Reset
-            // Endpoint. Also update the controller-local shadow context so snapshot/restore does
-            // not lose the halted state (transfer executors are rebuilt on demand).
+            // Endpoint.
             if exec.endpoint_state(ep_addr).is_some_and(|st| st.halted) {
                 self.write_endpoint_state_to_context(
                     mem,

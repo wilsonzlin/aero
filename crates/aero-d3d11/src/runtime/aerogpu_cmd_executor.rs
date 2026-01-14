@@ -8561,6 +8561,13 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        // Scratch allocations that are bound as uniform buffers must respect WebGPU's uniform buffer
+        // offset alignment.
+        //
+        // We also enforce a minimum 16-byte alignment for uniform struct layout.
+        let uniform_align =
+            u64::from(self.device.limits().min_uniform_buffer_offset_alignment).max(16);
+
         // Prepare compute prepass output buffers.
         let centered_placeholder_triangle = patchlist_only_emulation
             || matches!(
@@ -9345,31 +9352,32 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             // `&mut self` helpers later in this scope (e.g. `ensure_bound_resources_uploaded`), and
             // having the helper hold an immutable borrow of `self.device`/`self.queue` trips the
             // borrow checker.
-            fn create_uniform_buffer(
-                device: &wgpu::Device,
-                queue: &wgpu::Queue,
-                label: &'static str,
-                bytes: &[u8],
-            ) -> (wgpu::Buffer, u64) {
-                assert!(
-                    !bytes.is_empty(),
-                    "uniform buffer payload must be non-empty"
-                );
-                let size = bytes.len() as u64;
-                // Ensure the backing buffer is large enough for the declared binding size and keeps a
-                // 16-byte granularity (uniform struct alignment).
-                let size = size.saturating_add(15) & !15;
-                let mut padded = vec![0u8; size as usize];
-                padded[..bytes.len()].copy_from_slice(bytes);
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&buffer, 0, &padded);
-                (buffer, size)
-            }
+            let create_uniform_buffer =
+                |device: &wgpu::Device,
+                 queue: &wgpu::Queue,
+                 label: &'static str,
+                 bytes: &[u8]|
+                 -> (wgpu::Buffer, u64) {
+                    assert!(
+                        !bytes.is_empty(),
+                        "uniform buffer payload must be non-empty"
+                    );
+                    let size = bytes.len() as u64;
+                    // Ensure the backing buffer is large enough for the declared binding size and rounds
+                    // up to the uniform-buffer alignment. This keeps any future sub-allocation offsets
+                    // well-formed for `min_uniform_buffer_offset_alignment` requirements.
+                    let size = size.div_ceil(uniform_align).saturating_mul(uniform_align);
+                    let mut padded = vec![0u8; size as usize];
+                    padded[..bytes.len()].copy_from_slice(bytes);
+                    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(label),
+                        size,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    queue.write_buffer(&buffer, 0, &padded);
+                    (buffer, size)
+                  };
 
             let (params_buffer, _params_buffer_size) = create_uniform_buffer(
                 &self.device,

@@ -172,7 +172,8 @@ fn int10_vbe_controller_and_mode_info() {
     assert_eq!(read_u16(&info, 50), 640); // LinBytesPerScanLine
     for (off, &byte) in info.iter().enumerate().skip(54).take(8) {
         assert_eq!(
-            byte, 0,
+            byte,
+            0,
             "8bpp mode should have 0 Lin*Mask fields (offset {off})"
         );
     }

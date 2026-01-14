@@ -20,7 +20,6 @@ use aero_net_stack::{
 };
 
 pub mod pcapng;
-
 // Convenience re-exports so downstream users don't have to reach into `pcapng::`.
 pub use pcapng::{LinkType, PcapngWriter};
 

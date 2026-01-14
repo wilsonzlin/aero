@@ -255,17 +255,13 @@ fn glyph_box_double_vertical() -> [u8; 8] {
 
 fn glyph_block_upper_half() -> [u8; 8] {
     let mut out = [0u8; 8];
-    for row in &mut out[..4] {
-        *row = 0xFF;
-    }
+    out[..4].fill(0xFF);
     out
 }
 
 fn glyph_block_lower_half() -> [u8; 8] {
     let mut out = [0u8; 8];
-    for row in &mut out[4..] {
-        *row = 0xFF;
-    }
+    out[4..].fill(0xFF);
     out
 }
 
