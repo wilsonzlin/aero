@@ -164,6 +164,22 @@ param(
   [Alias("EnableVirtioTablet")]
   [switch]$WithVirtioTablet,
 
+  # If set, run an end-to-end virtio-blk runtime resize test:
+  # - wait for the guest marker:
+  #     AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
+  # - grow the backing device via QMP (blockdev-resize/block_resize)
+  # - require the guest virtio-blk-resize marker to PASS (not SKIP/FAIL/missing)
+  #
+  # Note: The guest image must be provisioned with `--test-blk-resize` (or env var equivalent)
+  # so it arms the polling loop and emits READY/PASS/FAIL markers.
+  [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioBlkResize", "EnableVirtioBlkResize", "RequireVirtioBlkResize")]
+  [switch]$WithBlkResize,
+
+  # Delta in MiB to grow the virtio-blk backing device when -WithBlkResize is enabled.
+  [Parameter(Mandatory = $false)]
+  [int]$BlkResizeDeltaMiB = 64,
+
   # If set, run a QMP `query-pci` preflight to validate QEMU-emitted virtio PCI Vendor/Device/Revision IDs.
   # In default (contract-v1) mode this enforces VEN_1AF4 + DEV_1041/DEV_1042/DEV_1052[/DEV_1059] and REV_01.
   # In transitional mode this is permissive and only asserts that at least one VEN_1AF4 device exists.
@@ -724,6 +740,11 @@ function Wait-AeroSelftestResult {
     # If true, require the optional virtio-snd-buffer-limits stress test marker to PASS.
     # This is intended to be paired with provisioning the guest with `--test-snd-buffer-limits`.
     [Parameter(Mandatory = $false)] [bool]$RequireVirtioSndBufferLimitsPass = $false,
+    # If true, require the optional virtio-blk-resize marker to PASS and orchestrate a QMP resize.
+    # The guest must be provisioned with `--test-blk-resize` (or env var equivalent).
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioBlkResizePass = $false,
+    # Delta in MiB to grow the virtio-blk backing device when RequireVirtioBlkResizePass is enabled.
+    [Parameter(Mandatory = $false)] [int]$VirtioBlkResizeDeltaMiB = 64,
     # If true, require the optional virtio-input-events marker to PASS (host will inject events via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
@@ -764,8 +785,16 @@ function Wait-AeroSelftestResult {
   $tail = ""
   $configExpectBlkMsi = $null
   $sawConfigExpectBlkMsi = $false
+  $virtioBlkMarkerTime = $null
   $sawVirtioBlkPass = $false
   $sawVirtioBlkFail = $false
+  $sawVirtioBlkResizeReady = $false
+  $sawVirtioBlkResizePass = $false
+  $sawVirtioBlkResizeFail = $false
+  $sawVirtioBlkResizeSkip = $false
+  $blkResizeOldBytes = $null
+  $blkResizeNewBytes = $null
+  $blkResizeRequested = $false
   $sawVirtioInputPass = $false
   $sawVirtioInputFail = $false
   $virtioInputMarkerTime = $null
@@ -881,9 +910,38 @@ function Wait-AeroSelftestResult {
 
       if (-not $sawVirtioBlkPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk\|PASS") {
         $sawVirtioBlkPass = $true
+        if ($null -eq $virtioBlkMarkerTime) { $virtioBlkMarkerTime = [DateTime]::UtcNow }
       }
       if (-not $sawVirtioBlkFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk\|FAIL") {
         $sawVirtioBlkFail = $true
+        if ($null -eq $virtioBlkMarkerTime) { $virtioBlkMarkerTime = [DateTime]::UtcNow }
+      }
+
+      if (-not $sawVirtioBlkResizeReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-resize\|READY") {
+        $matches = [regex]::Matches($tail, "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-resize\|READY\|[^\r\n]+")
+        if ($matches.Count -gt 0) {
+          $line = $matches[$matches.Count - 1].Value
+          if ($line -match "old_bytes=([0-9]+)") {
+            $blkResizeOldBytes = [UInt64]$Matches[1]
+            try {
+              $deltaBytes = [UInt64]$VirtioBlkResizeDeltaMiB * 1024 * 1024
+              $blkResizeNewBytes = Compute-AeroVirtioBlkResizeNewBytes -OldBytes $blkResizeOldBytes -DeltaBytes $deltaBytes
+            } catch {
+              # Leave new_bytes unset; QMP resize attempt will fail and report diagnostics.
+              $blkResizeNewBytes = $null
+            }
+          }
+        }
+        $sawVirtioBlkResizeReady = $true
+      }
+      if (-not $sawVirtioBlkResizePass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-resize\|PASS") {
+        $sawVirtioBlkResizePass = $true
+      }
+      if (-not $sawVirtioBlkResizeFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-resize\|FAIL") {
+        $sawVirtioBlkResizeFail = $true
+      }
+      if (-not $sawVirtioBlkResizeSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-resize\|SKIP") {
+        $sawVirtioBlkResizeSkip = $true
       }
       if (-not $sawVirtioInputPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
         $sawVirtioInputPass = $true
@@ -968,6 +1026,10 @@ function Wait-AeroSelftestResult {
             return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED"; Tail = $tail }
           }
         }
+      }
+      if ($RequireVirtioBlkResizePass) {
+        if ($sawVirtioBlkResizeSkip) { return @{ Result = "VIRTIO_BLK_RESIZE_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioBlkResizeFail) { return @{ Result = "VIRTIO_BLK_RESIZE_FAILED"; Tail = $tail } }
       }
       if ($RequireVirtioInputMediaKeysPass) {
         if ($sawVirtioInputMediaKeysSkip) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED"; Tail = $tail } }
@@ -1064,6 +1126,13 @@ function Wait-AeroSelftestResult {
           }
           if (-not $sawVirtioBlkPass) {
             return @{ Result = "MISSING_VIRTIO_BLK"; Tail = $tail }
+          }
+          if ($RequireVirtioBlkResizePass) {
+            if ($sawVirtioBlkResizeFail) { return @{ Result = "VIRTIO_BLK_RESIZE_FAILED"; Tail = $tail } }
+            if (-not $sawVirtioBlkResizePass) {
+              if ($sawVirtioBlkResizeSkip) { return @{ Result = "VIRTIO_BLK_RESIZE_SKIPPED"; Tail = $tail } }
+              return @{ Result = "MISSING_VIRTIO_BLK_RESIZE"; Tail = $tail }
+            }
           }
           if ($sawVirtioInputFail) {
             return @{ Result = "VIRTIO_INPUT_FAILED"; Tail = $tail }
@@ -1260,6 +1329,14 @@ function Wait-AeroSelftestResult {
           return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
         }
 
+        if ($RequireVirtioBlkResizePass) {
+          if ($sawVirtioBlkResizeFail) { return @{ Result = "VIRTIO_BLK_RESIZE_FAILED"; Tail = $tail } }
+          if (-not $sawVirtioBlkResizePass) {
+            if ($sawVirtioBlkResizeSkip) { return @{ Result = "VIRTIO_BLK_RESIZE_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_BLK_RESIZE"; Tail = $tail }
+          }
+        }
+
         if ($RequireVirtioInputEventsPass) {
           if ($sawVirtioInputEventsFail) { return @{ Result = "VIRTIO_INPUT_EVENTS_FAILED"; Tail = $tail } }
           if (-not $sawVirtioInputEventsPass) {
@@ -1316,8 +1393,28 @@ function Wait-AeroSelftestResult {
     # (virtio-input-events|READY). Inject multiple times on a short interval to reduce flakiness from timing
     # windows (reports may be dropped when no read is pending).
     #
+    # When requested, resize the virtio-blk backing device after the guest has armed its polling loop
+    # (virtio-blk-resize|READY).
+    #
     # If the guest never emits READY/SKIP/PASS/FAIL after completing virtio-input, assume the guest selftest
     # is too old (or misconfigured) and fail early to avoid burning the full virtio-net timeout.
+    if ($RequireVirtioBlkResizePass -and ($null -ne $virtioBlkMarkerTime) -and (-not $sawVirtioBlkResizeReady) -and (-not $sawVirtioBlkResizePass) -and (-not $sawVirtioBlkResizeFail) -and (-not $sawVirtioBlkResizeSkip)) {
+      $delta = ([DateTime]::UtcNow - $virtioBlkMarkerTime).TotalSeconds
+      if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_BLK_RESIZE"; Tail = $tail } }
+    }
+    if ($RequireVirtioBlkResizePass -and $sawVirtioBlkResizeReady -and (-not $sawVirtioBlkResizePass) -and (-not $sawVirtioBlkResizeFail) -and (-not $sawVirtioBlkResizeSkip) -and (-not $blkResizeRequested)) {
+      if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
+        return @{ Result = "QMP_BLK_RESIZE_FAILED"; Tail = $tail }
+      }
+      if (($null -eq $blkResizeOldBytes) -or ($null -eq $blkResizeNewBytes)) {
+        return @{ Result = "QMP_BLK_RESIZE_FAILED"; Tail = $tail }
+      }
+      $blkResizeRequested = $true
+      $ok = Try-AeroQmpResizeVirtioBlk -Host $QmpHost -Port ([int]$QmpPort) -OldBytes ([UInt64]$blkResizeOldBytes) -NewBytes ([UInt64]$blkResizeNewBytes) -DriveId "drive0"
+      if (-not $ok) {
+        return @{ Result = "QMP_BLK_RESIZE_FAILED"; Tail = $tail }
+      }
+    }
     if ($RequireVirtioInputEventsPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputEventsReady) -and (-not $sawVirtioInputEventsPass) -and (-not $sawVirtioInputEventsFail) -and (-not $sawVirtioInputEventsSkip)) {
       $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
       if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail } }
@@ -3270,6 +3367,100 @@ function Invoke-AeroQmpSendKey {
   $null = Invoke-AeroQmpCommand -Writer $Writer -Reader $Reader -Command $cmd
 }
 
+function Compute-AeroVirtioBlkResizeNewBytes {
+  param(
+    [Parameter(Mandatory = $true)] [UInt64]$OldBytes,
+    [Parameter(Mandatory = $true)] [UInt64]$DeltaBytes
+  )
+
+  if ($DeltaBytes -le 0) { throw "delta_bytes must be > 0" }
+  $newBytes = [UInt64]($OldBytes + $DeltaBytes)
+
+  # Align up to 512 bytes (QEMU typically requires sector alignment).
+  $align = 512.0
+  if (($newBytes % 512) -ne 0) {
+    $newBytes = [UInt64]([math]::Ceiling(([double]$newBytes) / $align) * $align)
+  }
+  if ($newBytes -le $OldBytes) {
+    $newBytes = [UInt64]($OldBytes + 512)
+  }
+  return $newBytes
+}
+
+function Try-AeroQmpResizeVirtioBlk {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port,
+    [Parameter(Mandatory = $true)] [UInt64]$OldBytes,
+    [Parameter(Mandatory = $true)] [UInt64]$NewBytes,
+    [Parameter(Mandatory = $false)] [string]$DriveId = "drive0"
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $lastErr = ""
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
+
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
+
+      # Greeting.
+      $null = $reader.ReadLine()
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
+
+      $cmdUsed = ""
+      $errBlockdev = ""
+      try {
+        $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{
+          execute   = "blockdev-resize"
+          arguments = @{ "node-name" = $DriveId; size = $NewBytes }
+        }
+        $cmdUsed = "blockdev-resize"
+      } catch {
+        try { $errBlockdev = [string]$_.Exception.Message } catch { }
+        if ([string]::IsNullOrEmpty($errBlockdev)) { $errBlockdev = "unknown" }
+        try {
+          $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{
+            execute   = "block_resize"
+            arguments = @{ device = $DriveId; size = $NewBytes }
+          }
+          $cmdUsed = "block_resize"
+          Write-Warning "QMP blockdev-resize failed; falling back to block_resize: $errBlockdev"
+        } catch {
+          $errLegacy = ""
+          try { $errLegacy = [string]$_.Exception.Message } catch { }
+          if ([string]::IsNullOrEmpty($errLegacy)) { $errLegacy = "unknown" }
+          throw "QMP resize failed: blockdev-resize error=$errBlockdev; block_resize error=$errLegacy"
+        }
+      }
+
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=$OldBytes|new_bytes=$NewBytes|qmp_cmd=$cmdUsed"
+      return $true
+    } catch {
+      $lastErr = ""
+      try { $lastErr = [string]$_.Exception.Message } catch { }
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
+  }
+
+  $reason = ""
+  try { $reason = Sanitize-AeroMarkerValue $lastErr } catch { }
+  if ([string]::IsNullOrEmpty($reason)) { $reason = "qmp_resize_failed" }
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=$reason"
+  return $false
+}
+
 function Invoke-AeroQmpInputSendEvent {
   param(
     [Parameter(Mandatory = $true)] [System.IO.StreamWriter]$Writer,
@@ -4325,6 +4516,16 @@ try {
   $needInputMediaKeys = [bool]$WithInputMediaKeys
   $needInputTabletEvents = [bool]$WithInputTabletEvents
   $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
+  $needBlkResize = [bool]$WithBlkResize
+
+  if ($needBlkResize) {
+    if ($VirtioTransitional) {
+      throw "-WithBlkResize is incompatible with -VirtioTransitional (blk resize uses the contract-v1 drive layout with id=drive0)"
+    }
+    if ($BlkResizeDeltaMiB -le 0) {
+      throw "-BlkResizeDeltaMiB must be a positive integer when -WithBlkResize is enabled"
+    }
+  }
   $requestedVirtioNetVectors = $(if ($VirtioNetVectors -gt 0) { $VirtioNetVectors } else { $VirtioMsixVectors })
   $requestedVirtioBlkVectors = $(if ($VirtioBlkVectors -gt 0) { $VirtioBlkVectors } else { $VirtioMsixVectors })
   $requestedVirtioSndVectors = $(if ($VirtioSndVectors -gt 0) { $VirtioSndVectors } else { $VirtioMsixVectors })
@@ -4334,13 +4535,14 @@ try {
   $virtioSndVectorsFlag = $(if ($VirtioSndVectors -gt 0) { "-VirtioSndVectors" } else { "-VirtioMsixVectors" })
   $virtioInputVectorsFlag = $(if ($VirtioInputVectors -gt 0) { "-VirtioInputVectors" } else { "-VirtioMsixVectors" })
   $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needMsixCheck -or [bool]$QemuPreflightPci
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
     # - Also used for virtio-input event injection when input injection flags are enabled
     #   (prefers QMP `input-send-event`, with backcompat fallbacks for keyboard/mouse when unavailable).
     # - Also used for virtio PCI MSI-X enable verification (query-pci / info pci) when -RequireVirtio*Msix is set.
+    # - Also used for virtio-blk runtime resize (-WithBlkResize).
     # - Also used for the optional virtio PCI ID preflight (-QemuPreflightPci/-QmpPreflightPci).
     try {
       $qmpPort = Get-AeroFreeTcpPort
@@ -4348,8 +4550,8 @@ try {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for input injection flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents) or -QemuPreflightPci/-QmpPreflightPci: $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents, -WithBlkResize) or -QemuPreflightPci/-QmpPreflightPci: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -4668,6 +4870,8 @@ try {
         -RequireVirtioNetUdpPass (-not $DisableUdp) `
         -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
         -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
+        -RequireVirtioBlkResizePass ([bool]$needBlkResize) `
+        -VirtioBlkResizeDeltaMiB ([int]$BlkResizeDeltaMiB) `
         -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
         -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
         -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
@@ -4861,6 +5065,38 @@ try {
         $msg += " abort_srb=$($counters['abort_srb']) reset_device_srb=$($counters['reset_device_srb']) reset_bus_srb=$($counters['reset_bus_srb']) pnp_srb=$($counters['pnp_srb']) ioctl_reset=$($counters['ioctl_reset'])"
       }
       Write-Host $msg
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_BLK_RESIZE" {
+      Write-Host "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize marker (READY/SKIP/PASS/FAIL) after virtio-blk completed while -WithBlkResize was enabled (guest selftest too old or missing --test-blk-resize)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_RESIZE_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but -WithBlkResize was enabled (provision the guest with --test-blk-resize)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_RESIZE_FAILED" {
+      Write-Host "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while -WithBlkResize was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_BLK_RESIZE_FAILED" {
+      Write-Host "FAIL: QMP_BLK_RESIZE_FAILED: failed to resize virtio-blk device via QMP (ensure QMP is reachable and QEMU supports blockdev-resize or block_resize)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

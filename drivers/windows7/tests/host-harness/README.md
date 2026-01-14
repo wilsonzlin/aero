@@ -622,14 +622,28 @@ Windows should observe a larger disk size after the host resizes the backing dev
 To enable end-to-end testing:
 
 1. Provision the guest image so the scheduled selftest runs with `--test-blk-resize`
-   (or set env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1` in the guest).
-2. Run the Python host harness with `--with-blk-resize` so it:
-   - waits for `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
-   - computes `new_bytes = old_bytes + delta` (default delta: 64 MiB)
-   - issues a QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
-   - requires `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|...`
+    (or set env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1` in the guest).
+   - When generating provisioning media with `New-AeroWin7TestImage.ps1`, you can bake this in via:
+     `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
+2. Run the host harness with blk-resize enabled so it:
+    - waits for `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
+    - computes `new_bytes = old_bytes + delta` (default delta: 64 MiB)
+    - issues a QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
+    - requires `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|...`
 
-Example:
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -WithBlkResize `
+  -BlkResizeDeltaMiB 64 `
+  -TimeoutSeconds 600
+```
+
+Example (Python):
 
 ```bash
 python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
