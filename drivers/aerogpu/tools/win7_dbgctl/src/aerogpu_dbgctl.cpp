@@ -785,7 +785,7 @@ static void PrintUsage() {
            L"  --dump-cursor-png PATH\n"
            L"  --dump-ring\n"
            L"  --dump-last-submit (alias: --dump-last-cmd) [--index-from-tail K] [--count N]\n"
-           L"      --cmd-out <path> [--alloc-out <path>] [--force]\n"
+           L"      --cmd-out <path> (or --out <path>) [--alloc-out <path>] [--force]\n"
            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
