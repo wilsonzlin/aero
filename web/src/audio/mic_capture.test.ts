@@ -252,3 +252,80 @@ test("MicCapture falls back to ScriptProcessorNode when AudioWorklet initializat
   expect(mic.getDebugInfo().backend).toBe("script");
   await mic.stop();
 });
+
+test("MicCapture script backend emits periodic stats messages", async () => {
+  delete (globalThis as any).AudioWorkletNode;
+
+  class FakeNode {
+    connect = vi.fn();
+    disconnect = vi.fn();
+  }
+
+  class FakeGainNode extends FakeNode {
+    gain = { value: 1 };
+  }
+
+  class FakeScriptProcessorNode extends FakeNode {
+    onaudioprocess: ((ev: any) => void) | null = null;
+  }
+
+  class FakeAudioContext {
+    sampleRate = 48_000;
+    destination = {};
+
+    createGain(): FakeGainNode {
+      return new FakeGainNode();
+    }
+
+    createMediaStreamSource(_stream: unknown): FakeNode {
+      return new FakeNode();
+    }
+
+    createScriptProcessor(_bufferSize: number, _inChannels: number, _outChannels: number): FakeScriptProcessorNode {
+      return new FakeScriptProcessorNode();
+    }
+
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+  }
+
+  GLOBALS.AudioContext = FakeAudioContext;
+
+  const track = { addEventListener: vi.fn(), stop: vi.fn() };
+  const stream = {
+    getAudioTracks: () => [track],
+    getTracks: () => [track],
+  };
+
+  (navigator as unknown as { mediaDevices?: unknown }).mediaDevices = {
+    getUserMedia: vi.fn(async () => stream),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  };
+
+  const mic = new MicCapture({ sampleRate: 48_000, bufferMs: 100, preferWorklet: false });
+  const messages: any[] = [];
+  mic.addEventListener("message", (ev) => {
+    messages.push((ev as MessageEvent).data);
+  });
+  await mic.start();
+
+  expect(mic.getDebugInfo().backend).toBe("script");
+
+  const node = (mic as any).scriptNode as FakeScriptProcessorNode;
+  expect(node).toBeTruthy();
+  expect(typeof node.onaudioprocess).toBe("function");
+
+  node.onaudioprocess?.({
+    inputBuffer: {
+      getChannelData: () => new Float32Array([0.1, 0.2, 0.3, 0.4]),
+    },
+  });
+
+  const stats = messages.find((m) => m && typeof m === "object" && m.type === "stats");
+  expect(stats).toBeTruthy();
+  expect(stats.buffered).toBe(4);
+  expect(stats.dropped).toBe(0);
+
+  await mic.stop();
+});

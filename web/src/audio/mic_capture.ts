@@ -200,10 +200,30 @@ export class MicCapture extends EventTarget {
           );
         }
         const node = audioContext.createScriptProcessor(2048, 1, 1);
+        let statsCounter = 0;
         node.onaudioprocess = (ev) => {
-          if (this.muteRequested) return;
-          const input = ev.inputBuffer.getChannelData(0);
-          micRingBufferWrite(this.ringBuffer, input);
+          if (!this.muteRequested) {
+            const input = ev.inputBuffer.getChannelData(0);
+            micRingBufferWrite(this.ringBuffer, input);
+          }
+
+          // Keep UI/debug stats behavior consistent with the AudioWorklet backend.
+          // AudioProcessingEvent frequency is much lower than AudioWorklet render quanta, so we
+          // can post on every few callbacks without spamming the main thread.
+          if ((statsCounter++ & 0x3) === 0) {
+            const writePos = Atomics.load(this.ringBuffer.header, WRITE_POS_INDEX) >>> 0;
+            const readPos = Atomics.load(this.ringBuffer.header, READ_POS_INDEX) >>> 0;
+            const buffered = (writePos - readPos) >>> 0;
+            this.dispatchEvent(
+              new MessageEvent("message", {
+                data: {
+                  type: "stats",
+                  buffered,
+                  dropped: Atomics.load(this.ringBuffer.header, DROPPED_SAMPLES_INDEX) >>> 0,
+                },
+              }),
+            );
+          }
         };
         source.connect(node);
         node.connect(sinkGain);
