@@ -86,8 +86,13 @@ Windows shows `DEV_1018` you must configure the hypervisor to expose a modern-on
 
 The virtio-snd specification defines `eventq` (queue index `1`) for asynchronous device → driver notifications.
 
-Contract v1 does **not** define any required event messages (see `docs/windows7-virtio-driver-contract.md` §3.4.2.1), and Aero’s
-virtio-snd device model currently emits **no** events. However:
+Contract v1 does **not** define any required event messages (see `docs/windows7-virtio-driver-contract.md` §3.4.2.1).
+
+By default, Aero’s virtio-snd device model does not emit any `eventq` messages unless the host explicitly queues them (for example
+via `VirtioSnd::queue_event(...)` / `VirtioSnd::queue_jack_event(...)`). The browser/WASM runtime uses this to emit microphone jack
+connect/disconnect events when the mic capture ring is attached/detached (`VirtioSndPciBridge::set_mic_ring_buffer`).
+
+Even when no events are emitted:
 
 - The Windows 7 virtio-snd driver posts a small bounded set of writable buffers and keeps `eventq` running.
 - If the device completes an event buffer anyway (future extensions, or a buggy device model), the driver parses the standard
@@ -120,7 +125,7 @@ contract and not packaged by default), the repo also contains an opt-in I/O-port
 The device reports two PCM streams:
 
 - `streams = 2`
-- `jacks = 0`
+- `jacks = 0` (**preferred**) or `jacks = 2` (**tolerated**, matches the driver’s fixed two-jack topology and enables optional JACK eventq notifications)
 - `chmaps = 0`
 
 ## Supported Control Commands
