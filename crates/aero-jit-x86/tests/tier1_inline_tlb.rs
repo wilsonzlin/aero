@@ -4207,7 +4207,7 @@ fn tier1_inline_tlb_mmio_load_exit_on_prefilled_non_ram_tlb_entry() {
     };
 
     // Prefill a non-RAM entry (missing TLB_FLAG_IS_RAM) with the required READ permission.
-    let tlb_data = 0x0 | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let tlb_data = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
     let ram = vec![0u8; 0x10000];
 
     let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
@@ -4257,7 +4257,7 @@ fn tier1_inline_tlb_mmio_store_exit_on_prefilled_non_ram_tlb_entry() {
         ..Default::default()
     };
 
-    let tlb_data = 0x0 | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let tlb_data = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
     let mut ram = vec![0u8; 0x10000];
     ram[0] = 0xaa;
 
@@ -4317,7 +4317,7 @@ fn tier1_inline_tlb_mmio_load_on_prefilled_non_ram_tlb_entry_uses_slow_helper_wh
         ..Default::default()
     };
 
-    let tlb_data = 0x0 | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let tlb_data = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
     let mut ram = vec![0u8; 0x10000];
     ram[addr as usize..addr as usize + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
 
@@ -4361,7 +4361,7 @@ fn tier1_inline_tlb_mmio_store_on_prefilled_non_ram_tlb_entry_uses_slow_helper_w
         ..Default::default()
     };
 
-    let tlb_data = 0x0 | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let tlb_data = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
     let ram = vec![0u8; 0x10000];
 
     let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
