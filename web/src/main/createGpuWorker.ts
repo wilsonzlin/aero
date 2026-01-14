@@ -56,6 +56,9 @@ export interface GpuWorkerHandle {
    *
    * The returned pixels are a readback of the *source framebuffer* content
    * (pre-scaling / pre-color-management), not a capture of the presented canvas.
+   *
+   * @param opts.includeCursor When true, the worker will composite the current cursor image/state
+   * over the screenshot (best-effort). Default: false for deterministic hashing.
    */
   requestScreenshot(opts?: { includeCursor?: boolean }): Promise<GpuRuntimeScreenshotResponseMessage>;
   /**
@@ -67,6 +70,8 @@ export interface GpuWorkerHandle {
    *
    * Note: the underlying worker API is best-effort; if a backend cannot read back presented
    * output yet it may fall back to returning a source-framebuffer screenshot.
+   *
+   * @param opts.includeCursor When true, includes cursor composition (best-effort). Default: false.
    */
   requestPresentedScreenshot(opts?: { includeCursor?: boolean }): Promise<GpuRuntimeScreenshotPresentedResponseMessage>;
   shutdown(): void;
