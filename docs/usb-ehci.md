@@ -36,6 +36,8 @@ The EHCI bring-up work in-tree is intentionally staged.
 What exists today (bring-up stage):
 
 - Capability + operational MMIO registers are implemented (including W1C status masking).
+- EHCI extended capability: **USB Legacy Support** (`HCCPARAMS.EECP` → `USBLEGSUP` / `USBLEGCTLSTS`)
+  is implemented for the “BIOS handoff” semaphore flow.
 - Root hub ports are implemented with **deterministic timers** (reset/resume) and change-bit latching.
 - `FRINDEX` advances in 1ms ticks (adds 8 microframes per tick) when the controller is running.
 - IRQ line level is derived from `USBSTS`/`USBINTR` (notably `PCD` for port changes).
@@ -104,6 +106,39 @@ The initial EHCI implementation intentionally omits:
 
 ---
 
+## PCI identity and wiring (Aero)
+
+EHCI is exposed as a **PCI function** with the standard USB/EHCI class code (`0x0c/0x03/0x20`) and
+one MMIO BAR for the EHCI register space.
+
+### PCI identity (native runtime)
+
+Native (`aero_machine` / `crates/devices`) uses the `USB_EHCI_ICH9` profile
+(`crates/devices/src/pci/profile.rs`) for a Windows-7-friendly identity:
+
+| Field | Value |
+|---|---|
+| BDF | `00:12.0` |
+| Vendor ID | `0x8086` (Intel) |
+| Device ID | `0x293a` (ICH9 EHCI) |
+| Class code | `0x0c/0x03/0x20` (Serial bus / USB / EHCI) |
+| Interrupt | PCI INTx (INTA#) |
+| BARs | BAR0 = MMIO (0x1000 bytes) |
+
+Note: the IRQ *line* observed by the guest depends on platform routing (PIRQ swizzle); see
+[`docs/irq-semantics.md`](./irq-semantics.md).
+
+### PCI identity (web runtime)
+
+The browser runtime exposes an equivalent identity via `web/src/io/devices/ehci.ts`:
+
+- BDF: `00:12.0`
+- Vendor/device ID: `8086:293a`
+- BAR0: `mmio32` 0x1000 bytes
+- INTx: level-triggered, forwarded via `raiseIrq`/`lowerIrq` transitions
+
+---
+
 ## Register model (contracts that matter to guests)
 
 EHCI exposes a **memory-mapped register block** (typically 4 KiB). The first part is the
@@ -127,7 +162,7 @@ The EHCI capability registers primarily allow the guest driver to discover:
 
 - where the operational regs live (`CAPLENGTH`)
 - number of root hub ports (`HCSPARAMS.N_PORTS`)
-- whether 64-bit addresses are supported (`HCCPARAMS.64-bit`)
+- whether 64-bit addresses are supported (`HCCPARAMS.AC64`)
 - the optional “extended capabilities pointer” (`HCCPARAMS.EECP`)
 
 **Aero contract:**
@@ -135,8 +170,29 @@ The EHCI capability registers primarily allow the guest driver to discover:
 - Capability registers are **read-only**; writes are ignored.
 - `CAPLENGTH` points to the start of the operational register block (commonly `0x20`).
 - `HCSPARAMS.N_PORTS` matches the number of implemented `PORTSC[n]` registers.
-- If 64-bit schedule pointers are not supported in the MVP, `HCCPARAMS.64-bit` must be `0` and
-  `CTRLDSSEGMENT` is effectively ignored/forced to 0.
+- Aero currently models a **32-bit** EHCI controller (`HCCPARAMS.AC64=0`); schedule pointer upper
+  bits (`CTRLDSSEGMENT`) are ignored and read back as 0.
+
+#### EHCI extended capability: USB Legacy Support (BIOS handoff)
+
+Many EHCI drivers (Windows/Linux) perform the “BIOS handoff” sequence so firmware stops owning the
+controller before the OS begins DMA scheduling.
+
+The EHCI spec places the **USB Legacy Support** capability (`USBLEGSUP` / `USBLEGCTLSTS`) in PCI
+configuration space (and points to it via `HCCPARAMS.EECP`).
+
+**Aero contract / current implementation:**
+
+- `HCCPARAMS.EECP` is **non-zero** and points to the first extended capability.
+- The extended capability registers are currently exposed **inside the EHCI MMIO window** at the
+  `EECP` offset (see `crates/aero-usb/src/ehci/regs.rs` for rationale).
+- `USBLEGSUP` behavior:
+  - Low byte encodes `CAPID=0x01` (USB Legacy Support) and `NEXT=0`.
+  - On reset, **BIOS-owned semaphore** starts set (`BIOS_SEM=1`).
+  - When the guest sets **OS-owned semaphore** (`OS_SEM=1`), Aero immediately clears `BIOS_SEM`
+    (models a successful handoff, without SMI/firmware timing).
+- `USBLEGCTLSTS` is currently stored as a plain read/write register; SMI trap side-effects are not
+  modeled.
 
 ### Operational registers (read/write)
 
@@ -428,7 +484,22 @@ Two key pieces of guest-visible behavior:
   - When set, the port is owned by a companion controller; EHCI should treat the port as not under
     its control for scheduling.
 
-### Aero’s planned integration with UHCI companions
+### Current behavior in Aero (implemented)
+
+In Aero’s EHCI model:
+
+- Root hub ports start with `PORT_OWNER=1` (companion-owned) by default.
+- `CONFIGFLAG` is implemented as the “claim/release all ports” knob:
+  - `CONFIGFLAG` `0→1` clears `PORT_OWNER` on all ports (EHCI owns).
+  - `CONFIGFLAG` `1→0` sets `PORT_OWNER` on all ports (companion owns).
+- `PORT_OWNER` is only writable while the port is disabled (matches typical EHCI semantics).
+- If `PORT_OWNER=1`, EHCI treats the port as **unreachable** for scheduling:
+  - `CCS` still reflects physical connection.
+  - Reset/enable/suspend/resume state is dropped when the port is handed off.
+- Any ownership change (`CONFIGFLAG` transition or `PORT_OWNER` toggle) asserts `USBSTS.PCD` so the
+  guest sees a port change interrupt when `USBINTR.PCD` is enabled.
+
+### Planned integration with UHCI companions
 
 The intended platform topology is:
 

@@ -55,6 +55,7 @@ function maskToSize(value: number, size: number): number {
  * to the runtime's {@link IrqSink} (`raiseIrq` on 0→1, `lowerIrq` on 1→0).
  *
  * See `docs/irq-semantics.md`.
+ * See `docs/usb-ehci.md` for EHCI model scope and bring-up status.
  */
 export class EhciPciDevice implements PciDevice, TickableDevice {
   readonly name = "ehci";

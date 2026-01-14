@@ -1,5 +1,7 @@
 //! Minimal EHCI (USB 2.0) host controller model.
 //!
+//! Design notes + emulator contracts: see `docs/usb-ehci.md`.
+//!
 //! This is intentionally a *bring-up* implementation: it models the capability/operational MMIO
 //! registers and an EHCI root hub with per-port state machines. Minimal schedule engines are
 //! implemented for:
