@@ -959,6 +959,7 @@ jobs:
           result_marker=""
           blk_marker=""
           blk_marker_line=""
+          blk_msix_marker_line=""
           blk_counters_marker=""
           blk_miniport_flags_marker=""
           blk_miniport_reset_recovery_marker=""
@@ -969,6 +970,7 @@ jobs:
           blk_reset_recovery_marker=""
           net_marker=""
           net_marker_line=""
+          net_msix_marker_line=""
           net_udp_marker=""
           net_udp_marker_line=""
           net_link_flap_marker=""
@@ -977,6 +979,7 @@ jobs:
           net_offload_csum_marker=""
           snd_marker=""
           snd_marker_line=""
+          snd_msix_marker_line=""
           input_events_marker=""
           input_events_marker_line=""
           input_wheel_marker=""
@@ -987,6 +990,7 @@ jobs:
           input_leds_marker=""
           input_binding_host_marker=""
           input_bind_host_marker=""
+          input_msix_marker_line=""
           input_events_modifiers_marker=""
           input_events_modifiers_marker_line=""
           input_events_buttons_marker=""
@@ -1056,6 +1060,9 @@ jobs:
             blk_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
+            blk_msix_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             blk_counters_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
@@ -1084,6 +1091,9 @@ jobs:
             net_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
+            net_msix_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_link_flap_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
@@ -1094,6 +1104,9 @@ jobs:
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-snd|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            snd_msix_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker_line="$(
@@ -1112,6 +1125,9 @@ jobs:
             )"
             input_leds_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            input_msix_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             input_events_modifiers_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-modifiers\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_modifiers_marker_line="$(
@@ -1311,6 +1327,9 @@ jobs:
             if [[ -n "${blk_marker_line}" ]]; then
               echo "- Guest virtio-blk marker line: \`${blk_marker_line}\`"
             fi
+            if [[ -n "${blk_msix_marker_line}" ]]; then
+              echo "- Guest virtio-blk-msix marker line: \`${blk_msix_marker_line}\`"
+            fi
             if [[ -n "${blk_counters_marker}" ]]; then
               echo "- Guest virtio-blk-counters marker: \`${blk_counters_marker}\`"
             fi
@@ -1364,6 +1383,9 @@ jobs:
             fi
             if [[ -n "${net_marker_line}" ]]; then
               echo "- Guest virtio-net marker line: \`${net_marker_line}\`"
+            fi
+            if [[ -n "${net_msix_marker_line}" ]]; then
+              echo "- Guest virtio-net-msix marker line: \`${net_msix_marker_line}\`"
             fi
             if [[ -n "${net_offload_csum_marker}" ]]; then
               echo "- Guest virtio-net-offload-csum marker: \`${net_offload_csum_marker}\`"
@@ -1422,6 +1444,9 @@ jobs:
             if [[ -n "${snd_marker_line}" ]]; then
               echo "- Guest virtio-snd marker line: \`${snd_marker_line}\`"
             fi
+            if [[ -n "${snd_msix_marker_line}" ]]; then
+              echo "- Guest virtio-snd-msix marker line: \`${snd_msix_marker_line}\`"
+            fi
             if [[ -n "${input_events_marker}" ]]; then
               echo "- Guest virtio-input-events marker: \`${input_events_marker}\`"
             fi
@@ -1445,6 +1470,9 @@ jobs:
             fi
             if [[ -n "${input_bind_host_marker}" ]]; then
               echo "- Host virtio-input bind marker: \`${input_bind_host_marker}\`"
+            fi
+            if [[ -n "${input_msix_marker_line}" ]]; then
+              echo "- Guest virtio-input-msix marker line: \`${input_msix_marker_line}\`"
             fi
             if [[ -n "${input_led_marker}" ]]; then
               echo "- Guest virtio-input-led marker: \`${input_led_marker}\`"
