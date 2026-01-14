@@ -217,7 +217,7 @@ pub fn translate_d3d9_shader_to_wgsl(
 
     match try_translate_sm3(token_stream.as_ref(), options) {
         Ok(ok) => {
-            validate_sampler_texture_types(&ok.sampler_texture_types)?;
+            validate_sampler_texture_types(&ok.used_samplers, &ok.sampler_texture_types)?;
             Ok(ok)
         }
         Err(err) => {
@@ -267,27 +267,26 @@ pub fn translate_d3d9_shader_to_wgsl(
                 sampler_texture_types,
                 fallback_reason: Some(err.to_string()),
             };
-            validate_sampler_texture_types(&out.sampler_texture_types)?;
+            validate_sampler_texture_types(&out.used_samplers, &out.sampler_texture_types)?;
             Ok(out)
         }
     }
 }
 
 fn validate_sampler_texture_types(
+    used_samplers: &BTreeSet<u16>,
     sampler_texture_types: &HashMap<u16, TextureType>,
 ) -> Result<(), ShaderTranslateError> {
-    for (sampler, ty) in sampler_texture_types {
-        if matches!(
-            ty,
-            TextureType::Texture1D
-                | TextureType::Texture2D
-                | TextureType::Texture3D
-                | TextureType::TextureCube
-        ) {
+    for &sampler in used_samplers {
+        let ty = sampler_texture_types
+            .get(&sampler)
+            .copied()
+            .unwrap_or(TextureType::Texture2D);
+        if matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
             continue;
         }
         return Err(ShaderTranslateError::Translation(format!(
-            "unsupported sampler texture type {ty:?} for s{sampler} (supported: 1D/2D/3D/Cube)"
+            "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
         )));
     }
     Ok(())

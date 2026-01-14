@@ -209,7 +209,8 @@ pub struct ShaderProgram {
     /// Texture type declared for each sampler register (`dcl_2d`, `dcl_cube`, etc).
     ///
     /// The AeroGPU D3D9 executor supports `texture_2d<f32>` and `texture_cube<f32>` samplers.
-    /// Other declarations (3D/1D/unknown) are rejected during translation.
+    /// Used samplers declared as other texture types (3D/1D/unknown) are rejected by the
+    /// high-level shader translator (`shader_translate`); unused declarations are tolerated.
     pub sampler_texture_types: HashMap<u16, TextureType>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,

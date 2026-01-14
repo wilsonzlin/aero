@@ -6932,6 +6932,88 @@ fn accepts_volume_sampler_declarations() {
 }
 
 #[test]
+fn translate_entrypoint_allows_unused_volume_sampler_declaration() {
+    // Regression test: shaders can declare unsupported sampler texture types (1D/3D/unknown) as
+    // long as the sampler is never actually used by a texture op. The WGSL backends only emit
+    // bindings for used samplers.
+    //
+    // Minimal ps_3_0:
+    //   dcl_volume s0
+    //   def c0, 1, 0, 0, 1
+    //   mov oC0, c0
+    //   end
+    let mut words = vec![0xFFFF_0300];
+    // dcl_volume s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        4u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // def c0, 1.0, 0.0, 0.0, 1.0
+    words.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            1.0f32.to_bits(),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+        ],
+    ));
+    // mov oC0, c0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert!(!translated.used_samplers.contains(&0));
+    assert!(!translated.wgsl.contains("texture_3d"), "wgsl:\n{}", translated.wgsl);
+    assert!(
+        !translated.wgsl.contains("textureSample"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_used_volume_sampler() {
+    // The executor only supports binding 2D + cube textures. Used volume samplers must still be
+    // rejected, even though we tolerate unused declarations.
+    let mut words = vec![0xFFFF_0300];
+    // dcl_volume s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        4u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, t0, s0
+    words.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(3, 0, 0xE4),
+            enc_src(10, 0, 0xE4),
+        ],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let err =
+        shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
+            .unwrap_err();
+    let msg = match err {
+        shader_translate::ShaderTranslateError::Translation(msg) => msg,
+        other => panic!("expected translation error, got {other:?}"),
+    };
+    assert!(msg.contains("Texture3D"), "{msg}");
+    assert!(msg.contains("s0"), "{msg}");
+}
+
+#[test]
 fn legacy_translator_emits_texture_1d_and_x_coords() {
     // Minimal ps_3_0 that samples from a 1D texture.
     let mut words = vec![0xFFFF_0300];
