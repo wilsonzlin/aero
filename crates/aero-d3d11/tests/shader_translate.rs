@@ -2291,6 +2291,67 @@ fn translates_f16tof32_via_unpack2x16float() {
         "expected f16tof32 lowering to use unpack2x16float:\n{}",
         translated.wgsl
     );
+    assert!(
+        translated.wgsl.contains("& 0xffffu"),
+        "expected f16tof32 lowering to mask low 16 bits:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Apply a source operand modifier to `f16tof32`. The translator should ignore modifiers so the
+    // raw binary16 bit pattern (in the low 16 bits) is preserved.
+    let mut half_bits = src_reg(RegFile::Temp, 0);
+    half_bits.modifier = OperandModifier::Neg;
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::F32ToF16 {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::F16ToF32 {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: half_bits,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected f16tof32 lowering to use unpack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("& 0xffffu"),
+        "expected f16tof32 lowering to mask low 16 bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("vec4<u32>(0u) -"),
+        "expected f16tof32 to ignore source operand modifiers (preserve half bits):\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]
