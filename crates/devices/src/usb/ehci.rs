@@ -2,6 +2,8 @@
 //!
 //! The controller implementation lives in `aero-usb`; this module provides the glue to expose it
 //! as a PCI function with an MMIO BAR.
+//!
+//! Design notes + emulator/runtime contracts: see `docs/usb-ehci.md`.
 
 use crate::pci::profile::USB_EHCI_ICH9;
 use crate::pci::{PciBarKind, PciConfigSpace, PciConfigSpaceState, PciDevice};

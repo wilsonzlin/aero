@@ -2,6 +2,8 @@
 //!
 //! The controller implementation itself lives in the shared `aero-usb` crate; this module is just
 //! thin integration glue (PCI config space, MMIO decode gating, DMA gating, IRQ gating).
+//!
+//! Design notes + emulator/runtime contracts: see `docs/usb-ehci.md`.
 
 pub use aero_usb::ehci::{regs, EhciController};
 
