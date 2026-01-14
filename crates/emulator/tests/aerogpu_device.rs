@@ -322,7 +322,10 @@ fn ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
     // Tick once with COMMAND.BME clear: DMA must not run yet.
     dev.tick(&mut mem, 0);
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
-    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0xDEAD_BEEF);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        0xDEAD_BEEF
+    );
     assert_eq!(
         mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
         999
@@ -336,7 +339,10 @@ fn ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
         mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
         AEROGPU_FENCE_PAGE_MAGIC
     );
-    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 0);
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        0
+    );
 }
 
 #[test]

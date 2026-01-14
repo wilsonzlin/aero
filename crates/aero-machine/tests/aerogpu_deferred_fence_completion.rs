@@ -1,5 +1,5 @@
-use aero_devices::pci::PciInterruptPin;
 use aero_devices::pci::profile;
+use aero_devices::pci::PciInterruptPin;
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 use pretty_assertions::assert_eq;
@@ -35,7 +35,10 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
             .map(|range| range.base)
             .unwrap_or(0)
     };
-    assert_ne!(bar0_base, 0, "expected AeroGPU BAR0 to be assigned by BIOS POST");
+    assert_ne!(
+        bar0_base, 0,
+        "expected AeroGPU BAR0 to be assigned by BIOS POST"
+    );
 
     // Guest allocations.
     let ring_gpa = 0x10000u64;
@@ -48,7 +51,8 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
     // Build a minimal valid ring containing a single submit desc (head=0, tail=1).
     let entry_count = 8u32;
     let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
-    let ring_size_bytes = ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
+    let ring_size_bytes =
+        ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Ring header.
     m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
@@ -132,7 +136,9 @@ fn aerogpu_deferred_fence_completion_requires_host_complete() {
 
     let pci_intx = m.pci_intx_router().expect("pc platform enabled");
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
-    let gsi = pci_intx.borrow().gsi_for_intx(profile::AEROGPU.bdf, PciInterruptPin::IntA);
+    let gsi = pci_intx
+        .borrow()
+        .gsi_for_intx(profile::AEROGPU.bdf, PciInterruptPin::IntA);
     assert!(
         !interrupts.borrow().gsi_level(gsi),
         "expected AeroGPU INTx to remain deasserted until fence completion"

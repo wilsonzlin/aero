@@ -18852,7 +18852,10 @@ mod tests {
             };
 
             if exec.backend() != wgpu::Backend::Gl {
-                skip_or_panic(module_path!(), "test requires wgpu GL backend (host_shadow only exists there)");
+                skip_or_panic(
+                    module_path!(),
+                    "test requires wgpu GL backend (host_shadow only exists there)",
+                );
                 return;
             }
 
@@ -18863,13 +18866,7 @@ mod tests {
 
             let mut writer = AerogpuCmdWriter::new();
             // Source is guest-backed but not an index buffer, so it has no host shadow.
-            writer.create_buffer(
-                SRC,
-                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
-                SIZE,
-                ALLOC_ID,
-                0,
-            );
+            writer.create_buffer(SRC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, SIZE, ALLOC_ID, 0);
             // Destination is an index buffer (host shadow allocated via UPLOAD_RESOURCE on GL).
             writer.create_buffer(DST, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, SIZE, 0, 0);
 
@@ -18892,7 +18889,9 @@ mod tests {
                 reserved0: 0,
             }];
 
-            let src_bytes = [0x11u8, 0x22, 0x33, 0x44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+            let src_bytes = [
+                0x11u8, 0x22, 0x33, 0x44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+            ];
             let mut guest_mem = VecGuestMemory::new(SIZE as usize);
             guest_mem
                 .write(0, &src_bytes)

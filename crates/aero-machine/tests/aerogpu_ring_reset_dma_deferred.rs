@@ -42,7 +42,8 @@ fn aerogpu_ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
 
     let entry_count = 8u32;
     let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
-    let ring_size_bytes = ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
+    let ring_size_bytes =
+        ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     vm.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     vm.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
@@ -106,7 +107,9 @@ fn aerogpu_ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
     }
     vm.process_aerogpu();
     assert_eq!(vm.read_physical_u32(ring_gpa + 24), 3);
-    assert_eq!(vm.read_physical_u32(fence_gpa), ring::AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(
+        vm.read_physical_u32(fence_gpa),
+        ring::AEROGPU_FENCE_PAGE_MAGIC
+    );
     assert_eq!(vm.read_physical_u64(fence_gpa + 8), 0);
 }
-

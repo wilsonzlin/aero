@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 use js_sys::{Array, Reflect};
 
@@ -136,20 +136,26 @@ fn parse_report_item(value: &JsValue) -> Result<webhid::HidReportItem, JsValue> 
     let string_minimum = parse_u32(&get_prop(value, "stringMinimum")?, "stringMinimum")?;
     let string_maximum = parse_u32(&get_prop(value, "stringMaximum")?, "stringMaximum")?;
     let designators = parse_u32_array(&get_prop(value, "designators")?, "designators")?;
-    let designator_minimum = parse_u32(&get_prop(value, "designatorMinimum")?, "designatorMinimum")?;
-    let designator_maximum = parse_u32(&get_prop(value, "designatorMaximum")?, "designatorMaximum")?;
+    let designator_minimum =
+        parse_u32(&get_prop(value, "designatorMinimum")?, "designatorMinimum")?;
+    let designator_maximum =
+        parse_u32(&get_prop(value, "designatorMaximum")?, "designatorMaximum")?;
     let is_absolute = parse_bool(&get_prop(value, "isAbsolute")?, "isAbsolute")?;
     let is_array = parse_bool(&get_prop(value, "isArray")?, "isArray")?;
     let is_buffered_bytes = parse_bool(&get_prop(value, "isBufferedBytes")?, "isBufferedBytes")?;
     let is_constant = parse_bool(&get_prop(value, "isConstant")?, "isConstant")?;
-    let is_linear =
-        parse_bool_with_default(&get_prop(value, "isLinear")?, true, "isLinear")?;
+    let is_linear = parse_bool_with_default(&get_prop(value, "isLinear")?, true, "isLinear")?;
     let is_range = parse_bool(&get_prop(value, "isRange")?, "isRange")?;
-    let is_relative = parse_bool_with_default(&get_prop(value, "isRelative")?, false, "isRelative")?;
-    let is_volatile = parse_bool_with_default(&get_prop(value, "isVolatile")?, false, "isVolatile")?;
+    let is_relative =
+        parse_bool_with_default(&get_prop(value, "isRelative")?, false, "isRelative")?;
+    let is_volatile =
+        parse_bool_with_default(&get_prop(value, "isVolatile")?, false, "isVolatile")?;
     let has_null = parse_bool_with_default(&get_prop(value, "hasNull")?, false, "hasNull")?;
-    let has_preferred_state =
-        parse_bool_with_default(&get_prop(value, "hasPreferredState")?, true, "hasPreferredState")?;
+    let has_preferred_state = parse_bool_with_default(
+        &get_prop(value, "hasPreferredState")?,
+        true,
+        "hasPreferredState",
+    )?;
     let is_wrapped = {
         let primary = get_prop(value, "isWrapped")?;
         if !primary.is_null() && !primary.is_undefined() {
@@ -261,7 +267,9 @@ fn parse_collection(value: &JsValue) -> Result<webhid::HidCollectionInfo, JsValu
 ///
 /// `collections_json` must be the normalized output of `normalizeCollections()` from
 /// `web/src/hid/webhid_normalize.ts` (array of objects with camelCase fields).
-pub fn parse_webhid_collections(collections_json: &JsValue) -> Result<Vec<webhid::HidCollectionInfo>, JsValue> {
+pub fn parse_webhid_collections(
+    collections_json: &JsValue,
+) -> Result<Vec<webhid::HidCollectionInfo>, JsValue> {
     let arr = expect_array(collections_json, "collections")?;
     let len = arr.length();
     let mut out = Vec::with_capacity(len as usize);
@@ -271,4 +279,3 @@ pub fn parse_webhid_collections(collections_json: &JsValue) -> Result<Vec<webhid
     }
     Ok(out)
 }
-
