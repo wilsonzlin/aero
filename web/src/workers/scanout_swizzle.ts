@@ -48,8 +48,8 @@ export type ConvertScanoutOptions = {
 export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
   const width = opts.width | 0;
   const height = opts.height | 0;
-  const srcStrideBytes = opts.srcStrideBytes | 0;
-  const dstStrideBytes = opts.dstStrideBytes | 0;
+  const srcStrideBytes = opts.srcStrideBytes >>> 0;
+  const dstStrideBytes = opts.dstStrideBytes >>> 0;
 
   if (width <= 0 || height <= 0) return false;
   const rowBytes = width * 4;
@@ -59,6 +59,7 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
   // Note: the last row only needs `rowBytes` bytes, even when strideBytes is larger.
   const requiredSrcBytes = (height - 1) * srcStrideBytes + rowBytes;
   const requiredDstBytes = (height - 1) * dstStrideBytes + rowBytes;
+  if (!Number.isSafeInteger(requiredSrcBytes) || !Number.isSafeInteger(requiredDstBytes)) return false;
   if (requiredSrcBytes < rowBytes || requiredDstBytes < rowBytes) return false;
   if (opts.src.byteLength < requiredSrcBytes || opts.dst.byteLength < requiredDstBytes) return false;
 
