@@ -612,6 +612,87 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
 }
 
 #[test]
+fn ring_reset_clears_latched_error_payload() {
+    let mut mem = memory::Bus::new(0x20_000);
+
+    let mut dev = new_test_device(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    dev.set_backend(Box::new(ImmediateAeroGpuBackend::new()));
+
+    // Ring with one malformed submission so ERROR_* registers are populated.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let cmd_gpa = 0x4000u64;
+    // Wrong magic -> CmdDecode error.
+    mem.write_u32(cmd_gpa + 0, 0);
+    mem.write_u32(cmd_gpa + 4, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(cmd_gpa + 8, 16);
+    mem.write_u32(cmd_gpa + 12, 0);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 16);
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 123);
+
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+
+    // Enable ERROR IRQ so it asserts the line.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::ERROR as u64);
+
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::CmdDecode as u32
+    );
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 123);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
+
+    // Ring reset should clear the latched error payload so guests don't observe stale ERROR_*
+    // values after recovery.
+    dev.write(
+        mmio::RING_CONTROL,
+        4,
+        (ring_control::ENABLE | ring_control::RESET) as u64,
+    );
+    dev.tick(&mut mem, 0);
+
+    assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(!dev.irq_level());
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::None as u32
+    );
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 0);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 0);
+}
+
+#[test]
 fn irq_ack_clears_only_requested_bits_and_recomputes_irq_level() {
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
     dev.config_mut().set_command(1 << 1);
