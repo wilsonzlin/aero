@@ -21,7 +21,11 @@ verify_dsdt_pair() {
   local aml_expected="${ROOT_DIR}/${aml_rel}"
 
   # Use `-p` so verification doesn't write artifacts into the repo.
-  iasl -tc -p "${tmp_dir}/${prefix}" "${asl}" >/dev/null
+  #
+  # ACPICA warns (3168) about legacy Processor() objects. Treat that warning as
+  # non-fatal/noise here since we still validate the actual AML round-trip with
+  # `scripts/validate-acpi.sh`.
+  iasl -vw 3168 -tc -p "${tmp_dir}/${prefix}" "${asl}" >/dev/null
 
   local aml_generated="${tmp_dir}/${prefix}.aml"
   if [[ ! -f "${aml_generated}" ]]; then
