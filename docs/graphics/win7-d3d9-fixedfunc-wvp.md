@@ -41,6 +41,8 @@ This covers the fixed-function FVFs:
 
 When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (`c244..c253`; `kFixedfuncLightingStartRegister = 244`) via `ensure_fixedfunc_lighting_constants_locked()` (normal transform, light 0, material, global ambient). Uploads are gated by `Device::fixedfunc_lighting_dirty` and occur at draw time when a lit fixed-function VS variant is active.
 
+Note: the fixed-function fallback supports only `TEXCOORD0=float2` for `TEX1` FVFs (default `D3DFVF_TEXCOORDSIZE2(0)`). Other `D3DFVF_TEXCOORDSIZE*` encodings for texcoord set 0 are accepted for input-layout translation (user shaders), but fixed-function draws will fail with `D3DERR_INVALIDCALL` when the fixed-function path is active.
+
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 
 For pre-transformed screen-space vertices (`D3DFVF_XYZRHW*` / `POSITIONT`), the UMD does **not** use WVP transforms.
