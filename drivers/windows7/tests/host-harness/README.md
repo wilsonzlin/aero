@@ -288,8 +288,9 @@ Notes:
 - `-VirtioDisableMsix` / `--virtio-disable-msix` is **mutually exclusive** with the MSI-X vector override flags
   (`-VirtioMsixVectors` / `--virtio-msix-vectors` and per-device `*Vectors` variants) and with
   `-RequireVirtio*Msix` / `--require-virtio-*-msix`.
-- Some QEMU builds may reject `vectors=0`. In that case, the harness fails fast and includes the QEMU error in the
-  usual stderr sidecar log (`<serial-base>.qemu.stderr.log`).
+- This requires a QEMU build that supports the virtio `vectors` property and accepts `vectors=0`. Some QEMU builds may
+  reject `vectors=0` (or omit `vectors` entirely). In that case, the harness fails fast and includes the QEMU error in
+  the usual stderr sidecar log (`<serial-base>.qemu.stderr.log`).
 - When enabled, the harness emits a machine-readable host marker:
   - `AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1`
 
