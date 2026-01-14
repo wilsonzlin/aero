@@ -228,6 +228,7 @@ Ops/features referenced by the scratchpad tasks:
 - `2f099e8dd` — `test(sm3): cover cube/3D sampler dcl in WGSL`
 - `1dcec36ab` — `test(sm3): add 1D sampler dcl coverage`
 - `0516665f7` — `test(sm3): cover non-2D texldp/texldd swizzles`
+- `b6b6bec11` — `test(sm3): cover 1D texldp/texldd and clean up software matcher`
 - `b10bb36f3` — `docs(graphics): mark SM3 TexSample/texkill tasks 401/402 done`
 - `6617e2bc5` — `docs(graphics): cross-link SM3 shader translation task notes`
 - `9f3c546f8` — `docs(graphics): link task-489 audit from SM3 translation notes`
