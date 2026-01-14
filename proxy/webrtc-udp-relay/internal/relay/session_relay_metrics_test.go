@@ -147,7 +147,7 @@ func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropp
 
 	dc := &fakeDataChannel{sent: make(chan []byte, 1)}
 	relayCfg := defaultConfig()
-	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
+	relayCfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 	relayCfg.UDPBindingIdleTimeout = time.Minute
 	relayCfg.UDPReadBufferBytes = 2048

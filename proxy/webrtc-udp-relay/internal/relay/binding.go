@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
@@ -96,7 +97,7 @@ func (b *udpPortBinding) Close() {
 }
 
 func (b *udpPortBinding) AllowRemote(remote *net.UDPAddr, now time.Time) {
-	if b.cfg.InboundFilterMode == InboundFilterAny {
+	if b.cfg.InboundFilterMode == config.UDPInboundFilterModeAny {
 		return
 	}
 	k, ok := makeRemoteKey(remote)
@@ -215,7 +216,7 @@ func (b *udpPortBinding) pruneAllowedLockedInternal(now time.Time, force bool) {
 }
 
 func (b *udpPortBinding) remoteAllowed(remote *net.UDPAddr, now time.Time) bool {
-	if b.cfg.InboundFilterMode == InboundFilterAny {
+	if b.cfg.InboundFilterMode == config.UDPInboundFilterModeAny {
 		return true
 	}
 	k, ok := makeRemoteKey(remote)

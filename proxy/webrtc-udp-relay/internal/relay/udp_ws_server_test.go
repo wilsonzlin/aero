@@ -874,7 +874,7 @@ func TestUDPWebSocketServer_InboundFilterAddressAndPort_DropsUnexpectedSourcePor
 	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
-	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
+	relayCfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 
 	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
@@ -956,7 +956,7 @@ func TestUDPWebSocketServer_InboundFilterAny_AllowsUnexpectedSourcePort(t *testi
 	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
-	relayCfg.InboundFilterMode = InboundFilterAny
+	relayCfg.InboundFilterMode = config.UDPInboundFilterModeAny
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 
 	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}, nil)
@@ -1021,7 +1021,7 @@ func TestUDPWebSocketServer_RemoteAllowlistEvictionIncrementsMetric(t *testing.T
 	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
-	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
+	relayCfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
 	relayCfg.MaxAllowedRemotesPerBinding = 1
 

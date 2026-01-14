@@ -1,6 +1,10 @@
 package relay
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+)
 
 func TestDefaultConfig_UDPReadBufferBytes_IsMaxDatagramPayloadBytesPlusOne(t *testing.T) {
 	cfg := defaultConfig()
@@ -31,14 +35,14 @@ func TestConfigWithDefaults_UDPReadBufferBytes_DefaultsRelativeToMaxPayload(t *t
 
 func TestConfigWithDefaults_DefaultInboundFilterModeIsAddressAndPort(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	if cfg.InboundFilterMode != InboundFilterAddressAndPort {
-		t.Fatalf("InboundFilterMode=%v, want %v", cfg.InboundFilterMode, InboundFilterAddressAndPort)
+	if cfg.InboundFilterMode != config.UDPInboundFilterModeAddressAndPort {
+		t.Fatalf("InboundFilterMode=%v, want %v", cfg.InboundFilterMode, config.UDPInboundFilterModeAddressAndPort)
 	}
 }
 
 func TestConfigWithDefaults_ClampsInvalidInboundFilterMode(t *testing.T) {
-	cfg := (Config{InboundFilterMode: InboundFilterMode(123)}).WithDefaults()
-	if cfg.InboundFilterMode != InboundFilterAddressAndPort {
-		t.Fatalf("InboundFilterMode=%v, want %v", cfg.InboundFilterMode, InboundFilterAddressAndPort)
+	cfg := (Config{InboundFilterMode: config.UDPInboundFilterMode("nope")}).WithDefaults()
+	if cfg.InboundFilterMode != config.UDPInboundFilterModeAddressAndPort {
+		t.Fatalf("InboundFilterMode=%v, want %v", cfg.InboundFilterMode, config.UDPInboundFilterModeAddressAndPort)
 	}
 }

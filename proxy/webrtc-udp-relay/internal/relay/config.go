@@ -7,23 +7,6 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
-// InboundFilterMode controls which remote endpoints are allowed to send UDP
-// packets back to a binding.
-type InboundFilterMode int
-
-const (
-	// InboundFilterAddressAndPort behaves like a typical symmetric NAT: inbound
-	// packets are accepted only from remote endpoints that the guest has
-	// previously sent a packet to (address+port tuple).
-	//
-	// This is intentionally the zero value so that an empty relay.Config{}
-	// defaults to the safer mode.
-	InboundFilterAddressAndPort InboundFilterMode = iota
-	// InboundFilterAny behaves like a full-cone NAT: inbound packets are accepted
-	// from any remote endpoint.
-	InboundFilterAny
-)
-
 type Config struct {
 	MaxUDPBindingsPerSession  int
 	UDPBindingIdleTimeout     time.Duration
@@ -75,14 +58,18 @@ type Config struct {
 	// v2 is always used for IPv6 packets (v1 cannot represent IPv6).
 	PreferV2 bool
 
-	InboundFilterMode InboundFilterMode
+	// InboundFilterMode controls which remote endpoints are allowed to send UDP
+	// packets back to a binding.
+	//
+	// This corresponds to UDP_INBOUND_FILTER_MODE in config.Load.
+	InboundFilterMode config.UDPInboundFilterMode
 
 	// RemoteAllowlistIdleTimeout expires allowlist entries. If zero, defaults to
 	// UDPBindingIdleTimeout.
 	RemoteAllowlistIdleTimeout time.Duration
 
 	// MaxAllowedRemotesPerBinding caps the size of the per-binding remote allowlist
-	// used by inbound filtering (InboundFilterAddressAndPort).
+	// used by inbound filtering when UDP_INBOUND_FILTER_MODE=address_and_port.
 	//
 	// This is defense-in-depth against a guest spraying UDP packets to many
 	// destinations on the same guest port.
@@ -100,7 +87,7 @@ func defaultConfig() Config {
 		UDPReadBufferBytes:          udpproto.DefaultMaxPayload + 1,
 		L2BackendAuthForwardMode:    config.L2BackendAuthForwardModeQuery,
 		L2MaxMessageBytes:           4096,
-		InboundFilterMode:           InboundFilterAddressAndPort,
+		InboundFilterMode:           config.UDPInboundFilterModeAddressAndPort,
 		MaxAllowedRemotesPerBinding: 1024,
 	}
 }
@@ -131,7 +118,7 @@ func (c Config) withDefaults() Config {
 		c.L2BackendAuthForwardMode = d.L2BackendAuthForwardMode
 	}
 	switch c.InboundFilterMode {
-	case InboundFilterAny, InboundFilterAddressAndPort:
+	case config.UDPInboundFilterModeAny, config.UDPInboundFilterModeAddressAndPort:
 		// ok
 	default:
 		c.InboundFilterMode = d.InboundFilterMode

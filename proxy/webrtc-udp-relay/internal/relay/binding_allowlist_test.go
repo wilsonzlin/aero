@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 )
 
 func TestUdpPortBinding_AllowRemote_Capped(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.MaxAllowedRemotesPerBinding = 1024
 
@@ -38,7 +39,7 @@ func TestUdpPortBinding_AllowRemote_Capped(t *testing.T) {
 
 func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.MaxAllowedRemotesPerBinding = 3
 
@@ -95,7 +96,7 @@ func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 
 func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 
 	b := &udpPortBinding{
@@ -139,7 +140,7 @@ func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
 
 func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 	cfg.MaxAllowedRemotesPerBinding = 2
 
@@ -190,7 +191,7 @@ func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
 
 func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAny
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAny
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 	cfg.MaxAllowedRemotesPerBinding = 1
 
@@ -204,33 +205,33 @@ func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
 	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10001}
 	now := time.Unix(0, 0)
 
-	// In InboundFilterAny mode, outbound traffic should not mutate the allowlist.
+	// In config.UDPInboundFilterModeAny mode, outbound traffic should not mutate the allowlist.
 	b.AllowRemote(remote, now)
 
 	b.allowedMu.Lock()
 	n := len(b.allowed)
 	b.allowedMu.Unlock()
 	if n != 0 {
-		t.Fatalf("allowlist size=%d, want 0 (InboundFilterAny should not track remotes)", n)
+		t.Fatalf("allowlist size=%d, want 0 (config.UDPInboundFilterModeAny should not track remotes)", n)
 	}
 
-	// In InboundFilterAny mode, any inbound remote should be accepted regardless
+	// In config.UDPInboundFilterModeAny mode, any inbound remote should be accepted regardless
 	// of allowlist contents.
 	if ok := b.remoteAllowed(remote, now.Add(2*time.Second)); !ok {
-		t.Fatalf("expected remote to be allowed in InboundFilterAny mode")
+		t.Fatalf("expected remote to be allowed in config.UDPInboundFilterModeAny mode")
 	}
 
 	b.allowedMu.Lock()
 	n = len(b.allowed)
 	b.allowedMu.Unlock()
 	if n != 0 {
-		t.Fatalf("allowlist size=%d after remoteAllowed, want 0 (InboundFilterAny should not track remotes)", n)
+		t.Fatalf("allowlist size=%d after remoteAllowed, want 0 (config.UDPInboundFilterModeAny should not track remotes)", n)
 	}
 
 	if got := m.Get(metrics.UDPRemoteAllowlistEvictionsTotal); got != 0 {
-		t.Fatalf("eviction metric=%d, want 0 (InboundFilterAny should not evict)", got)
+		t.Fatalf("eviction metric=%d, want 0 (config.UDPInboundFilterModeAny should not evict)", got)
 	}
 	if got := m.Get(metrics.UDPRemoteAllowlistOverflowDropsTotal); got != 0 {
-		t.Fatalf("drop metric=%d, want 0 (InboundFilterAny should not drop)", got)
+		t.Fatalf("drop metric=%d, want 0 (config.UDPInboundFilterModeAny should not drop)", got)
 	}
 }

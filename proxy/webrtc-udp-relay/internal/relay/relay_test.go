@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
@@ -117,7 +118,7 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	m := &metrics.Metrics{}
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.UDPBindingIdleTimeout = time.Minute
 	cfg.UDPReadBufferBytes = 2048
@@ -225,7 +226,7 @@ func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
 	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAny
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAny
 	cfg.UDPBindingIdleTimeout = time.Minute
 	cfg.UDPReadBufferBytes = 2048
 	cfg.DataChannelSendQueueBytes = 1 << 20
@@ -313,7 +314,7 @@ func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *tes
 	dc := &fakeDataChannel{sent: make(chan []byte, 16)}
 	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
-	cfg.InboundFilterMode = InboundFilterAny
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAny
 	cfg.UDPBindingIdleTimeout = time.Minute
 	cfg.DataChannelSendQueueBytes = 1 << 20
 
@@ -436,7 +437,7 @@ func TestSessionRelay_PreferV2NegotiatedForIPv4(t *testing.T) {
 	p := &policy.DestinationPolicy{Preset: "dev", DefaultAllow: true, AllowPrivateNetworks: true}
 	cfg := defaultConfig()
 	cfg.PreferV2 = true
-	cfg.InboundFilterMode = InboundFilterAddressAndPort
+	cfg.InboundFilterMode = config.UDPInboundFilterModeAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.UDPBindingIdleTimeout = time.Minute
 	cfg.UDPReadBufferBytes = 2048

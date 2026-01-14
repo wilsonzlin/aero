@@ -98,7 +98,7 @@ func main() {
 		UDPReadBufferBytes:          cfg.UDPReadBufferBytes,
 		DataChannelSendQueueBytes:   cfg.DataChannelSendQueueBytes,
 		MaxDatagramPayloadBytes:     cfg.MaxDatagramPayloadBytes,
-		InboundFilterMode:           inboundFilterMode(cfg.UDPInboundFilterMode),
+		InboundFilterMode:           cfg.UDPInboundFilterMode,
 		RemoteAllowlistIdleTimeout:  cfg.UDPRemoteAllowlistIdleTimeout,
 		MaxAllowedRemotesPerBinding: cfg.MaxAllowedRemotesPerBinding,
 		L2BackendWSURL:              cfg.L2BackendWSURL,
@@ -172,18 +172,6 @@ func main() {
 	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("http server exited after shutdown", "err", err)
 		os.Exit(1)
-	}
-}
-
-func inboundFilterMode(mode config.UDPInboundFilterMode) relay.InboundFilterMode {
-	switch mode {
-	case config.UDPInboundFilterModeAny:
-		return relay.InboundFilterAny
-	case config.UDPInboundFilterModeAddressAndPort:
-		return relay.InboundFilterAddressAndPort
-	default:
-		// Should be validated by config.Load.
-		return relay.InboundFilterAddressAndPort
 	}
 }
 
