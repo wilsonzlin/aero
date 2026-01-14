@@ -219,7 +219,9 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.display_resolution(), legacy_res);
-    assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_LEGACY_TEXT);
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }
 
 #[test]
@@ -317,4 +319,5 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
     assert_eq!(snap1.width, 1024);
     assert_eq!(snap1.height, 768);
     assert_eq!(snap1.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
 }
