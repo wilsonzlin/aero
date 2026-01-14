@@ -5157,11 +5157,13 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            status = virtio_input_msix_marker.status or ""
                             mode = virtio_input_msix_marker.fields.get("mode", "")
-                            if mode != "msix":
+                            if status != "PASS" or mode != "msix":
                                 print(
-                                    f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix "
-                                    f"while --require-virtio-input-msix was enabled (mode={mode or 'missing'})",
+                                    "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report "
+                                    f"PASS|mode=msix while --require-virtio-input-msix was enabled "
+                                    f"(status={status or 'missing'} mode={mode or 'missing'})",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -6420,11 +6422,13 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                                status = virtio_input_msix_marker.status or ""
                                 mode = virtio_input_msix_marker.fields.get("mode", "")
-                                if mode != "msix":
+                                if status != "PASS" or mode != "msix":
                                     print(
-                                        f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix "
-                                        f"while --require-virtio-input-msix was enabled (mode={mode or 'missing'})",
+                                        "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report "
+                                        f"PASS|mode=msix while --require-virtio-input-msix was enabled "
+                                        f"(status={status or 'missing'} mode={mode or 'missing'})",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
