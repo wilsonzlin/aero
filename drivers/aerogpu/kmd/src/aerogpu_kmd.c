@@ -11908,11 +11908,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             timeoutMs = 30000u;
         }
 
-        if (!adapter->Bar0 || !adapter->RingVa || adapter->RingEntryCount == 0 ||
-            (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && !adapter->RingHeader)) {
-            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
-            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
-            return STATUS_SUCCESS;
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            if (!AeroGpuV1SubmitPathUsable(adapter)) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                return STATUS_SUCCESS;
+            }
+        } else {
+            if (!AeroGpuLegacySubmitPathUsable(adapter)) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                return STATUS_SUCCESS;
+            }
         }
 
         const ULONGLONG startTime = KeQueryInterruptTime();
@@ -12037,7 +12044,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
 
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-                ULONG head = adapter->RingHeader->head;
+                /*
+                 * The v1 ring header lives at the base of the ring mapping. Use RingVa directly
+                 * instead of trusting a potentially stale RingHeader pointer.
+                 */
+                struct aerogpu_ring_header* ringHeader = (struct aerogpu_ring_header*)adapter->RingVa;
+                ULONG head = ringHeader->head;
                 ULONG tail = adapter->RingTail;
                 headBefore = head;
 
@@ -12067,7 +12079,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                     KeMemoryBarrier();
                     adapter->RingTail = tail + 1;
-                    adapter->RingHeader->tail = adapter->RingTail;
+                    ringHeader->tail = adapter->RingTail;
                     selftestInternal->RingTailAfter = adapter->RingTail;
                     KeMemoryBarrier();
 
@@ -12077,22 +12089,33 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 ULONG head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
                 AeroGpuLegacyRingUpdateHeadSeqLocked(adapter, head);
                 ULONG tail = adapter->RingTail;
+                if (tail >= adapter->RingEntryCount) {
+                    /*
+                     * Defensive: RingTail is a masked index for the legacy ABI. If the cached value is
+                     * corrupted, resync it from the MMIO register to avoid out-of-bounds ring access.
+                     */
+                    tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+                    if (tail >= adapter->RingEntryCount) {
+                        tail = 0;
+                    }
+                    adapter->RingTail = tail;
+                }
                 headBefore = head;
 
                 if (NT_SUCCESS(pushStatus) && head != tail) {
                     pushStatus = STATUS_DEVICE_BUSY;
                 }
 
-                ULONG nextTail = (adapter->RingTail + 1) % adapter->RingEntryCount;
+                ULONG nextTail = (tail + 1) % adapter->RingEntryCount;
                 if (NT_SUCCESS(pushStatus) && nextTail == head) {
                     pushStatus = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
                 } else if (NT_SUCCESS(pushStatus)) {
                     aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)adapter->RingVa;
-                    ring[adapter->RingTail].submit.type = AEROGPU_LEGACY_RING_ENTRY_SUBMIT;
-                    ring[adapter->RingTail].submit.flags = 0;
-                    ring[adapter->RingTail].submit.fence = (ULONG)fenceNoop;
-                    ring[adapter->RingTail].submit.desc_size = (ULONG)sizeof(aerogpu_legacy_submission_desc_header);
-                    ring[adapter->RingTail].submit.desc_gpa = (uint64_t)descPa.QuadPart;
+                    ring[tail].submit.type = AEROGPU_LEGACY_RING_ENTRY_SUBMIT;
+                    ring[tail].submit.flags = 0;
+                    ring[tail].submit.fence = (ULONG)fenceNoop;
+                    ring[tail].submit.desc_size = (ULONG)sizeof(aerogpu_legacy_submission_desc_header);
+                    ring[tail].submit.desc_gpa = (uint64_t)descPa.QuadPart;
 
                     KeMemoryBarrier();
                     adapter->RingTail = nextTail;
