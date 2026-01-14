@@ -255,6 +255,23 @@ impl IdeChannel {
         self.status
     }
 
+    fn read_drive_address(&self) -> u8 {
+        // IDE "drive address" register (a.k.a. Device Address) at `alt_status + 1`.
+        //
+        // The legacy PC/ATA contract expects this to read as `0xFF` when the selected device is
+        // absent (bus floats high), and as a stable non-zero value when present.
+        //
+        // Aero currently models this as a simple deterministic encoding based on which drive is
+        // selected. This is sufficient for BIOS/guest probes and for our unit tests.
+        if self.drives[self.selected].is_none() {
+            return 0xFF;
+        }
+
+        // 0xA0 is the canonical "drive/head" base value for CHS mode with master selected.
+        // Encode the selected device in bit 4, matching the drive/head register convention.
+        0xA0 | ((self.selected as u8) << 4)
+    }
+
     fn write_device_control(&mut self, val: u8, irq: &dyn IrqLine) {
         let prev = self.dev_ctl;
         self.dev_ctl = val;
