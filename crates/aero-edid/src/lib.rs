@@ -2,6 +2,11 @@
 
 pub const EDID_BLOCK_SIZE: usize = 128;
 
+const MAX_PIXEL_CLOCK_HZ: u64 = u16::MAX as u64 * 10_000;
+// Minimal blanking required by the synthesizer's porch/sync choices.
+const MIN_H_BLANK: u32 = 24; // 8+8+8, aligned to 8 pixels.
+const MIN_V_BLANK: u32 = 15; // 3+6+6.
+
 /// Display timing information for the preferred mode encoded in the EDID.
 ///
 /// Only a subset of timing parameters are exposed publicly; the generator will
@@ -32,16 +37,17 @@ impl Timing {
         // We treat timings that cannot possibly be represented in a single base
         // EDID Detailed Timing Descriptor as implausible (e.g. extremely high
         // resolutions or refresh rates that would require a pixel clock above
-        // 655.35MHz).
+        // 655.35MHz, even with minimal blanking).
         self.width != 0
             && self.height != 0
             && self.refresh_hz != 0
             && (self.width as u32) <= 0x0FFF
             && (self.height as u32) <= 0x0FFF
             && {
-                let min_pixel_clock_hz =
-                    self.width as u64 * self.height as u64 * self.refresh_hz as u64;
-                min_pixel_clock_hz <= u16::MAX as u64 * 10_000
+                let min_pixel_clock_hz = (self.width as u64 + MIN_H_BLANK as u64)
+                    * (self.height as u64 + MIN_V_BLANK as u64)
+                    * self.refresh_hz as u64;
+                min_pixel_clock_hz <= MAX_PIXEL_CLOCK_HZ
             }
     }
 }
@@ -155,6 +161,13 @@ fn align_up_u32(v: u32, align: u32) -> u32 {
         return v;
     }
     (v + (align - 1)) / align * align
+}
+
+fn align_down_u32(v: u32, align: u32) -> u32 {
+    if align == 0 {
+        return v;
+    }
+    v / align * align
 }
 
 fn range_limits_descriptor(preferred: Timing, preferred_dtd: &[u8; 18]) -> [u8; 18] {
@@ -309,6 +322,66 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
     let mut h_blank = align_up_u32((h_active + 4) / 5, 8).max(160);
     h_blank = h_blank.min(0x0FFF);
 
+    // Vertical blanking: ~5% of active, at least enough for porches.
+    let v_front_porch: u32 = 3;
+    let v_sync_width: u32 = 6;
+    let v_back_porch_min: u32 = 6;
+    let min_v_blank = v_front_porch + v_sync_width + v_back_porch_min;
+    let mut v_blank = ((v_active + 19) / 20).max(min_v_blank).min(0x0FFF);
+
+    // If the synthesized total would exceed the maximum EDID DTD pixel clock,
+    // reduce blanking until it fits (or fall back).
+    let mut h_total = h_active + h_blank;
+    let mut v_total = v_active + v_blank;
+    let mut pixel_clock_hz = (h_total as u64)
+        .saturating_mul(v_total as u64)
+        .saturating_mul(refresh_hz as u64);
+    if pixel_clock_hz > MAX_PIXEL_CLOCK_HZ {
+        fn fit_h_blank(
+            h_active: u32,
+            v_total: u32,
+            refresh_hz: u32,
+            h_blank: u32,
+        ) -> Option<u32> {
+            let denom = v_total as u64 * refresh_hz as u64;
+            if denom == 0 {
+                return None;
+            }
+            let h_total_max = (MAX_PIXEL_CLOCK_HZ / denom) as u32;
+            let min_h_total = h_active.saturating_add(MIN_H_BLANK);
+            if h_total_max < min_h_total {
+                return None;
+            }
+            let mut h_blank_max = h_total_max.saturating_sub(h_active).min(0x0FFF);
+            h_blank_max = align_down_u32(h_blank_max, 8);
+            if h_blank_max < MIN_H_BLANK {
+                return None;
+            }
+            Some(h_blank.min(h_blank_max).max(MIN_H_BLANK))
+        }
+
+        // First try to keep the vertical blanking as-is and reduce horizontal blanking.
+        if let Some(new_h_blank) = fit_h_blank(h_active, v_total, refresh_hz, h_blank) {
+            h_blank = new_h_blank;
+        } else {
+            // If we still can't fit, reduce vertical blanking to the minimum and retry.
+            v_blank = v_blank.min(MIN_V_BLANK.max(min_v_blank));
+            v_total = v_active + v_blank;
+            if let Some(new_h_blank) = fit_h_blank(h_active, v_total, refresh_hz, h_blank) {
+                h_blank = new_h_blank;
+            } else {
+                // Should be unreachable if `Timing::is_plausible` is used, but
+                // preserve invariants by falling back to the legacy default.
+                return known_dtd_bytes(Timing::DEFAULT).expect("missing default DTD");
+            }
+        }
+
+        h_total = h_active + h_blank;
+        pixel_clock_hz = (h_total as u64)
+            .saturating_mul(v_total as u64)
+            .saturating_mul(refresh_hz as u64);
+    }
+
     // Horizontal sync/porches (must fit within blanking).
     let h_front_porch_min = 8;
     let h_sync_width_min = 8;
@@ -317,41 +390,23 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
     let mut h_front_porch = align_up_u32(h_blank / 8, 8).max(h_front_porch_min);
     let mut h_sync_width = align_up_u32(h_blank / 4, 8).max(h_sync_width_min);
 
-    // Ensure everything fits. If not, grow blanking (up to 12-bit max).
-    let mut needed = h_front_porch + h_sync_width + h_back_porch_min;
+    let needed = h_front_porch + h_sync_width + h_back_porch_min;
     if needed > h_blank {
-        h_blank = align_up_u32(needed, 8).min(0x0FFF);
-    }
-    // Recompute after potential clamping.
-    needed = h_front_porch + h_sync_width + h_back_porch_min;
-    if needed > h_blank {
-        // Clamp to something that fits within 12-bit blanking; preserve
-        // invariants by shrinking sync widths first.
+        // Clamp to something that fits within blanking; preserve invariants by
+        // shrinking sync widths first.
         let available = h_blank.saturating_sub(h_front_porch + h_back_porch_min);
         h_sync_width = h_sync_width.min(available).max(h_sync_width_min.min(available));
         let available = h_blank.saturating_sub(h_sync_width + h_back_porch_min);
         h_front_porch = h_front_porch.min(available).max(h_front_porch_min.min(available));
     }
 
-    // Vertical blanking: ~5% of active, at least enough for porches.
-    let v_front_porch: u32 = 3;
-    let v_sync_width: u32 = 6;
-    let v_back_porch_min: u32 = 6;
-    let min_v_blank = v_front_porch + v_sync_width + v_back_porch_min;
-    let v_blank = ((v_active + 19) / 20).max(min_v_blank).min(0x0FFF);
-
-    // Totals.
-    let h_total = h_active + h_blank;
-    let v_total = v_active + v_blank;
-
     // Pixel clock (10kHz units). Round to nearest.
-    let pixel_clock_hz = (h_total as u64)
-        .saturating_mul(v_total as u64)
-        .saturating_mul(refresh_hz as u64);
     let mut pixel_clock_10khz = ((pixel_clock_hz + 5_000) / 10_000) as u32;
     if pixel_clock_10khz == 0 {
         pixel_clock_10khz = 1;
     }
+    // `Timing::is_plausible` and the blanking clamp logic above should ensure we
+    // never need to truncate the clock, but keep a defensive clamp.
     pixel_clock_10khz = pixel_clock_10khz.min(u16::MAX as u32);
 
     // EDID DTD sync fields are limited in size (10-bit horizontal, 6-bit
@@ -805,6 +860,24 @@ mod tests {
         let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
         let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
         assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    }
+
+    #[test]
+    fn high_resolution_preferred_mode_is_synthesized_without_clock_clamping() {
+        // This timing is within the DTD pixel clock limit, but the naive blanking heuristics can
+        // push the pixel clock over the 655.35MHz ceiling. Ensure we shrink blanking rather than
+        // clamping the clock (which would change the refresh rate).
+        let preferred = Timing::new(4095, 2160, 60);
+        let edid = generate_edid(preferred);
+        assert!(checksum_ok(&edid));
+
+        let dtd = parse_dtd(&edid[54..72]).expect("preferred DTD missing");
+        assert_eq!(dtd.h_active, preferred.width);
+        assert_eq!(dtd.v_active, preferred.height);
+        assert!(dtd.pixel_clock_hz <= MAX_PIXEL_CLOCK_HZ);
+
+        let refresh = dtd.refresh_hz();
+        assert!((refresh - preferred.refresh_hz as f64).abs() < 0.75, "refresh={refresh}");
     }
 
     #[test]
