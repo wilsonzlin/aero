@@ -32,8 +32,8 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
     let mut dev = new_test_device(scanout_state.clone());
 
     // Program a minimal valid scanout configuration. The scanout state publisher intentionally
-    // treats incomplete/invalid scanout register sets as "disabled" to avoid consumers
-    // interpreting garbage descriptors.
+    // waits to publish WDDM scanout ownership until the config is valid (so legacy VGA/VBE output
+    // is not suppressed by incomplete register programming).
     const WIDTH: u32 = 640;
     const HEIGHT: u32 = 480;
     const BYTES_PER_PIXEL: u32 = 4;
@@ -49,11 +49,14 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
 
-    // Enable scanout0 (WDDM).
+    // Program an initial framebuffer and enable scanout0 (WDDM).
+    let fb0 = 0x1000u64;
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb0 as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb0 >> 32) as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     let snap0 = scanout_state.snapshot();
     assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
-    assert_eq!(snap0.base_paddr(), 0);
+    assert_eq!(snap0.base_paddr(), fb0);
 
     // Flip to a new framebuffer address. Drivers typically write LO then HI.
     let fb1 = 0x1234_5678_9abc_def0u64;
@@ -61,7 +64,7 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
 
     // Must not publish a torn 64-bit update after only the LO write.
     let snap_after_lo = scanout_state.snapshot();
-    assert_eq!(snap_after_lo.base_paddr(), 0);
+    assert_eq!(snap_after_lo.base_paddr(), fb0);
 
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb1 >> 32) as u32);
     let snap1 = scanout_state.snapshot();
@@ -125,10 +128,22 @@ fn reset_clears_torn_fb_gpa_tracking() {
     // stale LO write.
     dev.reset();
 
-    // Enabling scanout should now publish a WDDM scanout-state update (even if the descriptor is
-    // still "disabled" due to missing config).
+    // Enabling scanout should now publish a WDDM scanout-state update once a valid configuration
+    // is programmed.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 640);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 480);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 640 * 4);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+    let fb = 0x2000u64;
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb >> 32) as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
-    assert_eq!(snap.base_paddr(), 0);
+    assert_eq!(snap.base_paddr(), fb);
 }

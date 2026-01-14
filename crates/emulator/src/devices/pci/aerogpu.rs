@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
 use aero_gpu_vga::{PortIO as _, VgaDevice};
-#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
-use aero_shared::scanout_state::ScanoutStateUpdate;
-use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
+use aero_shared::scanout_state::{ScanoutState, ScanoutStateUpdate, SCANOUT_SOURCE_WDDM};
 use memory::MemoryBus;
 
 use crate::devices::aerogpu_regs::{
@@ -54,16 +52,6 @@ const _: () = {
 const LEGACY_VGA_WINDOW_BASE: u32 = aero_devices_gpu::LEGACY_VGA_PADDR_BASE as u32;
 const LEGACY_VGA_WINDOW_SIZE: u32 = aero_devices_gpu::LEGACY_VGA_VRAM_BYTES as u32;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Scanout0Descriptor {
-    enable: bool,
-    width: u32,
-    height: u32,
-    pitch_bytes: u32,
-    format: AeroGpuFormat,
-    fb_gpa: u64,
-}
-
 pub struct AeroGpuPciDevice {
     config: PciConfigSpace,
     pub bar0: u32,
@@ -80,7 +68,13 @@ pub struct AeroGpuPciDevice {
     vga: VgaDevice,
 
     scanout_state: Option<Arc<ScanoutState>>,
-    last_published_scanout0: Option<Scanout0Descriptor>,
+    /// Host-only latch tracking whether the guest has claimed WDDM scanout ownership.
+    ///
+    /// Once a valid WDDM scanout is programmed (and enabled), legacy VGA/VBE scanout must not steal
+    /// ownership back even if the guest disables WDDM scanout temporarily (Windows uses
+    /// `SCANOUT0_ENABLE` as a visibility toggle). Ownership is released only on device reset.
+    wddm_scanout_active: bool,
+    last_published_scanout0: Option<ScanoutStateUpdate>,
     /// Pending LO dword for `SCANOUT0_FB_GPA` while waiting for the HI write commit.
     scanout0_fb_gpa_pending_lo: u32,
     /// Set after a write to `SCANOUT0_FB_GPA_LO` and cleared on `SCANOUT0_FB_GPA_HI`.
@@ -179,6 +173,7 @@ impl AeroGpuPciDevice {
             irq_level: false,
             vga,
             scanout_state: None,
+            wddm_scanout_active: false,
             last_published_scanout0: None,
             scanout0_fb_gpa_pending_lo: 0,
             scanout0_fb_gpa_lo_pending: false,
@@ -198,15 +193,35 @@ impl AeroGpuPciDevice {
         }
     }
 
-    fn scanout0_descriptor(&self) -> Scanout0Descriptor {
-        Scanout0Descriptor {
-            enable: self.regs.scanout0.enable,
-            width: self.regs.scanout0.width,
-            height: self.regs.scanout0.height,
-            pitch_bytes: self.regs.scanout0.pitch_bytes,
-            format: self.regs.scanout0.format,
-            fb_gpa: self.regs.scanout0.fb_gpa,
+    fn maybe_claim_wddm_scanout(&mut self) {
+        if self.wddm_scanout_active {
+            return;
         }
+        // Claim WDDM ownership only once scanout is actually enabled. The Windows driver stages
+        // `SCANOUT0_*` values and uses `SCANOUT0_ENABLE` as the commit/visibility toggle.
+        //
+        // This prevents prematurely suppressing legacy VGA/VBE output while the driver is still
+        // programming the scanout registers with `ENABLE=0`.
+        if !self.regs.scanout0.enable {
+            return;
+        }
+        // Do not claim while `fb_gpa` is mid-update (LO written without HI).
+        if self.scanout0_fb_gpa_lo_pending {
+            return;
+        }
+
+        // Claim only when the scanout configuration is valid for presentation. Invalid/unsupported
+        // scanout configurations are treated as "disabled" and must not steal ownership from
+        // legacy sources.
+        let update = self
+            .regs
+            .scanout0
+            .to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        if update.width == 0 || update.height == 0 {
+            return;
+        }
+
+        self.wddm_scanout_active = true;
     }
 
     fn command(&self) -> u16 {
@@ -278,8 +293,9 @@ impl AeroGpuPciDevice {
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn update_scanout_state_from_vga(&self) {
-        // While WDDM scanout0 is enabled, legacy VGA/VBE must not steal scanout ownership.
-        if self.regs.scanout0.enable {
+        // Once WDDM has claimed scanout ownership, legacy VGA/VBE must not steal it back until
+        // reset, even if WDDM temporarily disables scanout.
+        if self.wddm_scanout_active {
             return;
         }
 
@@ -428,6 +444,7 @@ impl AeroGpuPciDevice {
         // we must not leave the scanout state publisher permanently blocked on a stale LO write.
         self.scanout0_fb_gpa_pending_lo = 0;
         self.scanout0_fb_gpa_lo_pending = false;
+        self.wddm_scanout_active = false;
         self.last_published_scanout0 = None;
 
         // Reset torn cursor framebuffer address tracking.
@@ -574,7 +591,8 @@ impl AeroGpuPciDevice {
 
         // Publish a best-effort current state immediately so consumers don't have to wait for the
         // next register write / tick.
-        if self.regs.scanout0.enable {
+        self.maybe_claim_wddm_scanout();
+        if self.wddm_scanout_active {
             self.maybe_publish_wddm_scanout0_state();
         } else {
             self.publish_legacy_scanout_state();
@@ -623,33 +641,31 @@ impl AeroGpuPciDevice {
     }
 
     fn maybe_publish_wddm_scanout0_state(&mut self) {
-        let Some(state) = &self.scanout_state else {
+        self.maybe_claim_wddm_scanout();
+        if !self.wddm_scanout_active {
             return;
-        };
+        }
 
         // Do not publish while `fb_gpa` is mid-update (LO written without HI).
         if self.scanout0_fb_gpa_lo_pending {
             return;
         }
 
-        let desc = self.scanout0_descriptor();
+        let Some(state) = self.scanout_state.as_ref().map(Arc::clone) else {
+            return;
+        };
 
-        // Keep last-published state scoped to "enabled" so re-enabling always publishes.
-        if !desc.enable {
-            self.last_published_scanout0 = None;
+        let update = self
+            .regs
+            .scanout0
+            .to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+
+        if self.last_published_scanout0 == Some(update) {
             return;
         }
 
-        if self.last_published_scanout0 == Some(desc) {
-            return;
-        }
-
-        state.publish(
-            self.regs
-                .scanout0
-                .to_scanout_state_update(SCANOUT_SOURCE_WDDM),
-        );
-        self.last_published_scanout0 = Some(desc);
+        state.publish(update);
+        self.last_published_scanout0 = Some(update);
     }
 
     fn publish_legacy_scanout_state(&self) {
@@ -853,34 +869,49 @@ impl AeroGpuPciDevice {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
-                    self.last_published_scanout0 = None;
                 }
 
-                if prev_enable && !new_enable {
+                self.maybe_claim_wddm_scanout();
+
+                if prev_enable && !new_enable && !self.wddm_scanout_active {
+                    // If WDDM never successfully claimed scanout ownership, disabling scanout
+                    // returns output to the legacy VGA/VBE sources.
                     self.publish_legacy_scanout_state();
                 } else {
-                    // WDDM claims scanout by programming the scanout registers and then
-                    // transitioning ENABLE from 0->1. While enabled, it may also reprogram
-                    // the scanout registers for page flips / mode changes.
+                    // Once WDDM has claimed scanout ownership, SCANOUT0_ENABLE acts as a visibility
+                    // toggle: disabling scanout blanks presentation but does not revert ownership
+                    // back to legacy until reset.
                     self.maybe_publish_wddm_scanout0_state();
                 }
                 self.update_irq_level();
             }
             mmio::SCANOUT0_WIDTH => {
                 self.regs.scanout0.width = value;
-                self.maybe_publish_wddm_scanout0_state();
+                self.maybe_claim_wddm_scanout();
+                if self.regs.scanout0.enable {
+                    self.maybe_publish_wddm_scanout0_state();
+                }
             }
             mmio::SCANOUT0_HEIGHT => {
                 self.regs.scanout0.height = value;
-                self.maybe_publish_wddm_scanout0_state();
+                self.maybe_claim_wddm_scanout();
+                if self.regs.scanout0.enable {
+                    self.maybe_publish_wddm_scanout0_state();
+                }
             }
             mmio::SCANOUT0_FORMAT => {
                 self.regs.scanout0.format = AeroGpuFormat::from_u32(value);
-                self.maybe_publish_wddm_scanout0_state();
+                self.maybe_claim_wddm_scanout();
+                if self.regs.scanout0.enable {
+                    self.maybe_publish_wddm_scanout0_state();
+                }
             }
             mmio::SCANOUT0_PITCH_BYTES => {
                 self.regs.scanout0.pitch_bytes = value;
-                self.maybe_publish_wddm_scanout0_state();
+                self.maybe_claim_wddm_scanout();
+                if self.regs.scanout0.enable {
+                    self.maybe_publish_wddm_scanout0_state();
+                }
             }
             mmio::SCANOUT0_FB_GPA_LO => {
                 // Avoid exposing a torn 64-bit `fb_gpa` update. Treat the LO write as starting a
@@ -897,7 +928,10 @@ impl AeroGpuPciDevice {
                 };
                 self.regs.scanout0.fb_gpa = (u64::from(value) << 32) | lo;
                 self.scanout0_fb_gpa_lo_pending = false;
-                self.maybe_publish_wddm_scanout0_state();
+                self.maybe_claim_wddm_scanout();
+                if self.regs.scanout0.enable {
+                    self.maybe_publish_wddm_scanout0_state();
+                }
             }
 
             mmio::CURSOR_ENABLE => {
