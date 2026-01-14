@@ -1,7 +1,6 @@
 pub mod e1000_aero;
 pub mod l2_ring_backend;
 pub mod ring_backend;
-pub mod stack;
 pub mod trace;
 pub mod tunnel_backend;
 

@@ -1,19 +1,15 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::sync::Arc;
 use std::time::Duration;
 
+use aero_net_stack::backend::NetStackBackend;
 use aero_net_stack::packet::{
     EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
     MacAddr, TcpFlags, TcpSegment, TcpSegmentBuilder, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{Action, HostPolicy, StackConfig, TcpProxyEvent};
-use emulator::io::net::trace::{
-    CaptureArtifactOnPanic, NetTraceConfig, NetTracer, TracedNetworkStack,
-};
+use aero_net_stack::{Action, HostPolicy, StackConfig, TcpProxyEvent};
 
 #[derive(Clone, Copy, Debug)]
 struct Endpoint {
@@ -142,7 +138,7 @@ fn build_dhcp_request(
     out
 }
 
-fn dhcp_handshake(stack: &mut TracedNetworkStack, cfg: &StackConfig, guest_mac: MacAddr) {
+fn dhcp_handshake(backend: &mut NetStackBackend, cfg: &StackConfig, guest_mac: MacAddr) {
     let xid = 0x1020_3040;
     let discover = build_dhcp_discover(xid, guest_mac);
     let discover_frame = wrap_udp_ipv4_eth(
@@ -154,9 +150,9 @@ fn dhcp_handshake(stack: &mut TracedNetworkStack, cfg: &StackConfig, guest_mac: 
         67,
         &discover,
     );
-    stack.transmit_at(discover_frame, 0);
-    stack.drain_frames();
-    stack.drain_actions();
+    backend.transmit_at(discover_frame, 0);
+    backend.drain_frames();
+    backend.drain_actions();
 
     let request = build_dhcp_request(xid, guest_mac, cfg.guest_ip, cfg.gateway_ip);
     let request_frame = wrap_udp_ipv4_eth(
@@ -168,12 +164,12 @@ fn dhcp_handshake(stack: &mut TracedNetworkStack, cfg: &StackConfig, guest_mac: 
         67,
         &request,
     );
-    stack.transmit_at(request_frame, 1);
-    stack.drain_frames();
-    stack.drain_actions();
+    backend.transmit_at(request_frame, 1);
+    backend.drain_frames();
+    backend.drain_actions();
 
     assert!(
-        stack.inner().stack().is_ip_assigned(),
+        backend.stack().is_ip_assigned(),
         "DHCP should assign guest IP"
     );
 }
@@ -210,19 +206,10 @@ fn tcp_proxy_echo_end_to_end() {
         ..Default::default()
     };
     let guest_mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
-    let remote_ip = Ipv4Addr::new(127, 0, 0, 1);
+    let remote_ip = Ipv4Addr::LOCALHOST;
 
-    let tracer = Arc::new(NetTracer::new(NetTraceConfig {
-        capture_tcp_proxy: true,
-        ..NetTraceConfig::default()
-    }));
-    tracer.enable();
-    let _artifact = CaptureArtifactOnPanic::for_test(tracer.as_ref(), "tcp_proxy_echo_end_to_end");
-
-    let mut stack = TracedNetworkStack::new(tracer.clone(), cfg.clone());
-    dhcp_handshake(&mut stack, &cfg, guest_mac);
-
-    let mut streams: HashMap<u32, TcpStream> = HashMap::new();
+    let mut backend = NetStackBackend::new(cfg.clone());
+    dhcp_handshake(&mut backend, &cfg, guest_mac);
 
     let guest_port = 40000u16;
     let guest_isn = 1_000u32;
@@ -239,10 +226,10 @@ fn tcp_proxy_echo_end_to_end() {
 
     // SYN from guest to remote.
     let syn = wrap_tcp_ipv4_eth(guest_ep, remote_ep, guest_isn, 0, TcpFlags::SYN, &[]);
-    stack.transmit_at(syn, 20);
+    backend.transmit_at(syn, 20);
 
-    let actions = stack.drain_actions();
-    let frames = stack.drain_frames();
+    let actions = backend.drain_actions();
+    let frames = backend.drain_frames();
 
     let Action::TcpProxyConnect {
         connection_id,
@@ -266,18 +253,18 @@ fn tcp_proxy_echo_end_to_end() {
     let stack_isn = synack.seq_number();
 
     // Host fulfills connect by opening a real socket, then notifies the stack.
-    let stream = TcpStream::connect(addr).unwrap();
+    let mut stream = TcpStream::connect(addr).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
-    streams.insert(*connection_id, stream);
-    stack.push_tcp_event(
+    backend.push_tcp_event(
         TcpProxyEvent::Connected {
             connection_id: *connection_id,
         },
         21,
     );
-    assert!(stack.drain_actions().is_empty());
+    assert!(backend.drain_actions().is_empty());
+    assert!(backend.drain_frames().is_empty());
 
     // ACK to complete handshake.
     let ack = wrap_tcp_ipv4_eth(
@@ -288,9 +275,9 @@ fn tcp_proxy_echo_end_to_end() {
         TcpFlags::ACK,
         &[],
     );
-    stack.transmit_at(ack, 22);
-    assert!(stack.drain_actions().is_empty());
-    assert!(stack.drain_frames().is_empty());
+    backend.transmit_at(ack, 22);
+    assert!(backend.drain_actions().is_empty());
+    assert!(backend.drain_frames().is_empty());
 
     // Send data from guest; stack should emit a TcpProxySend action and an ACK frame.
     let payload = b"hello from guest";
@@ -302,9 +289,9 @@ fn tcp_proxy_echo_end_to_end() {
         TcpFlags::ACK | TcpFlags::PSH,
         payload,
     );
-    stack.transmit_at(psh, 23);
-    let actions = stack.drain_actions();
-    let frames = stack.drain_frames();
+    backend.transmit_at(psh, 23);
+    let actions = backend.drain_actions();
+    let frames = backend.drain_frames();
     assert!(
         frames.iter().any(|f| EthernetFrame::parse(f).is_ok()),
         "expected at least one ACK frame from stack"
@@ -320,27 +307,29 @@ fn tcp_proxy_echo_end_to_end() {
     else {
         unreachable!();
     };
-    assert_eq!(*send_id, *connection_id);
+    assert_eq!(send_id, connection_id);
     assert_eq!(data, payload);
 
     // Fulfill TcpProxySend by writing to the real socket, then feed the echoed bytes back.
-    let stream = streams.get_mut(connection_id).unwrap();
     stream.write_all(payload).unwrap();
-    let echoed = read_exact_or_panic(stream, payload.len());
+    let echoed = read_exact_or_panic(&mut stream, payload.len());
 
-    stack.push_tcp_event(
+    backend.push_tcp_event(
         TcpProxyEvent::Data {
             connection_id: *connection_id,
             data: echoed.clone(),
         },
         24,
     );
-    let frames = stack.drain_frames();
+    assert!(backend.drain_actions().is_empty());
+    let frames = backend.drain_frames();
     assert_eq!(frames.len(), 1);
     let eth = EthernetFrame::parse(&frames[0]).unwrap();
     let ip = Ipv4Packet::parse(eth.payload()).unwrap();
     let seg = TcpSegment::parse(ip.payload()).unwrap();
     assert_eq!(seg.payload(), echoed.as_slice());
+    assert_eq!(seg.src_port(), remote_ep.port);
+    assert_eq!(seg.dst_port(), guest_port);
 
     // ACK the echoed data.
     let guest_next = guest_isn + 1 + payload.len() as u32;
@@ -352,9 +341,9 @@ fn tcp_proxy_echo_end_to_end() {
         TcpFlags::ACK,
         &[],
     );
-    stack.transmit_at(ack_remote, 25);
-    assert!(stack.drain_actions().is_empty());
-    assert!(stack.drain_frames().is_empty());
+    backend.transmit_at(ack_remote, 25);
+    assert!(backend.drain_actions().is_empty());
+    assert!(backend.drain_frames().is_empty());
 
     // FIN close from guest.
     let fin = wrap_tcp_ipv4_eth(
@@ -365,18 +354,21 @@ fn tcp_proxy_echo_end_to_end() {
         TcpFlags::ACK | TcpFlags::FIN,
         &[],
     );
-    stack.transmit_at(fin, 26);
-    let actions = stack.drain_actions();
-    let frames = stack.drain_frames();
+    backend.transmit_at(fin, 26);
+    let actions = backend.drain_actions();
+    let frames = backend.drain_frames();
 
-    assert!(actions.iter().any(|a| matches!(
-        a,
-        Action::TcpProxyClose { connection_id: id } if *id == *connection_id
-    )));
+    assert!(
+        actions.iter().any(|a| matches!(
+            a,
+            Action::TcpProxyClose { connection_id: id } if id == connection_id
+        )),
+        "expected TcpProxyClose action"
+    );
     assert_eq!(frames.len(), 2, "expected ACK + FIN frames");
 
-    // Close the host stream.
-    streams.remove(connection_id);
+    // Close the host stream (causes the echo server thread to exit).
+    drop(stream);
 
     // ACK the stack FIN to let it drop state.
     let fin_seg = frames
@@ -397,15 +389,10 @@ fn tcp_proxy_echo_end_to_end() {
         TcpFlags::ACK,
         &[],
     );
-    stack.transmit_at(final_ack, 27);
-    assert!(stack.drain_actions().is_empty());
-    assert!(stack.drain_frames().is_empty());
-
-    let capture = tracer.export_pcapng();
-    assert!(
-        capture.windows(4).any(|w| w == b"ATCP"),
-        "expected traced capture to include tcp-proxy packets"
-    );
+    backend.transmit_at(final_ack, 27);
+    assert!(backend.drain_actions().is_empty());
+    assert!(backend.drain_frames().is_empty());
 
     server_handle.join().unwrap();
 }
+

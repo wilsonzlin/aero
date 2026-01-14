@@ -2,13 +2,12 @@
 
 use std::net::Ipv4Addr;
 
+use aero_net_stack::backend::NetStackBackend;
 use aero_net_stack::packet::{
     EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
     MacAddr, UdpDatagram, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{
-    Action, DnsResolved, HostPolicy, IpCidr, NetStackBackend, StackConfig,
-};
+use aero_net_stack::{Action, DnsResolved, HostPolicy, IpCidr, StackConfig};
 
 fn wrap_udp_ipv4_eth(
     src_mac: MacAddr,
@@ -202,3 +201,4 @@ fn dns_denied_ip_returns_nxdomain_and_is_not_cached() {
     let actions = backend.drain_actions();
     assert!(matches!(actions.as_slice(), [Action::DnsResolve { .. }]));
 }
+

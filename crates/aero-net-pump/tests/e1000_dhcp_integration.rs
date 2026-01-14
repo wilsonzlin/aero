@@ -3,14 +3,15 @@
 use std::collections::VecDeque;
 use std::net::Ipv4Addr;
 
+use aero_net_backend::NetworkBackend;
 use aero_net_e1000::E1000Device;
 use aero_net_pump::tick_e1000;
+use aero_net_stack::backend::NetStackBackend;
 use aero_net_stack::packet::{
     DhcpMessage, DhcpMessageType, EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet,
     Ipv4PacketBuilder, Ipv4Protocol, MacAddr, UdpPacket, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{Action, NetStackBackend, NetworkStack, StackConfig};
-use emulator::io::net::NetworkBackend;
+use aero_net_stack::{Action, NetworkStack, StackConfig};
 use memory::MemoryBus;
 
 const TX_RING_BASE: u64 = 0x1000;
@@ -432,3 +433,4 @@ fn dhcp_handshake_end_to_end_e1000_dma_to_netstack() {
         "ack yiaddr did not match offer"
     );
 }
+

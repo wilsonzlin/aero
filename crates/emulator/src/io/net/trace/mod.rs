@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::stack::{
-    Action, DnsResolved, Millis, NetStackBackend, StackConfig, TcpProxyEvent, UdpProxyEvent,
-    UdpTransport,
+use aero_net_stack::backend::NetStackBackend;
+use aero_net_stack::{
+    Action, DnsResolved, Millis, StackConfig, TcpProxyEvent, UdpProxyEvent, UdpTransport,
 };
 use super::NetworkBackend;
 

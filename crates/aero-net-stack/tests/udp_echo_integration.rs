@@ -3,13 +3,12 @@
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
+use aero_net_stack::backend::NetStackBackend;
 use aero_net_stack::packet::{
     EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
     MacAddr, UdpDatagram, UdpPacketBuilder,
 };
-use emulator::io::net::stack::{
-    Action, HostPolicy, NetStackBackend, StackConfig, UdpProxyEvent, UdpTransport,
-};
+use aero_net_stack::{Action, HostPolicy, StackConfig, UdpProxyEvent, UdpTransport};
 
 fn wrap_udp_ipv4_eth(
     src_mac: MacAddr,
@@ -220,3 +219,4 @@ fn udp_proxy_echo_end_to_end() {
 
     server_handle.join().unwrap();
 }
+
