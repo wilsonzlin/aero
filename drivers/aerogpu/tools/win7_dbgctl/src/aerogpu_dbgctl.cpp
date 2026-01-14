@@ -8895,6 +8895,35 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
       }
     }
 
+    /*
+     * Script-friendly behavior: if the caller explicitly requested --alloc-out but this submission
+     * has no alloc table (or the ring format doesn't expose one), still create an empty file.
+     *
+     * This matches the text-mode `DoDumpLastCmd` behavior and keeps decode pipelines simple
+     * (callers can always open the file; a zero-length alloc table is a valid "no allocs" case).
+     */
+    if ((allocOutPath && allocOutPath[0]) && !allocTablePresent && allocPathUtf8.empty()) {
+      if (!CreateEmptyFile(allocOutPath)) {
+        if (curOutPathOwned) {
+          HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        }
+        w.EndArray();
+        w.Key("ok");
+        w.Bool(false);
+        w.Key("error");
+        w.BeginObject();
+        w.Key("message");
+        w.String("Failed to create empty alloc_out file");
+        w.Key("status");
+        JsonWriteNtStatusError(w, f, STATUS_UNSUCCESSFUL);
+        w.EndObject();
+        w.EndObject();
+        out->push_back('\n');
+        return 2;
+      }
+      allocPathUtf8 = WideToUtf8(allocOutPath);
+    }
+
     w.BeginObject();
     w.Key("index_from_tail");
     w.Uint32(curIndexFromTail);
@@ -8934,10 +8963,13 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
       w.String(allocPathUtf8);
       w.Key("alloc_table_written");
       w.Bool(true);
+      if (allocOutPath && allocOutPath[0]) {
+        // User explicitly requested a path; surface whether the alloc table existed (it may be empty).
+        w.Key("alloc_table_present");
+        w.Bool(allocTablePresent);
+      }
     } else if (allocOutPath && allocOutPath[0]) {
       // User explicitly requested a path; surface whether the alloc table existed.
-      w.Key("alloc_table_written");
-      w.Bool(false);
       w.Key("alloc_table_present");
       w.Bool(allocTablePresent);
     }

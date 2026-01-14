@@ -449,8 +449,9 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
        (newest is `desc[desc_count - 1]`) so tooling/tests can observe recently completed submissions even when the pending
        `[head, tail)` region is drained quickly.
   - `AEROGPU_ESCAPE_OP_READ_GPA` (see `aerogpu_dbgctl_escape.h`)
-      - debug-only: allows bring-up tooling to read **bounded** slices of guest physical memory for GPU-owned buffers
-       (used by `aerogpu_dbgctl.exe --read-gpa`, `--dump-scanout-bmp`/`--dump-scanout-png`, `--dump-cursor-bmp`/`--dump-cursor-png`, and `--dump-last-cmd`)
+       - debug-only: allows bring-up tooling to read **bounded** slices of guest physical memory for GPU-owned buffers
+        (used by `aerogpu_dbgctl.exe --read-gpa`, `--dump-scanout-bmp`/`--dump-scanout-png`, `--dump-cursor-bmp`/`--dump-cursor-png`,
+        and `--dump-last-submit` (alias: `--dump-last-cmd`))
       - safety: the KMD enforces a hard maximum payload per call and restricts reads to driver-tracked GPU-related regions
         (e.g. pending submission buffers, ring/fence, scanout/cursor framebuffers). It is not intended to be a generic
        physical-memory read primitive.
