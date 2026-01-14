@@ -358,3 +358,73 @@ fn wgsl_relative_constant_indexing_without_defs_reads_uniform_buffer_directly() 
         .expect("wgsl validate");
     }
 }
+
+#[test]
+fn wgsl_mova_write_mask_preserves_other_components() {
+    // `mova` supports write masks (e.g. `mova a0.y, ...`). The WGSL lowering must respect these so
+    // a partial write does not clobber other components of the address register.
+    for stage in [ShaderStage::Vertex, ShaderStage::Pixel] {
+        let mut tokens = vec![
+            version_token(stage, 3, 0),
+            // def c0, 0.0, 1.0, 0.0, 1.0
+            opcode_token(81, 5),
+            dst_token(2, 0, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+            // mova a0.x, c0.x
+            opcode_token(46, 2),
+            dst_token(3, 0, 0x1),
+            src_token(2, 0, 0x00, 0), // c0.xxxx
+            // mova a0.y, c0.y
+            opcode_token(46, 2),
+            dst_token(3, 0, 0x2),
+            src_token(2, 0, 0x55, 0), // c0.yyyy
+        ];
+
+        match stage {
+            ShaderStage::Vertex => {
+                // mov oPos, c0
+                tokens.extend([
+                    opcode_token(1, 2),
+                    dst_token(4, 0, 0xF),
+                    src_token(2, 0, 0xE4, 0),
+                ]);
+            }
+            ShaderStage::Pixel => {
+                // mov oC0, c0
+                tokens.extend([
+                    opcode_token(1, 2),
+                    dst_token(8, 0, 0xF),
+                    src_token(2, 0, 0xE4, 0),
+                ]);
+            }
+        }
+        tokens.push(0x0000_FFFF);
+
+        let decoded = decode_u32_tokens(&tokens).unwrap();
+        let ir = build_ir(&decoded).unwrap();
+        verify_ir(&ir).unwrap();
+        let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+
+        // Ensure both assignments are per-component (not `a0 = ...`).
+        assert!(
+            wgsl.contains("a0.x = (vec4<i32>(c0.xxxx)).x;"),
+            "{wgsl}"
+        );
+        assert!(
+            wgsl.contains("a0.y = (vec4<i32>(c0.yyyy)).y;"),
+            "{wgsl}"
+        );
+        assert!(!wgsl.contains("a0 = vec4<i32>("), "{wgsl}");
+
+        let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("wgsl validate");
+    }
+}
