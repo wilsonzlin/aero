@@ -375,6 +375,7 @@ export function encodeDnsErrorResponse(options: DnsErrorResponseEncodeOptions): 
     (queryFlags & 0x7800) | // opcode
     (queryFlags & 0x0100) | // RD
     0x0080 | // RA
+    (queryFlags & 0x0010) | // CD
     (options.rcode & 0x000f);
 
   const hasQuestion = Boolean(options.question);

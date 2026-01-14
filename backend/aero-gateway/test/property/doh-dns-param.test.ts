@@ -74,6 +74,7 @@ describe('DoH GET dns= decoding and size limits (property)', () => {
                  (queryFlags & 0x7800) | // opcode
                  (queryFlags & 0x0100) | // RD
                  0x0080 | // RA
+                 (queryFlags & 0x0010) | // CD
                  0x0001; // FORMERR (rcode=1)
                assert.equal(header.flags, expectedFlags);
              },
