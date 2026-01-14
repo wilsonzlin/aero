@@ -445,6 +445,72 @@ class VirtioInputHidClassificationTests(unittest.TestCase):
         self.assertGreaterEqual(summary.mouse_xy_relative_collections, 1)
         self.assertEqual(classify_descriptor(summary), "ambiguous")
 
+    def test_keyboard_and_tablet_in_one_descriptor_is_ambiguous(self) -> None:
+        keyboard_plus_tablet = bytes(
+            [
+                # Keyboard application
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x06,  # Usage (Keyboard)
+                0xA1,
+                0x01,  # Collection (Application)
+                0xC0,  # End Collection
+                # Digitizer / touchscreen application
+                0x05,
+                0x0D,  # Usage Page (Digitizers)
+                0x09,
+                0x04,  # Usage (Touch Screen)
+                0xA1,
+                0x01,  # Collection (Application)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(keyboard_plus_tablet)
+        self.assertGreaterEqual(summary.keyboard_app_collections, 1)
+        self.assertGreaterEqual(summary.tablet_app_collections, 1)
+        self.assertEqual(classify_descriptor(summary), "ambiguous")
+
+    def test_mouse_and_tablet_in_one_descriptor_is_ambiguous(self) -> None:
+        mouse_plus_tablet = bytes(
+            [
+                # Mouse application with relative X/Y
+                0x05,
+                0x01,  # Usage Page (Generic Desktop)
+                0x09,
+                0x02,  # Usage (Mouse)
+                0xA1,
+                0x01,  # Collection (Application)
+                0x09,
+                0x30,  # Usage (X)
+                0x09,
+                0x31,  # Usage (Y)
+                0x15,
+                0x81,  # Logical Minimum (-127)
+                0x25,
+                0x7F,  # Logical Maximum (127)
+                0x75,
+                0x08,  # Report Size (8)
+                0x95,
+                0x02,  # Report Count (2)
+                0x81,
+                0x06,  # Input (Data,Var,Rel)
+                0xC0,  # End Collection
+                # Digitizer / touchscreen application
+                0x05,
+                0x0D,  # Usage Page (Digitizers)
+                0x09,
+                0x04,  # Usage (Touch Screen)
+                0xA1,
+                0x01,  # Collection (Application)
+                0xC0,  # End Collection
+            ]
+        )
+        summary = summarize_hid_report_descriptor(mouse_plus_tablet)
+        self.assertGreaterEqual(summary.mouse_xy_relative_collections, 1)
+        self.assertGreaterEqual(summary.tablet_app_collections, 1)
+        self.assertEqual(classify_descriptor(summary), "ambiguous")
+
 
 if __name__ == "__main__":
     unittest.main()
