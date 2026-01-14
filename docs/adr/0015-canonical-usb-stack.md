@@ -83,8 +83,9 @@ reintroduce an independent USB stack.
       - WebHID passthrough uses SAB ring buffers to avoid per-report messaging overhead:
         - **Input reports (main → worker):** IPC `RingBuffer` initialized via `hid.ring.init` and filled
           with compact, versioned `"HIDR"` input report records.
-        - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`
-          (and can be disabled via `hid.ringDetach` on ring corruption, falling back to `postMessage`).
+        - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`.
+          On detected ring corruption, either side can send `hid.ringDetach` to disable the WebHID
+          SharedArrayBuffer fast paths (including `hid.ring.init`) and fall back to `postMessage`.
         - Implementation:
           - `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
           - `web/src/hid/hid_input_report_ring.ts` (record codec + writer)
