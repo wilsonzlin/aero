@@ -29,11 +29,14 @@ Key docs for that bring-up:
 
 Quick reality check (as of this repo revision):
 
-- ✅ Boot display (default): `MachineConfig::enable_vga=true` uses `crates/aero-gpu-vga/` and is wired into
+- ✅ Boot display (standalone VGA/VBE path): `MachineConfig::enable_vga=true` uses `crates/aero-gpu-vga/` and is wired into
   `crates/aero-machine/` (plus BIOS INT 10h handlers in `crates/firmware/`). When the PC platform is enabled,
   `aero_machine` also exposes a **transitional** Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` used only
   to route the VBE LFB through PCI MMIO (stub BAR mirrors the configured LFB base; legacy default
   `0xE000_0000`).
+- ✅ Boot display (canonical browser machine): `MachineConfig::browser_defaults` (used by `crates/aero-wasm::Machine::new`)
+  enables **AeroGPU** by default (`enable_aerogpu=true`, `enable_vga=false`), using AeroGPU's BAR1-backed VRAM
+  plus legacy VGA/VBE decode for BIOS/boot display, and then handing off to WDDM scanout once claimed.
 - ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` (requires `enable_pc_platform=true`) /
   `MachineConfig::win7_graphics(...)`
   exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM** and VRAM-backed legacy VGA/VBE decode (`0xA0000..0xC0000`),
@@ -77,7 +80,7 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 | `crates/aero-webgpu/` | WebGPU abstraction layer |
 | `emulator/protocol/` | **Canonical** AeroGPU ABI mirrors (Rust + TypeScript) |
 | `crates/aero-devices-gpu/` | Shared “device-side” AeroGPU implementation (regs/ring/executor + portable PCI wrapper) |
-| `crates/aero-machine/` | Canonical full-system machine (`aero_machine::Machine`) — currently boots via `aero-gpu-vga` |
+| `crates/aero-machine/` | Canonical full-system machine (`aero_machine::Machine`) — supports both standalone VGA (`aero-gpu-vga`) and AeroGPU-owned legacy decode; browser defaults use AeroGPU |
 | `crates/emulator/` | Legacy/sandbox integration surfaces for device models (reuses `aero-devices-gpu`; still used by some host-side tests) |
 | `drivers/aerogpu/` | Windows 7 AeroGPU driver (KMD + UMD) |
 | `web/src/gpu/` + `web/src/workers/` | TypeScript GPU runtime + GPU worker plumbing |
