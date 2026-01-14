@@ -23,7 +23,8 @@ use std::rc::Rc;
 // colliding with this test-injected function.
 const XHCI_BDF: PciBdf = PciBdf::new(0, 0x1e, 0);
 const XHCI_BAR_INDEX: u8 = 0;
-const XHCI_BAR_SIZE: u32 = 0x4000;
+// Typical xHCI controllers expose a 64KiB BAR0 MMIO window.
+const XHCI_BAR_SIZE: u32 = 0x1_0000;
 
 // Keep the BAR within the platform's default PCI MMIO window (0xE000_0000..0xF000_0000) and away
 // from other devices that BIOS POST might have allocated near the start of the window.
@@ -602,8 +603,8 @@ fn pc_platform_xhci_bar0_size_probe_reports_expected_mask() {
     let mmio = Rc::new(RefCell::new(TestXhciMmio::default()));
     install_test_xhci(&mut pc, mmio);
 
-    // BAR size probing: write all-ones and read back the size mask. For a 0x4000 BAR, the mask is
-    // 0xFFFF_C000 (lower bits are hardwired to 0 per PCI spec).
+    // BAR size probing: write all-ones and read back the size mask.
+    // For a 64KiB BAR, the mask is 0xFFFF_0000 (lower bits are hardwired to 0 per PCI spec).
     write_cfg_u32(
         &mut pc,
         XHCI_BDF.bus,
@@ -619,7 +620,7 @@ fn pc_platform_xhci_bar0_size_probe_reports_expected_mask() {
         XHCI_BDF.function,
         0x10,
     );
-    assert_eq!(got, 0xFFFF_C000);
+    assert_eq!(got, !(XHCI_BAR_SIZE - 1) & 0xFFFF_FFF0);
 }
 
 #[test]
