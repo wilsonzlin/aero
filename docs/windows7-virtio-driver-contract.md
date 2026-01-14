@@ -1011,6 +1011,9 @@ Harness validation (non-normative, QEMU):
   - virtio-net:
     - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
     - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
+    - Newer virtio-net driver/selftest builds may append additional best-effort diagnostic fields to this marker (for example
+      `flags=0x...`, per-vector interrupt/DPC counters like `intr0=...|dpc0=...`, and drained buffer counts like
+      `rx_drained=...|tx_drained=...`). Harness log parsers should ignore unknown fields for forward compatibility.
   - virtio-snd:
     - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|...`
     - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|...`
