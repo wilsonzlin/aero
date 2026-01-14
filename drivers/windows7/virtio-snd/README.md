@@ -124,7 +124,11 @@ S16_LE).
 For compatibility, the bring-up path is defensive when a device advertises a superset:
 
 - It validates that the required contract format/rate/channel combinations are present in `PCM_INFO`.
-- It does not attempt to expose additional formats/rates to the Windows 7 audio stack.
+- When `PCM_INFO` capabilities are available, it dynamically generates WaveRT pin data ranges and can expose
+  additional formats/rates/channels to the Windows 7 audio stack.
+- It preserves the contract-v1 baseline format as the **first** enumerated format (so Windows keeps the
+  expected default mix format).
+- When `PCM_INFO` is unavailable (null backend / some legacy builds), the driver falls back to fixed contract-v1 formats.
 
 ## Prerequisites (host build/sign machine)
 

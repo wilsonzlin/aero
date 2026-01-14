@@ -94,7 +94,11 @@ Contract v1 fixes the PCM formats/rates and stream topology (stream 0 render + s
 For compatibility, the bring-up path is written to be defensive when a device advertises a superset:
 
 - It validates that the required contract format/rate/channel combinations are present in `PCM_INFO`.
-- It ignores additional formats/rates rather than attempting to expose them to the Windows audio stack.
+- When `PCM_INFO` capabilities are available, it can dynamically generate WaveRT format tables and expose
+  additional formats/rates/channels to the Windows audio stack.
+- It preserves the contract-v1 baseline format as the **first** enumerated format (so Windows keeps the
+  expected default mix format).
+- When `PCM_INFO` is unavailable (null backend / some legacy builds), it falls back to fixed contract-v1 formats.
 
 ## High-level architecture
 
@@ -170,9 +174,11 @@ The driver registers `Wave` (PortWaveRT + IMiniportWaveRT) and `Topology`
 
 Current behavior:
 
-- Exposes fixed-format endpoints:
+- Exposes contract-v1 fixed-format endpoints by default:
   - Render (stream 0): 48kHz, stereo, 16-bit PCM LE.
   - Capture (stream 1): 48kHz, mono, 16-bit PCM LE.
+- When virtio-snd `PCM_INFO` capabilities are available, it can additionally expose extra formats/rates/channels
+  via dynamically generated WaveRT data ranges (while still requiring and preferring the contract-v1 baseline).
 - Uses a periodic timer/DPC “software DMA” model to:
   - for render: advance play position, signal the WaveRT notification event, and
     submit one period of PCM into a backend callback.

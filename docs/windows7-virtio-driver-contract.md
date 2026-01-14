@@ -985,6 +985,17 @@ Compatibility note (non-normative):
   XRUN, control notify).
 - The Win7 virtio-snd driver is expected to tolerate unexpected `eventq` traffic without impacting audio streaming.
 
+#### 3.5.4 virtio-snd: multi-format negotiation (optional)
+
+Contract v1 defines only a minimal fixed PCM capability (§3.4.4), but some virtio-snd implementations may advertise
+additional formats/rates/channel counts in `PCM_INFO`.
+
+Compatibility note (non-normative):
+
+- The Win7 virtio-snd driver may expose additional `PCM_INFO` capabilities to PortCls/WaveRT by dynamically generating
+  pin data ranges from `PCM_INFO`.
+- The contract-v1 baseline format remains required and is advertised first to preserve the expected default mix format.
+
 ## 4. Versioning and compatibility
 
 ### 4.1 Contract version encoding

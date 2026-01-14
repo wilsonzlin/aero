@@ -64,6 +64,33 @@ static void test_tx_rejects_misaligned_pcm_bytes(void)
     virtio_test_queue_destroy(&q);
 }
 
+static void test_pcm_format_bytes_per_sample_mapping(void)
+{
+    USHORT bytes;
+
+    bytes = 0;
+    assert(VirtioSndPcmFormatToBytesPerSample(VIRTIO_SND_PCM_FMT_S16, &bytes));
+    assert(bytes == 2u);
+
+    /*
+     * virtio-snd PCM format codes are based on ALSA `snd_pcm_format_t`.
+     *
+     * In ALSA, S24/U24 correspond to 24-bit samples stored in a 32-bit container
+     * (not packed 3-byte samples), so bytes-per-sample must be 4.
+     */
+    bytes = 0;
+    assert(VirtioSndPcmFormatToBytesPerSample(VIRTIO_SND_PCM_FMT_S24, &bytes));
+    assert(bytes == 4u);
+
+    bytes = 0;
+    assert(VirtioSndPcmFormatToBytesPerSample(VIRTIO_SND_PCM_FMT_U24, &bytes));
+    assert(bytes == 4u);
+
+    bytes = 123;
+    assert(!VirtioSndPcmFormatToBytesPerSample(0xFFu, &bytes));
+    assert(bytes == 0u);
+}
+
 static void test_tx_builds_hdr_pcm_status_chain(void)
 {
     VIRTIO_TEST_QUEUE q;
@@ -657,6 +684,7 @@ static void test_control_capture_state_machine(void)
 
 int main(void)
 {
+    test_pcm_format_bytes_per_sample_mapping();
     test_tx_rejects_misaligned_pcm_bytes();
     test_tx_builds_hdr_pcm_status_chain();
     test_tx_split_payload_and_silence_fill();
