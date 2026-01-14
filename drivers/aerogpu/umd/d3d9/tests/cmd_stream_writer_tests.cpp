@@ -1175,6 +1175,19 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) != 0, "RasterCaps includes SCISSORTEST")) {
     return false;
   }
+  // StretchRect filtering supports only min/mag point/linear (no mip filtering).
+  const uint32_t stretchrect_required =
+      D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
+      D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+  if (!Check((caps.StretchRectFilterCaps & stretchrect_required) == stretchrect_required,
+             "StretchRectFilterCaps includes point+linear min/mag filtering")) {
+    return false;
+  }
+  const uint32_t stretchrect_mip_caps = D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
+  if (!Check((caps.StretchRectFilterCaps & stretchrect_mip_caps) == 0,
+             "StretchRectFilterCaps does not include mip filter caps")) {
+    return false;
+  }
   // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch), but
   // N-patches and quintic RT patches are not.
   if (!Check((caps.DevCaps & D3DDEVCAPS_RTPATCHES) != 0, "DevCaps advertises RTPATCHES")) {

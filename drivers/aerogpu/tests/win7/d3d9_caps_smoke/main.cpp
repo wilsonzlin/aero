@@ -197,6 +197,19 @@ static int RunD3D9CapsSmoke(int argc, char** argv) {
   if ((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) == 0) {
     return reporter.Fail("RasterCaps missing D3DPRASTERCAPS_SCISSORTEST");
   }
+  // StretchRect filtering supports only min/mag point/linear (no mip filtering).
+  const DWORD stretchrect_required =
+      D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
+      D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+  if ((caps.StretchRectFilterCaps & stretchrect_required) != stretchrect_required) {
+    return reporter.Fail("StretchRectFilterCaps missing point+linear min/mag filtering (got 0x%08lX)",
+                         (unsigned long)caps.StretchRectFilterCaps);
+  }
+  const DWORD stretchrect_mip_caps = D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
+  if ((caps.StretchRectFilterCaps & stretchrect_mip_caps) != 0) {
+    return reporter.Fail("StretchRectFilterCaps unexpectedly advertises mip filtering (got 0x%08lX)",
+                         (unsigned long)caps.StretchRectFilterCaps);
+  }
 
   if ((caps.ZCmpCaps & D3DPCMPCAPS_ALWAYS) == 0) {
     return reporter.Fail("ZCmpCaps missing D3DPCMPCAPS_ALWAYS");
