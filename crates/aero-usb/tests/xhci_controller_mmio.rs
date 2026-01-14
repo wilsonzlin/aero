@@ -674,6 +674,80 @@ fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
 }
 
 #[test]
+fn xhci_doorbell_ignores_halted_endpoint_without_device_context() {
+    use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
+
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mut ctrl = XhciController::new();
+    ctrl.attach_device(0, Box::new(DummyDevice));
+    while ctrl.pop_pending_event().is_some() {}
+
+    let mut mem = CountingMem::new(0x4000);
+
+    // Enable slot 1 so endpoint doorbells have a valid target.
+    ctrl.set_dcbaap(0x1000);
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion, CommandCompletion::success(1));
+    let slot_id = completion.slot_id;
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    assert_eq!(ctrl.address_device(slot_id, slot_ctx), completion);
+
+    // Configure a controller-local ring cursor for EP1 IN (DCI=3) but clear DCBAAP so the guest
+    // Device Context cannot be read. This mimics harness setups that only configure controller-local
+    // cursors.
+    let endpoint_id = 3u8;
+    let ring_base = 0x1800u64;
+    ctrl.set_endpoint_ring(slot_id, endpoint_id, ring_base, true);
+    ctrl.set_dcbaap(0);
+
+    // Place a malformed Link TRB (cycle=1) with a null segment pointer. This should trigger a TRB
+    // error and halt the endpoint.
+    let mut bad = Trb::default();
+    bad.set_trb_type(TrbType::Link);
+    bad.set_cycle(true);
+    bad.write_to(&mut mem, ring_base);
+
+    ctrl.ring_doorbell(slot_id, endpoint_id);
+    ctrl.tick(&mut mem);
+
+    assert_eq!(ctrl.pending_event_count(), 1);
+    let ev = ctrl.pop_pending_event().expect("expected transfer event");
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::TrbError.as_u8());
+    assert_eq!(ev.slot_id(), slot_id);
+    assert_eq!(ev.endpoint_id(), endpoint_id);
+
+    // Even without a readable Device Context, the controller should remember the halted state in its
+    // shadow context and ignore subsequent doorbells.
+    let slot = ctrl.slot_state(slot_id).expect("slot state");
+    let ep_ctx = slot
+        .endpoint_context(usize::from(endpoint_id - 1))
+        .expect("endpoint context");
+    assert_eq!(ep_ctx.endpoint_state(), 2, "expected endpoint to be halted");
+
+    ctrl.ring_doorbell(slot_id, endpoint_id);
+    ctrl.tick(&mut mem);
+    assert_eq!(
+        ctrl.pending_event_count(),
+        0,
+        "halted endpoint should ignore subsequent doorbells"
+    );
+}
+
+#[test]
 fn xhci_controller_hchalted_tracks_run_stop_and_reset() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x100);
