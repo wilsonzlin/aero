@@ -216,7 +216,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   row1[0] = D3DCOLOR_XRGB(0, 0, 255);      // bottom-left: blue
   row1[1] = D3DCOLOR_XRGB(255, 255, 0);    // bottom-right: yellow
 
-  sys_tex->UnlockRect(0);
+  hr = sys_tex->UnlockRect(0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DTexture9::UnlockRect", hr);
+  }
 
   ComPtr<IDirect3DTexture9> tex;
   hr = dev->CreateTexture(2, 2, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, tex.put(), NULL);
@@ -235,15 +238,39 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   }
 
   // Force point sampling so the expected texel is unambiguous.
-  dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-  dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
-  dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-  dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
-  dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+  hr = dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(MINFILTER)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(MAGFILTER)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(MIPFILTER)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(ADDRESSU)", hr);
+  }
+  hr = dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(ADDRESSV)", hr);
+  }
 
-  dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-  dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-  dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+  hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(COLOROP)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(COLORARG1)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(COLORARG2)", hr);
+  }
 
   // Place a quad around NDC origin via WORLD/VIEW/PROJECTION transforms.
   //
@@ -279,9 +306,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   proj._44 = 1.0f;
   proj._41 = 0.1f; // +X
 
-  dev->SetTransform(D3DTS_WORLD, &world);
-  dev->SetTransform(D3DTS_VIEW, &view);
-  dev->SetTransform(D3DTS_PROJECTION, &proj);
+  hr = dev->SetTransform(D3DTS_WORLD, &world);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(WORLD)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_VIEW, &view);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(VIEW)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_PROJECTION, &proj);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(PROJECTION)", hr);
+  }
 
   // Use a non-white vertex color so the test also validates stage0 MODULATE
   // (TEXTURE * DIFFUSE), not just texture sampling.
@@ -451,9 +487,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   identity._22 = 1.0f;
   identity._33 = 1.0f;
   identity._44 = 1.0f;
-  dev->SetTransform(D3DTS_WORLD, &identity);
-  dev->SetTransform(D3DTS_VIEW, &identity);
-  dev->SetTransform(D3DTS_PROJECTION, &identity);
+  hr = dev->SetTransform(D3DTS_WORLD, &identity);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(WORLD) (identity)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_VIEW, &identity);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(VIEW) (identity)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_PROJECTION, &identity);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(PROJECTION) (identity)", hr);
+  }
   rc = DrawAndValidateCenterPixel("vertex_decl_identity",
                                   L"d3d9_fixedfunc_textured_wvp_vdecl_identity.bmp",
                                   kClear,
@@ -463,9 +508,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   }
 
   // Restore the WVP transform for the final phase.
-  dev->SetTransform(D3DTS_WORLD, &world);
-  dev->SetTransform(D3DTS_VIEW, &view);
-  dev->SetTransform(D3DTS_PROJECTION, &proj);
+  hr = dev->SetTransform(D3DTS_WORLD, &world);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(WORLD) (restore)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_VIEW, &view);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(VIEW) (restore)", hr);
+  }
+  hr = dev->SetTransform(D3DTS_PROJECTION, &proj);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(PROJECTION) (restore)", hr);
+  }
 
   // ---------------------------------------------------------------------------
   // Path 3: SetFVF(XYZ|DIFFUSE|TEX1)
