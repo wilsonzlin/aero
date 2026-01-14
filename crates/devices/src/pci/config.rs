@@ -502,8 +502,12 @@ impl PciConfigSpace {
 
                     // These registers are present only when `per_vector_masking` is set. They are
                     // expected to reset to 0.
-                    self.write(mask_off, 4, 0);
-                    self.write(pending_off, 4, 0);
+                    if usize::from(mask_off).saturating_add(4) <= PCI_CONFIG_SPACE_SIZE {
+                        self.write(mask_off, 4, 0);
+                    }
+                    if usize::from(pending_off).saturating_add(4) <= PCI_CONFIG_SPACE_SIZE {
+                        self.write(pending_off, 4, 0);
+                    }
                 }
             }
         }
