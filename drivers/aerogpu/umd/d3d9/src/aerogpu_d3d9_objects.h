@@ -265,12 +265,6 @@ inline constexpr FixedFuncVariant fixedfunc_variant_from_fvf(uint32_t fvf) {
   return FixedFuncVariant::NONE;
 }
 
-inline constexpr bool fixedfunc_variant_uses_rhw(FixedFuncVariant variant) {
-  return variant == FixedFuncVariant::RHW_COLOR ||
-         variant == FixedFuncVariant::RHW_COLOR_TEX1 ||
-         variant == FixedFuncVariant::RHW_TEX1;
-}
-
 inline constexpr uint32_t fixedfunc_fvf_from_variant(FixedFuncVariant variant) {
   for (size_t i = 0; i < kFixedFuncVariantDeclTableCount; ++i) {
     if (kFixedFuncVariantDeclTable[i].variant == variant) {
@@ -278,6 +272,11 @@ inline constexpr uint32_t fixedfunc_fvf_from_variant(FixedFuncVariant variant) {
     }
   }
   return 0;
+}
+
+inline constexpr bool fixedfunc_variant_uses_rhw(FixedFuncVariant variant) {
+  const uint32_t fvf = fixedfunc_fvf_from_variant(variant);
+  return (fvf & kD3dFvfXyzRhw) != 0;
 }
 
 inline const FixedFuncVariantDeclDesc* fixedfunc_decl_desc(FixedFuncVariant variant) {
