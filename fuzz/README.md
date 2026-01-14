@@ -10,6 +10,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - User-space network stack Ethernet ingress (`aero-net-stack`)
 - NIC device models (E1000 + virtio-net)
 - HTTP `Range` header parsing (`aero-http-range`)
+- Auth token verification (`aero-auth-tokens`)
 - AeroSparse disk image parsing/open (`aero-storage`)
 - AeroGPU command stream + alloc-table parsing (`aero-gpu` / `aero-protocol`)
 - DXBC container + shader bytecode parsing (`aero-dxbc`)
@@ -39,6 +40,7 @@ cargo +"$nightly" fuzz run fuzz_ide
 cargo +"$nightly" fuzz run fuzz_piix3_ide_pci
 cargo +"$nightly" fuzz run fuzz_ide_busmaster
 cargo +"$nightly" fuzz run fuzz_http_range
+cargo +"$nightly" fuzz run fuzz_auth_tokens
 cargo +"$nightly" fuzz run fuzz_atapi
 cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
@@ -137,6 +139,9 @@ cd fuzz && cargo fuzz run fuzz_piix3_ide_pci -- -runs=10000
 
 # HTTP Range parsing/resolution (hostile headers near caps)
 cd fuzz && cargo fuzz run fuzz_http_range -- -runs=10000
+
+# Auth tokens (session cookie + HS256 JWT)
+cd fuzz && cargo fuzz run fuzz_auth_tokens -- -runs=10000
 
 # ATAPI packet parsing (SCSI CDBs)
 cd fuzz && cargo fuzz run fuzz_atapi -- -runs=10000
