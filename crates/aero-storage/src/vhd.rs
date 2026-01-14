@@ -1323,3 +1323,49 @@ fn write_zeroes<B: StorageBackend>(backend: &mut B, mut offset: u64, mut len: u6
     }
     Ok(())
 }
+
+// Compile-time guard: differencing VHDs should accept non-`Send` parent disks on wasm32.
+//
+// This is a core requirement for browser backends like OPFS/JS handles, which often cannot be sent
+// across threads. `VirtualDiskSend` captures the conditional `Send` policy, but we also want to
+// ensure the VHD differencing APIs don't accidentally re-introduce hard `+ Send` bounds.
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+mod wasm_send_bounds_check {
+    use std::rc::Rc;
+
+    use crate::{DiskError, MemBackend, Result, VirtualDisk, SECTOR_SIZE};
+
+    use super::VhdDisk;
+
+    #[derive(Debug)]
+    struct NotSendDisk(Rc<()>);
+
+    impl VirtualDisk for NotSendDisk {
+        fn capacity_bytes(&self) -> u64 {
+            SECTOR_SIZE as u64
+        }
+
+        fn read_at(&mut self, _offset: u64, buf: &mut [u8]) -> Result<()> {
+            buf.fill(0);
+            Ok(())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> Result<()> {
+            Err(DiskError::Unsupported("write"))
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn _assert_vhd_differencing_accepts_non_send_parent() {
+        let _parent: Box<dyn VirtualDisk> = Box::new(NotSendDisk(Rc::new(())));
+
+        let _open_with_parent: fn(MemBackend, Box<dyn VirtualDisk>) -> Result<VhdDisk<MemBackend>> =
+            VhdDisk::<MemBackend>::open_with_parent;
+        let _open_differencing: fn(MemBackend, Box<dyn VirtualDisk>) -> Result<VhdDisk<MemBackend>> =
+            VhdDisk::<MemBackend>::open_differencing;
+    }
+}
