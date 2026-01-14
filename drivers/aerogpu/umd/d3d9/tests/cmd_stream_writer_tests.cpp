@@ -2882,7 +2882,7 @@ bool TestLockSizeZeroClampsToArraySubresource() {
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
   lock.offset_bytes = kLayer1Mip1Offset;
-  lock.size_bytes = 0; // lock the remainder (default size semantics)
+  lock.size_bytes = 0; // default size semantics (driver clamps to the containing subresource)
   lock.flags = 0;
   D3DDDI_LOCKEDBOX box{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
