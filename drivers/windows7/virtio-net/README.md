@@ -151,6 +151,9 @@ You can also use `aero-virtio-selftest.exe`:
 - The selftest also emits a `virtio-net-irq|INFO|...` line indicating which interrupt mode Windows assigned:
   - `virtio-net-irq|INFO|mode=intx`
   - `virtio-net-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+- Newer guest selftests also emit a dedicated MSI-X diagnostics marker (derived from `\\.\AeroVirtioNetDiag`):
+  - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix>|messages=<n>|config_vector=...|rx_vector=...|tx_vector=...`
+  - Host marker (mirrored by the QEMU harness): `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|...`
 - To force MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
   - Host (best-effort, global): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - Host (best-effort, virtio-net only): `-VirtioNetVectors N` / `--virtio-net-vectors N`

@@ -1252,8 +1252,11 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     const DWORD err = GetLastError();
     if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
       log.LogLine("virtio-net-diag|WARN|reason=not_supported");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=not_supported");
     } else {
       log.Logf("virtio-net-diag|WARN|reason=open_failed|err=%lu", static_cast<unsigned long>(err));
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=open_failed|err=%lu",
+               static_cast<unsigned long>(err));
     }
     return;
   }
@@ -1266,10 +1269,14 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
 
   if (!ok) {
     log.Logf("virtio-net-diag|WARN|reason=ioctl_failed|err=%lu", static_cast<unsigned long>(err));
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=ioctl_failed|err=%lu",
+             static_cast<unsigned long>(err));
     return;
   }
   if (bytes < sizeof(ULONG) * 2) {
     log.Logf("virtio-net-diag|WARN|reason=short_read|bytes=%lu", static_cast<unsigned long>(bytes));
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=short_read|bytes=%lu",
+             static_cast<unsigned long>(bytes));
     return;
   }
 
@@ -1284,6 +1291,16 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       mode = "msi";
     }
   }
+
+  auto vec_to_string = [](USHORT v) -> std::string {
+    if (v == kVirtioPciMsiNoVector) return "none";
+    return std::to_string(static_cast<unsigned int>(v));
+  };
+
+  log.Logf(
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
+      mode, static_cast<unsigned long>(info.MessageCount), vec_to_string(info.MsixConfigVector).c_str(),
+      vec_to_string(info.MsixRxVector).c_str(), vec_to_string(info.MsixTxVector).c_str());
 
   const char* rx_err_flags_s = "unknown";
   const char* tx_err_flags_s = "unknown";

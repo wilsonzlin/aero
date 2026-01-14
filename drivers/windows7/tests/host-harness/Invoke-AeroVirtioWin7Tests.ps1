@@ -2444,6 +2444,69 @@ function Try-EmitAeroVirtioNetDiagMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioNetMsixMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|$status"
+
+  # Keep ordering stable for log scraping.
+  $ordered = @(
+    "mode",
+    "messages",
+    "config_vector",
+    "rx_vector",
+    "tx_vector",
+    "bytes",
+    "reason",
+    "err"
+  )
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  foreach ($k in ($fields.Keys | Where-Object { (-not $orderedSet.ContainsKey($_)) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioBlkIoMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -5514,6 +5577,7 @@ try {
   Try-EmitAeroVirtioNetUdpMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpDnsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetDiagMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioNetMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ" -SerialLogPath $SerialLogPath

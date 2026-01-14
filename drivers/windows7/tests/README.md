@@ -197,6 +197,9 @@ configuration.
   - virtio-blk:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+  - virtio-net:
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
   - virtio-snd:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
