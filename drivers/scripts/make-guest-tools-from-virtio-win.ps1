@@ -20,6 +20,9 @@ On Linux/macOS, run under PowerShell 7 (`pwsh`) and either:
 Use `-Profile` to choose a predictable driver set:
 
 - `full` (default): includes optional audio/input drivers when present (best-effort)
+  - Note: optional drivers are only included when present for BOTH x86 and amd64. If upstream
+    virtio-win provides an optional driver for only one arch, it is omitted entirely (unless
+    `-StrictOptional` is set).
 - `minimal`: storage+network only (aligned with the "minimal" packaging spec)
 
 Precedence:
