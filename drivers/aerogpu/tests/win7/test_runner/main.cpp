@@ -1079,6 +1079,99 @@ static std::string BuildAdapterJsonObject(const aerogpu_test::TestReportAdapterI
   return out;
 }
 
+static bool PopulateAdapterInTestReportJsonObject(std::string* obj,
+                                                  const aerogpu_test::TestReportAdapterInfo& adapter,
+                                                  bool* out_modified,
+                                                  std::string* err) {
+  if (out_modified) {
+    *out_modified = false;
+  }
+  if (err) {
+    err->clear();
+  }
+  if (!obj) {
+    if (err) {
+      *err = "PopulateAdapterInTestReportJsonObject: obj == NULL";
+    }
+    return false;
+  }
+  if (!adapter.present) {
+    return true;
+  }
+
+  const std::string adapter_json = BuildAdapterJsonObject(adapter);
+  if (adapter_json == "null") {
+    return true;
+  }
+
+  const char* const kKey = "\"adapter\"";
+  size_t key_pos = obj->find(kKey);
+  while (key_pos != std::string::npos) {
+    size_t i = key_pos + strlen(kKey);
+    // Skip whitespace between key and ':'.
+    while (i < obj->size()) {
+      const char c = (*obj)[i];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+        break;
+      }
+      i++;
+    }
+    if (i >= obj->size() || (*obj)[i] != ':') {
+      key_pos = obj->find(kKey, key_pos + 1);
+      continue;
+    }
+    i++;
+    // Skip whitespace between ':' and value.
+    while (i < obj->size()) {
+      const char c = (*obj)[i];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+        break;
+      }
+      i++;
+    }
+    if (i + 4 <= obj->size() && obj->compare(i, 4, "null") == 0) {
+      // Ensure the token is exactly `null` (avoid matching e.g. "nullx").
+      const bool ok_term =
+          (i + 4 == obj->size()) || (*obj)[i + 4] == ',' || (*obj)[i + 4] == '}' || (*obj)[i + 4] == ' ' ||
+          (*obj)[i + 4] == '\t' || (*obj)[i + 4] == '\r' || (*obj)[i + 4] == '\n';
+      if (ok_term) {
+        obj->replace(i, 4, adapter_json);
+        if (out_modified) {
+          *out_modified = true;
+        }
+        return true;
+      }
+    }
+    // Adapter is already populated (or has an unexpected value); don't modify.
+    return true;
+  }
+
+  // If the adapter field is missing entirely, add it at the end of the object.
+  size_t end = obj->size();
+  while (end > 0) {
+    const char c = (*obj)[end - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      break;
+    }
+    end--;
+  }
+  if (end == 0 || (*obj)[end - 1] != '}') {
+    if (err) {
+      *err = "PopulateAdapterInTestReportJsonObject: object does not end with '}'";
+    }
+    return false;
+  }
+
+  // The runner only calls this for per-test reports that already contain fields like schema_version/test_name,
+  // so assume non-empty object and emit a leading comma.
+  const std::string field = std::string(",\"adapter\":") + adapter_json;
+  obj->insert(end - 1, field);
+  if (out_modified) {
+    *out_modified = true;
+  }
+  return true;
+}
+
 static bool EqualsIgnoreCaseAscii(const std::string& a, const char* b) {
   if (!b) {
     return false;
@@ -1626,11 +1719,13 @@ int main(int argc, char** argv) {
         // populating the adapter from the suite-level D3D9Ex query when available.
         bool obj_modified = false;
         if (suite_adapter.present) {
-          const char* const kNeedle = "\"adapter\":null";
-          size_t pos = obj.find(kNeedle);
-          if (pos != std::string::npos) {
-            const std::string replacement = std::string("\"adapter\":") + BuildAdapterJsonObject(suite_adapter);
-            obj.replace(pos, strlen(kNeedle), replacement);
+          bool injected = false;
+          std::string inject_err;
+          if (!PopulateAdapterInTestReportJsonObject(&obj, suite_adapter, &injected, &inject_err)) {
+            aerogpu_test::PrintfStdout("INFO: %s: failed to inject suite adapter info into JSON: %s",
+                                       test_name.c_str(),
+                                       inject_err.c_str());
+          } else if (injected) {
             obj_modified = true;
           }
         }
