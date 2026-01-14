@@ -2,8 +2,8 @@ use aero_d3d11::sm4::decode::Sm4DecodeErrorKind;
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     BufferKind, BufferRef, CmpOp, CmpType, HsDomain, HsOutputTopology, HsPartitioning,
-    OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program,
-    SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    HullShaderPhase, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst,
+    Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -2752,6 +2752,101 @@ fn decodes_loop_endloop_and_break() {
             Sm4Inst::Ret
         ]
     );
+}
+
+#[test]
+fn decodes_sm5_tessellation_decls() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_inputcontrolpoints 3
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, 2), 3]);
+    // dcl_outputcontrolpoints 4
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT, 2), 4]);
+    // dcl_tessellator_domain tri
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_TESS_DOMAIN, 2), 2]);
+    // dcl_tessellator_partitioning fractional_even
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_TESS_PARTITIONING, 2), 4]);
+    // dcl_tessellator_output_primitive triangle_cw
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_TESS_OUTPUT_PRIMITIVE, 2), 3]);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 3 is hull shader.
+    let tokens = make_sm5_program_tokens(3, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Hull);
+
+    let module = decode_program(&program).expect("decode");
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::InputControlPointCount { count: 3 },
+            Sm4Decl::HsOutputControlPointCount { count: 4 },
+            Sm4Decl::HsDomain {
+                domain: HsDomain::Tri,
+            },
+            Sm4Decl::HsPartitioning {
+                partitioning: HsPartitioning::FractionalEven,
+            },
+            Sm4Decl::HsOutputTopology {
+                topology: HsOutputTopology::TriangleCw,
+            },
+        ]
+    );
+    assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
+}
+
+#[test]
+fn decodes_hull_shader_phase_markers_as_decls() {
+    let mut body = Vec::<u32>::new();
+
+    body.push(opcode_token(OPCODE_HS_CONTROL_POINT_PHASE, 1));
+
+    // mov r0, l(0,0,0,0)
+    let mut mov0 = vec![opcode_token(OPCODE_MOV, 8)];
+    mov0.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov0.extend_from_slice(&imm32_vec4([0, 0, 0, 0]));
+    body.extend_from_slice(&mov0);
+
+    body.push(opcode_token(OPCODE_HS_FORK_PHASE, 1));
+
+    // mov r1, l(0,0,0,0)
+    let mut mov1 = vec![opcode_token(OPCODE_MOV, 8)];
+    mov1.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    mov1.extend_from_slice(&imm32_vec4([0, 0, 0, 0]));
+    body.extend_from_slice(&mov1);
+
+    body.push(opcode_token(OPCODE_HS_JOIN_PHASE, 1));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(3, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+
+    let module = decode_program(&program).expect("decode");
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::HsPhase {
+                phase: HullShaderPhase::ControlPoint,
+                inst_index: 0,
+            },
+            Sm4Decl::HsPhase {
+                phase: HullShaderPhase::Fork,
+                inst_index: 1,
+            },
+            Sm4Decl::HsPhase {
+                phase: HullShaderPhase::Join,
+                inst_index: 2,
+            },
+        ]
+    );
+    assert_eq!(module.instructions.len(), 3);
+    assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
+    assert!(matches!(module.instructions[1], Sm4Inst::Mov { .. }));
+    assert!(matches!(module.instructions[2], Sm4Inst::Ret));
 }
 
 #[test]

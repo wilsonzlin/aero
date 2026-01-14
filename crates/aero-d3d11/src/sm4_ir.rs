@@ -226,6 +226,18 @@ pub enum Sm4Decl {
         /// Payload DWORDs after the customdata class token.
         dwords: Vec<u32>,
     },
+    /// Hull shader phase marker (control-point/fork/join).
+    ///
+    /// Hull shaders contain multiple "phases" in a single token stream. Phase marker opcodes
+    /// (e.g. `hs_control_point_phase`) are non-executable and are used to delimit which
+    /// instructions belong to the control-point vs patch-constant paths.
+    ///
+    /// `inst_index` refers to the index in [`Sm4Module::instructions`] of the first instruction
+    /// that belongs to this phase.
+    HsPhase {
+        phase: HullShaderPhase,
+        inst_index: usize,
+    },
     Unknown {
         opcode: u32,
     },
@@ -255,6 +267,14 @@ pub enum HsOutputTopology {
     Line,
     TriangleCw,
     TriangleCcw,
+}
+
+/// Hull shader phase marker emitted in the instruction stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HullShaderPhase {
+    ControlPoint,
+    Fork,
+    Join,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

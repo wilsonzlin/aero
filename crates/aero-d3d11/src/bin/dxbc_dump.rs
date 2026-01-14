@@ -7,8 +7,8 @@ use std::process;
 use aero_d3d11::sm4::decode::{decode_decl, decode_instruction};
 use aero_d3d11::sm4::opcode::{
     opcode_name, CUSTOMDATA_CLASS_COMMENT, CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER,
-    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
-    OPCODE_NOP,
+    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_HS_CONTROL_POINT_PHASE, OPCODE_HS_FORK_PHASE,
+    OPCODE_HS_JOIN_PHASE, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_NOP,
 };
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
 use aero_d3d11::{DxbcFile, Sm4Program};
@@ -194,7 +194,6 @@ fn real_main() -> anyhow::Result<()> {
 
     let toks = &program.tokens;
     let mut i = 2usize;
-    let mut in_decls = true;
     while i < toks.len() {
         let opcode_token = toks[i];
         let opcode = opcode_token & OPCODE_MASK;
@@ -265,13 +264,26 @@ fn real_main() -> anyhow::Result<()> {
             }
         } else if opcode == OPCODE_NOP {
             writeln!(out, "  ; nop")?;
-        } else if in_decls && opcode >= DECLARATION_OPCODE_MIN {
+        } else if program.stage == aero_d3d11::ShaderStage::Hull
+            && len == 1
+            && matches!(
+                opcode,
+                OPCODE_HS_CONTROL_POINT_PHASE | OPCODE_HS_FORK_PHASE | OPCODE_HS_JOIN_PHASE
+            )
+        {
+            let name = match opcode {
+                OPCODE_HS_CONTROL_POINT_PHASE => "hs_control_point_phase",
+                OPCODE_HS_FORK_PHASE => "hs_fork_phase",
+                OPCODE_HS_JOIN_PHASE => "hs_join_phase",
+                _ => "hs_phase",
+            };
+            writeln!(out, "  ; {name}")?;
+        } else if opcode >= DECLARATION_OPCODE_MIN {
             match decode_decl(opcode, inst_toks, i) {
                 Ok(decl) => writeln!(out, "  => decl {decl:?}")?,
                 Err(err) => writeln!(out, "  !! decl decode error: {err}")?,
             }
         } else {
-            in_decls = false;
             match decode_instruction(opcode, inst_toks, i) {
                 Ok(inst) => writeln!(out, "  => inst {inst:?}")?,
                 Err(err) => writeln!(out, "  !! inst decode error: {err}")?,

@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::sm4_ir::{
     BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, GsInputPrimitive,
-    GsOutputTopology, HsDomain, HsOutputTopology, HsPartitioning, OperandModifier,
-    PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef,
-    Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
-    UavRef, WriteMask,
+    GsOutputTopology, HsDomain, HsOutputTopology, HsPartitioning, HullShaderPhase,
+    OperandModifier, PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef,
+    SamplerRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle,
+    TextureRef, UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -120,7 +120,6 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
     let mut instructions = Vec::new();
 
     let mut i = 2usize;
-    let mut in_decls = true;
     while i < toks.len() {
         let opcode_token = toks[i];
         let opcode = opcode_token & OPCODE_MASK;
@@ -191,10 +190,35 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
             continue;
         }
 
-        // All declarations are required to come before the instruction stream. Unknown
-        // declarations are preserved as `Sm4Decl::Unknown` so later stages can still decide
-        // whether they're important.
-        if in_decls && opcode >= DECLARATION_OPCODE_MIN {
+        // Hull shader phase markers (`hs_control_point_phase`, `hs_fork_phase`, `hs_join_phase`)
+        // are non-executable instructions that delimit the control-point vs patch-constant code
+        // paths. Preserve them as metadata rather than polluting the instruction stream.
+        if program.stage == super::ShaderStage::Hull
+            && len == 1
+            && matches!(
+                opcode,
+                OPCODE_HS_CONTROL_POINT_PHASE | OPCODE_HS_FORK_PHASE | OPCODE_HS_JOIN_PHASE
+            )
+        {
+            let phase = match opcode {
+                OPCODE_HS_CONTROL_POINT_PHASE => HullShaderPhase::ControlPoint,
+                OPCODE_HS_FORK_PHASE => HullShaderPhase::Fork,
+                OPCODE_HS_JOIN_PHASE => HullShaderPhase::Join,
+                _ => unreachable!(),
+            };
+            decls.push(Sm4Decl::HsPhase {
+                phase,
+                inst_index: instructions.len(),
+            });
+            i += len;
+            continue;
+        }
+
+        // Declarations are encoded in a separate opcode space (>= 0x100). Most shader stages place
+        // all declarations before executable instructions, but hull shaders contain per-phase
+        // declaration blocks that can appear after phase markers. Treat any opcode in the
+        // declaration range as a declaration regardless of its position in the token stream.
+        if opcode >= DECLARATION_OPCODE_MIN {
             // Most declarations are best-effort decoded: if we can't interpret the encoding we
             // preserve them as `Unknown` and continue.
             //
@@ -210,7 +234,6 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
             i += len;
             continue;
         }
-        in_decls = false;
 
         instructions.push(decode_instruction(opcode, inst_toks, i)?);
         i += len;
