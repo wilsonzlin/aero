@@ -292,3 +292,24 @@ fn tier2_masks_shift_count_for_64bit_operands_like_x86() {
     assert_side_exit_at_int3(exit, CODE);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
+
+#[test]
+fn tier2_masks_shift_count_uses_6_bits_for_64bit_operands() {
+    // mov rax, 1
+    // shl rax, 32
+    // int3
+    //
+    // x86 masks 64-bit shift counts to 6 bits (mod 64), so 32 is *not* reduced to 0.
+    const CODE: &[u8] = &[
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+        0x48, 0xC1, 0xE0, 0x20, // shl rax, 32
+        0xCC, // int3
+    ];
+
+    let (exit, state) = run_x86(CODE);
+    assert_side_exit_at_int3(exit, CODE);
+    assert_eq!(
+        state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        1u64 << 32
+    );
+}
