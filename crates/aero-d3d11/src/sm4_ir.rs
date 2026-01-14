@@ -745,11 +745,17 @@ pub enum Sm4Inst {
     /// DXBC register files are untyped; in the WGSL backend we model the register file as
     /// `vec4<f32>` where each lane is treated as an untyped 32-bit payload.
     ///
-    /// When emitting WGSL `textureLoad`, the translator interprets the source lanes strictly as
-    /// integer bits (i.e. `bitcast<i32>(f32)`) to recover an `i32` coordinate/LOD.
+    /// When emitting WGSL `textureLoad`, the translator must recover integer texel coordinates and
+    /// an integer mip level from those untyped lanes. In practice DXBC shaders may provide these
+    /// values either as:
+    /// - raw integer bit patterns (common for compiler-generated DXBC), or
+    /// - numeric float values that happen to be exact integers (common in hand-authored /
+    ///   test-generated DXBC token streams).
     ///
-    /// Any numeric float→int conversion must be performed explicitly by the DXBC instruction
-    /// stream (e.g. via the `ftoi`/`round` family), not inferred heuristically during translation.
+    /// The translator therefore uses a small heuristic: when a lane looks like an exact integer
+    /// float (finite, in range, and with zero fractional part), it uses numeric `i32(f32)`
+    /// conversion; otherwise it falls back to interpreting the lane as raw integer bits via
+    /// `bitcast<i32>(f32)`.
     Ld {
         dst: DstOperand,
         /// Texel coordinate (x/y in `.xy`).
