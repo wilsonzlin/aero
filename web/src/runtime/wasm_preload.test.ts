@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { initWasm } from "./wasm_loader";
 import { precompileWasm } from "./wasm_preload";
 
@@ -76,5 +81,32 @@ describe("runtime/wasm_preload", () => {
     expect(initInput).toBe(compiled.module);
     expect(api.UsbPassthroughBridge).toBeDefined();
     expect(api.WebUsbUhciPassthroughHarness).toBeDefined();
+  });
+
+  it("precompiles from a file: URL in Node without using fetch()", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aero-wasm-preload-"));
+    try {
+      const wasmPath = join(dir, "aero_wasm_bg.wasm");
+      await writeFile(wasmPath, WASM_EMPTY_MODULE_BYTES);
+
+      const url = pathToFileURL(wasmPath).toString();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroWasmBinaryUrlOverride = { threaded: url };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).fetch = vi.fn(async () => {
+        throw new Error("fetch() should not be called for file: URLs in Node");
+      });
+
+      const compiled = await precompileWasm("threaded");
+      expect(compiled.url).toBe(url);
+      expect(compiled.module).toBeInstanceOf(WebAssembly.Module);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((globalThis as any).fetch).not.toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
