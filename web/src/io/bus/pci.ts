@@ -384,12 +384,14 @@ export class PciBus implements PortIoHandler {
   #addrReg = 0;
 
   // Simple allocators for auto-assigned BARs (legacy 32-bit).
-  #nextMmioBase = BigInt(GUEST_PCI_MMIO_BASE);
-  #nextIoBase = 0xc000;
+  #nextMmioBase: bigint;
+  #nextIoBase: number;
 
-  constructor(portBus: PortIoBus, mmioBus: MmioBus) {
+  constructor(portBus: PortIoBus, mmioBus: MmioBus, opts: { mmioBase?: bigint; ioBase?: number } = {}) {
     this.#portBus = portBus;
     this.#mmioBus = mmioBus;
+    this.#nextMmioBase = opts.mmioBase ?? BigInt(GUEST_PCI_MMIO_BASE);
+    this.#nextIoBase = opts.ioBase ?? 0xc000;
   }
 
   /**

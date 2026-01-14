@@ -701,6 +701,37 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(base, 4)).toBe(0xdead_beef);
   });
 
+  it("supports overriding the MMIO BAR allocator base (e.g. to reserve a VRAM aperture)", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+
+    // Reserve 16MiB at the front of the PCI MMIO window.
+    const overrideBase = BigInt(PCI_MMIO_BASE + 0x0100_0000);
+    const pciBus = new PciBus(portBus, mmioBus, { mmioBase: overrideBase });
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "override_mmio_base_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x100 }, null, null, null, null, null],
+      mmioRead: () => 0x1234_5678,
+      mmioWrite: () => {},
+    };
+
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    expect(bar0 >>> 0).toBe(Number(overrideBase) >>> 0);
+
+    const base = BigInt(bar0) & 0xffff_fff0n;
+    expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
+    cfg.writeU16(addr.device, addr.function, 0x04, 0x0002); // Memory Space Enable
+    expect(mmioBus.read(base, 4)).toBe(0x1234_5678);
+  });
+
   it("prevents initPciConfig() from changing the header type (BAR writes must still remap)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();

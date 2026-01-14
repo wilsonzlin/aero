@@ -40,16 +40,28 @@ export interface TickableDevice {
   tick(nowMs: number): void;
 }
 
+export interface DeviceManagerOptions {
+  /**
+   * Base address for auto-assigned PCI MMIO BARs.
+   *
+   * The browser runtime reserves sub-ranges inside the `[PCI_MMIO_BASE, 4GiB)` window for special
+   * purposes (e.g. a VRAM aperture). Callers can override the default allocator base to keep
+   * device BARs from overlapping those reserved ranges.
+   */
+  pciMmioBase?: bigint;
+}
+
 export class DeviceManager {
   readonly portBus = new PortIoBus();
   readonly mmioBus = new MmioBus();
-  readonly pciBus = new PciBus(this.portBus, this.mmioBus);
+  readonly pciBus: PciBus;
 
   readonly #irqSink: IrqSink;
   readonly #tickables: TickableDevice[] = [];
 
-  constructor(irqSink: IrqSink) {
+  constructor(irqSink: IrqSink, opts: DeviceManagerOptions = {}) {
     this.#irqSink = irqSink;
+    this.pciBus = new PciBus(this.portBus, this.mmioBus, { mmioBase: opts.pciMmioBase });
     this.pciBus.registerToPortBus();
     this.pciBus.registerEcamToMmioBus();
   }
