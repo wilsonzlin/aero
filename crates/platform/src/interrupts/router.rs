@@ -1546,6 +1546,38 @@ mod tests {
         assert_eq!(ints.get_pending_for_apic(1), Some(0x60));
     }
 
+    #[test]
+    fn init_ipi_before_apic_mode_then_switch_to_apic_reenables_target_lapic() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        // Default mode is legacy PIC; APIC delivery is disabled until the guest/programmer switches
+        // into APIC mode (e.g. via IMCR).
+        assert_eq!(ints.mode(), PlatformInterruptMode::LegacyPic);
+
+        // Program IOAPIC redirection while still in legacy PIC mode: this is a common OS/firmware
+        // bring-up sequence.
+        program_ioapic_entry(&mut ints, 1, 0x60, 1 << 24);
+
+        // Deliver INIT in legacy PIC mode. This resets the destination LAPIC and clears SVR[8]
+        // (software enable) back to the power-on state.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
+        ints.lapic_mmio_write_for_apic(0, 0x300, &(((5u32 << 8) | (1 << 14)).to_le_bytes()));
+        assert!(ints.take_pending_init(1));
+
+        // Switching to APIC mode should re-enable the destination LAPIC so IOAPIC delivery can
+        // begin without requiring a guest SVR write immediately after INIT.
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        let mut buf = [0u8; 4];
+        ints.lapics[1].mmio_read(0xF0, &mut buf);
+        assert_eq!(u32::from_le_bytes(buf), 0x1FF);
+
+        // Verify IOAPIC routing reaches LAPIC1 now that APIC mode is enabled.
+        ints.raise_irq(InterruptInput::Gsi(1));
+        ints.lower_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.get_pending_for_apic(0), None);
+        assert_eq!(ints.get_pending_for_apic(1), Some(0x60));
+    }
+
     fn lapic_read_u32(lapic: &LocalApic, offset: u64) -> u32 {
         let mut buf = [0u8; 4];
         lapic.mmio_read(offset, &mut buf);
