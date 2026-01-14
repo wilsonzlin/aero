@@ -278,6 +278,15 @@ typedef struct _KSPIN_LOCK {
     LONG locked;
 } KSPIN_LOCK, *PKSPIN_LOCK;
 
+/*
+ * KeGetCurrentIrql / WdkTestSetCurrentIrql are implemented in wdk_stubs.c.
+ *
+ * We forward-declare them here so the spinlock helpers below can model the
+ * IRQL raise/lower behaviour of KeAcquireSpinLock / KeReleaseSpinLock.
+ */
+KIRQL KeGetCurrentIrql(VOID);
+VOID WdkTestSetCurrentIrql(_In_ KIRQL Irql);
+
 static __forceinline VOID KeMemoryBarrier(VOID)
 {
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -293,8 +302,19 @@ static __forceinline VOID KeInitializeSpinLock(_Out_ PKSPIN_LOCK SpinLock)
 
 static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ KIRQL* OldIrql)
 {
+    KIRQL cur;
+
+    cur = KeGetCurrentIrql();
     if (OldIrql != NULL) {
-        *OldIrql = PASSIVE_LEVEL;
+        *OldIrql = cur;
+    }
+    if (cur < DISPATCH_LEVEL) {
+        /*
+         * Model KeAcquireSpinLock raising IRQL to DISPATCH_LEVEL. This helps host
+         * tests catch IRQL-dependent behaviour (e.g. improper sleeping while
+         * holding a spinlock).
+         */
+        WdkTestSetCurrentIrql(DISPATCH_LEVEL);
     }
     if (SpinLock == NULL) {
         return;
@@ -307,11 +327,11 @@ static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ 
 
 static __forceinline VOID KeReleaseSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _In_ KIRQL OldIrql)
 {
-    (void)OldIrql;
     if (SpinLock == NULL) {
         return;
     }
     __atomic_store_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
+    WdkTestSetCurrentIrql(OldIrql);
 }
 
 VOID WdkTestOnKeStallExecutionProcessor(_In_ ULONG Microseconds);
