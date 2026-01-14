@@ -775,6 +775,13 @@ impl VirtioSndPciBridge {
             .load_state(&state.virtio_pci)
             .map_err(|e| js_error(format!("Invalid virtio-pci snapshot: {e}")))?;
 
+        // Mirror the restored PCI command register into the wrapper field so DMA gating stays
+        // consistent immediately after restore (even when the surrounding PCI bus is implemented
+        // outside of this wrapper).
+        let mut cmd_bytes = [0u8; 2];
+        self.dev.config_read(0x04, &mut cmd_bytes);
+        self.pci_command = u16::from_le_bytes(cmd_bytes);
+
         // Restore virtio-snd internal state and clear any cached eventq buffers/events (they are
         // runtime-only and are not serialized).
         self.snd_mut().restore_state(&state.snd);
