@@ -535,6 +535,9 @@ session per JWT `sid` at a time**. A concurrent attempt will fail with
 `{type:"error"}` message). Clients should close the old session (PeerConnection
 or `/udp` WebSocket) and retry once it is torn down.
 
+This check is keyed by the JWT `sid` claim (not the raw JWT string), so minting a
+new JWT with the same `sid` does not allow a second concurrent session.
+
 Violations close the WebSocket connection with an error.
 
 #### Env vars
