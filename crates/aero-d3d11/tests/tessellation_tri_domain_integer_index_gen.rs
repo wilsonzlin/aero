@@ -5,7 +5,26 @@ use aero_d3d11::runtime::tessellation::tri_domain_integer::{
     tri_domain_integer_vertex_count, TriDomainIntegerIndexGen, TriDomainPatchMeta,
     TriIndexGenParams, TriangleWinding,
 };
+use aero_d3d11::runtime::tessellator;
 use anyhow::{anyhow, Context, Result};
+
+fn build_expected_indices(patch: &TriDomainPatchMeta, winding: TriangleWinding) -> Vec<u32> {
+    let tri_count = tri_domain_integer_triangle_count(patch.tess_level);
+    let mut out = Vec::with_capacity(tri_count as usize * 3);
+    for tri_id in 0..tri_count {
+        let tri = tessellator::tri_index_to_vertex_indices(patch.tess_level, tri_id);
+        let v0 = patch.vertex_base + tri[0];
+        let mut v1 = patch.vertex_base + tri[1];
+        let mut v2 = patch.vertex_base + tri[2];
+        if winding == TriangleWinding::Cw {
+            core::mem::swap(&mut v1, &mut v2);
+        }
+        out.push(v0);
+        out.push(v1);
+        out.push(v2);
+    }
+    out
+}
 
 async fn run_index_gen(
     device: &wgpu::Device,
@@ -208,6 +227,8 @@ fn tessellation_tri_domain_integer_index_gen_level2_produces_in_range_indices() 
             index_count,
         };
         let indices = run_index_gen(&device, &queue, &[patch], TriangleWinding::Ccw).await?;
+        let expected = build_expected_indices(&patch, TriangleWinding::Ccw);
+        assert_eq!(indices, expected, "CCW index buffer mismatch");
 
         assert_eq!(
             indices.len() as u32,
@@ -342,6 +363,38 @@ fn tessellation_tri_domain_integer_index_gen_multi_patch_chunking_and_winding() 
                 );
             }
         }
+
+        // Compare against CPU reference indexing to ensure connectivity matches `runtime::tessellator`.
+        let expected0_ccw = build_expected_indices(&patches[0], TriangleWinding::Ccw);
+        let expected1_ccw = build_expected_indices(&patches[1], TriangleWinding::Ccw);
+        assert_eq!(
+            ccw
+                .get(0..i0 as usize)
+                .ok_or_else(|| anyhow!("patch0 slice out of range"))?,
+            expected0_ccw.as_slice(),
+            "patch0 CCW indices mismatch"
+        );
+        assert_eq!(
+            ccw.get(i0 as usize..(i0 + i1) as usize)
+                .ok_or_else(|| anyhow!("patch1 slice out of range"))?,
+            expected1_ccw.as_slice(),
+            "patch1 CCW indices mismatch"
+        );
+
+        let expected0_cw = build_expected_indices(&patches[0], TriangleWinding::Cw);
+        let expected1_cw = build_expected_indices(&patches[1], TriangleWinding::Cw);
+        assert_eq!(
+            cw.get(0..i0 as usize)
+                .ok_or_else(|| anyhow!("patch0 slice out of range"))?,
+            expected0_cw.as_slice(),
+            "patch0 CW indices mismatch"
+        );
+        assert_eq!(
+            cw.get(i0 as usize..(i0 + i1) as usize)
+                .ok_or_else(|| anyhow!("patch1 slice out of range"))?,
+            expected1_cw.as_slice(),
+            "patch1 CW indices mismatch"
+        );
 
         // Smoke-check that both patches contributed: indices in the second patch slice must be
         // offset by `vertex_base`.
