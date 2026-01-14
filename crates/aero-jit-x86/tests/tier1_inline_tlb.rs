@@ -857,6 +857,118 @@ fn tier1_inline_tlb_collision_forces_retranslate() {
 }
 
 #[test]
+fn tier1_inline_tlb_tlb_salt_mismatch_forces_retranslate() {
+    // The runtime can invalidate all cached entries by changing the TLB salt (rather than
+    // zeroing tags). Ensure Tier-1 uses the salt from `JitContext` when checking tags.
+    let addr = 0x1000u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W32, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    // Backing RAM contains the value we expect to load.
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Match the real runtime layout: reserve the Tier-2 ctx region between the Tier-1 `JitContext`
+    // and the guest RAM backing store.
+    let ram_base = (JIT_CTX_PTR as u64)
+        + (JitContext::TOTAL_BYTE_SIZE as u64)
+        + u64::from(jit_ctx::TIER2_CTX_SIZE);
+    let total_len = ram_base as usize + ram.len();
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let new_salt = TLB_SALT ^ 0x1111_1111_1111_1111;
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: new_salt,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    // Pre-fill a matching RAM translation, but compute the tag using the *old* salt. The tag check
+    // should fail and trigger a call to `mmu_translate`.
+    let vpn = addr >> PAGE_SHIFT;
+    let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+    let entry_addr = (JIT_CTX_PTR as usize)
+        + (JitContext::TLB_OFFSET as usize)
+        + idx * (JIT_TLB_ENTRY_SIZE as usize);
+    let stale_tag = (vpn ^ TLB_SALT) | 1;
+    let data = (addr & PAGE_BASE_MASK)
+        | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    mem[entry_addr..entry_addr + 8].copy_from_slice(&stale_tag.to_le_bytes());
+    mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&data.to_le_bytes());
+
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0x2000);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let cpu_base = CPU_PTR as usize;
+    let snap = CpuSnapshot::from_wasm_bytes(
+        &got_mem[cpu_base..cpu_base + abi::CPU_STATE_SIZE as usize],
+    );
+    let mut got_cpu = CpuState {
+        gpr: snap.gpr,
+        rip: snap.rip,
+        ..Default::default()
+    };
+    got_cpu.set_rflags(snap.rflags);
+    let next_rip = if ret == JIT_EXIT_SENTINEL_I64 {
+        got_cpu.rip
+    } else {
+        ret as u64
+    };
+    let got_ram = got_mem[ram_base as usize..ram_base as usize + ram.len()].to_vec();
+
+    let host_state = *store.data();
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344);
+    assert_eq!(got_ram, ram);
+
+    // The stale tag should force a re-translation (and update the entry with the new salt).
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_permission_miss_read_calls_translate() {
     let addr = 0x1000u64;
 
