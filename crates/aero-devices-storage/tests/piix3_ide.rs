@@ -784,6 +784,137 @@ fn ata_software_reset_clears_pending_dma_request_on_secondary_channel() {
 }
 
 #[test]
+fn ata_srst_on_primary_channel_does_not_clear_secondary_pending_dma_request() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(0x11);
+    }
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_secondary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer to prove no DMA occurs until we start the secondary BMIDE engine.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // Queue a secondary DMA request by issuing READ DMA, but do not start BMIDE yet.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(SECONDARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(SECONDARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Assert SRST on the *primary* channel. This must not clear the secondary channel's pending
+    // DMA request.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x04);
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+
+    // Start secondary BMIDE and tick; the original request should still complete.
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st_secondary = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st_secondary & 0x07, 0x04);
+    assert!(ide.borrow().controller.secondary_irq_pending());
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, sector0);
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+}
+
+#[test]
+fn ata_srst_on_secondary_channel_does_not_clear_primary_pending_dma_request() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(5).wrapping_add(0x27);
+    }
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // Queue a primary DMA request by issuing READ DMA, but do not start BMIDE yet.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Assert SRST on the *secondary* channel. This must not clear the primary channel's pending
+    // DMA request.
+    ioports.write(SECONDARY_PORTS.ctrl_base, 1, 0x04);
+    ioports.write(SECONDARY_PORTS.ctrl_base, 1, 0x00);
+
+    // Start primary BMIDE and tick; the original request should still complete.
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st_primary = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st_primary & 0x07, 0x04);
+    assert!(ide.borrow().controller.primary_irq_pending());
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, sector0);
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn ata_pio_write_sector_via_byte_data_port_writes_roundtrip() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
