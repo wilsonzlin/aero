@@ -143,6 +143,9 @@ jobs:
       - name: Check safe-run RUSTFLAGS sanitization
         shell: bash
         run: bash scripts/tests/safe-run-rustflags-sanitization.sh
+      - name: Check safe-run Playwright timeout bump
+        shell: bash
+        run: bash scripts/tests/safe-run-playwright-timeout.sh
 
       - name: Check AeroGPU WDK guard macros
         run: python3 scripts/ci/check-aerogpu-wdk-guards.py
