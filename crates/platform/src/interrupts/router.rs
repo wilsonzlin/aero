@@ -633,10 +633,6 @@ impl PlatformInterrupts {
         self.lapics.get(cpu_index).map(|lapic| lapic.as_ref())
     }
 
-    pub(crate) fn lapic_by_apic_id(&self, apic_id: u8) -> Option<&LocalApic> {
-        self.lapic_for_apic_id(apic_id)
-    }
-
     pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
         self.lapics.iter().map(|lapic| lapic.as_ref())
     }
