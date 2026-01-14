@@ -2129,7 +2129,7 @@ fn emit_stmt(
             // lowering the prefix `mov` to a predicated `select` assignment.
             if then_lines.is_empty() && then_block.stmts.len() >= 2 {
                 if let (Some(Stmt::Op(mov)), Some(Stmt::Op(op))) =
-                    (then_block.stmts.get(0), then_block.stmts.get(1))
+                    (then_block.stmts.first(), then_block.stmts.get(1))
                 {
                     let mov_cond = cond_with_pred(mov, &cond_e)?;
                     if let Some(mov_line) =
@@ -2155,7 +2155,7 @@ fn emit_stmt(
                 if let Some(else_b) = else_block.as_ref() {
                     if else_b.stmts.len() >= 2 {
                         if let (Some(Stmt::Op(mov)), Some(Stmt::Op(op))) =
-                            (else_b.stmts.get(0), else_b.stmts.get(1))
+                            (else_b.stmts.first(), else_b.stmts.get(1))
                         {
                             let mov_cond = cond_with_pred(mov, &not_cond_e)?;
                             if let Some(mov_line) =
