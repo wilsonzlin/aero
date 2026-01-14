@@ -14,8 +14,9 @@ This script extracts all accepted `--...` flags from the tool source and fails
 CI if the README references any `--...` flag that isn't actually parsed today.
 
 Additionally, it checks dbgctl invocations in the Win7 AeroGPU validation
-playbook (and other docs that mention `aerogpu_dbgctl`) so bring-up docs can't
-accidentally reference non-existent flags.
+playbook (and other docs that mention `aerogpu_dbgctl`) plus a small allowlist
+of Guest Tools scripts (notably `guest-tools/verify.ps1`) so bring-up docs and
+shipped scripts can't accidentally reference non-existent flags.
 
 Rationale: several docs/playbooks historically referenced future/aspirational
 debug knobs (perf capture, hang injection, etc.). This guardrail ensures the
@@ -54,7 +55,9 @@ MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 # otherwise extract a truncated prefix).
 MD_FLAG_WILDCARD_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*\*")
 
-# We only scan markdown files in these dirs for dbgctl invocations.
+# We primarily scan markdown docs in these dirs for dbgctl invocations. Additionally, we include a
+# small allowlist of Guest Tools scripts that invoke dbgctl directly (so the shipped installer
+# tooling can't drift ahead of the implemented dbgctl flag surface area).
 SCAN_MD_DIRS = [
     ROOT / "docs",
     # Project-wide playbooks live under instructions/ and may embed dbgctl invocations.
@@ -65,6 +68,13 @@ SCAN_MD_DIRS = [
     ROOT / "guest-tools",
     # CI docs sometimes include dbgctl usage snippets / paths.
     ROOT / "ci",
+]
+
+# Guest-side scripts (shipped in Guest Tools) that embed dbgctl CLI flags in non-markdown files.
+# These scripts are used directly by end users, so keep their dbgctl invocations accurate.
+SCAN_DBGCTL_SCRIPT_FILES = [
+    ROOT / "guest-tools" / "verify.ps1",
+    ROOT / "guest-tools" / "verify.cmd",
 ]
 
 
@@ -173,6 +183,43 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
         if "aerogpu_dbgctl" not in line and not dbgctl_context_re.search(line):
             continue
         for flag in MD_FLAG_RE.findall(line):
+            out.append((line_no, flag))
+    return out
+
+
+def iter_dbgctl_flag_refs_full_file(path: pathlib.Path) -> list[tuple[int, str]]:
+    """
+    Find referenced dbgctl `--...` flags in the entire file (line-by-line).
+
+    This is intentionally used only for a small allowlist of scripts that are expected to contain
+    dbgctl-specific flags, to avoid false positives from unrelated tools in general docs.
+    """
+    text = read_text(path)
+    if "aerogpu_dbgctl" not in text:
+        return []
+
+    out: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if "--dbgctl" in line:
+            continue
+        for flag in MD_FLAG_RE.findall(line):
+            out.append((line_no, flag))
+    return out
+
+
+def iter_dbgctl_wildcard_flag_refs_full_file(path: pathlib.Path) -> list[tuple[int, str]]:
+    """
+    Find wildcard-style dbgctl flag references (e.g. `--dump-scanout-*`) in the entire file.
+    """
+    text = read_text(path)
+    if "aerogpu_dbgctl" not in text:
+        return []
+
+    out: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if "--dbgctl" in line:
+            continue
+        for flag in MD_FLAG_WILDCARD_RE.findall(line):
             out.append((line_no, flag))
     return out
 
@@ -358,8 +405,25 @@ def main() -> int:
                     if f == unknown_flag:
                         doc_errors.append(f"{rel}:{line_no}: {unknown_flag}")
 
+    for path in SCAN_DBGCTL_SCRIPT_FILES:
+        if not path.exists():
+            continue
+        for line_no, flag in iter_dbgctl_wildcard_flag_refs_full_file(path):
+            wildcard_errors.append(f"{path.relative_to(ROOT)}:{line_no}: {flag}")
+        refs = iter_dbgctl_flag_refs_full_file(path)
+        if not refs:
+            continue
+        unknown_flags = sorted({f for _, f in refs} - allowed_flags)
+        if not unknown_flags:
+            continue
+        rel = path.relative_to(ROOT)
+        for unknown_flag in unknown_flags:
+            for line_no, f in refs:
+                if f == unknown_flag:
+                    doc_errors.append(f"{rel}:{line_no}: {unknown_flag}")
+
     if doc_errors:
-        print("ERROR: docs reference unknown aerogpu_dbgctl flags:", file=sys.stderr)
+        print("ERROR: docs/scripts reference unknown aerogpu_dbgctl flags:", file=sys.stderr)
         for e in sorted(doc_errors):
             print(f"  - {e}", file=sys.stderr)
         print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
@@ -368,12 +432,15 @@ def main() -> int:
         return 1
 
     if wildcard_errors:
-        print("ERROR: docs reference wildcard-style aerogpu_dbgctl flags; list explicit flags instead:", file=sys.stderr)
+        print(
+            "ERROR: docs/scripts reference wildcard-style aerogpu_dbgctl flags; list explicit flags instead:",
+            file=sys.stderr,
+        )
         for e in sorted(wildcard_errors):
             print(f"  - {e}", file=sys.stderr)
         return 1
 
-    print("OK: Win7 dbgctl docs flags match parsed implementation.")
+    print("OK: Win7 dbgctl docs/scripts flags match parsed implementation.")
     return 0
 
 
