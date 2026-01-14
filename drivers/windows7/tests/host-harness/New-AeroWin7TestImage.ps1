@@ -69,6 +69,15 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$ExpectBlkMsi,
 
+  # If set, require virtio-net to be operating with MSI-X (not INTx).
+  # This adds `--require-net-msix` to the scheduled task.
+  #
+  # This is the guest-side complement to the host harness requirement flag:
+  # - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioNetMsix`
+  # - Python: `invoke_aero_virtio_win7_tests.py --require-virtio-net-msix`
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireNetMsix,
+
   # If set, enable the guest selftest's end-to-end virtio-blk runtime resize test
   # (adds `--test-blk-resize` to the scheduled task).
   #
@@ -489,6 +498,11 @@ if ($ExpectBlkMsi) {
   $expectBlkMsiArg = " --expect-blk-msi"
 }
 
+$requireNetMsixArg = ""
+if ($RequireNetMsix) {
+  $requireNetMsixArg = " --require-net-msix"
+}
+
 if ($RequireSnd -and $DisableSnd) {
   throw "RequireSnd and DisableSnd cannot both be set."
 }
@@ -644,7 +658,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireNetMsixArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -707,6 +721,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
     - Default UDP port: 18081 (must match the host harness UDP echo server port).
     - If you need to override the port, regenerate this media with `-UdpPort <port>` (adds `--udp-port` to the scheduled task)
       and run the host harness with the same port.
+  - To fail the virtio-net selftest when the driver is still using INTx (expected MSI-X), generate this media with
+    `-RequireNetMsix` (adds `--require-net-msix` to the scheduled task). This is the guest-side complement to the host harness
+    flags `-RequireVirtioNetMsix` / `--require-virtio-net-msix`.
   - The virtio-input end-to-end event delivery tests (HID input reports) are disabled by default.
     - To enable keyboard/mouse injection (required when running the host harness with `-WithInputEvents` / `--with-input-events`),
       generate this media with `-TestInputEvents` (adds `--test-input-events` to the scheduled task).
