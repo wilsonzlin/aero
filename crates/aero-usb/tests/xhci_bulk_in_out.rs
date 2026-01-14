@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -85,6 +85,49 @@ impl UsbDeviceModel for BulkEndpointDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct BulkOutNakOnceDevice {
+    out_received: Rc<RefCell<Vec<Vec<u8>>>>,
+    nak_next: Rc<Cell<bool>>,
+}
+
+impl BulkOutNakOnceDevice {
+    fn new(out_received: Rc<RefCell<Vec<Vec<u8>>>>) -> Self {
+        Self {
+            out_received,
+            nak_next: Rc::new(Cell::new(true)),
+        }
+    }
+}
+
+impl UsbDeviceModel for BulkOutNakOnceDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_in_transfer(&mut self, _ep_addr: u8, _max_len: usize) -> UsbInResult {
+        UsbInResult::Stall
+    }
+
+    fn handle_out_transfer(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
+        if ep_addr != 0x01 {
+            return UsbOutResult::Stall;
+        }
+
+        if self.nak_next.get() {
+            self.nak_next.set(false);
+            return UsbOutResult::Nak;
+        }
+
+        self.out_received.borrow_mut().push(data.to_vec());
+        UsbOutResult::Ack
+    }
+}
+
 fn assert_single_success_event(events: &[TransferEvent], ep_addr: u8, trb_ptr: u64, residual: u32) {
     assert_eq!(
         events,
@@ -129,6 +172,49 @@ fn xhci_bulk_out_normal_trb_delivers_payload() {
 
     let events = xhci.take_events();
     assert_single_success_event(&events, 0x01, normal_trb_addr, 0);
+}
+
+#[test]
+fn xhci_bulk_out_nak_leaves_trb_pending_until_ack() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let normal_trb_addr = ring_base;
+    let link_trb_addr = ring_base + TRB_LEN;
+
+    let payload = [0xdeu8, 0xad, 0xbe, 0xef];
+    let buf = alloc.alloc(payload.len() as u32, 0x10) as u64;
+    mem.write(buf as u32, &payload);
+
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, payload.len() as u32, true, false, true),
+    );
+    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkOutNakOnceDevice::new(out_received.clone());
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x01, ring_base);
+
+    // First tick: device NAKs; TD remains pending and no data is delivered.
+    xhci.tick_1ms(&mut mem);
+    assert!(xhci.take_events().is_empty());
+    assert!(out_received.borrow().is_empty());
+    assert_eq!(xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr, ring_base);
+
+    // Second tick: device ACKs; TD completes and payload is delivered once.
+    xhci.tick_1ms(&mut mem);
+    assert_eq!(out_received.borrow().as_slice(), &[payload.to_vec()]);
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x01, normal_trb_addr, 0);
+    assert_eq!(
+        xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        link_trb_addr
+    );
 }
 
 #[test]
