@@ -52,7 +52,7 @@ jobs:
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_aerogpu_trace_read -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_aerogpu_trace_read.dict
 
       - name: fuzz_dxbc_parse (10s)
-        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_dxbc_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_dxbc_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_parse.dict
 
       - name: fuzz_dxbc_sm4_parse (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run --features ci-smoke fuzz_dxbc_sm4_parse -- -max_total_time=10 -dict=fuzz/fuzz_targets/fuzz_dxbc_sm4_parse.dict
