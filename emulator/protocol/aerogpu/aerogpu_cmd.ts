@@ -284,7 +284,7 @@ export type AerogpuShaderStage = (typeof AerogpuShaderStage)[keyof typeof Aerogp
 export const AerogpuShaderStageEx = {
   // 0 = no stage_ex override (legacy Compute).
   None: 0,
-  Vertex: 1,
+  // DXBC program type 1 is Vertex, but Vertex must be encoded via `shader_stage` (not stage_ex).
   Geometry: 2,
   Hull: 3,
   Domain: 4,
