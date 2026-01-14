@@ -269,6 +269,9 @@ pub enum ShaderTranslateError {
     UavSlotUsedAsBufferAndTexture {
         slot: u32,
     },
+    TextureSlotUsedAsBufferAndTexture {
+        slot: u32,
+    },
     MissingStructuredBufferStride {
         kind: &'static str,
         slot: u32,
@@ -401,6 +404,10 @@ impl fmt::Display for ShaderTranslateError {
             ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot } => write!(
                 f,
                 "uav slot {slot} is used as both a UAV buffer and a typed UAV texture; u# slots must be used consistently"
+            ),
+            ShaderTranslateError::TextureSlotUsedAsBufferAndTexture { slot } => write!(
+                f,
+                "t# slot {slot} is used as both a texture SRV and an SRV buffer; t# slots must be used consistently"
             ),
             ShaderTranslateError::MissingStructuredBufferStride { kind, slot } => write!(
                 f,
@@ -3910,6 +3917,13 @@ fn scan_resources(
     for &slot in &used_uav_texture_slots {
         if uav_buffers.contains(&slot) {
             return Err(ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot });
+        }
+    }
+    // `t#` slots are likewise a single namespace for SRVs (textures and buffers share the same
+    // binding indices in the Aero D3D11 binding model).
+    for &slot in &textures {
+        if srv_buffers.contains(&slot) {
+            return Err(ShaderTranslateError::TextureSlotUsedAsBufferAndTexture { slot });
         }
     }
 
@@ -8089,6 +8103,34 @@ mod tests {
         assert!(matches!(
             err,
             ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot: 0 }
+        ));
+    }
+
+    #[test]
+    fn srv_slot_used_as_buffer_and_texture_triggers_error() {
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::LdRaw {
+                    dst: dummy_dst(),
+                    addr: dummy_coord(),
+                    buffer: crate::sm4_ir::BufferRef { slot: 0 },
+                },
+                Sm4Inst::Sample {
+                    dst: dummy_dst(),
+                    coord: dummy_coord(),
+                    texture: crate::sm4_ir::TextureRef { slot: 0 },
+                    sampler: crate::sm4_ir::SamplerRef { slot: 0 },
+                },
+            ],
+        };
+
+        let err = scan_resources(&module, None).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::TextureSlotUsedAsBufferAndTexture { slot: 0 }
         ));
     }
 }
