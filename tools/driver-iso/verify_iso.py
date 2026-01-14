@@ -186,14 +186,21 @@ def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
     return (require_arch,)
 
 
-def _require_unique_manifest_packages(packages: list[dict]) -> None:
+def _index_manifest_packages(packages: list[object]) -> tuple[dict[tuple[str, str], dict], set[str]]:
     """
-    Ensure each (id, arch) pair appears only once in the manifest.
+    Returns (packages_by_id_arch, required_ids).
+
+    Also validates:
+    - each entry is a dict with string 'id' and 'arch'
+    - no duplicate (id, arch) pairs
     """
 
-    seen: set[tuple[str, str]] = set()
     dupes: set[tuple[str, str]] = set()
+    packages_by_id_arch: dict[tuple[str, str], dict] = {}
+    required_ids: set[str] = set()
     for i, pkg in enumerate(packages):
+        if not isinstance(pkg, dict):
+            raise SystemExit(f"manifest package entry #{i} must be an object")
         pkg_id = pkg.get("id")
         arch = pkg.get("arch")
         if not isinstance(pkg_id, str) or not pkg_id:
@@ -201,14 +208,18 @@ def _require_unique_manifest_packages(packages: list[dict]) -> None:
         if not isinstance(arch, str) or not arch:
             raise SystemExit(f"manifest package entry #{i} ({pkg_id}) is missing a valid 'arch'")
         key = (pkg_id, arch)
-        if key in seen:
+        if key in packages_by_id_arch:
             dupes.add(key)
         else:
-            seen.add(key)
+            packages_by_id_arch[key] = pkg
+            if pkg.get("required") is True:
+                required_ids.add(pkg_id)
 
     if dupes:
         formatted = "\n".join(f"- {pkg_id} ({arch})" for (pkg_id, arch) in sorted(dupes))
         raise SystemExit(f"manifest has duplicate package entries for the same (id, arch):\n{formatted}")
+
+    return packages_by_id_arch, required_ids
 
 
 def main() -> int:
@@ -234,7 +245,7 @@ def main() -> int:
     packages = manifest.get("packages", [])
     if not isinstance(packages, list):
         raise SystemExit(f"manifest field 'packages' must be a list: {args.manifest}")
-    _require_unique_manifest_packages(packages)
+    packages_by_id_arch, required_ids = _index_manifest_packages(packages)
     files = _list_iso_files(args.iso.resolve())
 
     missing: list[str] = []
@@ -244,26 +255,20 @@ def main() -> int:
         missing.append(readme_path)
     if _normalize_iso_path("/THIRD_PARTY_NOTICES.md") not in files:
         missing.append("/THIRD_PARTY_NOTICES.md")
-    required_arches = set(_arches_for_require_arch(args.require_arch))
-    required_packages = [
-        pkg for pkg in packages if pkg.get("required") is True and pkg.get("arch") in required_arches
-    ]
-    for pkg in required_packages:
-        pkg_id = pkg.get("id")
-        arch = pkg.get("arch")
-        inf = pkg.get("inf")
-        if not isinstance(pkg_id, str) or not pkg_id:
-            missing.append("<manifest missing id> <unknown>")
-            continue
-        if not isinstance(arch, str) or not arch:
-            missing.append(f"<manifest missing arch> {pkg_id}")
-            continue
-        if not isinstance(inf, str) or not inf:
-            missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
-            continue
-        want = "/" + inf.lstrip("/\\")
-        if _normalize_iso_path(want) not in files:
-            missing.append(want)
+
+    for pkg_id in sorted(required_ids):
+        for arch in _arches_for_require_arch(args.require_arch):
+            pkg = packages_by_id_arch.get((pkg_id, arch))
+            if pkg is None:
+                missing.append(f"<manifest entry missing> {pkg_id} ({arch})")
+                continue
+            inf = pkg.get("inf")
+            if not isinstance(inf, str) or not inf:
+                missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
+                continue
+            want = "/" + inf.lstrip("/\\")
+            if _normalize_iso_path(want) not in files:
+                missing.append(want)
 
     if missing:
         formatted = "\n".join(f"- {m}" for m in missing)
