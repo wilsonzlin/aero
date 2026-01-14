@@ -1210,13 +1210,9 @@ void emit_upload_resource_locked(AeroGpuDevice* dev,
     return;
   }
 
-  uint32_t wddm_slice_pitch = 0;
   uint32_t wddm_pitch = 0;
   __if_exists(D3DDDICB_LOCK::Pitch) {
     wddm_pitch = lock_args.Pitch;
-  }
-  __if_exists(D3DDDICB_LOCK::SlicePitch) {
-    wddm_slice_pitch = lock_args.SlicePitch;
   }
 
   HRESULT copy_hr = S_OK;
@@ -1285,25 +1281,11 @@ Unlock:
     return;
   }
 
-  uint64_t dirty_size = upload_size;
-  if (res->kind == ResourceKind::Texture2D && upload_offset == 0 && upload_size == res->storage.size() &&
-      res->mip_levels == 1 && res->array_size == 1) {
-    if (wddm_slice_pitch != 0) {
-      dirty_size = static_cast<uint64_t>(wddm_slice_pitch);
-    } else if (wddm_pitch != 0) {
-      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-      const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
-      if (rows != 0) {
-        if (wddm_pitch <= (std::numeric_limits<uint64_t>::max() / static_cast<uint64_t>(rows))) {
-          const uint64_t slice_pitch_u64 = static_cast<uint64_t>(wddm_pitch) * static_cast<uint64_t>(rows);
-          if (slice_pitch_u64 != 0) {
-            dirty_size = slice_pitch_u64;
-          }
-        }
-      }
-    }
-  }
-  emit_dirty_range_locked(dev, res, upload_offset, dirty_size);
+  // RESOURCE_DIRTY_RANGE is validated against the protocol-required resource size
+  // on the host (CREATE_TEXTURE2D layouts), not the raw WDDM allocation size. Do
+  // not use the runtime's SlicePitch here, which can include extra padding and
+  // trip host-side bounds checks.
+  emit_dirty_range_locked(dev, res, upload_offset, upload_size);
 }
 
 void emit_dirty_range_locked(AeroGpuDevice* dev,

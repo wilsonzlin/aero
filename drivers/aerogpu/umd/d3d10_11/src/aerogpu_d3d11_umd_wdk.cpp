@@ -942,13 +942,9 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
 
   HRESULT copy_hr = S_OK;
   uint32_t lock_pitch = 0;
-  uint32_t lock_slice_pitch = 0;
   if (res->kind == ResourceKind::Texture2D) {
     __if_exists(D3DDDICB_LOCK::Pitch) {
       lock_pitch = lock_args.Pitch;
-    }
-    __if_exists(D3DDDICB_LOCK::SlicePitch) {
-      lock_slice_pitch = lock_args.SlicePitch;
     }
   }
   if (res->kind == ResourceKind::Texture2D &&
@@ -1024,31 +1020,14 @@ Unlock:
     SetError(dev, E_OUTOFMEMORY);
     return;
   }
-  uint64_t dirty_size = upload_size;
-  if (res->kind == ResourceKind::Texture2D &&
-      upload_offset == 0 &&
-      upload_size == res->storage.size() &&
-      res->mip_levels == 1 &&
-      res->array_size == 1) {
-    if (lock_slice_pitch != 0) {
-      dirty_size = static_cast<uint64_t>(lock_slice_pitch);
-    } else if (lock_pitch != 0) {
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-      const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
-      if (rows != 0) {
-        if (lock_pitch <= (std::numeric_limits<uint64_t>::max() / static_cast<uint64_t>(rows))) {
-          const uint64_t slice_pitch_u64 = static_cast<uint64_t>(lock_pitch) * static_cast<uint64_t>(rows);
-          if (slice_pitch_u64 != 0) {
-            dirty_size = slice_pitch_u64;
-          }
-        }
-      }
-    }
-  }
+  // Note: the host validates RESOURCE_DIRTY_RANGE against the protocol-visible
+  // required bytes (CREATE_TEXTURE2D layouts). Do not use the runtime's
+  // SlicePitch here, which can include extra padding and exceed the protocol
+  // size.
   dirty->resource_handle = res->handle;
   dirty->reserved0 = 0;
   dirty->offset_bytes = upload_offset;
-  dirty->size_bytes = dirty_size;
+  dirty->size_bytes = upload_size;
 }
 
 static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
@@ -8871,12 +8850,8 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
         }
 
         uint32_t lock_pitch = 0;
-        uint32_t lock_slice_pitch = 0;
         __if_exists(D3DDDICB_LOCK::Pitch) {
           lock_pitch = lock_args.Pitch;
-        }
-        __if_exists(D3DDDICB_LOCK::SlicePitch) {
-          lock_slice_pitch = lock_args.SlicePitch;
         }
 
         dst_wddm_pitch = dst_sub_layout.row_pitch_bytes;
@@ -8901,8 +8876,6 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
             return;
           }
           dst_wddm_pitch = lock_pitch;
-        } else {
-          lock_slice_pitch = 0;
         }
         if (dst_sub_layout.offset_bytes > static_cast<uint64_t>(SIZE_MAX)) {
           D3DDDICB_UNLOCK unlock_args = {};
@@ -8955,14 +8928,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           return;
         }
 
-        uint64_t dirty_size = dst_sub_layout.size_bytes;
-        if (use_lock_pitch && lock_slice_pitch != 0) {
-          dirty_size = lock_slice_pitch;
-        } else if (use_lock_pitch && dst_wddm_pitch != 0 && dst_rows_total != 0 &&
-                   dst_wddm_pitch <= (std::numeric_limits<uint64_t>::max() / dst_rows_total)) {
-          dirty_size = static_cast<uint64_t>(dst_wddm_pitch) * static_cast<uint64_t>(dst_rows_total);
-        }
-        EmitDirtyRangeLocked(dev, dst, dst_sub_layout.offset_bytes, dirty_size);
+        EmitDirtyRangeLocked(dev, dst, dst_sub_layout.offset_bytes, dst_sub_layout.size_bytes);
       }
     }
 
@@ -10182,13 +10148,9 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    uint32_t lock_slice_pitch = 0;
     uint32_t lock_pitch = 0;
     __if_exists(D3DDDICB_LOCK::Pitch) {
       lock_pitch = lock_args.Pitch;
-    }
-    __if_exists(D3DDDICB_LOCK::SlicePitch) {
-      lock_slice_pitch = lock_args.SlicePitch;
     }
 
     const bool use_lock_pitch = (dst_sub_layout.mip_level == 0);
@@ -10212,8 +10174,6 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
         return;
       }
       wddm_pitch = lock_pitch;
-    } else {
-      lock_slice_pitch = 0;
     }
     for (uint32_t y = 0; y < copy_height_blocks; y++) {
       const size_t dst_off =
@@ -10239,14 +10199,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    uint64_t dirty_size = dst_sub_layout.size_bytes;
-    if (use_lock_pitch && lock_slice_pitch != 0) {
-      dirty_size = lock_slice_pitch;
-    } else if (wddm_pitch != 0 && dst_sub_layout.rows_in_layout != 0 &&
-               wddm_pitch <= (std::numeric_limits<uint64_t>::max() / dst_sub_layout.rows_in_layout)) {
-      dirty_size = static_cast<uint64_t>(wddm_pitch) * static_cast<uint64_t>(dst_sub_layout.rows_in_layout);
-    }
-    EmitDirtyRangeLocked(dev, res, dst_sub_layout.offset_bytes, dirty_size);
+    EmitDirtyRangeLocked(dev, res, dst_sub_layout.offset_bytes, dst_sub_layout.size_bytes);
     return;
   }
 
