@@ -219,6 +219,7 @@ Ops/features referenced by the scratchpad tasks:
 - `5fb505938` — `docs(graphics): shorten SM3 shader translation status table`
 - `e8523a8f9` — `test(sm3): assert default sampler texture types in bind layout`
 - `b0ccdf25e` — `docs(graphics): document default Texture2D sampler type`
+- `cb9001d34` — `docs(graphics): note SM3 software sampler is 2D-only`
 
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl.rs`
