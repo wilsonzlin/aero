@@ -4953,15 +4953,21 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
 
   uint32_t mip_slice = 0;
   bool have_mip_slice = false;
-  // D3D10.0+ WDK typically stores MipSlice in Tex2D union member.
-  __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
-    mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
+  // Field names/union layouts vary across WDK vintages.
+  __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
+    mip_slice = static_cast<uint32_t>(pDesc->MipSlice);
     have_mip_slice = true;
   }
-  __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
-    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
-      mip_slice = static_cast<uint32_t>(pDesc->MipSlice);
+  __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+      mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
       have_mip_slice = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+      __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2D) {
+        mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+        have_mip_slice = true;
+      }
     }
   }
 
@@ -5082,14 +5088,20 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
 
   uint32_t mip_slice = 0;
   bool have_mip_slice = false;
-  __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
-    mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
+  __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::MipSlice) {
+    mip_slice = static_cast<uint32_t>(pDesc->MipSlice);
     have_mip_slice = true;
   }
-  __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
-    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::MipSlice) {
-      mip_slice = static_cast<uint32_t>(pDesc->MipSlice);
+  __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::MipSlice) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+      mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
       have_mip_slice = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+      __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2D) {
+        mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+        have_mip_slice = true;
+      }
     }
   }
   if (have_mip_slice) {
@@ -5215,6 +5227,13 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
       most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
       mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
       have_mip_range = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+      __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
+        most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
+        mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
+        have_mip_range = true;
+      }
     }
   }
 
