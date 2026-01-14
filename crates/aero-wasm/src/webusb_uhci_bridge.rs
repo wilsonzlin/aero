@@ -19,7 +19,7 @@ const WEBUSB_UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(
 const REG_USBCMD: u16 = 0x00;
 
 const ROOT_PORT_EXTERNAL_HUB: usize = 0;
-const ROOT_PORT_WEBUSB: usize = 1;
+const ROOT_PORT_WEBUSB: usize = crate::webusb_ports::WEBUSB_ROOT_PORT as usize;
 // Must match `web/src/usb/uhci_external_hub.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
 const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 
