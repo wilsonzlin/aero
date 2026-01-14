@@ -2783,6 +2783,8 @@ impl XhciController {
         self.command_ring = None;
         self.cmd_kick = false;
         self.mfindex = 0;
+        self.time_ms = 0;
+        self.last_tick_dma_dword = 0;
         self.pending_dma_on_run = false;
 
         for slot in self.slots.iter_mut() {

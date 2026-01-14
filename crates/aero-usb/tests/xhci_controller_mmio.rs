@@ -201,6 +201,40 @@ fn xhci_controller_config_and_dnctrl_roundtrip_and_reset() {
 }
 
 #[test]
+fn xhci_controller_hcrst_clears_tick_counters() {
+    // Snapshot tags for controller-local time and tick-driven DMA probe state.
+    const TAG_TIME_MS: u16 = 27;
+    const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    mem.data[0x1000..0x1004].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+    // Set RCS=1 so the controller must mask off CRCR flags when reading from the ring pointer.
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    ctrl.tick_1ms_with_dma(&mut mem);
+
+    let before = ctrl.save_state();
+    let r = SnapshotReader::parse(&before, *b"XHCI").expect("parse snapshot");
+    assert_eq!(r.u64(TAG_TIME_MS).unwrap().unwrap_or(0), 1);
+    assert_eq!(
+        r.u32(TAG_LAST_TICK_DMA_DWORD).unwrap().unwrap_or(0),
+        0xdead_beef
+    );
+
+    // Host controller reset should clear controller-local tick bookkeeping.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+
+    let after = ctrl.save_state();
+    let r2 = SnapshotReader::parse(&after, *b"XHCI").expect("parse snapshot after reset");
+    assert_eq!(r2.u64(TAG_TIME_MS).unwrap().unwrap_or(0), 0);
+    assert_eq!(r2.u32(TAG_LAST_TICK_DMA_DWORD).unwrap().unwrap_or(0), 0);
+}
+
+#[test]
 fn xhci_controller_tick_dma_dword_is_snapshotted() {
     // Snapshot tags for controller-local time and last tick DMA dword.
     const TAG_TIME_MS: u16 = 27;
