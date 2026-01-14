@@ -42,8 +42,9 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 - Supported source `dev->fvf` values:
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZRHW | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZ | D3DFVF_TEX1`
-- It computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes screen-space `XYZRHW` into the
-  destination layout described by `hVertexDecl`.
+- It writes screen-space `XYZRHW` into the destination layout described by `hVertexDecl`:
+  - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes
+    `XYZRHW` (screen space).
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
   - When the destination declaration includes diffuse color and the source format does not, the UMD fills it with opaque
     white (matching fixed-function behavior).
@@ -56,7 +57,7 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()`
   - `AEROGPU_CMD_SET_SHADER_CONSTANTS_F`
 - Existing CPU vertex processing:
-  - `device_process_vertices_internal()` (`ProcessVertices` fixed-function subset; WVP + viewport, writes `XYZRHW`)
+  - `device_process_vertices_internal()` (`ProcessVertices` fixed-function subset: XYZ→XYZRHW transform, XYZRHW pass-through, optional diffuse fill)
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW` → clip-space for fixed-function draws)
 - Transform state cache:
   - `Device::transform_matrices[...]` (populated by `Device::SetTransform` / state blocks)
