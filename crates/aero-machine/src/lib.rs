@@ -478,7 +478,6 @@ pub enum MachineError {
     VirtioBlkRequiresPcPlatform,
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
-    AeroGpuRequiresPcPlatform,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
     AerogpuRequiresPcPlatform,
@@ -518,9 +517,6 @@ impl fmt::Display for MachineError {
             }
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
-            }
-            MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
@@ -2689,9 +2685,6 @@ impl Machine {
         }
         if cfg.enable_uhci && !cfg.enable_pc_platform {
             return Err(MachineError::UhciRequiresPcPlatform);
-        }
-        if cfg.enable_aerogpu && !cfg.enable_pc_platform {
-            return Err(MachineError::AeroGpuRequiresPcPlatform);
         }
         if cfg.enable_e1000 && !cfg.enable_pc_platform {
             return Err(MachineError::E1000RequiresPcPlatform);

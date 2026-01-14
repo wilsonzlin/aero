@@ -107,7 +107,7 @@ fn enable_aerogpu_requires_enable_pc_platform() {
 
     assert!(matches!(
         Machine::new(cfg),
-        Err(MachineError::AeroGpuRequiresPcPlatform)
+        Err(MachineError::AerogpuRequiresPcPlatform)
     ));
 }
 
