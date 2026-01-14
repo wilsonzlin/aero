@@ -19,7 +19,7 @@
 //! parallel vCPU execution environment yet. For robust guest boots today, `cpu_count = 1` is still
 //! recommended.
 //!
-//! See `docs/21-smp.md` for the current SMP bring-up plan and progress tracker.
+//! See `docs/21-smp.md` for the current SMP status and roadmap.
 #![forbid(unsafe_code)]
 
 mod aerogpu;
@@ -1179,7 +1179,8 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         if delivery_mode != 0b110 {
             return;
         }
-        // STARTUP IPI is edge-triggered; ignore the level bit and treat any write as a delivery.
+        // STARTUP IPI is edge-triggered and does not have a deassert phase. Treat the ICR "level"
+        // bit as don't-care and deliver whenever `delivery_mode` is STARTUP.
 
         let vector = (icr_low & 0xFF) as u8;
         let shorthand = (icr_low >> 18) & 0b11;
