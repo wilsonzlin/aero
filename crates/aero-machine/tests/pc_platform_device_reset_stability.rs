@@ -7,6 +7,10 @@ use aero_machine::{Machine, MachineConfig};
 fn pc_platform_shared_devices_keep_rc_identity_across_resets() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
+        // Keep this test stable if AeroGPU becomes enabled-by-default; it asserts properties of
+        // the standalone VGA wiring (stable Rc identity across resets).
+        enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -14,7 +18,7 @@ fn pc_platform_shared_devices_keep_rc_identity_across_resets() {
     let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
     let ptr = Rc::as_ptr(&pci_cfg);
 
-    let vga = m.vga().expect("pc platform enabled implies VGA");
+    let vga = m.vga().expect("VGA enabled");
     let vga_ptr = Rc::as_ptr(&vga);
 
     // Mutate a PCI config-space register via the config mechanism #1 ports and verify it changes.
@@ -45,7 +49,7 @@ fn pc_platform_shared_devices_keep_rc_identity_across_resets() {
         "pci_config_ports Rc identity changed across reset"
     );
 
-    let vga_after = m.vga().expect("pc platform enabled implies VGA");
+    let vga_after = m.vga().expect("VGA enabled");
     let vga_ptr_after = Rc::as_ptr(&vga_after);
     assert_eq!(
         vga_ptr, vga_ptr_after,
