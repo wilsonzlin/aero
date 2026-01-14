@@ -2040,7 +2040,11 @@ impl AerogpuCmdRuntime {
                 binding: GS_BINDING_INPUTS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    // `runtime::gs_translate` declares `gs_inputs` as `var<storage, read_write>` so
+                    // it can share a scratch backing buffer with other expansion outputs on some
+                    // executors/backends. Keep the binding type in sync so pipeline creation
+                    // succeeds on strict backends.
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(gs_inputs_size.max(16)),
                 },
