@@ -1533,6 +1533,62 @@ static void test_tablet_scaling_rounds_to_nearest(void) {
   expect_report(&cap, 0, expect1, sizeof(expect1));
 }
 
+static void test_tablet_scaling_with_negative_device_min(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /*
+   * Cover scaling when the device range has a negative minimum (offset). Use a
+   * non-symmetric range so "0" does not land at the midpoint.
+   *
+   * For v=0 with range [-50, 150] and out_max=32767:
+   *   scaled = ((0 - (-50)) * 32767 + (200/2)) / 200
+   *          = (50*32767 + 100) / 200
+   *          = 8192 (0x2000)
+   */
+  hid_translate_set_tablet_abs_range(&t, -50, 150, -50, 150);
+
+  /* Value inside range. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 0);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 0);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x20, 0x00, 0x20};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Exact min maps to 0. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, -50);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, -50);
+  send_syn(&t);
+
+  assert(cap.count == 2);
+  uint8_t expect2[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x00, 0x00, 0x00};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Exact max maps to max. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 150);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 150);
+  send_syn(&t);
+
+  assert(cap.count == 3);
+  uint8_t expect3[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0xFF, 0x7F, 0xFF, 0x7F};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+
+  /* Values outside range should clamp before scaling. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, -100);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 200);
+  send_syn(&t);
+
+  assert(cap.count == 4);
+  uint8_t expect4[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x00, 0xFF, 0x7F};
+  expect_report(&cap, 3, expect4, sizeof(expect4));
+}
+
 static void test_tablet_scaling_min_equals_max_maps_to_zero(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1726,6 +1782,7 @@ int main(void) {
   test_tablet_multiple_abs_updates_before_syn_is_deterministic();
   test_tablet_scaling_reports();
   test_tablet_scaling_rounds_to_nearest();
+  test_tablet_scaling_with_negative_device_min();
   test_tablet_scaling_min_equals_max_maps_to_zero();
   test_tablet_abs_no_change_does_not_emit();
   test_tablet_abs_range_swaps_min_max();
