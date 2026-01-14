@@ -256,7 +256,8 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
     disabled (the controller still updates register state, but must not touch guest RAM).
   - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
     ring work (endpoint 0 control + bulk/interrupt Normal TRBs) and drains queued events
-    (`XhciController::tick_1ms`).
+    (`XhciController::tick_1ms`). When BME is disabled, `step_frames()` still advances port/reset
+    timers so operations like PORTSC reset completion can make forward progress.
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
   - WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
@@ -422,7 +423,7 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
-  - Today, `aero_usb::xhci::XhciController` snapshots (device ID `XHCI`, version `0.7`) capture:
+  - Today, `aero_usb::xhci::XhciController` snapshots (device ID `XHCI`, version `0.8`) capture:
     - operational/runtime state (`USBCMD`, `USBSTS`, `CONFIG`, `MFINDEX`, `CRCR`, `DCBAAP`, port count,
       `DNCTRL`, controller time bookkeeping (`time_ms`, `last_tick_dma_dword`), Interrupter 0 regs:
       `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP` + internal generation counters),

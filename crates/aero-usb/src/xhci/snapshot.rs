@@ -508,8 +508,8 @@ impl IoSnapshot for XhciController {
         w.field_u32(TAG_CONFIG, self.config & regs::CONFIG_SNAPSHOT_MASK);
         w.field_u32(TAG_MFINDEX, self.mfindex & regs::runtime::MFINDEX_MASK);
         w.field_u32(TAG_DNCTRL, self.dnctrl);
-        w.field_u64(TAG_TIME_MS, self.time_ms);
         w.field_u32(TAG_LAST_TICK_DMA_DWORD, self.last_tick_dma_dword);
+        w.field_u64(TAG_TIME_MS, self.time_ms);
 
         // Interrupter 0 registers + internal generation counters.
         w.field_u32(TAG_INTR0_IMAN, self.interrupter0.iman_raw());
@@ -654,7 +654,6 @@ impl IoSnapshot for XhciController {
         self.config = (self.config & !0xff) | u32::from(max_slots_en.min(regs::MAX_SLOTS));
         self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & regs::runtime::MFINDEX_MASK;
         self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
-
         // `time_ms`/`last_tick_dma_dword` were added in snapshot v0.7. An early implementation
         // mistakenly reused tag 26 (EP0 control TD full) for `time_ms`, so accept that legacy
         // encoding by detecting field "shapes" (tag 26 is a vec-bytes blob in valid snapshots and
