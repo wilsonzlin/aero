@@ -1,5 +1,5 @@
 import { SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
-import { guestPaddrToRamOffset, guestRangeInBounds, type GuestRamLayout } from "./shared_layout";
+import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
 
 export type ScanoutDescriptor = Readonly<{
   /**
@@ -105,13 +105,6 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   }
   const rgba8 = new Uint8Array(totalBytes);
 
-  const layout: GuestRamLayout = {
-    guest_base: 0,
-    guest_size: guestRam.byteLength,
-    runtime_reserved: 0,
-    wasm_pages: 0,
-  };
-
   const basePaddr = toU64Bigint(desc.basePaddr, "basePaddr");
   const pitchBig = BigInt(pitchBytes);
 
@@ -119,13 +112,13 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
     const rowPaddrBig = basePaddr + BigInt(y) * pitchBig;
     const rowPaddr = u64BigintToSafeNumber(rowPaddrBig, "scanout row paddr");
 
-    if (!guestRangeInBounds(layout, rowPaddr, rowBytes)) {
+    if (!guestRangeInBounds(guestRam.byteLength, rowPaddr, rowBytes)) {
       throw new RangeError(
         `scanout row is out of bounds: basePaddr=0x${basePaddr.toString(16)} y=${y} rowPaddr=0x${rowPaddrBig.toString(16)} rowBytes=0x${rowBytes.toString(16)} guest_size=0x${guestRam.byteLength.toString(16)}`,
       );
     }
 
-    const rowOff = guestPaddrToRamOffset(layout, rowPaddr);
+    const rowOff = guestPaddrToRamOffset(guestRam.byteLength, rowPaddr);
     if (rowOff === null) {
       throw new RangeError(
         `scanout row base_paddr is not backed by RAM: 0x${rowPaddrBig.toString(16)} (guest_size=0x${guestRam.byteLength.toString(16)})`,
@@ -151,4 +144,3 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
 
   return { width, height, rgba8 };
 }
-
