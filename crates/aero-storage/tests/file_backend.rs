@@ -12,7 +12,7 @@ fn file_backend_open_and_read_at() {
 
     std::fs::write(&path, b"abcdef").unwrap();
 
-    let mut backend = StdFileBackend::open(&path, true).unwrap();
+    let mut backend = StdFileBackend::open_read_only(&path).unwrap();
     assert_eq!(backend.len().unwrap(), 6);
 
     let mut buf = [0u8; 2];
@@ -80,7 +80,7 @@ fn file_backend_can_open_disk_image_auto() {
     disk.flush().unwrap();
 
     // Ensure data persists after reopening.
-    let backend = StdFileBackend::open(&path, false).unwrap();
+    let backend = StdFileBackend::open_rw(&path).unwrap();
     let mut disk = DiskImage::open_auto(backend).unwrap();
     let mut buf = vec![0u8; SECTOR_SIZE];
     disk.read_sectors(0, &mut buf).unwrap();
@@ -115,7 +115,7 @@ fn file_backend_read_only_rejects_writes() {
     backend.write_at(0, &[1, 2, 3, 4]).unwrap();
     backend.flush().unwrap();
 
-    let mut backend = StdFileBackend::open(&path, true).unwrap();
+    let mut backend = StdFileBackend::open_read_only(&path).unwrap();
     backend.flush().unwrap();
     let err = backend.write_at(0, &[9]).unwrap_err();
     assert!(matches!(
