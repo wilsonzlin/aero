@@ -46,6 +46,20 @@ fn tri_triangle_count(level: u32) -> u32 {
     level * level
 }
 
+fn ceil_sqrt_u32(v: u32) -> u32 {
+    if v == 0 {
+        return 0;
+    }
+    // Tessellation factors are clamped to `MAX_TESS_FACTOR` (64), so values are tiny (<= 4096).
+    // Use a float sqrt + correction for a compact, robust ceil-sqrt implementation.
+    let f = (v as f64).sqrt();
+    let mut r = f.floor() as u32;
+    if r.saturating_mul(r) < v {
+        r += 1;
+    }
+    r
+}
+
 /// Converts `(row=i, col=j)` coordinates into a linear vertex index in the tessellator's canonical
 /// enumeration.
 ///
@@ -96,24 +110,24 @@ pub fn tri_index_to_vertex_indices(level: u32, local_triangle: u32) -> [u32; 3] 
 
     // Clamp for robustness (keeps behavior defined for invalid indices).
     let tri_count = tri_triangle_count(level);
-    let mut t = local_triangle.min(tri_count.saturating_sub(1));
+    let tri_id = local_triangle.min(tri_count.saturating_sub(1));
 
-    // Each triangle row `i` contributes:
-    //   N = level - i
-    //   row_triangles = up(N) + down(N-1) = 2N - 1
-    let mut i: u32 = 0;
-    while i < level {
-        let n = level - i;
-        let row_tris = 2 * n - 1;
-        if t < row_tris {
-            break;
-        }
-        t -= row_tris;
-        i += 1;
-    }
+    // Closed-form row decoding:
+    // - Total triangles: level^2
+    // - Row `i` (0-based) contributes `2*(level-i)-1` triangles.
+    //
+    // Row starts are square prefix sums:
+    //   row_base(i) = level^2 - (level - i)^2
+    //
+    // Solve for the row by inverting with ceil-sqrt.
+    let remaining: u32 = tri_count - tri_id; // 1..=level^2
+    let k: u32 = ceil_sqrt_u32(remaining); // 1..=level
+    let i: u32 = level - k;
+    let row_base: u32 = tri_count - k * k;
+    let t: u32 = tri_id - row_base;
 
-    let j = t / 2;
-    let is_down = (t & 1) == 1;
+    let j: u32 = t / 2;
+    let is_down: bool = (t & 1) == 1;
 
     if !is_down {
         // "Up" triangle: (i,j), (i+1,j), (i,j+1)
@@ -195,25 +209,31 @@ fn tri_vertex_domain_location(level: u32, local_vertex: u32) -> vec3<f32> {{
   return vec3<f32>(f32(i) * inv, f32(j) * inv, f32(k) * inv);
 }}
 
+fn tri_ceil_sqrt_u32(v: u32) -> u32 {{
+  if (v == 0u) {{
+    return 0u;
+  }}
+  // v is small (<= MAX_TESS_FACTOR^2) so using f32 sqrt is safe and faster than integer loops.
+  let f = sqrt(f32(v));
+  var r: u32 = u32(f);
+  if (r * r < v) {{
+    r = r + 1u;
+  }}
+  return r;
+}}
+
 fn tri_index_to_vertex_indices(level: u32, local_triangle: u32) -> vec3<u32> {{
   let l = tri_clamp_level(level);
   let tri_count = l * l;
-  let t0 = min(local_triangle, tri_count - 1u);
+  let tri_id = min(local_triangle, tri_count - 1u);
 
-  var t = t0;
-  var i: u32 = 0u;
-  loop {{
-    if (i >= l) {{
-      break;
-    }}
-    let n = l - i;
-    let row_tris = 2u * n - 1u;
-    if (t < row_tris) {{
-      break;
-    }}
-    t = t - row_tris;
-    i = i + 1u;
-  }}
+  // Closed-form row decoding:
+  // row_base(i) = level^2 - (level - i)^2
+  let remaining: u32 = tri_count - tri_id;
+  let k: u32 = tri_ceil_sqrt_u32(remaining);
+  let i: u32 = l - k;
+  let row_base: u32 = tri_count - k * k;
+  let t: u32 = tri_id - row_base;
 
   let j = t / 2u;
   let is_down = (t & 1u) == 1u;

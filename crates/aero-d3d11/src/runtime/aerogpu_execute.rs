@@ -4252,6 +4252,8 @@ mod tests {
             let vs_wgsl = r#"
                 @vertex
                 fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+                    // Clockwise full-screen-ish triangle (matches D3D11 default FrontFace::Cw +
+                    // back-face culling).
                     var pos = array<vec2<f32>, 3>(
                         vec2<f32>(-1.0, -1.0),
                         // Emit a clockwise fullscreen triangle so it is front-facing under the
