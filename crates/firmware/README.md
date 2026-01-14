@@ -236,6 +236,11 @@ The fixtures are:
 - `crates/firmware/acpi/dsdt.aml` — legacy PCI root bridge (ECAM/MMCONFIG disabled)
 - `crates/firmware/acpi/dsdt_pcie.aml` — PCIe root bridge + ECAM/MMCONFIG enabled (Win7-relevant)
 
+Clean-room, human-readable references live alongside as ASL sources:
+
+- `crates/firmware/acpi/dsdt.asl`
+- `crates/firmware/acpi/dsdt_pcie.asl`
+
 The canonical source of truth is the `aero-acpi` Rust generator. To regenerate the checked-in
 fixtures after AML changes:
 
@@ -257,6 +262,7 @@ cargo run -p firmware --bin gen_dsdt --locked -- --check
 
 The DSDT fixtures are validated in CI in two ways:
 
+- `scripts/verify_dsdt.sh` compiles the clean-room ASL sources and ensures they match the shipped AML fixtures.
 - `scripts/validate-acpi.sh` decompiles and recompiles the checked-in AML tables using ACPICA `iasl`.
 - `crates/firmware/tests/acpi_tables.rs` asserts that each checked-in DSDT fixture matches the bytes
   produced by the `aero-acpi` Rust generator.

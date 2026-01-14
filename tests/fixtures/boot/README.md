@@ -26,7 +26,7 @@ CI runs `cargo xtask fixtures --check` and fails if any committed fixture output
 missing or out-of-date.
 
 Note: `cargo xtask fixtures` also regenerates other tiny, deterministic firmware
-fixtures outside this directory (e.g. `assets/bios.bin`, `crates/firmware/acpi/dsdt.aml`).
+fixtures outside this directory (e.g. `assets/bios.bin`, `crates/firmware/acpi/dsdt.aml`, `crates/firmware/acpi/dsdt_pcie.aml`).
 
 ## Fixture: `boot_vga_serial`
 
