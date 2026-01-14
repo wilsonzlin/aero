@@ -110,6 +110,44 @@ pub const FIXED_DISK_PARAM_TABLE_OFFSET: u16 = 0xE110;
 /// IVT vector 0x1D: legacy video parameter table pointer.
 pub const VIDEO_PARAM_TABLE_OFFSET: u16 = 0xE140;
 
+// ---------------------------------------------------------------------------------------------
+// Legacy VGA text-mode framebuffer helpers.
+// ---------------------------------------------------------------------------------------------
+//
+// The emulator/harness may or may not model a full VGA PCI device, but most PC firmware and boot
+// code can still surface fatal errors by writing directly into the legacy VGA text buffer.
+//
+// We keep this minimal and conservative:
+// - always target the color text window at physical 0xB8000,
+// - always render on line 0, and
+// - always use attribute 0x07 (light gray on black).
+const VGA_TEXT_BASE: u64 = 0x000B_8000;
+const VGA_TEXT_COLS: usize = 80;
+const VGA_TEXT_ATTR: u8 = 0x07;
+
+fn render_message_to_vga_text_line0(bus: &mut dyn BiosBus, msg: &str) {
+    let mut line = [0u8; VGA_TEXT_COLS * 2];
+    for pair in line.chunks_exact_mut(2) {
+        pair[0] = b' ';
+        pair[1] = VGA_TEXT_ATTR;
+    }
+
+    let mut col = 0usize;
+    for &b in msg.as_bytes() {
+        if b == b'\n' || b == b'\r' {
+            break;
+        }
+        if col >= VGA_TEXT_COLS {
+            break;
+        }
+        line[col * 2] = b;
+        // attribute byte already set to VGA_TEXT_ATTR
+        col += 1;
+    }
+
+    bus.write_physical(VGA_TEXT_BASE, &line);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiskError {
     OutOfRange,
