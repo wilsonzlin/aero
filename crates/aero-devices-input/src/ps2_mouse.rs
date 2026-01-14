@@ -136,9 +136,11 @@ impl Ps2Mouse {
         // has sign bits that can be treated as a 9th bit, but not all drivers decode it that way.)
         if self.mode == Mode::Stream && self.reporting_enabled {
             // Convert accumulated + new motion into PS/2 coordinates (+Y up).
-            let mut rem_x = self.dx + dx;
-            let mut rem_y = -(self.dy + dy);
-            let mut rem_wheel = self.wheel + wheel;
+            // Host input deltas are untrusted; use saturating math so extreme values cannot
+            // overflow (and panic in debug builds) before we clamp/split them into packets.
+            let mut rem_x = self.dx.saturating_add(dx);
+            let mut rem_y = 0i32.saturating_sub(self.dy.saturating_add(dy));
+            let mut rem_wheel = self.wheel.saturating_add(wheel);
 
             // We'll emit packets immediately; don't keep any buffered state.
             self.dx = 0;
@@ -182,9 +184,9 @@ impl Ps2Mouse {
             return;
         }
 
-        self.dx += dx;
-        self.dy += dy;
-        self.wheel += wheel;
+        self.dx = self.dx.saturating_add(dx);
+        self.dy = self.dy.saturating_add(dy);
+        self.wheel = self.wheel.saturating_add(wheel);
     }
 
     pub fn inject_button(&mut self, button: Ps2MouseButton, pressed: bool) {
@@ -340,7 +342,8 @@ impl Ps2Mouse {
     fn send_packet(&mut self) {
         // PS/2 uses +Y as "up", while browser mousemove uses +Y as "down".
         let x = self.dx;
-        let y = -self.dy;
+        // Avoid overflow when negating `i32::MIN` (host input is untrusted).
+        let y = 0i32.saturating_sub(self.dy);
 
         let mut x_overflow = false;
         let mut y_overflow = false;
@@ -645,6 +648,47 @@ mod tests {
             [0x08, 0x7F, 0x00],
             "unexpected last packet bytes"
         );
+    }
+
+    #[test]
+    fn stream_packets_do_not_overflow_on_min_dy() {
+        let mut m = Ps2Mouse::new();
+        m.receive_byte(0xF4);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        // `dy` is in browser coordinates (+Y is down). Using `i32::MIN` would overflow when we
+        // invert it for PS/2 (+Y is up) unless the implementation uses saturating math.
+        m.inject_motion(0, i32::MIN, 0);
+
+        let drained: Vec<u8> = std::iter::from_fn(|| m.pop_output()).collect();
+        assert_eq!(
+            drained.len(),
+            MAX_PACKETS_PER_INJECT * 3,
+            "expected inject_motion to cap work for extreme dy"
+        );
+        assert_eq!(drained[0..3], [0x08, 0x00, 0x7F]);
+        assert_eq!(drained[drained.len() - 3..], [0x08, 0x00, 0x7F]);
+    }
+
+    #[test]
+    fn remote_mode_saturates_extreme_motion_without_overflow() {
+        let mut m = Ps2Mouse::new();
+        // Switch to remote mode, where motion is accumulated until the guest reads it.
+        m.receive_byte(0xF0);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        // Accumulate extreme motion twice; this would overflow with normal `i32` addition in debug
+        // builds.
+        m.inject_motion(i32::MAX, i32::MIN, 0);
+        m.inject_motion(i32::MAX, i32::MIN, 0);
+
+        // Guest "read data" command should ACK and then emit a packet containing clamped deltas
+        // and overflow bits.
+        m.receive_byte(0xEB);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        let packet: Vec<u8> = std::iter::from_fn(|| m.pop_output()).take(3).collect();
+        assert_eq!(packet, vec![0xC8, 0xFF, 0xFF]);
     }
 
     #[test]
