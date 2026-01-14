@@ -309,8 +309,8 @@ pub struct MachineConfig {
     /// Machine snapshots preserve the BAR0 register file and the BAR1 VRAM backing store
     /// deterministically.
     ///
-    /// Requires [`MachineConfig::enable_pc_platform`] and is mutually exclusive with
-    /// [`MachineConfig::enable_vga`].
+    /// Requires [`MachineConfig::enable_pc_platform`] (PCI enumeration required) and is mutually
+    /// exclusive with [`MachineConfig::enable_vga`].
     pub enable_aerogpu: bool,
     /// Whether to attach a COM1 16550 serial device at `0x3F8`.
     pub enable_serial: bool,
@@ -587,7 +587,10 @@ impl fmt::Display for MachineError {
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
             ),
             MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
+                write!(
+                    f,
+                    "enable_aerogpu requires enable_pc_platform=true (PCI enumeration required)"
+                )
             }
             MachineError::AhciRequiresPcPlatform => {
                 write!(f, "enable_ahci requires enable_pc_platform=true")
