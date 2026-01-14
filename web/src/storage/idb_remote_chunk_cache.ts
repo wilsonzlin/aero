@@ -421,56 +421,66 @@ export class IdbRemoteChunkCache {
       const chunksStore = tx.objectStore("remote_chunks");
       const metaStore = tx.objectStore("remote_chunk_meta");
 
-      const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
-      await this.applyPendingAccessInTx(meta, chunksStore);
-
-      const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
-      const oldBytes = existing?.byteLength ?? existing?.data?.byteLength ?? 0;
-
-      meta.accessCounter += 1;
-      const lastAccess = meta.accessCounter;
-
-      const rec: RemoteChunkRecord = {
-        cacheKey: this.cacheKey,
-        chunkIndex,
-        data,
-        byteLength: data.byteLength,
-        lastAccess,
-      };
-      chunksStore.put(rec);
-
-      meta.bytesUsed = Math.max(0, meta.bytesUsed - oldBytes) + data.byteLength;
-      metaStore.put(meta);
-
-      let evicted: number[] = [];
-      if (this.cacheLimitBytes !== null && meta.bytesUsed > this.cacheLimitBytes) {
-        evicted = await enforceCacheLimitInTx({
-          cacheKey: this.cacheKey,
-          chunksStore,
-          metaStore,
-          meta,
-          cacheLimitBytes: this.cacheLimitBytes,
-          protectedChunkIndex: chunkIndex,
-        });
-      }
-
       try {
-        await idbTxDone(tx);
+        const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
+        await this.applyPendingAccessInTx(meta, chunksStore);
+
+        const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
+        const oldBytes = existing?.byteLength ?? existing?.data?.byteLength ?? 0;
+
+        meta.accessCounter += 1;
+        const lastAccess = meta.accessCounter;
+
+        const rec: RemoteChunkRecord = {
+          cacheKey: this.cacheKey,
+          chunkIndex,
+          data,
+          byteLength: data.byteLength,
+          lastAccess,
+        };
+        chunksStore.put(rec);
+
+        meta.bytesUsed = Math.max(0, meta.bytesUsed - oldBytes) + data.byteLength;
+        metaStore.put(meta);
+
+        let evicted: number[] = [];
+        if (this.cacheLimitBytes !== null && meta.bytesUsed > this.cacheLimitBytes) {
+          evicted = await enforceCacheLimitInTx({
+            cacheKey: this.cacheKey,
+            chunksStore,
+            metaStore,
+            meta,
+            cacheLimitBytes: this.cacheLimitBytes,
+            protectedChunkIndex: chunkIndex,
+          });
+        }
+
+        try {
+          await idbTxDone(tx);
+        } catch (err) {
+          // Ensure we surface quota errors consistently even when the transaction abort error is not
+          // the same object as the original failing request's error.
+          if (isQuotaExceededError(tx.error) && !isQuotaExceededError(err)) {
+            throw tx.error;
+          }
+          throw err;
+        }
+
+        if (this.maxCachedChunks > 0) {
+          const cached = new Uint8Array(data);
+          this.cache.set(chunkIndex, cached);
+          this.touchCacheKey(chunkIndex, cached);
+          for (const idx of evicted) this.cache.delete(idx);
+          this.evictMemoryIfNeeded();
+        }
       } catch (err) {
-        // Ensure we surface quota errors consistently even when the transaction abort error is not
-        // the same object as the original failing request's error.
+        // A QuotaExceededError can abort the transaction, causing subsequent requests in this
+        // transaction to fail with AbortError/TransactionInactiveError instead of the original
+        // quota exception. Consult `tx.error` so callers can reliably treat quota as non-fatal.
         if (isQuotaExceededError(tx.error) && !isQuotaExceededError(err)) {
           throw tx.error;
         }
         throw err;
-      }
-
-      if (this.maxCachedChunks > 0) {
-        const cached = new Uint8Array(data);
-        this.cache.set(chunkIndex, cached);
-        this.touchCacheKey(chunkIndex, cached);
-        for (const idx of evicted) this.cache.delete(idx);
-        this.evictMemoryIfNeeded();
       }
     };
 
