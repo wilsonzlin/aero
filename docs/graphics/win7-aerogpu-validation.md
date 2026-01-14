@@ -339,6 +339,7 @@ For quick guest-side sanity checks:
   * D3D9 fixed-function WVP transforms (legacy apps + DWM fixed-function bring-up): `drivers/aerogpu/tests/win7/d3d9_fixedfunc_wvp_triangle` and `drivers/aerogpu/tests/win7/d3d9_fixedfunc_textured_wvp`
   * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal; window hidden by default): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
   * D3D9Ex per-submit fence stress (validates monotonic submit fences + EVENT query completion + PresentEx throttling; on AGPU also validates ring descriptor `AEROGPU_SUBMIT_FLAG_PRESENT` + non-zero `alloc_table_gpa` for presents): `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress`
+  * Alloc table READONLY propagation (validates Win7/WDDM `WriteOperation` metadata is surfaced as `AEROGPU_ALLOC_FLAG_READONLY` so the host can reject unintended guest-memory writeback): `drivers/aerogpu/tests/win7/alloc_table_readonly_sanity`
   * D3D9Ex DWM-critical device probes (must be non-blocking; checks `CheckDeviceState`, `PresentEx` throttling, `WaitForVBlank`, `GetPresentStats`, residency, GPU thread priority, etc.): `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity`
   * Cross-process shared surface open (validates `DxgkDdiOpenAllocation` + ShareToken-backed shared-surface interop across runtimes):
     * D3D9Ex: `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` and `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc`
