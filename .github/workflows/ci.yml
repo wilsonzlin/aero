@@ -582,26 +582,7 @@ jobs:
       # is not always required for merges; `ci.yml` is.)
       - name: Check golden images are up-to-date (determinism)
         working-directory: ${{ steps.node-workspace.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          repo_root="$(git rev-parse --show-toplevel)"
-          cd "$repo_root"
-          npm run generate:goldens
-          if ! git diff --exit-code -- tests/golden; then
-            echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
-            echo "Changed files:"
-            git status --porcelain -- tests/golden
-            exit 1
-          fi
-          # `git diff` does not report untracked files; ensure the generator did not
-          # produce any new goldens that were forgotten in the commit.
-          if [[ -n "$(git status --porcelain -- tests/golden)" ]]; then
-            echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
-            echo "Changed files:"
-            git status --porcelain -- tests/golden
-            exit 1
-          fi
+        run: npm run check:goldens
 
       - name: Lint (if present)
         working-directory: ${{ steps.node-workspace.outputs.dir }}
