@@ -70,8 +70,10 @@ fn control_in(
 }
 
 // Hub-class port features (USB 2.0 spec 11.24.2.7).
+const HUB_PORT_FEATURE_SUSPEND: u16 = 2;
 const HUB_PORT_FEATURE_RESET: u16 = 4;
 const HUB_PORT_FEATURE_POWER: u16 = 8;
+const HUB_PORT_FEATURE_C_PORT_SUSPEND: u16 = 18;
 
 #[test]
 fn usb2_port_mux_ehci_remote_wakeup_enters_resume_state() {
@@ -1220,6 +1222,231 @@ fn ehci_remote_wakeup_enters_resume_state_through_external_hub() {
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
     assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
+
+    // The device should be reachable again after resume.
+    assert!(ehci.hub_mut().device_mut_for_address(2).is_some());
+}
+
+#[test]
+fn ehci_remote_wakeup_clears_external_hub_port_suspend_when_waking_upstream() {
+    const HUB_PORT_STATUS_SUSPEND: u16 = 1 << 2;
+    const HUB_PORT_CHANGE_SUSPEND: u16 = 1 << 2;
+
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
+
+    // Claim ports for EHCI (clears PORT_OWNER) and reset the root port to enable it.
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+    ehci.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..50 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    // Enumerate/configure the hub: address 0 -> address 1, SET_CONFIGURATION(1), and enable hub
+    // remote wake.
+    control_no_data(
+        &mut ehci,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Hotplug a keyboard behind hub port 1.
+    let keyboard = UsbHidKeyboardHandle::new();
+    ehci.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(keyboard.clone()))
+        .expect("attach keyboard behind hub port 1");
+
+    // Power+reset the hub port so the keyboard becomes reachable.
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23, // HostToDevice | Class | Other
+            b_request: 0x03,       // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_POWER,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23, // HostToDevice | Class | Other
+            b_request: 0x03,       // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_RESET,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    for _ in 0..50 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    // Minimal configuration + enable remote wakeup on the downstream keyboard.
+    control_no_data(
+        &mut ehci,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 2,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ehci,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    assert!(keyboard.configured(), "expected keyboard to be configured");
+
+    // Selectively suspend hub port 1, then clear suspend-change so we can observe the wake edge.
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    let st = control_in(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0xa3, // DeviceToHost | Class | Other (port)
+            b_request: 0x00,       // GET_STATUS
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
+        },
+        64,
+    );
+    assert_eq!(st.len(), 4);
+    let status = u16::from_le_bytes([st[0], st[1]]);
+    assert_ne!(
+        status & HUB_PORT_STATUS_SUSPEND,
+        0,
+        "expected hub port to be selectively suspended before remote wake"
+    );
+
+    control_no_data(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x01, // CLEAR_FEATURE
+            w_value: HUB_PORT_FEATURE_C_PORT_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+
+    // Suspend the root port into upstream suspend.
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
+
+    // Trigger remote wake via the keyboard.
+    keyboard.key_event(0x04, true); // HID usage for KeyA.
+    ehci.tick_1ms(&mut mem);
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(
+        portsc & PORTSC_FPR,
+        0,
+        "expected EHCI root port to enter resume state after remote wake"
+    );
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
+
+    // After the resume timer expires, the port should exit suspend/resume and return to J state.
+    for _ in 0..20 {
+        ehci.tick_1ms(&mut mem);
+    }
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
+
+    // The hub should also clear the downstream port's selective suspend state so the device will be
+    // active once the upstream link resumes.
+    let st = control_in(
+        &mut ehci,
+        1,
+        SetupPacket {
+            bm_request_type: 0xa3, // DeviceToHost | Class | Other (port)
+            b_request: 0x00,       // GET_STATUS
+            w_value: 0,
+            w_index: 1,
+            w_length: 4,
+        },
+        64,
+    );
+    assert_eq!(st.len(), 4);
+    let status = u16::from_le_bytes([st[0], st[1]]);
+    let change = u16::from_le_bytes([st[2], st[3]]);
+    assert_eq!(
+        status & HUB_PORT_STATUS_SUSPEND,
+        0,
+        "expected hub port suspend bit to clear on remote wake"
+    );
+    assert_ne!(
+        change & HUB_PORT_CHANGE_SUSPEND,
+        0,
+        "expected hub C_PORT_SUSPEND to latch when remote wake resumes the port"
+    );
 
     // The device should be reachable again after resume.
     assert!(ehci.hub_mut().device_mut_for_address(2).is_some());
