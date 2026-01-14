@@ -146,3 +146,29 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
 
     assert_wgsl_validates(&wgsl);
 }
+
+#[test]
+fn sm4_gs_emit_cut_fixture_translates() {
+    // The checked-in fixture uses decl encodings that differ from the tokenized-format enums
+    // (triangle=4, triangle_strip=5). The GS prepass translator should accept these encodings so it
+    // can run real DXBC blobs produced by various toolchains.
+    const DXBC: &[u8] = include_bytes!("fixtures/gs_emit_cut.dxbc");
+
+    let program = Sm4Program::parse_from_dxbc_bytes(DXBC).expect("SM4 parse");
+    assert_eq!(program.stage, ShaderStage::Geometry);
+    assert_eq!(program.model, ShaderModel { major: 4, minor: 0 });
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("GS_MAX_VERTEX_COUNT"),
+        "expected generated WGSL to include max vertex count constant"
+    );
+    assert!(
+        wgsl.contains("arrayLength(&out_vertices.data)"),
+        "expected generated WGSL to bounds-check out_vertices"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}
