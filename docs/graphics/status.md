@@ -504,6 +504,7 @@ Representative test pointers:
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs)
+  - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs)
@@ -558,6 +559,7 @@ Known gaps / limitations (enforced by code/tests):
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_emits_triangle`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelistadj_emits_triangle`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_instance_step_rate`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_texture_t0_translated_prepass`

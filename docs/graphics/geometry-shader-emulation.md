@@ -258,6 +258,7 @@ Test pointers:
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
@@ -516,6 +517,7 @@ End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
@@ -538,6 +540,7 @@ Example:
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelistadj_emits_triangle
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_instance_step_rate
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle
