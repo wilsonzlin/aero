@@ -875,16 +875,17 @@ fn handle_int13(
                 // EDD 3.0 defines a 0x42-byte structure. For compatibility with older callers we
                 // also support (and may return) smaller table sizes (down to 0x1A bytes).
                 //
-                // To avoid claiming a size we didn't fully populate, we only ever return:
+                // To avoid claiming a size we didn't fully populate, we only ever return one of
+                // the standard EDD structure sizes:
                 // - 0x42 (EDD 3.0) when the caller provides >= 0x42 bytes
                 // - 0x1E (EDD 2.x) when the caller provides >= 0x1E bytes but < 0x42
-                // - the caller's size for 0x1A..0x1D (legacy/minimal callers)
+                // - 0x1A (EDD 1.1) when the caller provides 0x1A..0x1D bytes
                 let write_len = if buf_size >= EDD_PARAMS_V3_SIZE {
                     EDD_PARAMS_V3_SIZE
                 } else if buf_size >= EDD_PARAMS_V2_SIZE {
                     EDD_PARAMS_V2_SIZE
                 } else {
-                    buf_size
+                    EDD_PARAMS_MIN_SIZE
                 };
                 bus.write_u16(table_addr, write_len as u16);
 
@@ -1504,16 +1505,17 @@ fn handle_int13(
             // EDD 3.0 defines a 0x42-byte structure. For compatibility with older callers we
             // also support (and may return) smaller table sizes (down to 0x1A bytes).
             //
-            // To avoid claiming a size we didn't fully populate, we only ever return:
+            // To avoid claiming a size we didn't fully populate, we only ever return one of the
+            // standard EDD structure sizes:
             // - 0x42 (EDD 3.0) when the caller provides >= 0x42 bytes
             // - 0x1E (EDD 2.x) when the caller provides >= 0x1E bytes but < 0x42
-            // - the caller's size for 0x1A..0x1D (legacy/minimal callers)
+            // - 0x1A (EDD 1.1) when the caller provides 0x1A..0x1D bytes
             let write_len = if buf_size >= EDD_PARAMS_V3_SIZE {
                 EDD_PARAMS_V3_SIZE
             } else if buf_size >= EDD_PARAMS_V2_SIZE {
                 EDD_PARAMS_V2_SIZE
             } else {
-                buf_size
+                EDD_PARAMS_MIN_SIZE
             };
             bus.write_u16(table_addr, write_len as u16);
 
@@ -3064,6 +3066,52 @@ mod tests {
                 sum = sum.wrapping_add(b);
             }
             assert_eq!(sum, 0);
+        }
+    }
+
+    #[test]
+    fn int13_ext_get_drive_params_rounds_small_buffers_down_to_edd11_size() {
+        // EDD defines standard sizes for the drive parameter table:
+        // - 0x1A (EDD 1.1)
+        // - 0x1E (EDD 2.x)
+        // - 0x42 (EDD 3.0)
+        //
+        // Some callers provide a buffer slightly larger than 0x1A but smaller than 0x1E; BIOSes
+        // should round down to the largest supported structure size (0x1A) instead of returning a
+        // non-standard, partially-defined size.
+        for (drive, expected_sectors, expected_bps) in [(0x80u8, 8u64, 512u16), (0xE0u8, 2u64, 2048u16)]
+        {
+            let mut bios = Bios::new(BiosConfig {
+                boot_drive: drive,
+                ..BiosConfig::default()
+            });
+            let disk_bytes = vec![0u8; 512 * 8];
+            let mut disk = InMemoryDisk::new(disk_bytes);
+ 
+            let mut cpu = CpuState::new(CpuMode::Real);
+            set_real_mode_seg(&mut cpu.segments.ds, 0);
+            cpu.gpr[gpr::RSI] = 0x0600;
+            cpu.gpr[gpr::RDX] = drive as u64; // DL
+            cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
+ 
+            let mut mem = TestMemory::new(2 * 1024 * 1024);
+            ivt::init_bda(&mut mem, drive);
+            cpu.a20_enabled = mem.a20_enabled();
+ 
+            let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
+            for i in 0..0x1Bu64 {
+                mem.write_u8(table_addr + i, 0xCC);
+            }
+            mem.write_u16(table_addr, 0x1B); // buffer size (non-standard)
+ 
+            handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+ 
+            assert_eq!(cpu.rflags & FLAG_CF, 0);
+            assert_eq!(mem.read_u16(table_addr), 0x1A);
+            assert_eq!(mem.read_u64(table_addr + 16), expected_sectors);
+            assert_eq!(mem.read_u16(table_addr + 24), expected_bps);
+            // Ensure we didn't scribble past the returned size (0x1A).
+            assert_eq!(mem.read_u8(table_addr + 0x1A), 0xCC);
         }
     }
 
