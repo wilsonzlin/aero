@@ -1110,11 +1110,15 @@ impl XhciController {
     }
 
     pub fn read_portsc(&self, port: usize) -> u32 {
-        self.ports[port].read_portsc()
+        self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0)
     }
 
     pub fn write_portsc(&mut self, port: usize, value: u32) {
-        let changed = self.ports[port].write_portsc(value);
+        let Some(port_state) = self.ports.get_mut(port) else {
+            return;
+        };
+
+        let changed = port_state.write_portsc(value);
         if changed {
             self.queue_port_status_change_event(port);
         }
@@ -1147,11 +1151,14 @@ impl XhciController {
     /// Attach a device model to a root hub port (0-based).
     pub fn attach_device(&mut self, port: usize, dev: Box<dyn UsbDeviceModel>) {
         // Replace any existing device (host-side convenience).
-        if self.ports[port].has_device() {
+        if self.ports.get(port).is_some_and(|p| p.has_device()) {
             self.detach_device(port);
         }
 
-        let changed = self.ports[port].attach(dev);
+        let Some(port_state) = self.ports.get_mut(port) else {
+            return;
+        };
+        let changed = port_state.attach(dev);
         if changed {
             self.queue_port_status_change_event(port);
         }
@@ -1159,7 +1166,10 @@ impl XhciController {
 
     /// Detach any device from a root hub port (0-based).
     pub fn detach_device(&mut self, port: usize) {
-        let changed = self.ports[port].detach();
+        let Some(port_state) = self.ports.get_mut(port) else {
+            return;
+        };
+        let changed = port_state.detach();
         if changed {
             self.queue_port_status_change_event(port);
         }

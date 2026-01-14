@@ -9,7 +9,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use aero_usb::xhci::ring::{RingCursor, RingError, RingPoll};
 use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::XhciController;
-use aero_usb::MemoryBus;
+use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 mod util;
 
@@ -62,6 +62,19 @@ impl MemoryBus for SafeMemory {
     }
 }
 
+#[derive(Default)]
+struct DummyDevice;
+
+impl UsbDeviceModel for DummyDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+}
+
 #[derive(Clone)]
 struct DeterministicRng {
     state: u64,
@@ -106,6 +119,25 @@ impl DeterministicRng {
             _ => self.next_u64(),
         }
     }
+}
+
+#[test]
+fn xhci_port_helpers_do_not_panic_on_invalid_port_indices() {
+    let mut xhci = XhciController::with_port_count(1);
+
+    // Out-of-range port indices should not panic; these helpers are used by host-side topology
+    // management (WASM UI) and should be defensive.
+    assert_eq!(xhci.read_portsc(1), 0);
+    assert_eq!(xhci.read_portsc(usize::MAX), 0);
+
+    xhci.write_portsc(1, 0);
+    xhci.write_portsc(usize::MAX, 0);
+
+    xhci.attach_device(1, Box::new(DummyDevice::default()));
+    xhci.attach_device(usize::MAX, Box::new(DummyDevice::default()));
+
+    xhci.detach_device(1);
+    xhci.detach_device(usize::MAX);
 }
 
 #[test]
