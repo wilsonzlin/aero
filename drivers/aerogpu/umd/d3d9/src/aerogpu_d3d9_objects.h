@@ -724,7 +724,7 @@ struct PatchCacheEntry {
   std::vector<uint16_t> indices_u16; // triangle-list indices
 };
 
-struct Device {
+  struct Device {
   explicit Device(Adapter* adapter) : adapter(adapter) {
     // In WDK builds the runtime provides the DMA command buffer later during
     // device/context creation, so defer command stream initialization until the
@@ -818,7 +818,6 @@ struct Device {
       m[15] = 1.0f;
     }
 
-#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     // Default fixed-function material is white.
     std::memset(&material, 0, sizeof(material));
     material.Diffuse.r = 1.0f;
@@ -834,6 +833,7 @@ struct Device {
       light_enabled[i] = FALSE;
     }
 
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     // Default gamma ramp is identity.
     std::memset(&gamma_ramp, 0, sizeof(gamma_ramp));
     WORD* ramp_words = reinterpret_cast<WORD*>(&gamma_ramp);
@@ -945,11 +945,17 @@ struct Device {
   VertexDecl* fvf_vertex_decl_xyz_diffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_tex1 = nullptr;
+  VertexDecl* fvf_vertex_decl_xyz_normal_diffuse = nullptr;
+  VertexDecl* fvf_vertex_decl_xyz_normal_diffuse_tex1 = nullptr;
   // Internal FVF-derived vertex declarations synthesized by `SetFVF` for the
   // programmable pipeline (user shaders with FVF instead of an explicit vertex
   // declaration). Keyed by the full FVF DWORD.
   std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
   Shader* fixedfunc_vs = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_diffuse = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_diffuse_tex1 = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_diffuse_lit = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_diffuse_tex1_lit = nullptr;
   Shader* fixedfunc_ps = nullptr;
   Shader* fixedfunc_vs_xyz_diffuse = nullptr;
   Shader* fixedfunc_vs_tex1 = nullptr;
@@ -972,6 +978,9 @@ struct Device {
   // when switching back to the fixed-function WVP vertex shaders (user shaders
   // may have written overlapping VS constant registers).
   bool fixedfunc_matrix_dirty = true;
+  // True when cached lighting/material state changed and the fixed-function
+  // fallback needs to re-upload the lighting constant register block.
+  bool fixedfunc_lighting_dirty = true;
 
   // Fixed-function "interop" fallbacks used when exactly one shader stage is
   // explicitly bound by the app (D3D9 allows VS-only or PS-only draws).
@@ -1049,8 +1058,11 @@ struct Device {
   uint8_t vs_consts_b[256] = {};
   uint8_t ps_consts_b[256] = {};
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  // Fixed-function lighting/material state (cached only).
+  // Fixed-function lighting/material state.
+  //
+  // This state is cached for deterministic Get*/state-block behavior and is also
+  // consumed by the fixed-function fallback path for a minimal lighting subset
+  // (see `drivers/aerogpu/umd/d3d9/README.md`).
   D3DMATERIAL9 material = {};
   bool material_valid = false;
   static constexpr uint32_t kMaxLights = 16u;
@@ -1058,6 +1070,7 @@ struct Device {
   bool light_valid[kMaxLights] = {};
   BOOL light_enabled[kMaxLights] = {};
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Misc legacy state not currently emitted to the AeroGPU command stream.
   D3DGAMMARAMP gamma_ramp = {};
   bool gamma_ramp_valid = false;

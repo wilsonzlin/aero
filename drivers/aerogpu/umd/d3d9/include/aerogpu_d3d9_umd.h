@@ -229,6 +229,52 @@ typedef struct _LUID {
   #define D3DDEVTYPE_HAL 1u
 #endif
 
+// ---- Fixed-function lighting public types (subset) ----------------------------
+// Some fixed-function state (material/lights) is cached in the UMD even in
+// portable builds, so we mirror the canonical d3d9types.h structs here.
+typedef struct _D3DVECTOR {
+  float x;
+  float y;
+  float z;
+} D3DVECTOR;
+
+typedef struct _D3DCOLORVALUE {
+  float r;
+  float g;
+  float b;
+  float a;
+} D3DCOLORVALUE;
+
+typedef struct _D3DMATERIAL9 {
+  D3DCOLORVALUE Diffuse;
+  D3DCOLORVALUE Ambient;
+  D3DCOLORVALUE Specular;
+  D3DCOLORVALUE Emissive;
+  float Power;
+} D3DMATERIAL9;
+
+typedef enum _D3DLIGHTTYPE {
+  D3DLIGHT_POINT = 1,
+  D3DLIGHT_SPOT = 2,
+  D3DLIGHT_DIRECTIONAL = 3,
+} D3DLIGHTTYPE;
+
+typedef struct _D3DLIGHT9 {
+  D3DLIGHTTYPE Type;
+  D3DCOLORVALUE Diffuse;
+  D3DCOLORVALUE Specular;
+  D3DCOLORVALUE Ambient;
+  D3DVECTOR Position;
+  D3DVECTOR Direction;
+  float Range;
+  float Falloff;
+  float Attenuation0;
+  float Attenuation1;
+  float Attenuation2;
+  float Theta;
+  float Phi;
+} D3DLIGHT9;
+
 // D3DCAPS2_* (from d3d9caps.h).
 #ifndef D3DCAPS2_CANRENDERWINDOWED
   #define D3DCAPS2_CANRENDERWINDOWED 0x00080000u

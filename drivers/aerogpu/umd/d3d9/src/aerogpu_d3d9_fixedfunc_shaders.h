@@ -231,6 +231,350 @@ static constexpr uint32_t kVsTransformPosWhiteTex1[] = {
 };
 
 // -----------------------------------------------------------------------------
+// Vertex shaders: FVF with normals (minimal fixed-function lighting bring-up)
+// -----------------------------------------------------------------------------
+
+// vs_2_0 (unlit; XYZ|NORMAL|DIFFUSE):
+//   dp4 oPos.x, v0, c240
+//   dp4 oPos.y, v0, c241
+//   dp4 oPos.z, v0, c242
+//   dp4 oPos.w, v0, c243
+//   mov oD0, v2
+//   mov oT0, v0
+//   end
+static constexpr uint32_t kVsWvpPosNormalDiffuse[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40002u, // v2.xyzw (diffuse)
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40000u, // v0.xyzw (stable t0)
+
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (unlit; XYZ|NORMAL|DIFFUSE|TEX1):
+//   dp4 oPos.x, v0, c240
+//   dp4 oPos.y, v0, c241
+//   dp4 oPos.z, v0, c242
+//   dp4 oPos.w, v0, c243
+//   mov oD0, v2
+//   mov oT0, v3
+//   end
+static constexpr uint32_t kVsWvpPosNormalDiffuseTex1[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40002u, // v2.xyzw (diffuse)
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40003u, // v3.xyzw (texcoord0)
+
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (lit; XYZ|NORMAL|DIFFUSE):
+//   def c254, 0,0,0,0
+//   dp4 oPos.x, v0, c240
+//   dp4 oPos.y, v0, c241
+//   dp4 oPos.z, v0, c242
+//   dp4 oPos.w, v0, c243
+//   dp3 r0.x, v1, c244      ; normal.x (view space)
+//   dp3 r0.y, v1, c245      ; normal.y
+//   dp3 r0.z, v1, c246      ; normal.z
+//   dp3 r1, r0, r0          ; length^2
+//   rsq r1, r1              ; 1/sqrt(len2)
+//   mul r0, r0, r1          ; normalize
+//   dp3 r2, r0, c247        ; ndotl
+//   max r2, r2, c254        ; clamp to 0
+//   mul r3, c248, c250      ; lightDiffuse * materialDiffuse
+//   mul r3, r3, r2          ; * ndotl
+//   add r4, c253, c249      ; globalAmbient + lightAmbient
+//   mul r4, r4, c251        ; * materialAmbient
+//   add r5, r3, r4          ; diffuse + ambient
+//   mul r5, r5, v2          ; * vertex diffuse
+//   add r5, r5, c252        ; + emissive
+//   mov oD0, r5
+//   mov oT0, v0
+//   end
+static constexpr uint32_t kVsWvpLitPosNormalDiffuse[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x06000051u, // def (5 operands)
+    0x200F00FEu, // c254.xyzw
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x04000008u, // dp3
+    0x00010000u, // r0.x
+    0x10E40001u, // v1.xyz (normal)
+    0x20E400F4u, // c244.xyz
+
+    0x04000008u, // dp3
+    0x00020000u, // r0.y
+    0x10E40001u, // v1.xyz
+    0x20E400F5u, // c245.xyz
+
+    0x04000008u, // dp3
+    0x00040000u, // r0.z
+    0x10E40001u, // v1.xyz
+    0x20E400F6u, // c246.xyz
+
+    0x04000008u, // dp3
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+
+    0x03000007u, // rsq (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000008u, // dp3
+    0x000F0002u, // r2.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400F7u, // c247.xyz
+
+    0x0400000Bu, // max (3 operands)
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x20E400F8u, // c248.xyzw
+    0x20E400FAu, // c250.xyzw
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40002u, // r2.xyzw
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400FDu, // c253.xyzw
+    0x20E400F9u, // c249.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x20E400FBu, // c251.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x10E40002u, // v2.xyzw (vertex diffuse)
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FCu, // c252.xyzw (emissive)
+
+    0x03000001u, // mov
+    0x500F0000u, // oD0.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x03000001u, // mov
+    0x600F0000u, // oT0.xyzw
+    0x10E40000u, // v0.xyzw
+
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (lit; XYZ|NORMAL|DIFFUSE|TEX1): identical to kVsWvpLitPosNormalDiffuse
+// but passes TEXCOORD0 through v3.
+static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x06000051u, // def (5 operands)
+    0x200F00FEu, // c254.xyzw
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x04000008u, // dp3
+    0x00010000u, // r0.x
+    0x10E40001u, // v1.xyz
+    0x20E400F4u, // c244.xyz
+
+    0x04000008u, // dp3
+    0x00020000u, // r0.y
+    0x10E40001u, // v1.xyz
+    0x20E400F5u, // c245.xyz
+
+    0x04000008u, // dp3
+    0x00040000u, // r0.z
+    0x10E40001u, // v1.xyz
+    0x20E400F6u, // c246.xyz
+
+    0x04000008u, // dp3
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+
+    0x03000007u, // rsq
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000008u, // dp3
+    0x000F0002u, // r2.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400F7u, // c247.xyz
+
+    0x0400000Bu, // max
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x20E400F8u, // c248.xyzw
+    0x20E400FAu, // c250.xyzw
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40002u, // r2.xyzw
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400FDu, // c253.xyzw
+    0x20E400F9u, // c249.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x20E400FBu, // c251.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x10E40002u, // v2.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FCu, // c252.xyzw
+
+    0x03000001u, // mov
+    0x500F0000u, // oD0.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x03000001u, // mov
+    0x600F0000u, // oT0.xyzw
+    0x10E40003u, // v3.xyzw
+
+    0x0000FFFFu, // end
+};
+
+// -----------------------------------------------------------------------------
 // Pixel shaders (ps_2_0)
 // -----------------------------------------------------------------------------
 

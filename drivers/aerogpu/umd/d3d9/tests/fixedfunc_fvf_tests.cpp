@@ -26,6 +26,7 @@ namespace {
 // Portable D3D9 FVF bits (from d3d9types.h).
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
@@ -35,6 +36,8 @@ constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzNormalDiffuse = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse;
+constexpr uint32_t kFvfXyzNormalDiffuseTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse | kD3dFvfTex1;
 
 // D3D9 shader stage IDs used by the DDI (from d3d9umddi.h). Keep local numeric
 // definitions so portable builds don't require the Windows SDK/WDK.
@@ -67,6 +70,8 @@ constexpr uint32_t kD3dTaTexture = 2u;
 constexpr uint32_t kD3dTaTFactor = 3u;
 
 // D3DRS_* render state IDs (from d3d9types.h).
+constexpr uint32_t kD3dRsAmbient = 26u;       // D3DRS_AMBIENT
+constexpr uint32_t kD3dRsLighting = 137u;     // D3DRS_LIGHTING
 constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
 
 // D3DTRANSFORMSTATETYPE numeric values (from d3d9types.h).
@@ -420,6 +425,28 @@ struct VertexXyzTex1 {
   float v;
 };
 
+struct VertexXyzNormalDiffuse {
+  float x;
+  float y;
+  float z;
+  float nx;
+  float ny;
+  float nz;
+  uint32_t color;
+};
+
+struct VertexXyzNormalDiffuseTex1 {
+  float x;
+  float y;
+  float z;
+  float nx;
+  float ny;
+  float nz;
+  uint32_t color;
+  float u;
+  float v;
+};
+
 #pragma pack(push, 1)
 struct D3DVERTEXELEMENT9_COMPAT {
   uint16_t Stream;
@@ -442,6 +469,7 @@ constexpr uint8_t kD3dDeclTypeUnused = 17;
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
 constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageNormal = 3;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
@@ -3111,6 +3139,8 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
+  // Fixed-function emulation for XYZ vertices uses a WVP vertex shader and
+  // uploads the matrix into reserved VS constants c240..c243 as column vectors.
   const float expected_wvp_cols[16] = {
       1.0f, 0.0f, 0.0f, tx,
       0.0f, 1.0f, 0.0f, ty,
@@ -3240,7 +3270,7 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
                "XYZ|DIFFUSE via decl without texture binds PS without texld")) {
       return false;
     }
-    if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer (decl xyz|diffuse)")) {
+    if (!Check(dev->up_vertex_buffer == nullptr, "VB draw via decl does not allocate scratch UP buffer")) {
       return false;
     }
   }
@@ -3540,7 +3570,7 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
                "XYZ|DIFFUSE|TEX1 via decl binds PS that samples texture (texld)")) {
       return false;
     }
-    if (!Check(dev->up_vertex_buffer == nullptr, "VB draw does not allocate scratch UP buffer (decl xyz|diffuse|tex1)")) {
+    if (!Check(dev->up_vertex_buffer == nullptr, "VB draw via decl does not allocate scratch UP buffer (tex1)")) {
       return false;
     }
   }
@@ -5487,6 +5517,320 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
   return true;
 }
 
+size_t CountVsConstantUploads(const uint8_t* buf,
+                              size_t capacity,
+                              uint32_t start_register,
+                              uint32_t vec4_count) {
+  size_t count = 0;
+  for (const auto* hdr : CollectOpcodes(buf, capacity, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != start_register || sc->vec4_count != vec4_count) {
+      continue;
+    }
+    ++count;
+  }
+  return count;
+}
+
+const float* FindVsConstantsPayload(const uint8_t* buf,
+                                    size_t capacity,
+                                    uint32_t start_register,
+                                    uint32_t vec4_count) {
+  for (const auto* hdr : CollectOpcodes(buf, capacity, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != start_register || sc->vec4_count != vec4_count) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + static_cast<size_t>(vec4_count) * 4u * sizeof(float);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    return reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+  }
+  return nullptr;
+}
+
+bool TestFvfXyzNormalDiffuseLightingSelectsLitVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // Lighting off: select the unlit variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=FALSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE; lighting=off)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound (unlit)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuse),
+               "VS bytecode == fixedfunc::kVsWvpPosNormalDiffuse (unlit)")) {
+      return false;
+    }
+  }
+
+  // Lighting on: select the lit variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE; lighting=on)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound (lit)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpLitPosNormalDiffuse),
+               "VS bytecode == fixedfunc::kVsWvpLitPosNormalDiffuse (lit)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Global ambient: blue (ARGB).
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF0000FFu);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=blue)")) {
+    return false;
+  }
+
+  // Configure the cached light/material state directly (portable builds do not expose
+  // SetLight/SetMaterial DDIs in the device vtable).
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    std::memset(&dev->lights[0], 0, sizeof(dev->lights[0]));
+    dev->lights[0].Type = D3DLIGHT_DIRECTIONAL;
+    dev->lights[0].Direction = {0.0f, 0.0f, -1.0f};
+    dev->lights[0].Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+    dev->lights[0].Ambient = {0.0f, 0.5f, 0.0f, 1.0f};
+    dev->light_valid[0] = true;
+    dev->light_enabled[0] = TRUE;
+
+    dev->material_valid = true;
+    dev->material.Diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
+    dev->material.Ambient = {0.25f, 0.25f, 0.25f, 1.0f};
+    dev->material.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    dev->fixedfunc_lighting_dirty = true;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // ---------------------------------------------------------------------------
+  // First draw: emits the lighting constant block once.
+  // ---------------------------------------------------------------------------
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(lighting constants; first)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(lighting constants; first)")) {
+    return false;
+  }
+
+  constexpr uint32_t kLightingStart = 244u;
+  constexpr uint32_t kLightingVec4 = 10u;
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
+             "lighting constant upload emitted once")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
+  if (!Check(payload != nullptr, "lighting constant payload present")) {
+    return false;
+  }
+
+  const float expected[40] = {
+      // c244..c246: identity world*view 3x3 columns.
+      1.0f, 0.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 1.0f, 0.0f,
+      // c247: light direction in view space (negated).
+      0.0f, 0.0f, 1.0f, 0.0f,
+      // c248..c249: light diffuse/ambient.
+      1.0f, 0.0f, 0.0f, 1.0f,
+      0.0f, 0.5f, 0.0f, 1.0f,
+      // c250..c252: material diffuse/ambient/emissive.
+      0.5f, 0.5f, 0.5f, 1.0f,
+      0.25f, 0.25f, 0.25f, 1.0f,
+      0.0f, 0.0f, 0.0f, 0.0f,
+      // c253: global ambient (ARGB blue -> RGBA {0,0,1,1}).
+      0.0f, 0.0f, 1.0f, 1.0f,
+  };
+  for (size_t i = 0; i < 40; ++i) {
+    // Compare numerically (treat -0.0 == 0.0) instead of bitwise comparing.
+    if (payload[i] != expected[i]) {
+      std::fprintf(stderr, "Lighting constants mismatch:\n");
+      for (size_t j = 0; j < 40; ++j) {
+        std::fprintf(stderr, "  [%02zu] got=%f expected=%f\n", j, payload[j], expected[j]);
+      }
+      return Check(false, "lighting constant payload matches expected values");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Second draw: should not re-upload lighting constants if nothing changed.
+  // ---------------------------------------------------------------------------
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(lighting constants; second)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(lighting constants; second)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 0,
+             "lighting constant upload is skipped when not dirty")) {
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Change D3DRS_AMBIENT: should mark the lighting block dirty and re-upload.
+  // ---------------------------------------------------------------------------
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=red)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(lighting constants; ambient changed)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(lighting constants; ambient changed)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
+             "lighting constant upload re-emitted after ambient change")) {
+    return false;
+  }
+  payload = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
+  if (!Check(payload != nullptr, "lighting payload present (ambient changed)")) {
+    return false;
+  }
+  if (!Check(payload[9 * 4 + 0] == 1.0f && payload[9 * 4 + 1] == 0.0f &&
+             payload[9 * 4 + 2] == 0.0f && payload[9 * 4 + 3] == 1.0f,
+             "global ambient constant reflects new D3DRS_AMBIENT value")) {
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Change light direction: re-upload should reflect the new direction (manual dirty).
+  // ---------------------------------------------------------------------------
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->lights[0].Direction = {0.0f, 0.0f, 1.0f};
+    dev->fixedfunc_lighting_dirty = true;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(lighting constants; light direction changed)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(lighting constants; light direction changed)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
+             "lighting constant upload re-emitted after light direction change")) {
+    return false;
+  }
+  payload = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
+  if (!Check(payload != nullptr, "lighting payload present (light direction changed)")) {
+    return false;
+  }
+  if (!Check(payload[3 * 4 + 0] == 0.0f && payload[3 * 4 + 1] == 0.0f &&
+             payload[3 * 4 + 2] == -1.0f && payload[3 * 4 + 3] == 0.0f,
+             "light direction constant reflects updated light direction")) {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -5525,6 +5869,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseLightingSelectsLitVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty()) {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {

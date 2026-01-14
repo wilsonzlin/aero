@@ -121,7 +121,8 @@ namespace aerogpu {
 //   - transforms / clip planes / clip status
 //   - stream source frequency / software vertex processing / N-patch mode
 //   - shader int/bool constants
-//   - (WDK) lighting/material + palettes/current palette + gamma ramp
+//   - lighting/material
+//   - (WDK) palettes/current palette + gamma ramp
 // - texture bindings
 // - render target + depth/stencil bindings
 // - viewport + scissor
@@ -172,10 +173,10 @@ struct StateBlock {
   bool cursor_visible_set = false;
   BOOL cursor_visible = FALSE;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Fixed-function lighting/material state. Cached-only and not currently
-  // consumed by the AeroGPU shader pipeline, but tracked for Get*/state-block
-  // compatibility with legacy apps.
+  // consumed by the AeroGPU command stream directly, but tracked for Get*/state-block
+  // compatibility with legacy apps and consulted by the minimal fixed-function
+  // fallback path for a small lighting subset (see README).
   bool material_set = false;
   bool material_valid = false;
   D3DMATERIAL9 material{};
@@ -186,6 +187,7 @@ struct StateBlock {
   std::bitset<Device::kMaxLights> light_enable_mask{};
   std::bitset<Device::kMaxLights> light_enable_bits{};
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Misc legacy state (cached only, not currently emitted to the AeroGPU command
   // stream), but must be round-trippable via Get* and state blocks.
   bool gamma_ramp_set = false;
@@ -2886,6 +2888,9 @@ constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffu
 constexpr uint32_t kSupportedFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
+// Minimal lighting bring-up: XYZ + NORMAL + DIFFUSE (+ optional TEX1).
+constexpr uint32_t kSupportedFvfXyzNormalDiffuse = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse;
+constexpr uint32_t kSupportedFvfXyzNormalDiffuseTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse | kD3dFvfTex1;
 
 bool fixedfunc_fvf_supported(uint32_t fvf) {
   // Fixed-function bring-up paths which require a known internal FVF-driven
@@ -2896,6 +2901,18 @@ bool fixedfunc_fvf_supported(uint32_t fvf) {
 
 constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
   const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  // Fixed-function fallback only supports default float2 texcoords for TEX1.
+  //
+  // D3DFVF_TEXCOORDSIZE* (bits 16+) can legally contain garbage for *unused*
+  // texcoord sets; ignore those by masking them out above. However, if TEX1 is
+  // present, the texcoord-0 size bits are semantically meaningful. Our fixed-
+  // function bring-up shaders and hardcoded internal declarations assume float2.
+  if ((base & kD3dFvfTex1) != 0) {
+    // Texcoord-0 size bits (two bits at offset 16): 0 -> float2.
+    if ((fvf & (0x3u << 16u)) != 0) {
+      return false;
+    }
+  }
   switch (base) {
     case kSupportedFvfXyzrhwDiffuse:
     case kSupportedFvfXyzrhwDiffuseTex1:
@@ -2903,6 +2920,8 @@ constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
     case kSupportedFvfXyzDiffuse:
     case kSupportedFvfXyzDiffuseTex1:
     case kSupportedFvfXyzTex1:
+    case kSupportedFvfXyzNormalDiffuse:
+    case kSupportedFvfXyzNormalDiffuseTex1:
       return true;
     default:
       return false;
@@ -2916,6 +2935,12 @@ constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
          (base == kSupportedFvfXyzrhwTex1);
 }
 
+constexpr bool fixedfunc_fvf_has_normal(uint32_t fvf) {
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  return (base == kSupportedFvfXyzNormalDiffuse) ||
+         (base == kSupportedFvfXyzNormalDiffuseTex1);
+}
+
 constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
   // Fixed-function draws that use non-pretransformed positions (D3DFVF_XYZ*) rely
   // on internal WVP vertex shaders that read a reserved high VS constant register
@@ -2923,7 +2948,8 @@ constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
   const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
   return (base == kSupportedFvfXyzDiffuse) ||
          (base == kSupportedFvfXyzDiffuseTex1) ||
-         (base == kSupportedFvfXyzTex1);
+         (base == kSupportedFvfXyzTex1) ||
+         fixedfunc_fvf_has_normal(fvf);
 }
 
 #pragma pack(push, 1)
@@ -2971,6 +2997,20 @@ constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
 constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
+// Fixed-function lighting constant register block.
+//
+// Layout (float4 registers; uploaded only when the lit VS variant is active):
+//   c244..c246: columns of the row-major world*view 3x3 (normal transform; w=0)
+//   c247: light direction in view space (vector from vertex to light; w=0)
+//   c248: light diffuse (RGBA)
+//   c249: light ambient (RGBA)
+//   c250: material diffuse (RGBA)
+//   c251: material ambient (RGBA)
+//   c252: material emissive (RGBA)
+//   c253: global ambient from D3DRS_AMBIENT (RGBA)
+constexpr uint32_t kFixedfuncLightingStartRegister = 244u;
+constexpr uint32_t kFixedfuncLightingVec4Count = 10u;
+
 // D3DTRANSFORMSTATETYPE numeric values (d3d9types.h). Use local constants so we
 // can key off them even when building without the Windows SDK/WDK.
 constexpr uint32_t kD3dTransformView = 2u;
@@ -2990,6 +3030,10 @@ constexpr uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
       return 24u;
     case kSupportedFvfXyzTex1:
       return 20u;
+    case kSupportedFvfXyzNormalDiffuse:
+      return 28u;
+    case kSupportedFvfXyzNormalDiffuseTex1:
+      return 36u;
     default:
       return 0u;
   }
@@ -3455,7 +3499,6 @@ inline void stateblock_record_show_cursor_locked(Device* dev, BOOL visible) {
   sb->cursor_visible = visible ? TRUE : FALSE;
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 inline void stateblock_record_material_locked(Device* dev, const D3DMATERIAL9& material, bool valid) {
   if (!dev || !dev->recording_state_block) {
     return;
@@ -3499,6 +3542,7 @@ inline void stateblock_record_light_enable_locked(Device* dev, uint32_t index, B
   }
 }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 inline void stateblock_record_gamma_ramp_locked(Device* dev, const D3DGAMMARAMP& ramp, bool valid) {
   if (!dev || !dev->recording_state_block) {
     return;
@@ -5366,6 +5410,20 @@ static bool emit_set_shader_constants_f_locked(
   return true;
 }
 
+static void d3d9_colorvalue_to_float4(const D3DCOLORVALUE& c, float out[4]) {
+  out[0] = c.r;
+  out[1] = c.g;
+  out[2] = c.b;
+  out[3] = c.a;
+}
+
+static void d3d9_argb_to_float4(uint32_t argb, float out[4]) {
+  out[0] = static_cast<float>((argb >> 16) & 0xFFu) / 255.0f; // R
+  out[1] = static_cast<float>((argb >> 8) & 0xFFu) / 255.0f;  // G
+  out[2] = static_cast<float>((argb >> 0) & 0xFFu) / 255.0f;  // B
+  out[3] = static_cast<float>((argb >> 24) & 0xFFu) / 255.0f; // A
+}
+
 static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
   if (!dev) {
     return E_FAIL;
@@ -5399,6 +5457,94 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
   dev->fixedfunc_matrix_dirty = false;
   return S_OK;
 }
+
+static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
+  if (!dev) {
+    return E_FAIL;
+  }
+  if (!dev->fixedfunc_lighting_dirty) {
+    return S_OK;
+  }
+
+  // Fixed-function D3D9 lighting is computed in view space. We therefore:
+  // - transform normals by world*view (3x3)
+  // - transform the directional light vector by view (3x3)
+  float world_view[16] = {};
+  d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0], dev->transform_matrices[kD3dTransformView], world_view);
+
+  // Upload:
+  //   c244..c246 = columns of world_view[0..2][0..2] (w=0)
+  //   c247 = directional light vector in view space (w=0)
+  //   c248..c249 = light diffuse/ambient
+  //   c250..c252 = material diffuse/ambient/emissive
+  //   c253 = global ambient from D3DRS_AMBIENT
+  float regs[kFixedfuncLightingVec4Count * 4u] = {};
+  for (uint32_t c = 0; c < 3; ++c) {
+    regs[c * 4u + 0] = world_view[0 * 4u + c];
+    regs[c * 4u + 1] = world_view[1 * 4u + c];
+    regs[c * 4u + 2] = world_view[2 * 4u + c];
+    regs[c * 4u + 3] = 0.0f;
+  }
+
+  // Light 0 (directional only).
+  float light_dir_view[4] = {};
+  float light_diffuse[4] = {};
+  float light_ambient[4] = {};
+  if (dev->light_enabled[0] && dev->light_valid[0] && dev->lights[0].Type == D3DLIGHT_DIRECTIONAL) {
+    const D3DLIGHT9& l = dev->lights[0];
+
+    // Transform direction into view space (row-vector * view3x3).
+    const float* view = dev->transform_matrices[kD3dTransformView];
+    const float dx = l.Direction.x;
+    const float dy = l.Direction.y;
+    const float dz = l.Direction.z;
+    const float dir_view_x = dx * view[0 * 4u + 0] + dy * view[1 * 4u + 0] + dz * view[2 * 4u + 0];
+    const float dir_view_y = dx * view[0 * 4u + 1] + dy * view[1 * 4u + 1] + dz * view[2 * 4u + 1];
+    const float dir_view_z = dx * view[0 * 4u + 2] + dy * view[1 * 4u + 2] + dz * view[2 * 4u + 2];
+
+    // Shader expects vector from vertex to light, so negate D3D9's "light direction" (light rays).
+    light_dir_view[0] = -dir_view_x;
+    light_dir_view[1] = -dir_view_y;
+    light_dir_view[2] = -dir_view_z;
+    light_dir_view[3] = 0.0f;
+
+    d3d9_colorvalue_to_float4(l.Diffuse, light_diffuse);
+    d3d9_colorvalue_to_float4(l.Ambient, light_ambient);
+  }
+  std::memcpy(&regs[3 * 4u], light_dir_view, sizeof(light_dir_view));
+  std::memcpy(&regs[4 * 4u], light_diffuse, sizeof(light_diffuse));
+  std::memcpy(&regs[5 * 4u], light_ambient, sizeof(light_ambient));
+
+  // Material.
+  float mat_diffuse[4] = {};
+  float mat_ambient[4] = {};
+  float mat_emissive[4] = {};
+  if (dev->material_valid) {
+    d3d9_colorvalue_to_float4(dev->material.Diffuse, mat_diffuse);
+    d3d9_colorvalue_to_float4(dev->material.Ambient, mat_ambient);
+    d3d9_colorvalue_to_float4(dev->material.Emissive, mat_emissive);
+  }
+  std::memcpy(&regs[6 * 4u], mat_diffuse, sizeof(mat_diffuse));
+  std::memcpy(&regs[7 * 4u], mat_ambient, sizeof(mat_ambient));
+  std::memcpy(&regs[8 * 4u], mat_emissive, sizeof(mat_emissive));
+
+  // Global ambient (D3DRS_AMBIENT, numeric value 26).
+  float global_ambient[4] = {};
+  constexpr uint32_t kD3dRsAmbient = 26u;
+  d3d9_argb_to_float4(dev->render_states[kD3dRsAmbient], global_ambient);
+  std::memcpy(&regs[9 * 4u], global_ambient, sizeof(global_ambient));
+
+  if (!emit_set_shader_constants_f_locked(dev,
+                                          kD3d9ShaderStageVs,
+                                          kFixedfuncLightingStartRegister,
+                                          regs,
+                                          kFixedfuncLightingVec4Count)) {
+    return E_OUTOFMEMORY;
+  }
+
+  dev->fixedfunc_lighting_dirty = false;
+  return S_OK;
+}
 HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -5409,6 +5555,8 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   }
 
   const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
+  const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
 
   // Stage0 texture stage state is only relevant to the fixed-function *pixel*
   // stage. When a user pixel shader is bound (PS-only interop path), stage state
@@ -5429,6 +5577,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   const void* vs_bytes = nullptr;
   uint32_t vs_size = 0;
   bool needs_matrix = false;
+  bool needs_lighting = false;
 
   switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
@@ -5479,6 +5628,26 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1));
       needs_matrix = true;
       break;
+    case kSupportedFvfXyzNormalDiffuse:
+      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_diffuse_lit : &dev->fixedfunc_vs_xyz_normal_diffuse;
+      ps_slot = &dev->fixedfunc_ps;
+      fvf_decl = dev->fvf_vertex_decl_xyz_normal_diffuse;
+      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormalDiffuse : fixedfunc::kVsWvpPosNormalDiffuse;
+      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuse))
+                                 : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuse));
+      needs_matrix = true;
+      needs_lighting = lighting_enabled;
+      break;
+    case kSupportedFvfXyzNormalDiffuseTex1:
+      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit : &dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
+      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+      fvf_decl = dev->fvf_vertex_decl_xyz_normal_diffuse_tex1;
+      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormalDiffuseTex1 : fixedfunc::kVsWvpPosNormalDiffuseTex1;
+      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1))
+                                 : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1));
+      needs_matrix = true;
+      needs_lighting = lighting_enabled;
+      break;
     default:
       return D3DERR_INVALIDCALL;
   }
@@ -5516,12 +5685,13 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       Shader* prev_ps = dev->ps;
       dev->vs = *vs_slot;
       dev->ps = *ps_slot;
-      // Do not force `fixedfunc_matrix_dirty` here: other entrypoints already
-      // mark the matrix constants dirty on relevant state changes (SetFVF /
-      // SetVertexDecl, SetTransform/MultiplyTransform, user shader/constant
-      // writes that overlap the reserved range). Forcing it here can cause
-      // redundant WVP uploads because SetTransform may have already updated the
-      // fixed-function constant range eagerly.
+      // Do not force `fixedfunc_matrix_dirty`/`fixedfunc_lighting_dirty` here:
+      // other entrypoints already mark the constant ranges dirty on relevant
+      // state changes (SetFVF / SetVertexDecl, SetTransform/MultiplyTransform,
+      // SetLight/SetMaterial, user shader/constant writes that overlap the
+      // reserved ranges). Forcing it here can cause redundant uploads because
+      // SetTransform may have already updated the fixed-function constant range
+      // eagerly.
       if (!emit_bind_shaders_locked(dev)) {
         dev->vs = prev_vs;
         dev->ps = prev_ps;
@@ -5536,6 +5706,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       return hr;
     }
   }
+  if (needs_lighting) {
+    const HRESULT hr = ensure_fixedfunc_lighting_constants_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
 
   return S_OK;
 }
@@ -5546,6 +5722,8 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
   if (!dev) {
     return nullptr;
   }
+  constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
+  const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
   const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
   switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
@@ -5560,6 +5738,10 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
       return dev->fixedfunc_vs_xyz_diffuse_tex1;
     case kSupportedFvfXyzTex1:
       return dev->fixedfunc_vs_xyz_tex1;
+    case kSupportedFvfXyzNormalDiffuse:
+      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_diffuse_lit : dev->fixedfunc_vs_xyz_normal_diffuse;
+    case kSupportedFvfXyzNormalDiffuseTex1:
+      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit : dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
     default:
       return nullptr;
   }
@@ -5780,29 +5962,7 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
   }
 
   Shader* vs = nullptr;
-  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
-  switch (fvf_base) {
-    case kSupportedFvfXyzrhwDiffuse:
-      vs = dev->fixedfunc_vs;
-      break;
-    case kSupportedFvfXyzrhwDiffuseTex1:
-      vs = dev->fixedfunc_vs_tex1;
-      break;
-    case kSupportedFvfXyzrhwTex1:
-      vs = dev->fixedfunc_vs_tex1_nodiffuse;
-      break;
-    case kSupportedFvfXyzDiffuse:
-      vs = dev->fixedfunc_vs_xyz_diffuse;
-      break;
-    case kSupportedFvfXyzDiffuseTex1:
-      vs = dev->fixedfunc_vs_xyz_diffuse_tex1;
-      break;
-    case kSupportedFvfXyzTex1:
-      vs = dev->fixedfunc_vs_xyz_tex1;
-      break;
-    default:
-      return kD3DErrInvalidCall;
-  }
+  vs = fixedfunc_vs_variant_for_fvf_locked(dev);
 
   if (!vs) {
     // If we created the fixed-function pipeline successfully but do not have a
@@ -13349,6 +13509,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       switch (dev->fvf) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
         case kSupportedFvfXyzrhwDiffuseTex1:
@@ -13357,6 +13518,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
         default:
@@ -13463,6 +13625,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
   }
   stateblock_record_render_state_locked(dev, state, value);
 
+  // Fixed-function lighting is implemented by the fixed-function fallback VS
+  // variants and consumes a reserved VS constant range. Changes to lighting
+  // render state must mark the constant block dirty.
+  constexpr uint32_t kD3dRsAmbient = 26u;  // D3DRS_AMBIENT
+  constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
+  if (state == kD3dRsAmbient || state == kD3dRsLighting) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
+
   // Some D3D9 runtimes may treat SCISSORTESTENABLE as a plain render state (DDI),
   // while the AeroGPU command stream uses an explicit scissor packet. Keep the
   // cached scissor enable flag in sync and emit the matching scissor command so
@@ -13530,6 +13701,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_transform(
   if (state == 2u || state == 3u || state == 256u) {
     dev->fixedfunc_matrix_dirty = true;
   }
+  if (state == 2u || state == 256u) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
   stateblock_record_transform_locked(dev, state, dev->transform_matrices[state]);
 
   return trace.ret(S_OK);
@@ -13560,6 +13734,9 @@ HRESULT AEROGPU_D3D9_CALL device_multiply_transform(
 
   if (state == 2u || state == 3u || state == 256u) {
     dev->fixedfunc_matrix_dirty = true;
+  }
+  if (state == 2u || state == 256u) {
+    dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_transform_locked(dev, state, dev->transform_matrices[state]);
 
@@ -13790,6 +13967,35 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
       if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok && is_end(e3)) {
         implied_fvf = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e2, 0);
       }
+
+      // XYZ | NORMAL | DIFFUSE:
+      //   POSITION float3 @0
+      //   NORMAL   float3 @12
+      //   COLOR0   D3DCOLOR @24
+      //   END
+      const bool e1_xyz_normal_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeFloat3) &&
+                                    (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageNormal) && (e1.UsageIndex == 0);
+      const bool e2_xyz_color_ok = (e2.Stream == 0) && (e2.Offset == 24) && (e2.Type == kD3dDeclTypeD3dColor) &&
+                                   (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageColor) && (e2.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_normal_ok && e2_xyz_color_ok && is_end(e3)) {
+        implied_fvf = kSupportedFvfXyzNormalDiffuse;
+      }
+
+      // XYZ | NORMAL | DIFFUSE | TEX1:
+      //   POSITION float3 @0
+      //   NORMAL   float3 @12
+      //   COLOR0   D3DCOLOR @24
+      //   TEXCOORD0 float2 @28
+      //   END
+      if (decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 5) {
+        const auto& e4 = elems[4];
+        const bool e3_xyz_tex_ok = (e3.Stream == 0) && (e3.Offset == 28) && (e3.Type == kD3dDeclTypeFloat2) &&
+                                   (e3.Method == kD3dDeclMethodDefault) &&
+                                   (e3.Usage == kD3dDeclUsageTexcoord || e3.Usage == kD3dDeclUsagePosition) && (e3.UsageIndex == 0);
+        if (e0_xyz_ok && e1_xyz_normal_ok && e2_xyz_color_ok && e3_xyz_tex_ok && is_end(e4)) {
+          implied_fvf = kSupportedFvfXyzNormalDiffuseTex1;
+        }
+      }
     }
     } // decl has >=3 elements
   }
@@ -13799,6 +14005,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     // constant range, even if transforms did not change (user shaders may have
     // written overlapping registers).
     dev->fixedfunc_matrix_dirty = true;
+  }
+  if (fixedfunc_fvf_has_normal(implied_fvf)) {
+    dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
   return trace.ret(S_OK);
@@ -13875,8 +14084,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   // Other FVFs may be accepted and cached so GetFVF + state blocks behave
   // deterministically, but rendering is not guaranteed for unsupported formats.
   if (fixedfunc_supported_fvf(fvf)) {
+    const uint32_t fvf_base = fvf & ~kD3dFvfTexCoordSizeMask;
     VertexDecl* decl = nullptr;
-    switch (fvf) {
+    switch (fvf_base) {
       case kSupportedFvfXyzrhwDiffuse: {
         if (!dev->fvf_vertex_decl) {
           const D3DVERTEXELEMENT9_COMPAT elems[] = {
@@ -13951,6 +14161,33 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
         decl = dev->fvf_vertex_decl_xyz_tex1;
         break;
       }
+      case kSupportedFvfXyzNormalDiffuse: {
+        if (!dev->fvf_vertex_decl_xyz_normal_diffuse) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+              {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+              {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_xyz_normal_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_xyz_normal_diffuse;
+        break;
+      }
+      case kSupportedFvfXyzNormalDiffuseTex1: {
+        if (!dev->fvf_vertex_decl_xyz_normal_diffuse_tex1) {
+          const D3DVERTEXELEMENT9_COMPAT elems[] = {
+              {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+              {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+              {0, 24, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+              {0, 28, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+              {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+          };
+          dev->fvf_vertex_decl_xyz_normal_diffuse_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        }
+        decl = dev->fvf_vertex_decl_xyz_normal_diffuse_tex1;
+        break;
+      }
       default:
         break;
     }
@@ -13970,6 +14207,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
       // change (user shaders may have written overlapping registers before
       // switching back to FVF mode).
       dev->fixedfunc_matrix_dirty = true;
+    }
+    if (fixedfunc_fvf_has_normal(fvf)) {
+      dev->fixedfunc_lighting_dirty = true;
     }
     stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
     return trace.ret(S_OK);
@@ -14088,6 +14328,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   if (stage == kD3d9ShaderStageVs && sh && fixedfunc_fvf_needs_matrix(dev->fvf)) {
     dev->fixedfunc_matrix_dirty = true;
   }
+  // Same idea for fixed-function lighting: the lit VS variants use a reserved
+  // high constant range for normals/light/material state.
+  if (stage == kD3d9ShaderStageVs && sh && fixedfunc_fvf_has_normal(dev->fvf)) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
 
   // D3D9 allows apps to bind only one stage (VS-only or PS-only); the missing
   // stage is treated as fixed-function. Ensure we never emit a BIND_SHADERS
@@ -14187,6 +14432,16 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
     const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;
     if (start_reg < ff_end && end_reg > ff_start) {
       dev->fixedfunc_matrix_dirty = true;
+    }
+  }
+  // Likewise for the fixed-function lighting constant block used by the lit VS
+  // variants for NORMAL FVFs.
+  if (stage_norm == kD3d9ShaderStageVs && fixedfunc_fvf_has_normal(dev->fvf)) {
+    const uint32_t end_reg = start_reg + vec4_count;
+    const uint32_t ff_start = kFixedfuncLightingStartRegister;
+    const uint32_t ff_end = kFixedfuncLightingStartRegister + kFixedfuncLightingVec4Count;
+    if (start_reg < ff_end && end_reg > ff_start) {
+      dev->fixedfunc_lighting_dirty = true;
     }
   }
 
@@ -14333,7 +14588,6 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->n_patch_mode_set = true;
     sb->n_patch_mode = dev->n_patch_mode;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     sb->material_set = true;
     sb->material_valid = dev->material_valid;
     sb->material = dev->material;
@@ -14349,7 +14603,6 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
         sb->light_enable_bits.set(i);
       }
     }
-#endif
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     sb->clip_status_set = true;
@@ -14440,7 +14693,6 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
     sb->cursor_visible = dev->cursor_visible ? TRUE : FALSE;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (sb->material_set) {
     sb->material_valid = dev->material_valid;
     sb->material = dev->material;
@@ -14463,6 +14715,7 @@ static void stateblock_capture_locked(Device* dev, StateBlock* sb) {
     }
   }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (sb->gamma_ramp_set) {
     sb->gamma_ramp_valid = dev->gamma_ramp_valid;
     sb->gamma_ramp = dev->gamma_ramp;
@@ -14753,9 +15006,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   // Fixed-function state: transforms. Cached for GetTransform/state blocks.
   //
   // WORLD/VIEW/PROJECTION are also consumed by bring-up fixed-function paths:
-  // - `D3DFVF_XYZ*` fixed-function draws use internal WVP VS variants and a
-  //   reserved high VS constant range (c240..c243) uploaded by
-  //   `ensure_fixedfunc_wvp_constants_locked()`.
+  // - untransformed `D3DFVF_XYZ*`: internal WVP VS variants and a reserved high VS
+  //   constant range (c240..c243) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
+  // - pre-transformed `D3DFVF_XYZRHW*`: draw-time `XYZRHW` -> clip-space conversion.
   //
   // Transforms are also consumed by the fixed-function `ProcessVertices` subset.
   if (sb->transform_mask.any()) {
@@ -14768,6 +15021,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
                   sizeof(float) * 16u);
       if (t == kD3dTransformWorld0 || t == kD3dTransformView || t == kD3dTransformProjection) {
         dev->fixedfunc_matrix_dirty = true;
+      }
+      if (t == kD3dTransformWorld0 || t == kD3dTransformView) {
+        dev->fixedfunc_lighting_dirty = true;
       }
       stateblock_record_transform_locked(dev, t, dev->transform_matrices[t]);
     }
@@ -14808,24 +15064,31 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (sb->material_set) {
     dev->material = sb->material;
     dev->material_valid = sb->material_valid;
+    dev->fixedfunc_lighting_dirty = true;
     stateblock_record_material_locked(dev, dev->material, dev->material_valid);
   }
   for (uint32_t i = 0; i < Device::kMaxLights; ++i) {
     if (sb->light_mask.test(i)) {
       dev->lights[i] = sb->lights[i];
       dev->light_valid[i] = sb->light_valid_bits.test(i);
+      if (i == 0) {
+        dev->fixedfunc_lighting_dirty = true;
+      }
       stateblock_record_light_locked(dev, i, dev->lights[i], dev->light_valid[i]);
     }
     if (sb->light_enable_mask.test(i)) {
       dev->light_enabled[i] = sb->light_enable_bits.test(i) ? TRUE : FALSE;
+      if (i == 0) {
+        dev->fixedfunc_lighting_dirty = true;
+      }
       stateblock_record_light_enable_locked(dev, i, dev->light_enabled[i]);
     }
   }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (sb->gamma_ramp_set) {
     dev->gamma_ramp = sb->gamma_ramp;
     dev->gamma_ramp_valid = sb->gamma_ramp_valid;
@@ -14923,6 +15186,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     if (old_fvf != dev->fvf && fixedfunc_fvf_needs_matrix(dev->fvf)) {
       dev->fixedfunc_matrix_dirty = true;
     }
+    if (old_fvf != dev->fvf && fixedfunc_fvf_has_normal(dev->fvf)) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
   if (sb->vertex_decl_set || sb->fvf_set) {
     stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
@@ -14978,6 +15244,9 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     if (dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
       dev->fixedfunc_matrix_dirty = true;
     }
+    if (dev->user_vs && fixedfunc_fvf_has_normal(dev->fvf)) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
   if (sb->user_ps_set && dev->user_ps != sb->user_ps) {
     dev->user_ps = sb->user_ps;
@@ -15029,6 +15298,14 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
           dev->fixedfunc_matrix_dirty = true;
         }
       }
+      if (stage == kD3d9ShaderStageVs && fixedfunc_fvf_has_normal(dev->fvf)) {
+        const uint32_t write_end = start + count;
+        const uint32_t ff_start = kFixedfuncLightingStartRegister;
+        const uint32_t ff_end = kFixedfuncLightingStartRegister + kFixedfuncLightingVec4Count;
+        if (start < ff_end && write_end > ff_start) {
+          dev->fixedfunc_lighting_dirty = true;
+        }
+      }
 
       std::memcpy(dst + static_cast<size_t>(start) * 4,
                   src + static_cast<size_t>(start) * 4,
@@ -15059,11 +15336,14 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       return hr;
     }
     // State blocks can capture and re-apply VS constant registers even when the
-    // app uses fixed-function rendering. Since the fixed-function WVP shader
-    // consumes c240..c243, treat the range as clobbered and re-upload the matrix
-    // after the block is applied.
+    // app uses fixed-function rendering. If the fixed-function fallback consumes any
+    // reserved VS constant ranges (WVP/lighting), treat them as clobbered and re-upload
+    // on the next draw.
     if (fixedfunc_fvf_needs_matrix(dev->fvf)) {
       dev->fixedfunc_matrix_dirty = true;
+    }
+    if (fixedfunc_fvf_has_normal(dev->fvf)) {
+      dev->fixedfunc_lighting_dirty = true;
     }
   }
   if (sb->ps_const_mask.any()) {
@@ -15775,6 +16055,9 @@ HRESULT device_set_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, const Ma
   if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
     dev->fixedfunc_matrix_dirty = true;
   }
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
   // If fixed-function WVP rendering is active, reflect transform updates in the
@@ -15821,6 +16104,9 @@ HRESULT device_multiply_transform_impl(D3DDDI_HDEVICE hDevice, StateT state, con
   std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
   if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
     dev->fixedfunc_matrix_dirty = true;
+  }
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
+    dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
@@ -15956,6 +16242,7 @@ HRESULT device_set_material_impl(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMa
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->material = *pMaterial;
   dev->material_valid = true;
+  dev->fixedfunc_lighting_dirty = true;
   stateblock_record_material_locked(dev, dev->material, dev->material_valid);
   return trace.ret(S_OK);
 }
@@ -16014,6 +16301,9 @@ HRESULT device_set_light_impl(D3DDDI_HDEVICE hDevice, IndexT index, const LightT
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::memcpy(&dev->lights[idx], pLight, sizeof(dev->lights[idx]));
   dev->light_valid[idx] = true;
+  if (idx == 0) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
   stateblock_record_light_locked(dev, idx, dev->lights[idx], dev->light_valid[idx]);
   return trace.ret(S_OK);
 }
@@ -16076,6 +16366,9 @@ HRESULT device_light_enable_impl(D3DDDI_HDEVICE hDevice, IndexT index, BoolT ena
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->light_enabled[idx] = d3d9_to_u32(enabled) ? TRUE : FALSE;
+  if (idx == 0) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
   stateblock_record_light_enable_locked(dev, idx, dev->light_enabled[idx]);
   return trace.ret(S_OK);
 }
@@ -24392,6 +24685,8 @@ struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
 // - Untransformed `D3DFVF_XYZ*` fixed-function draws use internal WVP vertex shader
 //   variants that read `WORLD0 * VIEW * PROJECTION` from a reserved high VS constant
 //   range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
+// - The minimal lighting subset (`D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`)
+//   also consumes WORLD/VIEW for normal transform (uploaded in c244..c246).
 //
 // Keep these outside the WDK-only DDI block so they are available in portable
 // builds (Linux/CI) and in Windows portable builds that do not use WDK headers.
@@ -24418,6 +24713,9 @@ static HRESULT AEROGPU_D3D9_CALL device_set_transform_portable(
   std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
   if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
     dev->fixedfunc_matrix_dirty = true;
+  }
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
+    dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
   return trace.ret(S_OK);
@@ -24451,6 +24749,9 @@ static HRESULT AEROGPU_D3D9_CALL device_multiply_transform_portable(
   std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
   if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
     dev->fixedfunc_matrix_dirty = true;
+  }
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
+    dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
   return trace.ret(S_OK);
