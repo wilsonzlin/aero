@@ -262,6 +262,8 @@ pub const OPCODE_F16TOF32: u32 = 0x5e;
 /// - `GroupMemoryBarrierWithGroupSync()`
 /// - `DeviceMemoryBarrierWithGroupSync()`
 /// - `AllMemoryBarrierWithGroupSync()`
+/// - `GroupMemoryBarrier()` (fence-only; no group sync)
+/// - `DeviceMemoryBarrier()` / `AllMemoryBarrier()` (fence-only; no group sync)
 pub const OPCODE_SYNC: u32 = 0x5f;
 
 /// Opcode token "opcode-specific control" field (bits 24..=30).

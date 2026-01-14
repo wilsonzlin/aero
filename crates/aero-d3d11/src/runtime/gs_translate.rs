@@ -168,6 +168,7 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::StoreRaw { .. } => "store_raw",
         Sm4Inst::LdStructured { .. } => "ld_structured",
         Sm4Inst::StoreStructured { .. } => "store_structured",
+        Sm4Inst::Sync { .. } => "sync",
         Sm4Inst::Emit { .. } => "emit",
         Sm4Inst::Cut { .. } => "cut",
         Sm4Inst::EmitThenCut { .. } => "emitthen_cut",
