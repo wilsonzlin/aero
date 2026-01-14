@@ -1064,7 +1064,7 @@ impl UsbHidPassthroughBridge {
         obj.into()
     }
 
-    /// Drain the next pending guest -> host feature report read request.
+    /// Drain the next pending guest -> host feature report read request (`GET_REPORT`, Feature).
     ///
     /// Returns `null` when no request is pending.
     pub fn drain_next_feature_report_request(&mut self) -> JsValue {
@@ -1087,6 +1087,9 @@ impl UsbHidPassthroughBridge {
     }
 
     /// Complete a previously-drained feature report read request.
+    ///
+    /// `data` should contain the report payload bytes without a report-id prefix; the USB HID
+    /// device model will insert the report-id prefix when needed.
     pub fn complete_feature_report_request(
         &mut self,
         request_id: u32,
@@ -1204,7 +1207,7 @@ impl WebHidPassthroughBridge {
         obj.into()
     }
 
-    /// Drain the next pending guest -> host feature report read request.
+    /// Drain the next pending guest -> host feature report read request (`GET_REPORT`, Feature).
     ///
     /// Returns `null` when no request is pending.
     pub fn drain_next_feature_report_request(&mut self) -> JsValue {
@@ -1227,6 +1230,9 @@ impl WebHidPassthroughBridge {
     }
 
     /// Complete a previously-drained feature report read request.
+    ///
+    /// `data` should contain the report payload bytes without a report-id prefix; the USB HID
+    /// device model will insert the report-id prefix when needed.
     pub fn complete_feature_report_request(
         &mut self,
         request_id: u32,

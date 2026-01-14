@@ -153,4 +153,50 @@ describe("workers/IoWorkerLegacyHidPassthroughAdapter", () => {
     expect(msg!.reportId).toBe(1);
     expect(new Uint8Array(msg!.data)).toEqual(new Uint8Array([0xbb, 0xcc]));
   });
+
+  it("translates hid.getFeatureReport payloads into legacy hid:getFeatureReport and translates results back", () => {
+    const adapter = new IoWorkerLegacyHidPassthroughAdapter({ firstDeviceId: 10 });
+
+    adapter.attach({
+      type: "hid:attach",
+      deviceId: "dev-a",
+      guestPort: 0,
+      vendorId: 1,
+      productId: 2,
+      collections: [] as any,
+    });
+
+    const req = adapter.getFeatureReport({ deviceId: 10, requestId: 1, reportId: 7 });
+    expect(req).not.toBeNull();
+    expect(req!.type).toBe("hid:getFeatureReport");
+    expect(req!.deviceId).toBe("dev-a");
+    expect(req!.requestId).toBe(1);
+    expect(req!.reportId).toBe(7);
+
+    const ok = adapter.featureReportResult({
+      type: "hid:featureReportResult",
+      deviceId: "dev-a",
+      requestId: 1,
+      reportId: 7,
+      ok: true,
+      data: new Uint8Array([1, 2, 3]).buffer,
+    });
+    expect(ok).not.toBeNull();
+    expect(ok!.type).toBe("hid.featureReportResult");
+    expect(ok!.deviceId).toBe(10);
+    expect(ok!.ok).toBe(true);
+    expect(Array.from(ok!.data ?? [])).toEqual([1, 2, 3]);
+
+    const err = adapter.featureReportResult({
+      type: "hid:featureReportResult",
+      deviceId: "dev-a",
+      requestId: 2,
+      reportId: 7,
+      ok: false,
+      error: "boom",
+    });
+    expect(err).not.toBeNull();
+    expect(err!.ok).toBe(false);
+    expect(err!.error).toBe("boom");
+  });
 });

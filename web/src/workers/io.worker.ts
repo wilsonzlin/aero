@@ -128,6 +128,7 @@ import {
   isHidDetachMessage,
   isHidFeatureReportResultMessage,
   isHidInputReportMessage,
+  type HidGetFeatureReportMessage,
   isHidProxyMessage,
   isHidRingAttachMessage,
   isHidRingDetachMessage,
@@ -135,7 +136,6 @@ import {
   type HidAttachMessage,
   type HidDetachMessage,
   type HidErrorMessage,
-  type HidGetFeatureReportMessage,
   type HidFeatureReportResultMessage,
   type HidInputReportMessage,
   type HidLogMessage,
@@ -164,6 +164,7 @@ import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
   isHidAttachMessage as isHidPassthroughAttachMessage,
   isHidDetachMessage as isHidPassthroughDetachMessage,
+  isHidFeatureReportResultMessage as isHidPassthroughFeatureReportResultMessage,
   isHidInputReportMessage as isHidPassthroughInputReportMessage,
   type GuestUsbPath,
   type GuestUsbPort,
@@ -615,11 +616,16 @@ function estimateQueuedSnapshotPausedBytes(msg: unknown): number {
     }
     return 0;
   }
+  if (isHidFeatureReportResultMessage(msg)) {
+    if (msg.ok && msg.data) return msg.data.byteLength >>> 0;
+    return 0;
+  }
   if (isHidInputReportMessage(msg)) {
     return msg.data.byteLength >>> 0;
   }
-  if (isHidFeatureReportResultMessage(msg)) {
-    return (msg.data?.byteLength ?? 0) >>> 0;
+  if (isHidPassthroughFeatureReportResultMessage(msg)) {
+    if (msg.ok && msg.data) return msg.data.byteLength >>> 0;
+    return 0;
   }
   if (isHidPassthroughInputReportMessage(msg)) {
     return msg.data.byteLength >>> 0;
@@ -681,7 +687,8 @@ ctx.addEventListener(
       isHidPassthroughAttachHubMessage(data) ||
       isHidPassthroughAttachMessage(data) ||
       isHidPassthroughDetachMessage(data) ||
-      isHidPassthroughInputReportMessage(data);
+      isHidPassthroughInputReportMessage(data) ||
+      isHidPassthroughFeatureReportResultMessage(data);
     if (!shouldQueue) return;
     ev.stopImmediatePropagation();
     queueSnapshotPausedMessage(data);
@@ -2587,13 +2594,26 @@ const hidHostSink: HidHostSink = {
     }
   },
   requestFeatureReport: (payload) => {
+    const legacyMsg = legacyHidAdapter.getFeatureReport(payload);
+    if (legacyMsg) {
+      try {
+        ctx.postMessage(legacyMsg);
+      } catch {
+        // ignore
+      }
+      return;
+    }
     const msg: HidGetFeatureReportMessage = {
       type: "hid.getFeatureReport",
       deviceId: payload.deviceId >>> 0,
       requestId: payload.requestId >>> 0,
       reportId: payload.reportId >>> 0,
     };
-    ctx.postMessage(msg);
+    try {
+      ctx.postMessage(msg);
+    } catch {
+      // ignore
+    }
   },
   log: (message, deviceId) => {
     const msg: HidLogMessage = { type: "hid.log", message, ...(deviceId !== undefined ? { deviceId } : {}) };
@@ -4712,6 +4732,14 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       if (input) {
         if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
         hidGuest.inputReport(input);
+      }
+      return;
+    }
+
+    if (isHidPassthroughFeatureReportResultMessage(data)) {
+      const translated = legacyHidAdapter.featureReportResult(data);
+      if (translated) {
+        handleHidFeatureReportResult(translated);
       }
       return;
     }

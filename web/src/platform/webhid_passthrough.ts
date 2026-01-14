@@ -9,9 +9,11 @@ import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
 import { fnv1a32Hex } from "../utils/fnv1a";
 import {
+  isHidGetFeatureReportMessage,
   isHidSendReportMessage,
   type GuestUsbPath,
   type GuestUsbRootPort,
+  type HidFeatureReportResultMessage,
   type HidPassthroughMessage,
 } from "./hid_passthrough_protocol";
 import {
@@ -267,29 +269,116 @@ export class WebHidPassthroughManager {
    * it's often wired directly to a `Worker#message` event.
    */
   handleWorkerMessage(msg: unknown): void {
-    if (!isHidSendReportMessage(msg)) return;
-    const attachment = this.#attachedDevices.find((d) => d.deviceId === msg.deviceId);
-    if (!attachment) return;
+    if (isHidSendReportMessage(msg)) {
+      const attachment = this.#attachedDevices.find((d) => d.deviceId === msg.deviceId);
+      if (!attachment) return;
 
-    const deviceId = msg.deviceId;
-    const reportType = msg.reportType;
-    const reportId = msg.reportId;
-    const bytes = new Uint8Array(msg.data);
+      const deviceId = msg.deviceId;
+      const reportType = msg.reportType;
+      const reportId = msg.reportId;
+      const bytes = new Uint8Array(msg.data);
 
-    this.#enqueueOutputReportSend(deviceId, async () => {
-      const current = this.#attachedDevices.find((d) => d.deviceId === deviceId);
-      if (!current) return;
-      const device = current.device;
-      try {
-        if (reportType === "feature") {
-          await device.sendFeatureReport(reportId, bytes);
-        } else {
-          await device.sendReport(reportId, bytes);
+      this.#enqueueOutputReportSend(deviceId, async () => {
+        const current = this.#attachedDevices.find((d) => d.deviceId === deviceId);
+        if (!current) return;
+        const device = current.device;
+        try {
+          if (reportType === "feature") {
+            await device.sendFeatureReport(reportId, bytes);
+          } else {
+            await device.sendReport(reportId, bytes);
+          }
+        } catch (err) {
+          console.warn(`WebHID ${reportType === "feature" ? "sendFeatureReport" : "sendReport"}() failed`, err);
         }
-      } catch (err) {
-        console.warn(`WebHID ${reportType === "feature" ? "sendFeatureReport" : "sendReport"}() failed`, err);
+      });
+      return;
+    }
+
+    if (isHidGetFeatureReportMessage(msg)) {
+      const deviceId = msg.deviceId;
+      const reportId = msg.reportId;
+      const requestId = msg.requestId;
+
+      const reply = (res: HidFeatureReportResultMessage, transfer?: Transferable[]): void => {
+        try {
+          if (transfer) {
+            this.#target.postMessage(res, transfer);
+          } else {
+            this.#target.postMessage(res);
+          }
+        } catch {
+          // Best-effort only; if the worker is gone we'll naturally stop receiving requests.
+        }
+      };
+
+      const attachment = this.#attachedDevices.find((d) => d.deviceId === deviceId);
+      if (!attachment) {
+        reply({
+          type: "hid:featureReportResult",
+          deviceId,
+          requestId,
+          reportId,
+          ok: false,
+          error: `DeviceId=${deviceId} is not attached.`,
+        });
+        return;
       }
-    });
+
+      // Serialize receiveFeatureReport relative to sendReport/sendFeatureReport calls for the same
+      // physical device, matching WebHID ordering expectations.
+      this.#enqueueOutputReportSend(deviceId, async () => {
+        const current = this.#attachedDevices.find((d) => d.deviceId === deviceId);
+        if (!current) {
+          reply({
+            type: "hid:featureReportResult",
+            deviceId,
+            requestId,
+            reportId,
+            ok: false,
+            error: `DeviceId=${deviceId} is not attached.`,
+          });
+          return;
+        }
+
+        try {
+          const view = await current.device.receiveFeatureReport(reportId);
+          if (!(view instanceof DataView)) {
+            reply({
+              type: "hid:featureReportResult",
+              deviceId,
+              requestId,
+              reportId,
+              ok: false,
+              error: "receiveFeatureReport returned non-DataView value.",
+            });
+            return;
+          }
+          const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+          const data = new Uint8Array(src.byteLength);
+          data.set(src);
+          const res: HidFeatureReportResultMessage = {
+            type: "hid:featureReportResult",
+            deviceId,
+            requestId,
+            reportId,
+            ok: true,
+            data: data.buffer,
+          };
+          reply(res, [data.buffer]);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          reply({
+            type: "hid:featureReportResult",
+            deviceId,
+            requestId,
+            reportId,
+            ok: false,
+            error: message,
+          });
+        }
+      });
+    }
   }
 
   setInputReportRing(ring: RingBuffer | null, status: Int32Array | null = null): void {

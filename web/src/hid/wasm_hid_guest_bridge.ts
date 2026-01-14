@@ -177,31 +177,34 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       } catch {
         configured = false;
       }
-      if (!configured) continue;
 
-      while (remainingReports > 0) {
-        let report: { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null = null;
-        try {
-          report = bridge.drain_next_output_report();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.host.error(`drain_next_output_report failed: ${message}`, deviceId);
-          break;
+      if (configured) {
+        while (remainingReports > 0) {
+          let report: { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null = null;
+          try {
+            report = bridge.drain_next_output_report();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.host.error(`drain_next_output_report failed: ${message}`, deviceId);
+            break;
+          }
+          if (!report) break;
+
+          remainingReports -= 1;
+          this.host.sendReport({
+            deviceId,
+            reportType: report.reportType,
+            reportId: report.reportId,
+            data: report.data,
+          });
         }
-        if (!report) break;
-
-        remainingReports -= 1;
-        this.host.sendReport({
-          deviceId,
-          reportType: report.reportType,
-          reportId: report.reportId,
-          data: report.data,
-        });
       }
 
       const drainFeatureReportRequest = (bridge as unknown as { drain_next_feature_report_request?: () => unknown })
         .drain_next_feature_report_request;
       if (typeof drainFeatureReportRequest === "function") {
+        // Feature report reads are delivered over the control endpoint and can occur before the
+        // guest has configured the USB device. Always drain them (independent of `configured`).
         while (remainingFeatureRequests > 0) {
           let req: FeatureReportRequest | null = null;
           try {

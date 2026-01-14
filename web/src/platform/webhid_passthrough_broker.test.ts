@@ -45,6 +45,7 @@ class FakeHidDevice {
 
   readonly sendReport = vi.fn(async (_reportId: number, _data: BufferSource) => {});
   readonly sendFeatureReport = vi.fn(async (_reportId: number, _data: BufferSource) => {});
+  readonly receiveFeatureReport = vi.fn(async (_reportId: number) => new DataView(new ArrayBuffer(0)));
 
   readonly #listeners = new Map<string, Set<Listener>>();
 
@@ -299,6 +300,36 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     device.dispatchInputReport(2, new DataView(new Uint8Array([10]).buffer));
     const forwarded = target.posted.filter((p) => p.message.type === "hid:inputReport");
     expect(forwarded).toHaveLength(1);
+  });
+
+  it("handles hid:getFeatureReport from the worker and responds with hid:featureReportResult", async () => {
+    const device = new FakeHidDevice();
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    device.receiveFeatureReport.mockImplementationOnce(async () => new DataView(Uint8Array.of(1, 2, 3).buffer));
+
+    await manager.attachKnownDevice(device as unknown as HIDDevice);
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const deviceId = attach.deviceId as string;
+
+    manager.handleWorkerMessage({
+      type: "hid:getFeatureReport",
+      deviceId,
+      requestId: 1,
+      reportId: 7,
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.receiveFeatureReport).toHaveBeenCalledTimes(1);
+    expect(device.receiveFeatureReport).toHaveBeenCalledWith(7);
+
+    const resEntry = target.posted.find((p) => p.message.type === "hid:featureReportResult")!;
+    expect(resEntry.message).toMatchObject({ deviceId, requestId: 1, reportId: 7, ok: true });
+    const data = (resEntry.message as any).data as ArrayBuffer;
+    expect(Array.from(new Uint8Array(data))).toEqual([1, 2, 3]);
+    expect(resEntry.transfer?.[0]).toBe(data);
   });
 
   it("executes hid:sendReport sequentially per device", async () => {

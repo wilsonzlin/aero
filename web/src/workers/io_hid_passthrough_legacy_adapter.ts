@@ -1,10 +1,17 @@
 import type { NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
-import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "../hid/hid_proxy_protocol";
+import type {
+  HidAttachMessage,
+  HidDetachMessage,
+  HidFeatureReportResultMessage,
+  HidInputReportMessage,
+} from "../hid/hid_proxy_protocol";
 import type {
   GuestUsbPath,
   GuestUsbPort,
   HidAttachMessage as HidPassthroughAttachMessage,
   HidDetachMessage as HidPassthroughDetachMessage,
+  HidFeatureReportResultMessage as HidPassthroughFeatureReportResultMessage,
+  HidGetFeatureReportMessage as HidPassthroughGetFeatureReportMessage,
   HidInputReportMessage as HidPassthroughInputReportMessage,
   HidSendReportMessage as HidPassthroughSendReportMessage,
 } from "../platform/hid_passthrough_protocol";
@@ -121,6 +128,34 @@ export class IoWorkerLegacyHidPassthroughAdapter {
       reportType: payload.reportType,
       reportId: payload.reportId,
       data: buffer,
+    };
+  }
+
+  getFeatureReport(payload: { deviceId: number; requestId: number; reportId: number }): HidPassthroughGetFeatureReportMessage | null {
+    const legacyId = this.#legacyIdByNumericId.get(payload.deviceId);
+    if (!legacyId) return null;
+    return {
+      type: "hid:getFeatureReport",
+      deviceId: legacyId,
+      requestId: payload.requestId >>> 0,
+      reportId: payload.reportId >>> 0,
+    };
+  }
+
+  featureReportResult(msg: HidPassthroughFeatureReportResultMessage): HidFeatureReportResultMessage | null {
+    const deviceId = this.#numericIdByLegacyId.get(msg.deviceId);
+    if (deviceId === undefined) return null;
+    // Ignore results for devices that are no longer attached.
+    if (!this.#attachedNumericIds.has(deviceId)) return null;
+
+    return {
+      type: "hid.featureReportResult",
+      deviceId,
+      requestId: msg.requestId >>> 0,
+      reportId: msg.reportId >>> 0,
+      ok: msg.ok,
+      ...(msg.ok && msg.data instanceof ArrayBuffer ? { data: new Uint8Array(msg.data) as Uint8Array<ArrayBuffer> } : {}),
+      ...(!msg.ok && msg.error !== undefined ? { error: msg.error } : {}),
     };
   }
 }

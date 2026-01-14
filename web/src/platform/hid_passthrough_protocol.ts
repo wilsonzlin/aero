@@ -125,12 +125,37 @@ export type HidSendReportMessage = {
   data: ArrayBuffer;
 };
 
+export type HidGetFeatureReportMessage = {
+  /**
+   * I/O worker -> main: request `HIDDevice.receiveFeatureReport(reportId)`.
+   */
+  type: "hid:getFeatureReport";
+  deviceId: string;
+  requestId: number;
+  reportId: number;
+};
+
+export type HidFeatureReportResultMessage = {
+  /**
+   * Main -> I/O worker: response to {@link HidGetFeatureReportMessage}.
+   */
+  type: "hid:featureReportResult";
+  deviceId: string;
+  requestId: number;
+  reportId: number;
+  ok: boolean;
+  data?: ArrayBuffer;
+  error?: string;
+};
+
 export type HidPassthroughMessage =
   | HidAttachHubMessage
   | HidAttachMessage
   | HidDetachMessage
   | HidInputReportMessage
-  | HidSendReportMessage;
+  | HidSendReportMessage
+  | HidGetFeatureReportMessage
+  | HidFeatureReportResultMessage;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -269,12 +294,33 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
   return isArrayBuffer(value.data);
 }
 
+export function isHidGetFeatureReportMessage(value: unknown): value is HidGetFeatureReportMessage {
+  if (!isRecord(value) || value.type !== "hid:getFeatureReport") return false;
+  if (typeof value.deviceId !== "string") return false;
+  if (!isUint32(value.requestId)) return false;
+  return isFiniteNumber(value.reportId);
+}
+
+export function isHidFeatureReportResultMessage(value: unknown): value is HidFeatureReportResultMessage {
+  if (!isRecord(value) || value.type !== "hid:featureReportResult") return false;
+  if (typeof value.deviceId !== "string") return false;
+  if (!isUint32(value.requestId)) return false;
+  if (!isFiniteNumber(value.reportId)) return false;
+  if (typeof value.ok !== "boolean") return false;
+  if (value.ok) {
+    return isArrayBuffer(value.data);
+  }
+  return value.data === undefined && (value.error === undefined || typeof value.error === "string");
+}
+
 export function isHidPassthroughMessage(value: unknown): value is HidPassthroughMessage {
   return (
     isHidAttachHubMessage(value) ||
     isHidAttachMessage(value) ||
     isHidDetachMessage(value) ||
     isHidInputReportMessage(value) ||
-    isHidSendReportMessage(value)
+    isHidSendReportMessage(value) ||
+    isHidGetFeatureReportMessage(value) ||
+    isHidFeatureReportResultMessage(value)
   );
 }

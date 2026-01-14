@@ -3,11 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   isHidAttachMessage,
   isHidDetachMessage,
+  isHidFeatureReportResultMessage,
+  isHidGetFeatureReportMessage,
   isHidInputReportMessage,
   isHidPassthroughMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
   type HidDetachMessage,
+  type HidFeatureReportResultMessage,
+  type HidGetFeatureReportMessage,
   type HidInputReportMessage,
   type HidSendReportMessage,
 } from "./hid_passthrough_protocol";
@@ -133,6 +137,42 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidSendReportMessage({ ...send, data: new Uint8Array([2]) } as unknown)).toBe(false);
   });
 
+  it("validates hid:getFeatureReport and hid:featureReportResult messages", () => {
+    const get: HidGetFeatureReportMessage = {
+      type: "hid:getFeatureReport",
+      deviceId: "dev-1",
+      requestId: 1,
+      reportId: 7,
+    };
+    expect(isHidGetFeatureReportMessage(get)).toBe(true);
+    expect(isHidPassthroughMessage(get)).toBe(true);
+
+    const ok: HidFeatureReportResultMessage = {
+      type: "hid:featureReportResult",
+      deviceId: "dev-1",
+      requestId: 1,
+      reportId: 7,
+      ok: true,
+      data: new Uint8Array([1, 2, 3]).buffer,
+    };
+    expect(isHidFeatureReportResultMessage(ok)).toBe(true);
+    expect(isHidPassthroughMessage(ok)).toBe(true);
+
+    const err: HidFeatureReportResultMessage = {
+      type: "hid:featureReportResult",
+      deviceId: "dev-1",
+      requestId: 2,
+      reportId: 7,
+      ok: false,
+      error: "boom",
+    };
+    expect(isHidFeatureReportResultMessage(err)).toBe(true);
+    expect(isHidPassthroughMessage(err)).toBe(true);
+
+    expect(isHidFeatureReportResultMessage({ ...ok, data: undefined } as unknown)).toBe(false);
+    expect(isHidFeatureReportResultMessage({ ...err, data: new ArrayBuffer(0) } as unknown)).toBe(false);
+  });
+
   it("messages are structured-cloneable", () => {
     const attach: HidAttachMessage = {
       type: "hid:attach",
@@ -160,5 +200,23 @@ describe("platform/hid_passthrough_protocol", () => {
       data: new Uint8Array([4, 5]).buffer,
     };
     expect(isHidPassthroughMessage(structuredClone(send) as unknown)).toBe(true);
+
+    const get: HidGetFeatureReportMessage = {
+      type: "hid:getFeatureReport",
+      deviceId: "dev-1",
+      requestId: 9,
+      reportId: 7,
+    };
+    expect(isHidPassthroughMessage(structuredClone(get) as unknown)).toBe(true);
+
+    const res: HidFeatureReportResultMessage = {
+      type: "hid:featureReportResult",
+      deviceId: "dev-1",
+      requestId: 9,
+      reportId: 7,
+      ok: true,
+      data: new Uint8Array([1]).buffer,
+    };
+    expect(isHidPassthroughMessage(structuredClone(res) as unknown)).toBe(true);
   });
 });
