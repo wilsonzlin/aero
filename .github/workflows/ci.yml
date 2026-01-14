@@ -560,7 +560,7 @@ jobs:
         run: |
           set -euo pipefail
           repo_root="$(git rev-parse --show-toplevel)"
-          npm run generate:goldens
+          (cd "$repo_root" && npm run generate:goldens)
           if ! git -C "$repo_root" diff --exit-code -- tests/golden; then
             echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
             echo "Changed files:"
