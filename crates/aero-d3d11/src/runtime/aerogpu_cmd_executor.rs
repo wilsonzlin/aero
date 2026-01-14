@@ -958,6 +958,20 @@ struct ConstantBufferScratch {
 }
 
 #[derive(Debug)]
+struct SrvBufferScratch {
+    id: BufferId,
+    buffer: wgpu::Buffer,
+    /// Total size of the scratch buffer allocation (>= `bind_size`).
+    size: u64,
+    /// Source buffer handle last copied into this scratch buffer.
+    src_buffer: u32,
+    /// Source byte offset last copied into this scratch buffer.
+    src_offset: u64,
+    /// Last bound range size copied into this scratch buffer.
+    bind_size: u64,
+}
+
+#[derive(Debug)]
 #[allow(dead_code)]
 struct GsScratchBuffer {
     id: BufferId,
@@ -1213,6 +1227,7 @@ pub struct AerogpuD3d11Executor {
 
     gpu_scratch: GpuScratchAllocator,
     cbuffer_scratch: HashMap<(ShaderStage, u32), ConstantBufferScratch>,
+    srv_buffer_scratch: HashMap<(ShaderStage, u32), SrvBufferScratch>,
     gs_scratch: GsScratchPool,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
@@ -1472,6 +1487,7 @@ impl AerogpuD3d11Executor {
             legacy_constants,
             gpu_scratch,
             cbuffer_scratch: HashMap::new(),
+            srv_buffer_scratch: HashMap::new(),
             gs_scratch: GsScratchPool::default(),
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
@@ -1672,6 +1688,7 @@ impl AerogpuD3d11Executor {
         self.shared_surfaces.clear();
         self.pipeline_cache.clear();
         self.cbuffer_scratch.clear();
+        self.srv_buffer_scratch.clear();
         self.gpu_scratch.clear();
         self.gs_scratch.clear();
         self.expansion_scratch.reset();
@@ -3860,6 +3877,12 @@ impl AerogpuD3d11Executor {
                         resources: &self.resources,
                         legacy_constants: &self.legacy_constants,
                         cbuffer_scratch: &self.cbuffer_scratch,
+                        srv_buffer_scratch: &self.srv_buffer_scratch,
+                        storage_align: (self.device.limits().min_storage_buffer_offset_alignment
+                            as u64)
+                            .max(1),
+                        max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                            as u64,
                         dummy_uniform: &self.dummy_uniform,
                         dummy_storage: &self.dummy_storage,
                         dummy_texture_view: &self.dummy_texture_view,
@@ -3883,6 +3906,12 @@ impl AerogpuD3d11Executor {
                         resources: &self.resources,
                         legacy_constants: &self.legacy_constants,
                         cbuffer_scratch: &self.cbuffer_scratch,
+                        srv_buffer_scratch: &self.srv_buffer_scratch,
+                        storage_align: (self.device.limits().min_storage_buffer_offset_alignment
+                            as u64)
+                            .max(1),
+                        max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                            as u64,
                         dummy_uniform: &self.dummy_uniform,
                         dummy_storage: &self.dummy_storage,
                         dummy_texture_view: &self.dummy_texture_view,
@@ -5842,6 +5871,18 @@ impl AerogpuD3d11Executor {
                                         resources: &self.resources,
                                         legacy_constants: &self.legacy_constants,
                                         cbuffer_scratch: &self.cbuffer_scratch,
+                                        srv_buffer_scratch: &self.srv_buffer_scratch,
+                                        storage_align: (self
+                                            .device
+                                            .limits()
+                                            .min_storage_buffer_offset_alignment
+                                            as u64)
+                                            .max(1),
+                                        max_storage_binding_size: self
+                                            .device
+                                            .limits()
+                                            .max_storage_buffer_binding_size
+                                            as u64,
                                         dummy_uniform: &self.dummy_uniform,
                                         dummy_storage: &self.dummy_storage,
                                         dummy_texture_view: &self.dummy_texture_view,
@@ -6020,6 +6061,18 @@ impl AerogpuD3d11Executor {
                                         resources: &self.resources,
                                         legacy_constants: &self.legacy_constants,
                                         cbuffer_scratch: &self.cbuffer_scratch,
+                                        srv_buffer_scratch: &self.srv_buffer_scratch,
+                                        storage_align: (self
+                                            .device
+                                            .limits()
+                                            .min_storage_buffer_offset_alignment
+                                            as u64)
+                                            .max(1),
+                                        max_storage_binding_size: self
+                                            .device
+                                            .limits()
+                                            .max_storage_buffer_binding_size
+                                            as u64,
                                         dummy_uniform: &self.dummy_uniform,
                                         dummy_storage: &self.dummy_storage,
                                         dummy_texture_view: &self.dummy_texture_view,
@@ -10548,6 +10601,18 @@ impl AerogpuD3d11Executor {
                     resources: &self.resources,
                     legacy_constants: &self.legacy_constants,
                     cbuffer_scratch: &self.cbuffer_scratch,
+                    srv_buffer_scratch: &self.srv_buffer_scratch,
+                    storage_align: (self
+                        .device
+                        .limits()
+                        .min_storage_buffer_offset_alignment
+                        as u64)
+                        .max(1),
+                    max_storage_binding_size: self
+                        .device
+                        .limits()
+                        .max_storage_buffer_binding_size
+                        as u64,
                     dummy_uniform: &self.dummy_uniform,
                     dummy_storage: &self.dummy_storage,
                     dummy_texture_view: &self.dummy_texture_view,
@@ -10732,6 +10797,8 @@ impl AerogpuD3d11Executor {
     ) -> Result<()> {
         let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let max_uniform_binding_size = self.device.limits().max_uniform_buffer_binding_size as u64;
+        let storage_align = (self.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+        let max_storage_binding_size = self.device.limits().max_storage_buffer_binding_size as u64;
 
         for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
             let stage = group_index_to_stage(group_index as u32)?;
@@ -10887,6 +10954,65 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        // WebGPU requires storage buffer binding offsets to be aligned to
+        // `min_storage_buffer_offset_alignment`. D3D11 buffer SRVs (e.g. `ByteAddressBuffer`) can
+        // be bound at arbitrary byte offsets, so for unaligned offsets we copy the bound range
+        // into an internal scratch buffer and bind that at offset 0.
+        //
+        // Note: UAV buffers are read-write; a scratch implementation for UAV offsets would need to
+        // copy results back into the original buffer. For now, we only scratch read-only SRV
+        // buffers.
+        for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
+            let stage = group_index_to_stage(group_index as u32)?;
+            for binding in group_bindings {
+                let crate::BindingKind::SrvBuffer { slot } = &binding.kind else {
+                    continue;
+                };
+                let Some(srv) = self.bindings.stage(stage).srv_buffer(*slot) else {
+                    continue;
+                };
+                let offset = srv.offset;
+                if offset == 0 || offset.is_multiple_of(storage_align) {
+                    continue;
+                }
+                let (src_ptr, src_size) = match self.resources.buffers.get(&srv.buffer) {
+                    Some(src) => (&src.buffer as *const wgpu::Buffer, src.size),
+                    None => continue,
+                };
+                if offset >= src_size {
+                    continue;
+                }
+
+                let remaining = src_size - offset;
+                let mut size = srv.size.unwrap_or(remaining).min(remaining);
+                if size > max_storage_binding_size {
+                    size = max_storage_binding_size;
+                }
+                // WebGPU requires storage buffer binding sizes to be 4-byte aligned.
+                size -= size % 4;
+                if size == 0 {
+                    continue;
+                }
+
+                if !offset.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                    || !size.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                {
+                    bail!(
+                        "srv buffer scratch copy requires COPY_BUFFER_ALIGNMENT={} (stage={stage:?} slot={slot} buffer={} offset={offset} size={size})",
+                        wgpu::COPY_BUFFER_ALIGNMENT,
+                        srv.buffer,
+                    );
+                }
+
+                let scratch =
+                    self.ensure_srv_buffer_scratch(stage, *slot, srv.buffer, offset, size);
+                let src = unsafe { &*src_ptr };
+                encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
+                self.encoder_has_commands = true;
+                self.encoder_used_buffers.insert(srv.buffer);
+            }
+        }
+
         Ok(())
     }
 
@@ -10920,6 +11046,55 @@ impl AerogpuD3d11Executor {
         self.cbuffer_scratch
             .get(&key)
             .expect("scratch buffer inserted above")
+    }
+
+    fn ensure_srv_buffer_scratch(
+        &mut self,
+        stage: ShaderStage,
+        slot: u32,
+        src_buffer: u32,
+        src_offset: u64,
+        bind_size: u64,
+    ) -> &SrvBufferScratch {
+        let key = (stage, slot);
+        let needs_new = self
+            .srv_buffer_scratch
+            .get(&key)
+            .map(|existing| existing.size < bind_size)
+            .unwrap_or(true);
+
+        if needs_new {
+            let id = BufferId(self.next_scratch_buffer_id);
+            self.next_scratch_buffer_id = self.next_scratch_buffer_id.wrapping_add(1);
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd srv buffer scratch"),
+                size: bind_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            self.srv_buffer_scratch.insert(
+                key,
+                SrvBufferScratch {
+                    id,
+                    buffer,
+                    size: bind_size,
+                    src_buffer,
+                    src_offset,
+                    bind_size,
+                },
+            );
+        }
+
+        let scratch = self
+            .srv_buffer_scratch
+            .get_mut(&key)
+            .expect("scratch inserted above");
+        scratch.src_buffer = src_buffer;
+        scratch.src_offset = src_offset;
+        scratch.bind_size = bind_size;
+        scratch
     }
 
     fn ensure_buffer_uploaded(
@@ -12003,6 +12178,9 @@ struct CmdExecutorBindGroupProvider<'a> {
     resources: &'a AerogpuD3d11Resources,
     legacy_constants: &'a HashMap<ShaderStage, wgpu::Buffer>,
     cbuffer_scratch: &'a HashMap<(ShaderStage, u32), ConstantBufferScratch>,
+    srv_buffer_scratch: &'a HashMap<(ShaderStage, u32), SrvBufferScratch>,
+    storage_align: u64,
+    max_storage_binding_size: u64,
     dummy_uniform: &'a wgpu::Buffer,
     dummy_storage: &'a wgpu::Buffer,
     dummy_texture_view: &'a wgpu::TextureView,
@@ -12054,10 +12232,46 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
     fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
         let bound = self.stage_state.srv_buffer(slot)?;
         let buf = self.resources.buffers.get(&bound.buffer)?;
+
+        // If the SRV binding uses an unaligned offset, the executor may have copied the bound range
+        // into a scratch buffer (see `ensure_bound_resources_uploaded`). Surface that scratch buffer
+        // so bind group construction can still succeed and preserve correct view semantics.
+        let offset = bound.offset;
+        if offset != 0 && !offset.is_multiple_of(self.storage_align) {
+            if offset >= buf.size {
+                return None;
+            }
+            let remaining = buf.size - offset;
+            let mut bind_size = bound.size.unwrap_or(remaining).min(remaining);
+            if bind_size > self.max_storage_binding_size {
+                bind_size = self.max_storage_binding_size;
+            }
+            bind_size -= bind_size % 4;
+            if bind_size == 0 {
+                return None;
+            }
+
+            if let Some(scratch) = self.srv_buffer_scratch.get(&(self.stage, slot)) {
+                if scratch.src_buffer == bound.buffer
+                    && scratch.src_offset == offset
+                    && scratch.bind_size == bind_size
+                {
+                    return Some(reflection_bindings::BufferBinding {
+                        id: scratch.id,
+                        buffer: &scratch.buffer,
+                        offset: 0,
+                        size: Some(bind_size),
+                        total_size: scratch.size,
+                    });
+                }
+            }
+            return None;
+        }
+
         Some(reflection_bindings::BufferBinding {
             id: BufferId(bound.buffer as u64),
             buffer: &buf.buffer,
-            offset: bound.offset,
+            offset,
             size: bound.size,
             total_size: buf.size,
         })
@@ -16084,6 +16298,11 @@ fn cs_main() {
                 resources: &exec.resources,
                 legacy_constants: &exec.legacy_constants,
                 cbuffer_scratch: &exec.cbuffer_scratch,
+                srv_buffer_scratch: &exec.srv_buffer_scratch,
+                storage_align: (exec.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size
+                    as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view: &exec.dummy_texture_view,
@@ -16112,6 +16331,11 @@ fn cs_main() {
                 resources: &exec.resources,
                 legacy_constants: &exec.legacy_constants,
                 cbuffer_scratch: &exec.cbuffer_scratch,
+                srv_buffer_scratch: &exec.srv_buffer_scratch,
+                storage_align: (exec.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size
+                    as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view: &exec.dummy_texture_view,
@@ -16428,6 +16652,168 @@ fn cs_main() {
                 1,
                 "expected a compute pipeline cache hit on the second draw with a different primitive count"
             );
+        });
+    }
+
+    #[test]
+    fn srv_buffer_scratch_allows_unaligned_binding_offsets() {
+        pollster::block_on(async {
+            use reflection_bindings::BindGroupResourceProvider;
+
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let storage_align =
+                (exec.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+            if storage_align <= wgpu::COPY_BUFFER_ALIGNMENT {
+                skip_or_panic(
+                    module_path!(),
+                    &format!("storage alignment too small for scratch test ({storage_align})"),
+                );
+                return;
+            }
+
+            const BUF: u32 = 1;
+            let buf_size = storage_align
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(64))
+                .expect("buf_size overflow");
+            let src = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("srv buffer scratch test src"),
+                size: buf_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            // Fill buffer with a deterministic u32 pattern so the scratch copy can be validated by
+            // reading back the first copied word.
+            let mut data = Vec::with_capacity(buf_size as usize);
+            for i in 0..(buf_size / 4) {
+                data.extend_from_slice(&(i as u32).to_le_bytes());
+            }
+            exec.queue.write_buffer(&src, 0, &data);
+
+            exec.resources.buffers.insert(
+                BUF,
+                BufferResource {
+                    buffer: src,
+                    size: buf_size,
+                    gpu_size: buf_size,
+                    #[cfg(test)]
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
+                    backing: None,
+                    dirty: None,
+                },
+            );
+
+            let offset = storage_align - wgpu::COPY_BUFFER_ALIGNMENT;
+            let bind_size = 16u64;
+            exec.bindings.stage_mut(ShaderStage::Compute).set_srv_buffer(
+                0,
+                Some(BoundBuffer {
+                    buffer: BUF,
+                    offset,
+                    size: Some(bind_size),
+                }),
+            );
+
+            let binding = crate::Binding {
+                group: ShaderStage::Compute.as_bind_group_index(),
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::SrvBuffer { slot: 0 },
+            };
+            let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(std::slice::from_ref(
+                    &binding,
+                ))],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("build pipeline bindings");
+
+            let allocs = AllocTable::new(None).expect("alloc table");
+            let mut guest_mem = VecGuestMemory::new(0);
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("srv buffer scratch test encoder"),
+                });
+            exec.ensure_bound_resources_uploaded(
+                &mut encoder,
+                &pipeline_bindings,
+                &allocs,
+                &mut guest_mem,
+            )
+            .expect("ensure bound resources uploaded");
+
+            let scratch = exec
+                .srv_buffer_scratch
+                .get(&(ShaderStage::Compute, 0))
+                .expect("scratch buffer should be allocated for unaligned SRV offset");
+
+            // Copy back the scratched bytes so we can validate the copy.
+            let staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("srv buffer scratch test staging"),
+                size: scratch.bind_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(&scratch.buffer, 0, &staging, 0, scratch.bind_size);
+            exec.queue.submit([encoder.finish()]);
+            exec.poll_wait();
+
+            let slice = staging.slice(..);
+            let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |v| {
+                sender.send(v).ok();
+            });
+            exec.poll_wait();
+            receiver
+                .receive()
+                .await
+                .expect("map_async dropped")
+                .expect("map_async failed");
+
+            let mapped = slice.get_mapped_range();
+            let got = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+            drop(mapped);
+            staging.unmap();
+            let expected = (offset / 4) as u32;
+            assert_eq!(got, expected);
+
+            // Verify that bind-group providers surface the scratch buffer rather than the original
+            // unaligned offset binding.
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &exec.resources,
+                legacy_constants: &exec.legacy_constants,
+                cbuffer_scratch: &exec.cbuffer_scratch,
+                srv_buffer_scratch: &exec.srv_buffer_scratch,
+                storage_align,
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size as u64,
+                dummy_uniform: &exec.dummy_uniform,
+                dummy_storage: &exec.dummy_storage,
+                dummy_texture_view: &exec.dummy_texture_view,
+                default_sampler: &exec.default_sampler,
+                stage: ShaderStage::Compute,
+                stage_state: exec.bindings.stage(ShaderStage::Compute),
+            };
+            let bound = provider
+                .srv_buffer(0)
+                .expect("provider should surface scratch binding");
+            assert_eq!(bound.id, scratch.id);
+            assert_eq!(bound.offset, 0);
+            assert_eq!(bound.size, Some(scratch.bind_size));
         });
     }
 
