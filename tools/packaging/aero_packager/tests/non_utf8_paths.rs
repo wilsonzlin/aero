@@ -74,6 +74,70 @@ fn packaging_fails_on_non_utf8_driver_paths() -> anyhow::Result<()> {
 }
 
 #[test]
+fn packaging_fails_on_non_utf8_driver_dir_component() -> anyhow::Result<()> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    for arch in ["x86", "amd64"] {
+        write_stub_pci_driver(
+            &drivers_tmp.path().join(arch).join("testdrv"),
+            "testdrv",
+            r"PCI\VEN_1234&DEV_5678",
+        )?;
+    }
+
+    // Create a non-UTF8 directory component containing a valid filename.
+    let invalid_dir = OsString::from_vec(vec![b'd', b'i', b'r', 0xFF]);
+    let invalid_path = drivers_tmp
+        .path()
+        .join("x86")
+        .join("testdrv")
+        .join(invalid_dir)
+        .join("ok.bin");
+    fs::create_dir_all(invalid_path.parent().unwrap())?;
+    fs::write(&invalid_path, b"bad\n")?;
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({
+        "drivers": [
+            {
+                "name": "testdrv",
+                "required": true,
+                "expected_hardware_ids": [],
+            }
+        ]
+    });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("non-UTF8 path component") && msg.contains("\\xFF"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn packaging_fails_on_non_utf8_guest_tools_paths() -> anyhow::Result<()> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
@@ -91,6 +155,51 @@ fn packaging_fails_on_non_utf8_guest_tools_paths() -> anyhow::Result<()> {
         .join("config")
         .join("subdir")
         .join(invalid_name);
+    fs::create_dir_all(invalid_path.parent().unwrap())?;
+    fs::write(&invalid_path, b"bad\n")?;
+
+    let spec_path = testdata.join("spec.json");
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("non-UTF8 path component") && msg.contains("\\xFF"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn packaging_fails_on_non_utf8_guest_tools_dir_component() -> anyhow::Result<()> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_src = testdata.join("guest-tools");
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+
+    // Inject a file under guest-tools/config/<non-utf8>/ok.txt.
+    let invalid_dir = OsString::from_vec(vec![b'd', b'i', b'r', 0xFF]);
+    let invalid_path = guest_tools_tmp
+        .path()
+        .join("config")
+        .join(invalid_dir)
+        .join("ok.txt");
     fs::create_dir_all(invalid_path.parent().unwrap())?;
     fs::write(&invalid_path, b"bad\n")?;
 
