@@ -107,7 +107,10 @@ fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: 
     // Schedule traversal budget exceeded.
     // If the schedule naturally terminated exactly at the budget boundary, treat that as success;
     // otherwise surface a schedule fault so `tick_1ms()` stays bounded.
-    if !link.terminated() {
+    //
+    // Note that we treat `addr=0` as termination throughout schedule walking to avoid hangs when the
+    // guest programs an uninitialized frame list (all zeros). Preserve that behavior here too.
+    if !link.terminated() && link.addr() != 0 {
         *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
     }
 }
@@ -235,7 +238,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             }
         }
     }
-    if budget_exhausted && !elem.terminated() && !elem.is_qh() {
+    if budget_exhausted && !elem.terminated() && !elem.is_qh() && elem.addr() != 0 {
         *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
     }
 

@@ -477,3 +477,77 @@ fn uhci_schedule_link_exact_budget_limit_termination_does_not_fault() {
     assert_eq!(sts & (regs::USBSTS_USBERRINT | regs::USBSTS_HSE), 0);
     assert!(!ctrl.irq_level());
 }
+
+#[test]
+fn uhci_qh_element_list_exact_budget_limit_null_termination_does_not_fault() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x8000);
+
+    // This matches the internal `MAX_QH_ELEMENT_STEPS` constant in `uhci/schedule.rs`.
+    const QH_ELEM_BUDGET: usize = 1024;
+
+    ctrl.hub_mut()
+        .attach(0, Box::new(AlwaysAckDevice::default()));
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, QH_ADDR | LINK_PTR_Q);
+
+    mem.write_u32(QH_ADDR, LINK_PTR_T);
+    mem.write_u32(QH_ADDR + 4, TD_ADDR);
+
+    let token = PID_OUT | (1u32 << 15) | (0x7ffu32 << 21); // OUT, ep1, ZLP
+    for i in 0..(QH_ELEM_BUDGET as u32) {
+        let td = TD_ADDR + i * 0x10;
+        let next = if i + 1 < QH_ELEM_BUDGET as u32 {
+            TD_ADDR + (i + 1) * 0x10
+        } else {
+            0
+        };
+        mem.write_u32(td, next);
+        mem.write_u32(td + 4, TD_STATUS_ACTIVE);
+        mem.write_u32(td + 8, token);
+        mem.write_u32(td + 12, 0);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_eq!(sts & (regs::USBSTS_USBERRINT | regs::USBSTS_HSE), 0);
+    assert!(!ctrl.irq_level());
+}
+
+#[test]
+fn uhci_schedule_link_exact_budget_limit_null_termination_does_not_fault() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x20000);
+
+    // This matches the internal `MAX_SCHEDULE_LINKS_PER_FRAME` constant in `uhci/schedule.rs`.
+    const SCHEDULE_LINK_BUDGET: usize = 4096;
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, QH_ADDR | LINK_PTR_Q);
+
+    for i in 0..(SCHEDULE_LINK_BUDGET as u32) {
+        let qh = QH_ADDR + i * 0x10;
+        let next = if i + 1 < SCHEDULE_LINK_BUDGET as u32 {
+            (QH_ADDR + (i + 1) * 0x10) | LINK_PTR_Q
+        } else {
+            0
+        };
+        mem.write_u32(qh, next);
+        mem.write_u32(qh + 4, LINK_PTR_T);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_eq!(sts & (regs::USBSTS_USBERRINT | regs::USBSTS_HSE), 0);
+    assert!(!ctrl.irq_level());
+}
