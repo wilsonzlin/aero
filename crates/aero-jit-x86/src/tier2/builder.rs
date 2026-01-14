@@ -131,7 +131,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
         self.queue.push_back(rip);
         Some(id)
     }
- 
+
     fn lower_block(&mut self, id: BlockId, bb: &BasicBlock) -> Block {
         // `code_len` tracks the byte span of *guest code bytes that are executed by the block* for
         // code version guards.
@@ -550,21 +550,14 @@ impl BlockLowerer<'_> {
         let dst = self.map_value(dst);
         let flags = map_flagset(flags);
 
-        // Tier-2 `eval_binop` does not model x86 shift flag semantics. If Tier-1 requests flag
-        // updates for a shift, lower it explicitly via a sequence of Tier-2 ops that compute the
-        // correct flags.
+        // Tier-2 `eval_binop` does not model x86 shift flag semantics.
+        //
+        // When Tier-1 requests flag updates for a shift, expand it into an explicit sequence of
+        // Tier-2 ops that compute the architecturally correct flags when the shift count is a
+        // constant. If the shift count is not a constant, conservatively mark the block as
+        // unsupported (deopt at the block entry).
         if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) && !flags.is_empty() {
             self.lower_shift_with_flags(dst, op, lhs, rhs, width, flags);
-            return;
-        }
-
-        // Tier-2 does not currently model x86 shift/rotate flag semantics (CF/OF depend on the
-        // shifted-out bit, and the "count==0 => flags unchanged" rule).
-        //
-        // Until Tier-2 grows correct support, conservatively deopt at the entry RIP when Tier-1
-        // requests flag updates for shift instructions.
-        if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::Sar) && !flags.is_empty() {
-            self.unsupported = true;
             return;
         }
 
