@@ -1113,6 +1113,12 @@ impl AeroGpuMmioDevice {
         self.next_vblank_ns = snap.next_vblank_ns;
 
         self.wddm_scanout_active = snap.wddm_scanout_active;
+        // Defensive: `SCANOUT0_ENABLE=0` releases WDDM ownership. If a snapshot/restore mismatch
+        // produces `enable=0` with `wddm_scanout_active=1`, prefer the enable bit and allow falling
+        // back to legacy presentation.
+        if !self.scanout0_enable {
+            self.wddm_scanout_active = false;
+        }
 
         self.cursor_enable = snap.cursor_enable != 0;
         self.cursor_x = snap.cursor_x as i32;
@@ -1145,6 +1151,12 @@ impl AeroGpuMmioDevice {
         self.pending_submissions.clear();
         if let Some(backend) = self.backend.as_mut() {
             backend.reset();
+        }
+
+        // Defensive: if scanout or vblank pacing is disabled, do not leave a pending deadline.
+        if self.vblank_interval_ns.is_none() || !self.scanout0_enable {
+            self.next_vblank_ns = None;
+            self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
         }
     }
 
@@ -3068,6 +3080,12 @@ impl IoSnapshot for AeroGpuMmioDevice {
         self.vblank_interval_ns = vblank_interval_ns;
         self.next_vblank_ns = next_vblank_ns;
         self.wddm_scanout_active = wddm_scanout_active;
+        // Defensive: `SCANOUT0_ENABLE=0` releases WDDM ownership. If a snapshot/restore mismatch
+        // produces `enable=0` with `wddm_scanout_active=1`, prefer the enable bit and allow falling
+        // back to legacy presentation.
+        if !self.scanout0_enable {
+            self.wddm_scanout_active = false;
+        }
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             self.scanout0_dirty = scanout0_dirty;
