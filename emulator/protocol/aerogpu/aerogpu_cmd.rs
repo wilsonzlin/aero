@@ -250,7 +250,7 @@ pub fn encode_stage_ex(stage_ex: AerogpuShaderStageEx) -> (u32, u32) {
     (AerogpuShaderStage::Compute as u32, stage_ex as u32)
 }
 
-/// Effective shader stage resolved from a legacy `shader_stage` (VS/PS/CS) plus an optional
+/// Effective shader stage resolved from a legacy `shader_stage` (VS/PS/CS/GS) plus an optional
 /// `stage_ex` discriminator in a trailing `reserved0` u32.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuShaderStageResolved {
