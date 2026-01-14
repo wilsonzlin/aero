@@ -56,13 +56,9 @@ function drainAndAssertParity(ts: I8042Controller, bridge: I8042Bridge, label: s
   return out;
 }
 
-function injectWasmKeyboardBytes(bridge: I8042Bridge, bytes: readonly number[]): void {
-  if (bytes.length === 0) return;
-  if (bridge.inject_keyboard_bytes) {
-    bridge.inject_keyboard_bytes(Uint8Array.from(bytes));
-    return;
-  }
-  // Fall back to the stable `inject_key_scancode_bytes(packed, len)` API.
+function injectKeyboardScancodeBytes(ts: I8042Controller, bridge: I8042Bridge, bytes: readonly number[]): void {
+  // Mirror the browser event transport (`InputEventType.KeyScancode`): arbitrary-length Set-2
+  // sequences are chunked into <=4-byte packets and injected via `inject_key_scancode_bytes`.
   for (let i = 0; i < bytes.length; i += 4) {
     const b0 = bytes[i] ?? 0;
     const b1 = bytes[i + 1] ?? 0;
@@ -70,6 +66,7 @@ function injectWasmKeyboardBytes(bridge: I8042Bridge, bytes: readonly number[]):
     const b3 = bytes[i + 3] ?? 0;
     const len = Math.min(4, bytes.length - i);
     const packed = (b0 & 0xff) | ((b1 & 0xff) << 8) | ((b2 & 0xff) << 16) | ((b3 & 0xff) << 24);
+    ts.injectKeyboardBytes(Uint8Array.from([b0, b1, b2, b3].slice(0, len)));
     bridge.inject_key_scancode_bytes(packed >>> 0, len);
   }
 }
@@ -82,6 +79,33 @@ function writeToMouseTs(dev: I8042Controller, byte: number): void {
 function writeToMouseWasm(bridge: I8042Bridge, byte: number): void {
   bridge.port_write(0x64, 0xd4);
   bridge.port_write(0x60, byte & 0xff);
+}
+
+function injectMouseButtons(ts: I8042Controller, bridge: I8042Bridge, buttons: number): void {
+  ts.injectMouseButtons(buttons);
+  if (bridge.inject_ps2_mouse_buttons) {
+    bridge.inject_ps2_mouse_buttons(buttons & 0xff);
+  } else {
+    bridge.inject_mouse_buttons(buttons & 0xff);
+  }
+}
+
+function injectMouseMove(ts: I8042Controller, bridge: I8042Bridge, dx: number, dy: number): void {
+  ts.injectMouseMove(dx, dy);
+  if (bridge.inject_ps2_mouse_motion) {
+    bridge.inject_ps2_mouse_motion(dx | 0, dy | 0, 0);
+  } else {
+    bridge.inject_mouse_move(dx | 0, dy | 0);
+  }
+}
+
+function injectMouseWheel(ts: I8042Controller, bridge: I8042Bridge, dz: number): void {
+  ts.injectMouseWheel(dz);
+  if (bridge.inject_ps2_mouse_motion) {
+    bridge.inject_ps2_mouse_motion(0, 0, dz | 0);
+  } else {
+    bridge.inject_mouse_wheel(dz | 0);
+  }
 }
 
 describe("io/devices/i8042 TS <-> WASM parity", () => {
@@ -129,13 +153,11 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
           throw new Error(`Missing PS/2 Set-2 mapping for DOM code: ${code}`);
         }
 
-        ts.injectKeyboardBytes(Uint8Array.from(press));
-        injectWasmKeyboardBytes(bridge, press);
+        injectKeyboardScancodeBytes(ts, bridge, press);
         const pressOut = assertDrainParity(`keyboard press parity for ${code}`);
         expect(pressOut.length, `keyboard press produced output for ${code}`).toBeGreaterThan(0);
 
-        ts.injectKeyboardBytes(Uint8Array.from(release));
-        injectWasmKeyboardBytes(bridge, release);
+        injectKeyboardScancodeBytes(ts, bridge, release);
         const releaseOut = assertDrainParity(`keyboard release parity for ${code}`);
         if (code === "Pause") {
           // Pause is make-only (no break sequence).
@@ -157,8 +179,7 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
         0x00, // release
       ];
       for (const mask of buttonMasks) {
-        ts.injectMouseButtons(mask);
-        bridge.inject_mouse_buttons(mask);
+        injectMouseButtons(ts, bridge, mask);
         expect(assertDrainParity(`mouse buttons parity mask=${mask.toString(16)}`).length).toBeGreaterThan(0);
       }
 
@@ -171,8 +192,7 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
         { dx: 300, dy: -300 },
       ];
       for (const { dx, dy } of motions) {
-        ts.injectMouseMove(dx, dy);
-        bridge.inject_mouse_move(dx, dy);
+        injectMouseMove(ts, bridge, dx, dy);
         expect(assertDrainParity(`mouse motion parity dx=${dx} dy=${dy}`).length).toBeGreaterThan(0);
       }
 
@@ -191,13 +211,11 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       expect(assertDrainParity("mouse device id parity (wheel enabled)").length).toBeGreaterThan(0);
 
       // Motion packets should now include a 4th (wheel) byte of 0.
-      ts.injectMouseMove(5, 3);
-      bridge.inject_mouse_move(5, 3);
+      injectMouseMove(ts, bridge, 5, 3);
       expect(assertDrainParity("mouse motion parity (wheel mode)")).toHaveLength(4);
 
       // Button-only packets should also include a 4th (wheel) byte in wheel mode.
-      ts.injectMouseButtons(0x01);
-      bridge.inject_mouse_buttons(0x01);
+      injectMouseButtons(ts, bridge, 0x01);
       expect(assertDrainParity("mouse buttons parity (wheel mode)")).toHaveLength(4);
 
       const wheels = [
@@ -207,8 +225,7 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
         -20,
       ];
       for (const dz of wheels) {
-        ts.injectMouseWheel(dz);
-        bridge.inject_mouse_wheel(dz);
+        injectMouseWheel(ts, bridge, dz);
         expect(assertDrainParity(`mouse wheel parity dz=${dz}`).length).toBeGreaterThan(0);
       }
 
@@ -222,11 +239,9 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       const rawCode = "ArrowUp";
       const rawPress = ps2Set2BytesForKeyEvent(rawCode, true)!;
       const rawRelease = ps2Set2BytesForKeyEvent(rawCode, false)!;
-      ts.injectKeyboardBytes(Uint8Array.from(rawPress));
-      injectWasmKeyboardBytes(bridge, rawPress);
+      injectKeyboardScancodeBytes(ts, bridge, rawPress);
       expect(assertDrainParity(`keyboard raw press parity for ${rawCode}`)).toEqual(rawPress.map((b) => b & 0xff));
-      ts.injectKeyboardBytes(Uint8Array.from(rawRelease));
-      injectWasmKeyboardBytes(bridge, rawRelease);
+      injectKeyboardScancodeBytes(ts, bridge, rawRelease);
       expect(assertDrainParity(`keyboard raw release parity for ${rawCode}`)).toEqual(rawRelease.map((b) => b & 0xff));
     } finally {
       bridge.free();
