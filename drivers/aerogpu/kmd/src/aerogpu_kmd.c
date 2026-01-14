@@ -73,6 +73,15 @@ extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
 #define STATUS_GRAPHICS_DEVICE_REMOVED ((NTSTATUS)0xC01E0001L)
 #endif
 
+/*
+ * Legacy device models may optionally mirror `FEATURES_LO/HI` to ease incremental
+ * bring-up. See `drivers/aerogpu/protocol/aerogpu_pci.h` for AEROGPU_FEATURE_*
+ * bit definitions.
+ */
+#define AEROGPU_KMD_LEGACY_PLAUSIBLE_FEATURES_MASK                                                               \
+    (AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT | AEROGPU_FEATURE_VBLANK |    \
+     AEROGPU_FEATURE_TRANSFER | AEROGPU_FEATURE_ERROR_INFO)
+
 #if DBG
 /*
  * DBG-only rate limiting for logs that can be triggered by misbehaving guests.
@@ -2617,8 +2626,8 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
         /*
          * Legacy devices do not guarantee FEATURES_LO/HI exist, but some bring-up
-         * models expose them (mirroring `aerogpu_pci.h`) to allow incremental
-         * migration of optional capabilities like vblank.
+         * models expose them (mirroring `drivers/aerogpu/protocol/aerogpu_pci.h`) to
+         * allow incremental migration of optional capabilities like vblank.
          *
          * Reuse the dbgctl "plausibility" guard: only accept the value if it
          * contains no unknown bits.
@@ -2626,9 +2635,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
             const ULONGLONG maybeFeatures = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                                             ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-            const ULONGLONG knownFeatures =
-                AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT | AEROGPU_FEATURE_VBLANK;
-            const ULONGLONG unknownFeatures = maybeFeatures & ~knownFeatures;
+            const ULONGLONG unknownFeatures = maybeFeatures & ~(ULONGLONG)AEROGPU_KMD_LEGACY_PLAUSIBLE_FEATURES_MASK;
             if (unknownFeatures == 0) {
                 features = maybeFeatures;
             } else {
@@ -9172,9 +9179,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
                     const uint64_t maybeFeatures = (uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                                                    ((uint64_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-                    const uint64_t knownFeatures = AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT |
-                                                  AEROGPU_FEATURE_VBLANK | AEROGPU_FEATURE_TRANSFER | AEROGPU_FEATURE_ERROR_INFO;
-                    if ((maybeFeatures & ~knownFeatures) == 0) {
+                    if ((maybeFeatures & ~(uint64_t)AEROGPU_KMD_LEGACY_PLAUSIBLE_FEATURES_MASK) == 0) {
                         features = maybeFeatures;
                     }
                 }
