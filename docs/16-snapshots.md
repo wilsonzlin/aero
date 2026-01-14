@@ -247,6 +247,21 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 Note: older runtimes that do not recognize `gpu.aerogpu` may still encode/decode this device as
 `device.25` (the generic fallback spelling). This is acceptable for forward compatibility.
 
+#### GPU VRAM (`DeviceId::GPU_VRAM` = `28`, kind `gpu.vram`)
+
+In the web runtime, GPU VRAM (the SharedArrayBuffer-backed BAR1 mapping) is stored as one or more
+`gpu.vram` device blobs.
+
+- Chunking: VRAM may be split across multiple outer `DeviceId::GPU_VRAM` entries.
+  - Each chunk uses a distinct `DeviceState.flags` value (`flags = chunk_index`) so the snapshot file
+    does not contain duplicate `(DeviceId, version, flags)` keys.
+- Payload format: each chunk payload starts with a legacy 8-byte `"AERO"` header
+  (`version = 1`, `flags = chunk_index`) followed by per-chunk metadata (total length, offset, chunk
+  length) and then raw VRAM bytes.
+- Restore policy: when the IO worker is given a VRAM buffer (`vramU8`), it applies `gpu.vram` blobs
+  directly into that buffer and does **not** forward them to the coordinator (to avoid transferring
+  large blobs through `postMessage`).
+
 The web runtime may also store **host-managed** snapshot state under reserved `device.<id>` entries that do **not** correspond to a Rust `DeviceId` enum variant. These blobs are treated as opaque by the Rust snapshot tooling and exist to make browser-specific integrations round-trip correctly across save/restore.
 
 Current reserved web-only ids:
