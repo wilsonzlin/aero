@@ -120,3 +120,95 @@ fn wgsl_supports_mova_and_relative_constant_indexing() {
         assert!(wgsl.wgsl.contains("return c2;"), "{}", wgsl.wgsl);
     }
 }
+
+#[test]
+fn wgsl_relative_constant_indexing_uses_addr_component_y() {
+    for stage in [ShaderStage::Vertex, ShaderStage::Pixel] {
+        // mov r0, c1[a0.y]
+        let mut c1_rel = src_token(2, 1, 0xE4, 0);
+        c1_rel |= 0x0000_2000; // RELATIVE flag
+
+        let mut tokens = vec![
+            version_token(stage, 3, 0),
+            // def c0, 0.0, 1.0, 0.0, 0.0  (used to write a0.y = 1)
+            opcode_token(81, 5),
+            dst_token(2, 0, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            // def c1, 0.0, 0.0, 0.0, 0.0
+            opcode_token(81, 5),
+            dst_token(2, 1, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+            // def c2, 2.0, 3.0, 4.0, 5.0  (target of relative indexing)
+            opcode_token(81, 5),
+            dst_token(2, 2, 0xF),
+            0x4000_0000, // 2.0
+            0x4040_0000, // 3.0
+            0x4080_0000, // 4.0
+            0x40A0_0000, // 5.0
+            // mova a0.y, c0
+            opcode_token(46, 2),
+            dst_token(3, 0, 0x2), // a0.y (regtype 3)
+            src_token(2, 0, 0xE4, 0),
+            // mov r0, c1[a0.y]
+            opcode_token(1, 3),
+            dst_token(0, 0, 0xF),
+            c1_rel,
+            src_token(3, 0, 0x55, 0), // a0.y (swizzle yyyy)
+        ];
+
+        match stage {
+            ShaderStage::Vertex => {
+                // mov oPos, r0
+                tokens.extend([
+                    opcode_token(1, 2),
+                    dst_token(4, 0, 0xF),
+                    src_token(0, 0, 0xE4, 0),
+                ]);
+            }
+            ShaderStage::Pixel => {
+                // mov oC0, r0
+                tokens.extend([
+                    opcode_token(1, 2),
+                    dst_token(8, 0, 0xF),
+                    src_token(0, 0, 0xE4, 0),
+                ]);
+            }
+        }
+        tokens.push(0x0000_FFFF); // end
+
+        let decoded = decode_u32_tokens(&tokens).unwrap();
+        let ir = build_ir(&decoded).unwrap();
+        verify_ir(&ir).unwrap();
+
+        let wgsl = generate_wgsl(&ir).unwrap();
+
+        let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("wgsl validate");
+
+        // Address register + clamped relative indexing should reference the requested component
+        // (`a0.y`), not assume `.x`.
+        assert!(wgsl.wgsl.contains("var a0: vec4<i32>"), "{}", wgsl.wgsl);
+        assert!(wgsl.wgsl.contains("a0.y"), "{}", wgsl.wgsl);
+        assert!(
+            wgsl.wgsl.contains("clamp(i32(1) + (a0.y)"),
+            "{}",
+            wgsl.wgsl
+        );
+        assert!(
+            !wgsl.wgsl.contains("clamp(i32(1) + (a0.x)"),
+            "{}",
+            wgsl.wgsl
+        );
+    }
+}
