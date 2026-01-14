@@ -69,13 +69,16 @@ fn aerogpu_features_lo_hi_match_implemented_capabilities() {
         | pci::AEROGPU_FEATURE_CURSOR
         | pci::AEROGPU_FEATURE_VBLANK
         | pci::AEROGPU_FEATURE_FENCE_PAGE
-        | pci::AEROGPU_FEATURE_ERROR_INFO;
+        | pci::AEROGPU_FEATURE_ERROR_INFO
+        // Transfer/copy opcodes are feature-gated in ABI 1.1+.
+        | if pci::AEROGPU_ABI_MINOR >= 1 {
+            pci::AEROGPU_FEATURE_TRANSFER
+        } else {
+            0
+        };
 
     assert_eq!(
         features, expected,
         "unexpected AeroGPU feature bits: got=0x{features:016x} expected=0x{expected:016x}"
     );
-
-    // Guardrails: transfer is not implemented yet; ensure it is not advertised.
-    assert_eq!(features & pci::AEROGPU_FEATURE_TRANSFER, 0);
 }

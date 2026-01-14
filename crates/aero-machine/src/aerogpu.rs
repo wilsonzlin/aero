@@ -63,6 +63,17 @@ fn supported_features() -> u64 {
         | pci::AEROGPU_FEATURE_SCANOUT
         | pci::AEROGPU_FEATURE_VBLANK
         | pci::AEROGPU_FEATURE_ERROR_INFO
+        // Transfer/copy commands (and optional guest writeback) are feature-gated starting at
+        // ABI 1.1+.
+        //
+        // Even though `aero-machine` itself does not execute command streams in-process by
+        // default, the canonical integration (browser GPU worker or an installed in-process
+        // backend) supports these opcodes and expects the device to advertise the capability.
+        | if pci::AEROGPU_ABI_MINOR >= 1 {
+            pci::AEROGPU_FEATURE_TRANSFER
+        } else {
+            0
+        }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
