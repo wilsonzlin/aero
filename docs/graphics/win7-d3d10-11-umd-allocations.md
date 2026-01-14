@@ -290,7 +290,7 @@ On Win7/WDDM 1.1 it is used in two distinct places:
 * `HANDLE hSection`
   * **Out (shared resources):** section handle for cross-process sharing (`IDXGIResource::GetSharedHandle`).
     * This is a user-mode NT handle and its numeric value is process-local. When transferring it to another process, it must be duplicated/inherited (`DuplicateHandle`/inheritance) before calling `OpenSharedResource(...)`.
-    * AeroGPU does not use the numeric `HANDLE` value as a stable host-facing identifier; shared surfaces are keyed by a stable `share_token` persisted in WDDM allocation private driver data (see `docs/graphics/win7-shared-surfaces-share-token.md`).
+    * AeroGPU does not use the numeric user-mode shared `HANDLE` value as a stable host-facing identifier; shared surfaces are keyed by a stable `share_token` persisted in WDDM allocation private driver data (see `docs/graphics/win7-shared-surfaces-share-token.md`).
 * `D3DDDICB_ALLOCATEFLAGS Flags`
   * Resource-level allocation flags (header-dependent bitfield).
   * For Win7 `CreateResource` allocation calls you will commonly set:
