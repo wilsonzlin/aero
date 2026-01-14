@@ -6402,15 +6402,26 @@ static std::optional<IN_ADDR> FindIpv4AddressForAdapterGuid(const std::wstring& 
   if (oper_up_out) *oper_up_out = false;
   if (friendly_out) friendly_out->clear();
 
+  // GetAdaptersAddresses requires a retry loop: the adapter list can change between calls,
+  // returning ERROR_BUFFER_OVERFLOW even after sizing. Treat this as best-effort (return nullopt
+  // on non-recoverable errors), but retry a few times to avoid transient failures during link flaps.
   ULONG size = 0;
-  GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr, &size);
+  const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
+  ULONG rc = GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &size);
+  if (rc != ERROR_BUFFER_OVERFLOW && rc != NO_ERROR) return std::nullopt;
   if (size == 0) return std::nullopt;
 
-  std::vector<BYTE> buf(size);
-  auto* addrs = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
-  if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, addrs, &size) != NO_ERROR) {
+  std::vector<BYTE> buf;
+  IP_ADAPTER_ADDRESSES* addrs = nullptr;
+  for (int attempt = 0; attempt < 4; attempt++) {
+    buf.resize(size);
+    addrs = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+    rc = GetAdaptersAddresses(AF_INET, flags, nullptr, addrs, &size);
+    if (rc == NO_ERROR) break;
+    if (rc == ERROR_BUFFER_OVERFLOW && size != 0) continue;
     return std::nullopt;
   }
+  if (rc != NO_ERROR) return std::nullopt;
 
   const auto needle = NormalizeGuidLikeString(adapter_guid);
 
