@@ -290,10 +290,14 @@ async function runLoop(): Promise<void> {
 }
 
 async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAssembly.Memory): Promise<void> {
-  // `initWasmForContext` (via `wasm_loader.ts`) relies on Vite-only `import.meta.glob`.
+  // `initWasmForContext` (via `wasm_loader.ts`) relies on Vite transforms (`import.meta.glob`).
   // When this worker is executed directly under Node (e.g. in worker_threads tests),
-  // `import.meta.glob` is not defined, so skip WASM init entirely.
-  if (typeof (import.meta as unknown as { glob?: unknown }).glob !== "function") return;
+  // those transforms are not applied, so importing the WASM loader would throw.
+  //
+  // In real browser/Vite builds, `process` is typically undefined (or lacks `versions.node`),
+  // so WASM init proceeds.
+  const isNode = typeof process !== "undefined" && typeof process.versions?.node === "string";
+  if (isNode) return;
 
   try {
     const { initWasmForContext } = await import("../runtime/wasm_context");
