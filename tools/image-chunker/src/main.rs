@@ -176,6 +176,10 @@ struct VerifyArgs {
     ///
     /// The tool will fetch `<prefix>/manifest.json` (versioned prefix) or
     /// `<prefix>/<imageVersion>/manifest.json` (image root + `--image-version`).
+    ///
+    /// If `<prefix>/manifest.json` is not found and `--image-version` is not provided, the tool
+    /// will attempt to resolve `latest.json` under the given prefix and verify the referenced
+    /// versioned manifest instead.
     #[arg(long)]
     prefix: Option<String>,
 
@@ -581,13 +585,14 @@ async fn verify(args: VerifyArgs) -> Result<()> {
     )
     .await?;
 
-    let manifest_key = resolve_verify_manifest_key(&args)?;
-    let version_prefix = manifest_key
-        .strip_suffix("manifest.json")
-        .ok_or_else(|| anyhow!("manifest key must end with 'manifest.json', got '{manifest_key}'"))?
-        .to_string();
-
+    let mut manifest_key = resolve_verify_manifest_key(&args)?;
     eprintln!("Downloading s3://{}/{}...", args.bucket, manifest_key);
+
+    // If the user provided `--prefix` without `--image-version`, the prefix may refer to either a
+    // versioned image prefix (`.../<version>/`) or an image root (`.../<imageId>/`). If
+    // `<prefix>/manifest.json` does not exist, fall back to resolving `latest.json` (if present).
+    let mut latest_from_prefix: Option<(String, LatestV1)> = None;
+
     let manifest: ManifestV1 = match download_json_object_with_retry(
         &s3,
         &args.bucket,
@@ -602,17 +607,50 @@ async fn verify(args: VerifyArgs) -> Result<()> {
                 && args.prefix.is_some()
                 && args.image_version.is_none() =>
         {
-            return Err(err).with_context(|| {
-                    format!(
-                        "manifest.json was not found at s3://{}/{manifest_key}. If --prefix is an image root prefix, pass --image-version (or use --manifest-key).",
-                        args.bucket
-                    )
-                });
+            let image_root_prefix = normalize_prefix(args.prefix.as_ref().expect("prefix"));
+            let latest_key = latest_object_key(&image_root_prefix);
+            eprintln!(
+                "Note: manifest not found at s3://{}/{}; trying s3://{}/{}...",
+                args.bucket, manifest_key, args.bucket, latest_key
+            );
+            let latest = download_json_object_optional_with_retry::<LatestV1>(
+                &s3,
+                &args.bucket,
+                &latest_key,
+                args.retries,
+            )
+            .await?
+            .ok_or_else(|| {
+                err.context(format!(
+                    "manifest.json was not found at s3://{}/{}. If --prefix is an image root prefix, either pass --image-version, or publish a latest pointer at s3://{}/{}.",
+                    args.bucket, manifest_key, args.bucket, latest_key
+                ))
+            })?;
+
+            manifest_key = latest.manifest_key.clone();
+            eprintln!(
+                "Downloading s3://{}/{} (from latest.json)...",
+                args.bucket, manifest_key
+            );
+            let manifest: ManifestV1 =
+                download_json_object_with_retry(&s3, &args.bucket, &manifest_key, args.retries)
+                    .await?;
+            latest_from_prefix = Some((image_root_prefix, latest));
+            manifest
         }
         Err(err) => return Err(err),
     };
     validate_manifest_v1(&manifest, args.max_chunks)?;
     let manifest = Arc::new(manifest);
+
+    if let Some((image_root_prefix, latest)) = &latest_from_prefix {
+        validate_latest_v1(latest, image_root_prefix, &manifest_key, manifest.as_ref())?;
+    }
+
+    let version_prefix = manifest_key
+        .strip_suffix("manifest.json")
+        .ok_or_else(|| anyhow!("manifest key must end with 'manifest.json', got '{manifest_key}'"))?
+        .to_string();
 
     if let Some(expected) = &args.image_id {
         if manifest.image_id != *expected {
@@ -660,32 +698,39 @@ async fn verify(args: VerifyArgs) -> Result<()> {
     );
 
     // Optional sanity check: if `latest.json` exists at the inferred image root, validate it.
-    if let Ok(image_root_prefix) = parent_prefix(&version_prefix) {
-        let latest_key = latest_object_key(&image_root_prefix);
-        match download_json_object_optional_with_retry::<LatestV1>(
-            &s3,
-            &args.bucket,
-            &latest_key,
-            args.retries,
-        )
-        .await?
-        {
-            None => {
-                eprintln!(
-                    "Note: s3://{}/{} not found; skipping latest pointer validation.",
-                    args.bucket, latest_key
-                );
-            }
-            Some(latest) => {
-                validate_latest_v1(
-                    &latest,
-                    &image_root_prefix,
-                    &manifest_key,
-                    manifest.as_ref(),
-                )?;
-                // Ensure the referenced manifest exists (unless it is the one we already fetched).
-                if latest.manifest_key != manifest_key {
-                    head_object_with_retry(&s3, &args.bucket, &latest.manifest_key, args.retries)
+    // Skip if we already validated `latest.json` as part of resolving `--prefix` above.
+    if latest_from_prefix.is_none() {
+        if let Ok(image_root_prefix) = parent_prefix(&version_prefix) {
+            let latest_key = latest_object_key(&image_root_prefix);
+            match download_json_object_optional_with_retry::<LatestV1>(
+                &s3,
+                &args.bucket,
+                &latest_key,
+                args.retries,
+            )
+            .await?
+            {
+                None => {
+                    eprintln!(
+                        "Note: s3://{}/{} not found; skipping latest pointer validation.",
+                        args.bucket, latest_key
+                    );
+                }
+                Some(latest) => {
+                    validate_latest_v1(
+                        &latest,
+                        &image_root_prefix,
+                        &manifest_key,
+                        manifest.as_ref(),
+                    )?;
+                    // Ensure the referenced manifest exists (unless it is the one we already fetched).
+                    if latest.manifest_key != manifest_key {
+                        head_object_with_retry(
+                            &s3,
+                            &args.bucket,
+                            &latest.manifest_key,
+                            args.retries,
+                        )
                         .await
                         .with_context(|| {
                             format!(
@@ -693,6 +738,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
                                 args.bucket, latest.manifest_key
                             )
                         })?;
+                    }
                 }
             }
         }

@@ -198,6 +198,20 @@ If you prefer to point at an image root prefix (`images/<imageId>/`), provide `-
   --region us-east-1
 ```
 
+### Example: verify the `latest.json` pointer
+
+If you published a `latest.json` pointer (with `publish --publish-latest`), you can also verify the
+current latest version by pointing `verify` at the image root prefix without specifying a version:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --bucket disk-images \
+  --prefix images/<imageId>/ \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1
+```
+
 ### Example: verify using an explicit manifest object key
 
 If you already know the object key of the versioned manifest (for example, from a `latest.json`
