@@ -86,6 +86,12 @@ fn ia_vertex_byte_addr(slot: u32, vertex_index: u32, element_offset_bytes: u32) 
   return base + vertex_index * stride + element_offset_bytes;
 }
 
+// DXGI_FORMAT_R32_FLOAT
+fn ia_load_r32_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> f32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return ia_load_f32(slot, addr);
+}
+
 // DXGI_FORMAT_R32G32B32_FLOAT
 fn ia_load_r32g32b32_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec3<f32> {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
@@ -102,6 +108,17 @@ fn ia_load_r32g32_float(slot: u32, vertex_index: u32, element_offset_bytes: u32)
   return vec2<f32>(
     ia_load_f32(slot, addr + 0u),
     ia_load_f32(slot, addr + 4u),
+  );
+}
+
+// DXGI_FORMAT_R32G32B32A32_FLOAT
+fn ia_load_r32g32b32a32_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec4<f32>(
+    ia_load_f32(slot, addr + 0u),
+    ia_load_f32(slot, addr + 4u),
+    ia_load_f32(slot, addr + 8u),
+    ia_load_f32(slot, addr + 12u),
   );
 }
 
@@ -297,6 +314,42 @@ fn ia_load_r32g32b32a32_uint(slot: u32, vertex_index: u32, element_offset_bytes:
     ia_load_u32(slot, addr + 4u),
     ia_load_u32(slot, addr + 8u),
     ia_load_u32(slot, addr + 12u),
+  );
+}
+
+// DXGI_FORMAT_R32_SINT
+fn ia_load_r32_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> i32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return bitcast<i32>(ia_load_u32(slot, addr));
+}
+
+// DXGI_FORMAT_R32G32_SINT
+fn ia_load_r32g32_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec2<i32>(
+    bitcast<i32>(ia_load_u32(slot, addr + 0u)),
+    bitcast<i32>(ia_load_u32(slot, addr + 4u)),
+  );
+}
+
+// DXGI_FORMAT_R32G32B32_SINT
+fn ia_load_r32g32b32_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec3<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec3<i32>(
+    bitcast<i32>(ia_load_u32(slot, addr + 0u)),
+    bitcast<i32>(ia_load_u32(slot, addr + 4u)),
+    bitcast<i32>(ia_load_u32(slot, addr + 8u)),
+  );
+}
+
+// DXGI_FORMAT_R32G32B32A32_SINT
+fn ia_load_r32g32b32a32_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  return vec4<i32>(
+    bitcast<i32>(ia_load_u32(slot, addr + 0u)),
+    bitcast<i32>(ia_load_u32(slot, addr + 4u)),
+    bitcast<i32>(ia_load_u32(slot, addr + 8u)),
+    bitcast<i32>(ia_load_u32(slot, addr + 12u)),
   );
 }
 
