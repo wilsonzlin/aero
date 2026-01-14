@@ -448,7 +448,6 @@ pub struct XhciController {
     // subsequent MMIO accesses without requiring the guest to ring doorbell 0 for every TRB.
     command_ring: Option<RingCursor>,
     cmd_kick: bool,
-    dma_on_run_pending: bool,
 
     // Runtime registers: interrupter 0 + guest event ring delivery.
     interrupter0: InterrupterRegs,
@@ -514,7 +513,6 @@ impl fmt::Debug for XhciController {
             .field("slots", &self.slots.len())
             .field("command_ring", &self.command_ring)
             .field("cmd_kick", &self.cmd_kick)
-            .field("dma_on_run_pending", &self.dma_on_run_pending)
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("time_ms", &self.time_ms)
@@ -566,14 +564,13 @@ impl XhciController {
             dnctrl: 0,
             crcr: 0,
             dcbaap: 0,
-            config: 0,
-            slots,
-            cmd_kick: false,
-            dma_on_run_pending: false,
-            ports: (0..port_count).map(|_| XhciPort::new()).collect(),
-            command_ring: None,
-            interrupter0: InterrupterRegs::default(),
-            event_ring: EventRingProducer::default(),
+             config: 0,
+             slots,
+             cmd_kick: false,
+             ports: (0..port_count).map(|_| XhciPort::new()).collect(),
+             command_ring: None,
+             interrupter0: InterrupterRegs::default(),
+             event_ring: EventRingProducer::default(),
             mfindex: 0,
             pending_events: VecDeque::new(),
             dropped_event_trbs: 0,
@@ -2901,7 +2898,6 @@ impl XhciController {
         self.config = 0;
         self.command_ring = None;
         self.cmd_kick = false;
-        self.dma_on_run_pending = false;
         self.mfindex = 0;
         self.time_ms = 0;
         self.last_tick_dma_dword = 0;

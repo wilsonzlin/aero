@@ -136,8 +136,8 @@ fn xhci_mmio_read_does_not_dma_after_host_controller_error() {
 
     force_hce(&mut xhci, &mut mem);
 
-    // MMIO reads run `maybe_process_command_ring()` first. Ensure that path does not DMA after HCE,
-    // even if we set `cmd_kick` by ringing doorbell 0.
+    // MMIO reads should never DMA, even if we ring doorbell 0 (setting `cmd_kick`) before the
+    // controller enters the fatal error state.
     let doorbell0 = u64::from(regs::DBOFF_VALUE);
     xhci.mmio_write(doorbell0, 4, 0);
 

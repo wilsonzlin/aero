@@ -261,6 +261,7 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     xhci.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
     xhci.mmio_write(regs::REG_CRCR_HI, 4, 0);
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci.tick_1ms_with_dma(&mut mem_no_dma);
     assert_eq!(mem_no_dma.reads, 0);
     assert!(
         !xhci.irq_level(),
