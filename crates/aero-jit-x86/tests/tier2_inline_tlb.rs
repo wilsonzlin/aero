@@ -1261,7 +1261,7 @@ fn tier2_inline_tlb_code_version_bump_skips_out_of_bounds_physical_page() {
     // Initialize the in-bounds table entries with distinct values.
     write_u32_le(&mut ram, table_ptr, 5); // page 0
     write_u32_le(&mut ram, table_ptr + 4, 10); // page 1
-                                               // Sentinel for the would-be out-of-bounds page 2 entry.
+                                                // Sentinel for the would-be out-of-bounds page 2 entry.
     write_u32_le(&mut ram, table_ptr + 8, 0xDEAD_BEEF);
 
     let cpu_ptr = ram.len() as u64;

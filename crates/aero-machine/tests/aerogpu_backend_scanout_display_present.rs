@@ -15,8 +15,7 @@ struct FakeScanoutBackend {
 
 impl FakeScanoutBackend {
     fn with_solid_rgba8(width: u32, height: u32, rgba: [u8; 4]) -> Self {
-        let mut rgba8 = Vec::new();
-        rgba8.resize((width * height * 4) as usize, 0);
+        let mut rgba8 = vec![0u8; (width * height * 4) as usize];
         for px in rgba8.chunks_exact_mut(4) {
             px.copy_from_slice(&rgba);
         }
@@ -91,4 +90,3 @@ fn aerogpu_backend_scanout_is_presented_via_machine_display_present() {
     assert_eq!(fb.len(), 4);
     assert_eq!(fb[0], u32::from_le_bytes([1, 2, 3, 255]));
 }
-
