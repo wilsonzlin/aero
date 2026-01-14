@@ -168,9 +168,60 @@ def format_error(header: str, lines: Iterable[str]) -> str:
 
 def read_text(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        data = path.read_bytes()
     except FileNotFoundError:
         fail(f"missing required file: {path.as_posix()}")
+
+    # Prefer strict UTF-8 for repository text, but allow UTF-16 (a common INF
+    # encoding) when detected.
+    #
+    # Note: UTF-16LE without a BOM will decode as UTF-8 without error but produce
+    # NUL-padded text. Detect that via byte-level heuristics.
+
+    # BOM handling.
+    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+        try:
+            return data.decode("utf-16").lstrip("\ufeff")
+        except UnicodeDecodeError:
+            fail(f"{path.as_posix()}: failed to decode file as UTF-16 (has BOM)")
+
+    # Try UTF-8 first.
+    utf8_text: str | None
+    try:
+        utf8_text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        utf8_text = None
+    else:
+        # Fast-path: no NULs means we almost certainly decoded correctly.
+        if "\x00" not in utf8_text:
+            return utf8_text
+
+    # Heuristic detection for UTF-16 without BOM.
+    # Plain ASCII UTF-16LE will have many 0x00 bytes at odd indices; UTF-16BE will
+    # have many 0x00 bytes at even indices.
+    sample = data[:4096]
+    sample_len = len(sample)
+    even_zeros = sum(1 for i, b in enumerate(sample) if b == 0 and (i % 2) == 0)
+    odd_zeros = sum(1 for i, b in enumerate(sample) if b == 0 and (i % 2) == 1)
+
+    enc: str | None = None
+    if sample_len >= 2:
+        even_ratio = even_zeros / sample_len
+        odd_ratio = odd_zeros / sample_len
+        if (odd_zeros > (even_zeros * 4 + 10)) or (odd_ratio > 0.2 and even_ratio < 0.05):
+            enc = "utf-16-le"
+        elif (even_zeros > (odd_zeros * 4 + 10)) or (even_ratio > 0.2 and odd_ratio < 0.05):
+            enc = "utf-16-be"
+
+    if enc is not None:
+        try:
+            return data.decode(enc).lstrip("\ufeff")
+        except UnicodeDecodeError:
+            fail(f"{path.as_posix()}: failed to decode file as {enc} (heuristic)")
+
+    if utf8_text is not None:
+        fail(f"{path.as_posix()}: decoded as UTF-8 but contained NUL bytes (likely UTF-16 without BOM)")
+    fail(f"{path.as_posix()}: failed to decode file as UTF-8 (unexpected encoding)")
 
 
 def strip_inf_comment_lines(text: str) -> str:
@@ -905,6 +956,32 @@ def _self_test_inf_int_parsing() -> None:
         fail("internal unit-test failed: expected _try_parse_inf_int('0x08') == 8")
     if _try_parse_inf_int("0x00000010") != 16:
         fail("internal unit-test failed: expected _try_parse_inf_int('0x00000010') == 16")
+
+
+def _self_test_read_text_utf16() -> None:
+    sample = "[Version]\nSignature=\"$WINDOWS NT$\"\n"
+    with tempfile.TemporaryDirectory() as td:
+        p_bom = Path(td) / "utf16-bom.txt"
+        p_bom.write_bytes(b"\xff\xfe" + sample.encode("utf-16-le"))
+        got_bom = read_text(p_bom)
+        if got_bom != sample:
+            fail(
+                format_error(
+                    "internal unit-test failed: read_text did not decode UTF-16LE with BOM correctly:",
+                    [f"got:      {got_bom!r}", f"expected: {sample!r}"],
+                )
+            )
+
+        p_no_bom = Path(td) / "utf16-no-bom.txt"
+        p_no_bom.write_bytes(sample.encode("utf-16-le"))
+        got_no_bom = read_text(p_no_bom)
+        if got_no_bom != sample:
+            fail(
+                format_error(
+                    "internal unit-test failed: read_text did not decode UTF-16LE without BOM correctly:",
+                    [f"got:      {got_no_bom!r}", f"expected: {sample!r}"],
+                )
+            )
 
 
 @dataclass(frozen=True)
@@ -2842,6 +2919,7 @@ def main() -> None:
     _self_test_inf_inline_comment_stripping()
     _self_test_inf_parsers_ignore_comments()
     _self_test_inf_int_parsing()
+    _self_test_read_text_utf16()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
     _self_test_parse_guest_selftest_expected_service_names()
