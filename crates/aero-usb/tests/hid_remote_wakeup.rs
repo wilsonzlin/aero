@@ -2205,6 +2205,72 @@ fn hid_keyboard_remote_wakeup_does_not_propagate_through_nested_hubs_without_inn
         !ctrl.irq_level(),
         "unexpected IRQ even though inner hub remote wake is disabled"
     );
+
+    // Enable DEVICE_REMOTE_WAKEUP on the inner hub *after* the downstream device has already
+    // requested remote wake. The inner hub should have drained the wake request even while
+    // propagation was disabled, so enabling remote wake later must not "replay" a stale wake event.
+    {
+        let mut outer_hub_dev = ctrl
+            .hub_mut()
+            .port_device_mut(0)
+            .expect("outer hub device should be attached");
+        let inner_hub_dev = outer_hub_dev
+            .model_mut()
+            .hub_port_device_mut(1)
+            .expect("inner hub device should be attached");
+        control_no_data_dev(
+            inner_hub_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    for _ in 0..5 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "unexpected Resume Detect from a stale wake request after enabling inner hub remote wake"
+    );
+    let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
+    assert_eq!(
+        usbsts & USBSTS_RESUMEDETECT,
+        0,
+        "unexpected UHCI USBSTS.RESUMEDETECT from stale wake request after enabling inner hub remote wake"
+    );
+    assert!(
+        !ctrl.irq_level(),
+        "unexpected IRQ from stale wake request after enabling inner hub remote wake"
+    );
+
+    // A fresh key event should now propagate remote wakeup through the hub chain.
+    keyboard.key_event(0x05, true); // HID usage for KeyB.
+    ctrl.tick_1ms(&mut mem);
+
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert!(
+        portsc & PORTSC_RD != 0,
+        "expected Resume Detect after remote wake once inner hub remote wake is enabled"
+    );
+
+    let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
+    assert!(
+        usbsts & USBSTS_RESUMEDETECT != 0,
+        "expected UHCI USBSTS.RESUMEDETECT after remote wake once inner hub remote wake is enabled"
+    );
+    assert!(
+        ctrl.irq_level(),
+        "expected IRQ after remote wake once inner hub remote wake is enabled"
+    );
 }
 
 #[test]

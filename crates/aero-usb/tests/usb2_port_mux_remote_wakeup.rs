@@ -993,6 +993,75 @@ fn usb2_port_mux_ehci_remote_wakeup_does_not_propagate_through_nested_hubs_witho
     assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
     assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
     assert!(ehci.hub_mut().device_mut_for_address(3).is_none());
+
+    // Enable DEVICE_REMOTE_WAKEUP on the inner hub *after* the downstream device has already
+    // requested remote wake. The inner hub should have drained the wake request even while
+    // propagation was disabled, so enabling remote wake later must not "replay" a stale wake event.
+    {
+        let mut outer_hub_dev = ehci
+            .hub_mut()
+            .port_device_mut(0)
+            .expect("outer hub device should be attached");
+        let inner_hub_dev = outer_hub_dev
+            .model_mut()
+            .hub_port_device_mut(1)
+            .expect("inner hub device should be attached");
+        control_no_data_dev(
+            inner_hub_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    for _ in 0..5 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(
+        portsc & PORTSC_FPR,
+        0,
+        "unexpected resume state from a stale wake request after enabling inner hub remote wake"
+    );
+    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
+    assert!(
+        ehci.hub_mut().device_mut_for_address(3).is_none(),
+        "device should remain unreachable while the root port remains suspended"
+    );
+
+    // A fresh key event should now propagate remote wakeup through the hub chain.
+    keyboard.key_event(0x05, true); // HID usage for KeyB.
+    ehci.tick_1ms(&mut mem);
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(
+        portsc & PORTSC_FPR,
+        0,
+        "expected resume state after remote wake once inner hub remote wake is enabled"
+    );
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
+
+    // After the resume timer expires, the port should exit suspend/resume and return to J state.
+    for _ in 0..20 {
+        ehci.tick_1ms(&mut mem);
+    }
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
+    assert!(
+        ehci.hub_mut().device_mut_for_address(3).is_some(),
+        "device should be reachable after remote wake resumes the port"
+    );
 }
 
 #[test]
