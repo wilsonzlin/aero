@@ -4767,10 +4767,20 @@ function Test-AeroQmpCommandNotFound {
   $m = $Message.ToLowerInvariant()
   $cmd = $Command.ToLowerInvariant()
   if (-not $m.Contains($cmd)) { return $false }
+
+  # Avoid misclassifying "Device ... has not been found" (DeviceNotFound) as a missing QMP command just because the
+  # error string also includes "QMP command '<name>' ...".
+  if ($m.Contains("devicenotfound")) { return $false }
+
   if ($m.Contains("commandnotfound")) { return $true }
-  if ($m.Contains("has not been found")) { return $true }
   if ($m.Contains("unknown command")) { return $true }
   if ($m.Contains("command not found")) { return $true }
+
+  # Match QEMU phrasing:
+  #   "The command input-send-event has not been found"
+  # and variants with quotes around the command name.
+  $cmdEsc = [regex]::Escape($cmd)
+  if ($m -match "\bcommand\s+['\"]?$cmdEsc['\"]?\s+has\s+not\s+been\s+found\b") { return $true }
   return $false
 }
 
