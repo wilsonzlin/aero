@@ -3,8 +3,8 @@
 //! Note: this is **not** the canonical full-system VM wiring crate used by the browser runtime.
 //! For the canonical machine integration layer see `crates/aero-machine` (`aero_machine::Machine`).
 
-use super::cpu::CpuState;
-use super::lapic::{DeliveryMode, DestinationShorthand, Icr, Level, LocalApic};
+use crate::cpu::CpuState;
+use crate::lapic::{DeliveryMode, DestinationShorthand, Icr, Level, LocalApic};
 
 #[derive(Debug, Clone)]
 pub struct Vcpu {
@@ -27,13 +27,13 @@ pub struct Trampoline {
 }
 
 #[derive(Debug, Clone)]
-pub struct Machine {
+pub struct SmpMachine {
     pub cpus: Vec<Vcpu>,
     pub memory: Vec<u8>,
     pub trampoline: Option<Trampoline>,
 }
 
-impl Machine {
+impl SmpMachine {
     pub fn new(cpu_count: usize, memory_size: usize) -> Self {
         assert!(cpu_count >= 1, "must have at least one CPU (BSP)");
 
@@ -175,3 +175,4 @@ impl Machine {
         Ok(tramp)
     }
 }
+

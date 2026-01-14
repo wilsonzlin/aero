@@ -71,3 +71,4 @@ impl CpuState {
         self.run_state = VcpuRunState::Running;
     }
 }
+

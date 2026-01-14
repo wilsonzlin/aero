@@ -1,6 +1,6 @@
-//! Snapshot adapter for the minimal SMP machine model.
+//! Snapshot adapter for the deterministic SMP/APIC model.
 //!
-//! This bridges `emulator::smp::Machine` into the `aero-snapshot` save/restore
+//! This bridges [`crate::SmpMachine`] into the `aero-snapshot` save/restore
 //! pipeline so we can validate multi-vCPU snapshots against a small, fully
 //! deterministic SMP/APIC model.
 
@@ -12,8 +12,8 @@ use aero_snapshot::{
     SnapshotError, SnapshotMeta, SnapshotSource, SnapshotTarget, VcpuMmuSnapshot, VcpuSnapshot,
 };
 
-use super::lapic::APIC_REG_ICR_HIGH;
-use super::{Machine, VcpuRunState};
+use crate::lapic::APIC_REG_ICR_HIGH;
+use crate::{SmpMachine, VcpuRunState};
 
 const SMP_INTERNAL_VERSION: u16 = 1;
 
@@ -26,7 +26,7 @@ struct SmpCpuInternal {
     pending_interrupts: Vec<u8>,
 }
 
-fn encode_smp_cpu_internal(machine_cpu: &super::CpuState, apic: &super::LocalApic) -> Vec<u8> {
+fn encode_smp_cpu_internal(machine_cpu: &crate::CpuState, apic: &crate::LocalApic) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&SMP_INTERNAL_VERSION.to_le_bytes());
     buf.push(machine_cpu.is_bsp as u8);
@@ -119,7 +119,7 @@ fn decode_smp_cpu_internal(data: &[u8]) -> Result<SmpCpuInternal> {
     })
 }
 
-fn encode_trampoline(trampoline: Option<super::Trampoline>) -> Vec<u8> {
+fn encode_trampoline(trampoline: Option<crate::Trampoline>) -> Vec<u8> {
     let mut buf = Vec::new();
     match trampoline {
         Some(tramp) => {
@@ -135,7 +135,7 @@ fn encode_trampoline(trampoline: Option<super::Trampoline>) -> Vec<u8> {
     buf
 }
 
-fn decode_trampoline(data: &[u8]) -> Result<Option<super::Trampoline>> {
+fn decode_trampoline(data: &[u8]) -> Result<Option<crate::Trampoline>> {
     let mut r = Cursor::new(data);
     let mut tag = [0u8; 1];
     r.read_exact(&mut tag)?;
@@ -154,7 +154,7 @@ fn decode_trampoline(data: &[u8]) -> Result<Option<super::Trampoline>> {
             r.read_exact(&mut len_bytes)?;
             let code_len = u64::from_le_bytes(len_bytes) as usize;
 
-            Ok(Some(super::Trampoline {
+            Ok(Some(crate::Trampoline {
                 start_paddr,
                 vector,
                 code_len,
@@ -164,7 +164,7 @@ fn decode_trampoline(data: &[u8]) -> Result<Option<super::Trampoline>> {
     }
 }
 
-impl SnapshotSource for Machine {
+impl SnapshotSource for SmpMachine {
     fn snapshot_meta(&mut self) -> SnapshotMeta {
         SnapshotMeta::default()
     }
@@ -252,7 +252,7 @@ impl SnapshotSource for Machine {
     }
 }
 
-impl SnapshotTarget for Machine {
+impl SnapshotTarget for SmpMachine {
     fn restore_cpu_state(&mut self, state: SnapshotCpuState) {
         // Legacy single-CPU snapshots restore into the BSP by convention.
         self.cpus[0].cpu.rip = state.rip;
@@ -366,3 +366,4 @@ impl SnapshotTarget for Machine {
         Ok(())
     }
 }
+

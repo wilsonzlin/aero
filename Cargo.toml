@@ -46,6 +46,7 @@ members = [
     "crates/aero-perf",
     "crates/aero-mmu",
     "crates/aero-snapshot",
+    "crates/aero-smp-model",
     "crates/aero-io-snapshot",
     "crates/aero-opfs",
     "crates/aero-storage-server",

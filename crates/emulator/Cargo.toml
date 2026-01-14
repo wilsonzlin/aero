@@ -21,6 +21,8 @@ storage-device-crates = []
 # Legacy audio stack (AC97/HDA/DSP). This is not part of the browser/WASM runtime
 # path; it is retained for reference and for targeted tests.
 legacy-audio = []
+# Legacy deterministic SMP/APIC model + snapshot harness.
+legacy-smp-model = ["dep:aero-smp-model"]
 aerogpu-trace = ["dep:aero-gpu-trace"]
 # Legacy AeroGPU PCI/MMIO bring-up device model + tests (legacy vendor 1AED).
 aerogpu-legacy = ["dep:aero-aerogpu", "aero-aerogpu/legacy-abi"]
@@ -38,6 +40,7 @@ aero-edid = { path = "../aero-edid" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
+aero-smp-model = { path = "../aero-smp-model", optional = true }
 aero-platform = { path = "../platform" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-shared = { path = "../aero-shared" }

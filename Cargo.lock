@@ -680,6 +680,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-smp-model"
+version = "0.1.0"
+dependencies = [
+ "aero-snapshot",
+ "firmware",
+]
+
+[[package]]
 name = "aero-snapshot"
 version = "0.1.0"
 dependencies = [
@@ -1904,6 +1912,7 @@ dependencies = [
  "aero-platform",
  "aero-protocol",
  "aero-shared",
+ "aero-smp-model",
  "aero-snapshot",
  "aero-storage",
  "aero-storage-adapters",

@@ -5,12 +5,12 @@
 //! scheduler. This module models the latter: a round-robin scheduler where each
 //! "tick" executes one slice of one vCPU.
 
-use super::cpu::VcpuRunState;
-use super::machine::Machine;
+use crate::cpu::VcpuRunState;
+use crate::machine::SmpMachine;
 
 pub trait Guest {
-    fn on_tick(&mut self, cpu: usize, machine: &mut Machine);
-    fn on_interrupt(&mut self, cpu: usize, vector: u8, machine: &mut Machine);
+    fn on_tick(&mut self, cpu: usize, machine: &mut SmpMachine);
+    fn on_interrupt(&mut self, cpu: usize, vector: u8, machine: &mut SmpMachine);
 }
 
 /// A simple deterministic round-robin scheduler.
@@ -25,7 +25,12 @@ impl DeterministicScheduler {
     }
 
     /// Run the machine for a fixed number of scheduler ticks.
-    pub fn run_for_ticks(&mut self, machine: &mut Machine, guest: &mut impl Guest, ticks: u64) {
+    pub fn run_for_ticks(
+        &mut self,
+        machine: &mut SmpMachine,
+        guest: &mut impl Guest,
+        ticks: u64,
+    ) {
         let cpu_count = machine.cpu_count();
         for _ in 0..ticks {
             let cpu = self.next_cpu;
@@ -53,3 +58,4 @@ impl Default for DeterministicScheduler {
         Self::new()
     }
 }
+

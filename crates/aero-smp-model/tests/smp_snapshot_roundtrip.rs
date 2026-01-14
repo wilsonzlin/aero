@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use emulator::smp::{Machine, VcpuRunState, APIC_REG_ICR_HIGH, APIC_REG_ICR_LOW, RESET_VECTOR};
+use aero_smp_model::{SmpMachine, VcpuRunState, APIC_REG_ICR_HIGH, APIC_REG_ICR_LOW, RESET_VECTOR};
 
 fn icr_high_dest(apic_id: u8) -> u32 {
     (apic_id as u32) << 24
@@ -30,7 +30,7 @@ fn icr_low_fixed_shorthand_all_excluding_self(vector: u8) -> u32 {
 fn smp_snapshot_roundtrip_preserves_cpu_apic_and_ram() {
     let cpu_count = 4;
     let mem_size = 0x40000;
-    let mut machine = Machine::new(cpu_count, mem_size);
+    let mut machine = SmpMachine::new(cpu_count, mem_size);
 
     // Install an AP trampoline and start a couple of APs.
     let tramp = machine
@@ -89,7 +89,7 @@ fn smp_snapshot_roundtrip_preserves_cpu_apic_and_ram() {
 
     let bytes = out.into_inner();
 
-    let mut restored = Machine::new(cpu_count, mem_size);
+    let mut restored = SmpMachine::new(cpu_count, mem_size);
     aero_snapshot::restore_snapshot(&mut Cursor::new(&bytes), &mut restored).unwrap();
 
     assert_eq!(restored.trampoline, machine.trampoline);
@@ -123,3 +123,4 @@ fn smp_snapshot_roundtrip_preserves_cpu_apic_and_ram() {
         }
     }
 }
+
