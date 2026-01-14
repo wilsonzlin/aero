@@ -807,7 +807,9 @@ struct BufferResource {
     /// Optional CPU shadow copy of the buffer contents.
     ///
     /// This is used to implement deterministic D3D11 primitive-restart semantics for indexed strip
-    /// topologies by expanding strip indices on the CPU.
+    /// topologies by expanding strip indices on the CPU. On wgpu-GL, guests may upload index data
+    /// via a host-owned staging buffer + `COPY_BUFFER`, so we also keep shadows for host-owned
+    /// uploads to propagate CPU-visible index bytes into the index-buffer shadow.
     host_shadow: Option<Vec<u8>>,
 }
 
@@ -12086,9 +12088,10 @@ impl AerogpuD3d11Executor {
                 // Some buffers (notably index buffers) need a CPU-visible copy so we can implement
                 // primitive-restart semantics deterministically even when the backend does not
                 // reliably honor `PrimitiveState.strip_index_format` (e.g. wgpu-GL).
-                if buf_mut.host_shadow.is_some()
+                let needs_shadow = buf_mut.host_shadow.is_some()
                     || (buf_mut.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0
-                {
+                    || (self.backend == wgpu::Backend::Gl && buf_mut.backing.is_none());
+                if needs_shadow {
                     let offset_usize: usize = offset
                         .try_into()
                         .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset out of range"))?;
@@ -12907,8 +12910,6 @@ impl AerogpuD3d11Executor {
                         dst.host_shadow = None;
                     }
                 }
-            } else if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
-                dst.host_shadow = None;
             }
         }
 
