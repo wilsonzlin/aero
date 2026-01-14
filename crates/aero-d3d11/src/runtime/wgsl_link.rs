@@ -347,8 +347,17 @@ pub(crate) fn trim_ps_outputs_to_locations(
                 }
             }
 
-            // Remove `var out: PsOut;` and `return out;`.
-            if trimmed == "var out: PsOut;" || trimmed == "return out;" {
+            // Remove `var out: PsOut;`, and rewrite `return out;` into `return;` to preserve
+            // early-return control flow (WGSL allows `return;` in `()`-returning entry points).
+            if trimmed == "var out: PsOut;" {
+                continue;
+            }
+            if trimmed == "return out;" {
+                let line_trimmed_start = line.trim_start();
+                let indent_len = line.len().saturating_sub(line_trimmed_start.len());
+                let indent = &line[..indent_len];
+                out.push_str(indent);
+                out.push_str("return;\n");
                 continue;
             }
 
@@ -643,5 +652,34 @@ mod tests {
         assert!(trimmed.contains("fn fs_main() {"));
         assert!(!trimmed.contains("var out: PsOut;"));
         assert!(!trimmed.contains("return out;"));
+    }
+
+    #[test]
+    fn trims_ps_outputs_to_empty_preserves_early_returns() {
+        // When trimming removes every output member, `PsOut` is dropped and `fs_main` is rewritten
+        // to return `()`. Ensure we preserve `return out;` control flow as `return;` so early
+        // returns remain correct.
+        let wgsl = r#"
+            struct PsOut {
+                @location(0) t0: vec4<f32>,
+            };
+
+            @fragment
+            fn fs_main() -> PsOut {
+                var out: PsOut;
+                if true {
+                    return out;
+                }
+                out.t0 = vec4<f32>(1.0);
+                return out;
+            }
+        "#;
+        let keep = BTreeSet::new();
+        let trimmed = trim_ps_outputs_to_locations(wgsl, &keep);
+        assert!(!trimmed.contains("return out;"));
+        assert!(
+            trimmed.contains("return;"),
+            "expected trimmed shader to contain `return;` to preserve early returns:\n{trimmed}"
+        );
     }
 }
