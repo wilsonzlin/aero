@@ -5205,9 +5205,10 @@ function renderAudioPanel(): HTMLElement {
         // reproduce the exact worker/runtime setup.
         try {
           const cfg = snapshotConfigForExport();
+          const cfgOk = !(cfg && typeof cfg === "object" && "error" in cfg);
           entries.push({
             path: `${dir}/aero-config.json`,
-            data: encoder.encode(JSON.stringify({ timeIso, ...cfg }, null, 2)),
+            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: cfgOk, ...cfg }, null, 2)),
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -5230,15 +5231,18 @@ function renderAudioPanel(): HTMLElement {
         // (permissions, device selection, supported constraints).
         entries.push({
           path: `${dir}/host-media-devices.json`,
-          data: encoder.encode(JSON.stringify({ timeIso, ...hostMediaDevices }, null, 2)),
+          data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ...hostMediaDevices }, null, 2)),
         });
 
         // Worker coordinator snapshot (best-effort): captures worker state/health + wasm variants.
         try {
           const workersSnap = snapshotWorkerCoordinator();
+          const workersOk = !(workersSnap && typeof workersSnap === "object" && "error" in workersSnap);
           entries.push({
             path: `${dir}/workers.json`,
-            data: encoder.encode(JSON.stringify({ timeIso, workers: workersSnap }, null, 2)),
+            data: encoder.encode(
+              JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: workersOk, workers: workersSnap }, null, 2),
+            ),
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
