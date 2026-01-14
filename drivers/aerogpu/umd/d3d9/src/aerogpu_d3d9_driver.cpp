@@ -5891,7 +5891,13 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   }
 
   auto* dev = as_device(hDevice);
+  if (device_is_lost(dev)) {
+    return device_lost_hresult(dev);
+  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return device_lost_hresult(dev);
+  }
 
   // D3DPV_* flags passed through from IDirect3DDevice9::ProcessVertices.
   //

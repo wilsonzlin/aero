@@ -213,6 +213,59 @@ void test_xyz_diffuse_dest_decl_position_usage0() {
   assert(diffuse == 0xAABBCCDDu);
 }
 
+void test_process_vertices_device_lost() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.device_lost.store(true, std::memory_order_release);
+  dev.device_lost_hr.store(static_cast<int32_t>(E_FAIL), std::memory_order_release);
+
+  dev.fvf = kFvfXyz | kFvfDiffuse;
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 16;
+  src.storage.resize(16);
+  write_f32(src.storage, 0, 0.0f);
+  write_f32(src.storage, 4, 0.0f);
+  write_f32(src.storage, 8, 0.0f);
+  write_u32(src.storage, 12, 0x01020304u);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 20;
+  dst.storage.resize(20);
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 16;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(hr == D3DERR_DEVICELOST);
+}
+
 void test_xyz_diffuse_with_pixel_shader_bound() {
   Adapter adapter;
   Device dev(&adapter);
@@ -1778,6 +1831,7 @@ void test_process_vertices_fallback_inplace_overlap_src_inside_dst() {
 int main() {
   aerogpu::test_xyz_diffuse();
   aerogpu::test_xyz_diffuse_dest_decl_position_usage0();
+  aerogpu::test_process_vertices_device_lost();
   aerogpu::test_xyz_diffuse_with_pixel_shader_bound();
   aerogpu::test_xyz_diffuse_padded_dest_stride();
   aerogpu::test_xyz_diffuse_inplace_overlap_safe();
