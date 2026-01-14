@@ -101,7 +101,9 @@ fn rejects_nonzero_emit_stream_index() {
             .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
-            msg.contains("emit_stream") && msg.contains("stream") && msg.contains("1"),
+            msg.contains("emit_stream")
+                && msg.contains("stream index 1")
+                && msg.contains("at dword 2"),
             "unexpected error: {err:#}"
         );
     });
@@ -130,7 +132,9 @@ fn rejects_nonzero_emit_stream_index_after_implicit_zero() {
             .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
-            msg.contains("emit_stream") && msg.contains("stream") && msg.contains("1"),
+            msg.contains("emit_stream")
+                && msg.contains("stream index 1")
+                && msg.contains("at dword 3"),
             "unexpected error: {err:#}"
         );
     });
@@ -160,7 +164,7 @@ fn rejects_nonzero_cut_stream_index() {
             .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
-            msg.contains("cut_stream") && msg.contains("stream") && msg.contains("1"),
+            msg.contains("cut_stream") && msg.contains("stream index 1") && msg.contains("at dword 2"),
             "unexpected error: {err:#}"
         );
     });
@@ -189,7 +193,7 @@ fn rejects_nonzero_cut_stream_index_after_implicit_zero() {
             .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
-            msg.contains("cut_stream") && msg.contains("stream") && msg.contains("1"),
+            msg.contains("cut_stream") && msg.contains("stream index 1") && msg.contains("at dword 3"),
             "unexpected error: {err:#}"
         );
     });
@@ -219,7 +223,9 @@ fn rejects_nonzero_emitthen_cut_stream_index() {
             .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
-            msg.contains("emitthen_cut_stream") && msg.contains("stream") && msg.contains("1"),
+            msg.contains("emitthen_cut_stream")
+                && msg.contains("stream index 1")
+                && msg.contains("at dword 2"),
             "unexpected error: {err:#}"
         );
     });
@@ -248,7 +254,9 @@ fn rejects_nonzero_emitthen_cut_stream_index_after_implicit_zero() {
             .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
         let msg = err.to_string();
         assert!(
-            msg.contains("emitthen_cut_stream") && msg.contains("stream") && msg.contains("1"),
+            msg.contains("emitthen_cut_stream")
+                && msg.contains("stream index 1")
+                && msg.contains("at dword 3"),
             "unexpected error: {err:#}"
         );
     });

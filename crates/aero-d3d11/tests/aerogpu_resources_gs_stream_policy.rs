@@ -99,7 +99,7 @@ fn aerogpu_resources_rejects_nonzero_emit_stream_index_for_ignored_geometry_shad
                 .expect_err("expected CreateShaderDxbc to reject non-zero stream index");
             let msg = err.to_string();
             assert!(
-                msg.contains(op_name) && msg.contains("stream") && msg.contains("1"),
+                msg.contains(op_name) && msg.contains("stream index 1") && msg.contains("at dword 3"),
                 "unexpected error: {err:#}"
             );
         }
