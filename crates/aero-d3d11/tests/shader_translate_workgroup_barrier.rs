@@ -145,9 +145,12 @@ fn translates_sync_uav_fence_only_to_wgsl() {
 }
 
 #[test]
-fn rejects_sync_with_group_sync_inside_control_flow() {
-    // Barriers that include THREAD_GROUP_SYNC must be executed uniformly; we conservatively reject
-    // any appearance inside structured control flow to avoid generating WGSL that can deadlock.
+fn translates_sync_with_group_sync_inside_control_flow_to_wgsl() {
+    // Translator-only test: build the decoded IR directly.
+    //
+    // Group-sync barriers are expected to be used in uniform control flow in D3D, but can legally
+    // appear inside structured control-flow constructs such as loops and `if` blocks. Ensure we can
+    // translate such shaders without introducing extra restrictions here.
     let module = Sm4Module {
         stage: ShaderStage::Compute,
         model: ShaderModel { major: 5, minor: 0 },
@@ -173,14 +176,11 @@ fn rejects_sync_with_group_sync_inside_control_flow() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
-    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
-    match err {
-        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
-            assert_eq!(inst_index, 1);
-            assert_eq!(opcode, "sync_group_sync_in_control_flow");
-        }
-        other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
-    }
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("if ("));
+    assert!(translated.wgsl.contains("storageBarrier()"));
+    assert!(translated.wgsl.contains("workgroupBarrier()"));
+    assert_wgsl_validates(&translated.wgsl);
 }
 
 #[test]

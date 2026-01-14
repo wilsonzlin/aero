@@ -440,7 +440,7 @@ Known gaps / limitations (enforced by code/tests):
 - SM5 compute/UAV bring-up is partially supported, but still has important limitations:
   - `sync` barriers are translated for compute shaders.
     - Fence-only variants (no thread-group sync) do not have a perfect WGSL/WebGPU mapping; the current translation uses `storageBarrier()` as an approximation and therefore rejects fence-only `sync` in potentially divergent control flow (see `crates/aero-d3d11/src/shader_translate.rs`).
-    - `*WithGroupSync` barriers are only supported in straight-line code today (rejected inside structured control flow or after conditional returns), to avoid deadlocks on backends that do not fully validate barrier uniformity.
+    - `*WithGroupSync` barriers are translated, but are rejected when they appear after potentially conditional returns (to avoid deadlocks when not all invocations reach the barrier).
   - Typed UAV stores and UAV buffer atomics are supported for a small subset of formats/operations, but broader `RWTexture*` and `Interlocked*` coverage is still missing.
 
 Roadmap/plan docs:
