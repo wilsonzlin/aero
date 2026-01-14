@@ -3019,23 +3019,6 @@ impl XhciController {
                 }
             }
 
-            // When a transfer results in an endpoint halt (STALL/TRB error), reflect that into the
-            // guest Endpoint Context so software can observe the halted state and issue Reset
-            // Endpoint.
-            if exec
-                .endpoint_state(ep_addr)
-                .is_some_and(|st| st.halted)
-                && self.write_endpoint_state_to_context(
-                    mem,
-                    slot_id,
-                    endpoint_id,
-                    context::EndpointState::Halted,
-                )
-            {
-                self.slots[slot_idx].endpoint_contexts[usize::from(endpoint_id - 1)]
-                    .set_endpoint_state_enum(context::EndpointState::Halted);
-            }
-
             // Drain and emit transfer events.
             let events = exec.take_events();
             for ev in events {
