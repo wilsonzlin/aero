@@ -1012,6 +1012,28 @@ impl IoSnapshot for I8042Controller {
 
         self.prefer_mouse = r.bool(TAG_PREFER_MOUSE)?.unwrap_or(false);
 
+        // Snapshots may be untrusted/corrupt. Keep the i8042 status register coherent with the
+        // restored buffers so guests do not observe an "output buffer full" state without any
+        // readable data (which would otherwise cause busy-loops).
+        //
+        // For valid snapshots this is a no-op because the bits are already consistent.
+        const STATUS_KNOWN_MASK: u8 =
+            STATUS_OBF | STATUS_IBF | STATUS_SYS | STATUS_A2 | STATUS_AUX_OBF;
+        self.status &= STATUS_KNOWN_MASK;
+        // The input buffer fullness is transient in this device model (writes are processed
+        // synchronously), so clear it to avoid a corrupted snapshot permanently wedging the guest.
+        self.status &= !STATUS_IBF;
+        // The system bit should always be set once the controller has initialized.
+        self.status |= STATUS_SYS;
+        // Derive OBF/AUX bits from the restored output buffer.
+        self.status &= !(STATUS_OBF | STATUS_AUX_OBF | STATUS_A2);
+        if let Some(out) = self.output_buffer {
+            self.status |= STATUS_OBF;
+            if matches!(out.source, OutputSource::Mouse) {
+                self.status |= STATUS_AUX_OBF;
+            }
+        }
+
         // `irq_sink` and `sys_ctrl` are host integration points; they are expected to be
         // (re)attached by the coordinator. If `sys_ctrl` is already attached, resynchronize the
         // platform A20 line with the restored output-port image.
@@ -1185,5 +1207,36 @@ mod tests {
         assert!(dev.output_buffer.is_some());
         // Translation is enabled by default (Set-2 -> Set-1), so 0x1c ("A" in Set-2) becomes 0x1e.
         assert_eq!(dev.read_port(0x60), 0x1e);
+    }
+
+    #[test]
+    fn snapshot_restore_sanitizes_inconsistent_status_bits() {
+        const TAG_REGS: u16 = 1;
+
+        // Corrupt snapshot: claim the output buffer is full, but omit the output buffer field.
+        let regs = Encoder::new()
+            .u8(STATUS_OBF) // status
+            .u8(0x45) // command_byte baseline
+            .finish();
+
+        let mut w =
+            SnapshotWriter::new(I8042Controller::DEVICE_ID, I8042Controller::DEVICE_VERSION);
+        w.field_bytes(TAG_REGS, regs);
+
+        let mut dev = I8042Controller::new();
+        dev.load_state(&w.finish())
+            .expect("snapshot restore should succeed");
+
+        let status = dev.read_port(0x64);
+        assert_eq!(
+            status & STATUS_OBF,
+            0,
+            "expected OBF to be cleared when no output buffer is present"
+        );
+        assert_ne!(
+            status & STATUS_SYS,
+            0,
+            "expected SYS bit to remain set after restore"
+        );
     }
 }
