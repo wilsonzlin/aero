@@ -8911,6 +8911,9 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
   if (!dev) {
     return;
   }
+  if (VertexCount == 0) {
+    return;
+  }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
@@ -8958,6 +8961,9 @@ void AEROGPU_APIENTRY DrawInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
 void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
+    return;
+  }
+  if (IndexCount == 0) {
     return;
   }
 
