@@ -1259,7 +1259,7 @@ fn tier2_inline_tlb_code_version_bump_skips_out_of_bounds_physical_page() {
     ram[0x2010] = 0x22;
 
     // Initialize the in-bounds table entries with distinct values.
-    write_u32_le(&mut ram, table_ptr + 0, 5); // page 0
+    write_u32_le(&mut ram, table_ptr, 5); // page 0
     write_u32_le(&mut ram, table_ptr + 4, 10); // page 1
                                                // Sentinel for the would-be out-of-bounds page 2 entry.
     write_u32_le(&mut ram, table_ptr + 8, 0xDEAD_BEEF);
@@ -1330,7 +1330,7 @@ fn tier2_inline_tlb_code_version_bump_skips_out_of_bounds_physical_page() {
     assert_eq!(got_ram[0x2010], 0xAB);
 
     // Page 2 is out of bounds, so the bump should be skipped entirely.
-    assert_eq!(read_u32_le(got_ram, table_ptr + 0), 5);
+    assert_eq!(read_u32_le(got_ram, table_ptr), 5);
     assert_eq!(read_u32_le(got_ram, table_ptr + 4), 10);
     assert_eq!(read_u32_le(got_ram, table_ptr + 8), 0xDEAD_BEEF);
 
