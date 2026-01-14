@@ -320,6 +320,10 @@ pwsh ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json  # required w
 # Note: CI only builds/packages drivers that explicitly opt in via `ci-package.json`
 # under the driver directory (and have at least one `.inf`), to avoid accidentally
 # shipping scaffolding/test drivers.
+#
+# If you need to ship extra packaging assets, use:
+#   - `additionalFiles` for non-binary files (README/license text, install scripts, etc)
+#   - `toolFiles` for repo-local `.exe` helper tools (explicit opt-in; `.exe` remains disallowed in additionalFiles)
 
 # Optional: generate catalogs + test-sign + bundle artifacts (Guest Tools ISO/zip, etc.)
 pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
