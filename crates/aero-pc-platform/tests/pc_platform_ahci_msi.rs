@@ -179,3 +179,113 @@ fn pc_platform_triggers_ahci_msi_when_enabled_even_if_intx_disabled() {
     mem_read(&mut pc, identify_buf, &mut identify);
     assert_eq!(identify[0], 0x40);
 }
+
+#[test]
+fn pc_platform_ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            // Keep the platform minimal to avoid unrelated device interrupts affecting the test.
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+
+    // Switch the platform into APIC mode so we can observe MSI delivery via the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+
+    // Enable memory decoding + bus mastering so the controller can DMA and raise interrupts, but
+    // disable legacy INTx so the test observes MSI delivery exclusively.
+    let mut cmd = pci_cfg_read_u16(&mut pc, bdf, 0x04);
+    cmd |= (1 << 1) | (1 << 2) | (1 << 10); // MEM | BME | INTX_DISABLE
+    pci_cfg_write_u16(&mut pc, bdf, 0x04, cmd);
+
+    // Program the MSI capability with the single vector masked.
+    let cap = find_capability(&mut pc, bdf, PCI_CAP_ID_MSI);
+    let ctrl = pci_cfg_read_u16(&mut pc, bdf, cap + 0x02);
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(
+        per_vector_masking,
+        "AHCI MSI capability should support per-vector masking"
+    );
+
+    let vector: u8 = 0x46;
+    pci_cfg_write_u32(&mut pc, bdf, cap + 0x04, 0xFEE0_0000); // addr low (dest=0)
+    if is_64bit {
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x08, 0); // addr high
+        pci_cfg_write_u16(&mut pc, bdf, cap + 0x0C, u16::from(vector)); // data
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x10, 1); // mask
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x14, 0); // clear pending
+    } else {
+        pci_cfg_write_u16(&mut pc, bdf, cap + 0x08, u16::from(vector)); // data
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x0C, 1); // mask
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x10, 0); // clear pending
+    }
+    pci_cfg_write_u16(&mut pc, bdf, cap + 0x02, ctrl | 0x0001); // enable
+
+    let abar = pci_read_bar(&mut pc, bdf, AHCI_ABAR_BAR_INDEX);
+    assert_eq!(abar.kind, BarKind::Mem32);
+    assert_ne!(abar.base, 0);
+
+    // Guest memory layout for command list + table + DMA buffer.
+    let mut alloc = GuestAllocator::new(2 * 1024 * 1024, 0x1000);
+    let clb = alloc.alloc_bytes(1024, 1024);
+    let fb = alloc.alloc_bytes(256, 256);
+    let ctba = alloc.alloc_bytes(256, 128);
+    let identify_buf = alloc.alloc_bytes(512, 512);
+
+    // Program AHCI registers (port 0).
+    pc.memory.write_u32(abar.base + HBA_GHC, GHC_IE | GHC_AE);
+    pc.memory
+        .write_u32(abar.base + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(abar.base + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory
+        .write_u32(abar.base + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(abar.base + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+    pc.memory
+        .write_u32(abar.base + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.memory.write_u32(
+        abar.base + PORT_BASE + PORT_REG_CMD,
+        PORT_CMD_ST | PORT_CMD_FRE,
+    );
+
+    // Clear any prior port interrupt state and build an IDENTIFY command.
+    pc.memory
+        .write_u32(abar.base + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+    write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut pc, ctba, 0, identify_buf, 512);
+
+    pc.memory.write_u32(abar.base + PORT_BASE + PORT_REG_CI, 1);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+    pc.process_ahci();
+
+    // Polling INTx should not produce any interrupt (INTx is disabled and MSI is masked).
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Unmask MSI in canonical PCI config space.
+    if is_64bit {
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x10, 0);
+    } else {
+        pci_cfg_write_u32(&mut pc, bdf, cap + 0x0C, 0);
+    }
+
+    // Sync the new MSI mask into the device model via the platform's regular polling path.
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // The controller's interrupt condition is still asserted (status bits uncleared), but MSI
+    // delivery is edge-triggered; it should only re-deliver due to the pending bit that was latched
+    // while masked.
+    pc.process_ahci();
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
+}
