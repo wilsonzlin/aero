@@ -1266,6 +1266,35 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     udp6_s = udp6_buf;
   }
 
+  const char* tx_tcp_offload_s = "unknown";
+  const char* tx_tcp_fallback_s = "unknown";
+  const char* tx_udp_offload_s = "unknown";
+  const char* tx_udp_fallback_s = "unknown";
+  char tx_tcp_offload_buf[32];
+  char tx_tcp_fallback_buf[32];
+  char tx_udp_offload_buf[32];
+  char tx_udp_fallback_buf[32];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, StatTxTcpCsumOffload) + sizeof(ULONGLONG)) {
+    snprintf(tx_tcp_offload_buf, sizeof(tx_tcp_offload_buf), "%llu",
+             static_cast<unsigned long long>(info.StatTxTcpCsumOffload));
+    tx_tcp_offload_s = tx_tcp_offload_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, StatTxTcpCsumFallback) + sizeof(ULONGLONG)) {
+    snprintf(tx_tcp_fallback_buf, sizeof(tx_tcp_fallback_buf), "%llu",
+             static_cast<unsigned long long>(info.StatTxTcpCsumFallback));
+    tx_tcp_fallback_s = tx_tcp_fallback_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, StatTxUdpCsumOffload) + sizeof(ULONGLONG)) {
+    snprintf(tx_udp_offload_buf, sizeof(tx_udp_offload_buf), "%llu",
+             static_cast<unsigned long long>(info.StatTxUdpCsumOffload));
+    tx_udp_offload_s = tx_udp_offload_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, StatTxUdpCsumFallback) + sizeof(ULONGLONG)) {
+    snprintf(tx_udp_fallback_buf, sizeof(tx_udp_fallback_buf), "%llu",
+             static_cast<unsigned long long>(info.StatTxUdpCsumFallback));
+    tx_udp_fallback_s = tx_udp_fallback_buf;
+  }
+
   const char* tso_max_s = "unknown";
   char tso_max_buf[32];
   if (bytes >= offsetof(AEROVNET_DIAG_INFO, TxTsoMaxOffloadSize) + sizeof(ULONG)) {
@@ -1351,6 +1380,8 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       "rx_avail_idx=%u|rx_used_idx=%u|tx_avail_idx=%u|tx_used_idx=%u|"
       "rx_vq_error_flags=%s|tx_vq_error_flags=%s|"
       "tx_csum_v4=%u|tx_csum_v6=%u|tx_udp_csum_v4=%s|tx_udp_csum_v6=%s|"
+      "tx_tcp_csum_offload_pkts=%s|tx_tcp_csum_fallback_pkts=%s|"
+      "tx_udp_csum_offload_pkts=%s|tx_udp_csum_fallback_pkts=%s|"
       "tx_tso_v4=%u|tx_tso_v6=%u|tx_tso_max_size=%s|"
       "ctrl_vq=%s|ctrl_rx=%s|ctrl_vlan=%s|ctrl_mac_addr=%s|ctrl_queue_index=%s|ctrl_queue_size=%s|"
       "ctrl_error_flags=%s|ctrl_cmd_sent=%s|ctrl_cmd_ok=%s|ctrl_cmd_err=%s|ctrl_cmd_timeout=%s|"
@@ -1359,11 +1390,11 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
       static_cast<unsigned>(info.MsixRxVector), static_cast<unsigned>(info.MsixTxVector), info.RxQueueSize,
       info.TxQueueSize, info.RxAvailIdx, info.RxUsedIdx, info.TxAvailIdx, info.TxUsedIdx, rx_err_flags_s,
-      tx_err_flags_s, info.TxChecksumV4Enabled, info.TxChecksumV6Enabled, udp4_s, udp6_s, info.TxTsoV4Enabled,
-      info.TxTsoV6Enabled, tso_max_s, ctrl_vq_s, ctrl_rx_s, ctrl_vlan_s, ctrl_mac_s, ctrl_q_index_s, ctrl_q_size_s,
-      ctrl_err_flags_s, ctrl_cmd_sent_s, ctrl_cmd_ok_s, ctrl_cmd_err_s, ctrl_cmd_timeout_s,
-      static_cast<unsigned long long>(info.StatTxErrors), static_cast<unsigned long long>(info.StatRxErrors),
-      static_cast<unsigned long long>(info.StatRxNoBuffers));
+      tx_err_flags_s, info.TxChecksumV4Enabled, info.TxChecksumV6Enabled, udp4_s, udp6_s, tx_tcp_offload_s,
+      tx_tcp_fallback_s, tx_udp_offload_s, tx_udp_fallback_s, info.TxTsoV4Enabled, info.TxTsoV6Enabled, tso_max_s,
+      ctrl_vq_s, ctrl_rx_s, ctrl_vlan_s, ctrl_mac_s, ctrl_q_index_s, ctrl_q_size_s, ctrl_err_flags_s, ctrl_cmd_sent_s,
+      ctrl_cmd_ok_s, ctrl_cmd_err_s, ctrl_cmd_timeout_s, static_cast<unsigned long long>(info.StatTxErrors),
+      static_cast<unsigned long long>(info.StatRxErrors), static_cast<unsigned long long>(info.StatRxNoBuffers));
 }
 
 static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log,

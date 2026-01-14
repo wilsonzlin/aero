@@ -90,6 +90,25 @@ class VirtioNetDiagMarkerTests(unittest.TestCase):
             "tx_tso_v4=1|tx_tso_v6=0|tx_tso_max_size=65536",
         )
 
+    def test_emits_tx_checksum_counters(self) -> None:
+        tail = (
+            b"virtio-net-diag|INFO|host_features=0x1|guest_features=0x2|irq_mode=msix|irq_message_count=3|"
+            b"tx_csum_v4=1|tx_csum_v6=1|tx_udp_csum_v4=0|tx_udp_csum_v6=1|"
+            b"tx_tcp_csum_offload_pkts=10|tx_tcp_csum_fallback_pkts=2|"
+            b"tx_udp_csum_offload_pkts=7|tx_udp_csum_fallback_pkts=1|"
+            b"tx_tso_v4=1|tx_tso_v6=0|tx_tso_max_size=65536\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|host_features=0x1|guest_features=0x2|"
+            "irq_mode=msix|irq_message_count=3|"
+            "tx_csum_v4=1|tx_csum_v6=1|tx_udp_csum_v4=0|tx_udp_csum_v6=1|"
+            "tx_tcp_csum_offload_pkts=10|tx_tcp_csum_fallback_pkts=2|"
+            "tx_udp_csum_offload_pkts=7|tx_udp_csum_fallback_pkts=1|"
+            "tx_tso_v4=1|tx_tso_v6=0|tx_tso_max_size=65536",
+        )
+
     def test_emits_ctrl_vq_fields(self) -> None:
         tail = (
             b"virtio-net-diag|INFO|irq_mode=msix|irq_message_count=3|ctrl_vq=1|ctrl_rx=1|ctrl_vlan=0|"

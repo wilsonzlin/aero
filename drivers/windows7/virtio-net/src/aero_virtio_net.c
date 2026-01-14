@@ -1224,6 +1224,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
       InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
+      Adapter->StatTxTcpCsumFallback++;
     } else if (Intent.WantUdpChecksum) {
       if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
         return NDIS_STATUS_INVALID_PACKET;
@@ -1231,6 +1232,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
       InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
+      Adapter->StatTxUdpCsumFallback++;
     }
 
     RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
@@ -1266,6 +1268,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
         InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
+        Adapter->StatTxTcpCsumFallback++;
       } else if (Intent.WantUdpChecksum) {
         if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
           return NDIS_STATUS_INVALID_PACKET;
@@ -1273,6 +1276,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
         InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
+        Adapter->StatTxUdpCsumFallback++;
       }
 
       RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
@@ -1290,6 +1294,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
+          Adapter->StatTxTcpCsumFallback++;
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -1301,6 +1306,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
+          Adapter->StatTxUdpCsumFallback++;
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -1316,6 +1322,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
 #endif
+          Adapter->StatTxTcpCsumFallback++;
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -1327,6 +1334,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #if DBG
           InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
+          Adapter->StatTxUdpCsumFallback++;
           RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
           return NDIS_STATUS_SUCCESS;
         }
@@ -1336,6 +1344,12 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     } else {
       return NDIS_STATUS_INVALID_PACKET;
     }
+  }
+
+  if (Intent.WantUdpChecksum) {
+    Adapter->StatTxUdpCsumOffload++;
+  } else if (Intent.WantTcpChecksum || Intent.WantTso) {
+    Adapter->StatTxTcpCsumOffload++;
   }
 
 #if DBG
@@ -4977,6 +4991,11 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   Info.CtrlCmdOk = Adapter->StatCtrlVqCmdOk;
   Info.CtrlCmdErr = Adapter->StatCtrlVqCmdErr;
   Info.CtrlCmdTimeout = Adapter->StatCtrlVqCmdTimeout;
+
+  Info.StatTxTcpCsumOffload = Adapter->StatTxTcpCsumOffload;
+  Info.StatTxTcpCsumFallback = Adapter->StatTxTcpCsumFallback;
+  Info.StatTxUdpCsumOffload = Adapter->StatTxUdpCsumOffload;
+  Info.StatTxUdpCsumFallback = Adapter->StatTxUdpCsumFallback;
   NdisReleaseSpinLock(&Adapter->Lock);
 
   // Read back the currently programmed MSI-X vectors from virtio common config.

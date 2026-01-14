@@ -294,6 +294,10 @@ typedef struct _AEROVNET_ADAPTER {
   ULONGLONG StatTxErrors;
   ULONGLONG StatRxErrors;
   ULONGLONG StatRxNoBuffers;
+  ULONGLONG StatTxTcpCsumOffload;
+  ULONGLONG StatTxTcpCsumFallback;
+  ULONGLONG StatTxUdpCsumOffload;
+  ULONGLONG StatTxUdpCsumFallback;
   ULONGLONG StatCtrlVqCmdSent;
   ULONGLONG StatCtrlVqCmdOk;
   ULONGLONG StatCtrlVqCmdErr;
