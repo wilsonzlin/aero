@@ -151,19 +151,35 @@ fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
     let bytes = ctrl.save_state();
     let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
 
-    // Encode snapshots using the pre-tag-swap mapping:
-    // - tag 11: host_controller_error
-    // - tag 12: ports
+    // Cover both historical and mixed tag mappings:
     //
-    // We test both the original 0.3 header and an intermediate 0.4 header that still used the 0.3
-    // tag layout.
-    for legacy_version in [SnapshotVersion::new(0, 3), SnapshotVersion::new(0, 4)] {
-        let mut w = SnapshotWriter::new(*b"XHCI", legacy_version);
+    // - Legacy (0.3) mapping:
+    //   - tag 11: host_controller_error
+    //   - tag 12: ports
+    // - Current (0.4+) mapping:
+    //   - tag 11: ports
+    //   - tag 12: host_controller_error
+    //
+    // Some intermediate snapshots had a 0.4 header while still using the legacy tag layout (and
+    // vice versa), so we exercise multiple combinations of header version + tag layout.
+    for (device_version, swap_tags) in [
+        // Expected legacy 0.3 snapshot.
+        (SnapshotVersion::new(0, 3), true),
+        // 0.4 header but legacy tag mapping.
+        (SnapshotVersion::new(0, 4), true),
+        // 0.3 header but 0.4 tag mapping.
+        (SnapshotVersion::new(0, 3), false),
+    ] {
+        let mut w = SnapshotWriter::new(*b"XHCI", device_version);
         for (tag, field) in r.iter_fields() {
-            let out_tag = match tag {
-                11 => 12,
-                12 => 11,
-                other => other,
+            let out_tag = if swap_tags {
+                match tag {
+                    11 => 12,
+                    12 => 11,
+                    other => other,
+                }
+            } else {
+                tag
             };
             w.field_bytes(out_tag, field.to_vec());
         }
@@ -174,7 +190,7 @@ fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
         restored.attach_device(0, Box::new(keyboard_restored.clone()));
         restored
             .load_state(&legacy_bytes)
-            .unwrap_or_else(|e| panic!("load legacy snapshot version {}: {e}", legacy_version));
+            .unwrap_or_else(|e| panic!("load legacy snapshot version {}: {e}", device_version));
 
         assert!(
             keyboard_restored.configured(),
