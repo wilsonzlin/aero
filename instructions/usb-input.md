@@ -222,6 +222,9 @@ The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "i
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 cargo xtask input
 
+# Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
+cargo xtask input --rust-only
+
 # Targeted WASM USB bridge regression test (runs in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
 
@@ -236,6 +239,7 @@ cargo xtask input --e2e
 
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
+bash ./scripts/safe-run.sh cargo xtask input --rust-only
 
 # --- Manual / debugging (run pieces individually) ---
 

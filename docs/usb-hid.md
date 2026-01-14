@@ -129,6 +129,9 @@ When adding support for a new key code:
    - `cargo test -p aero-usb --locked`
    - `npm -w web run test:unit -- src/input`
 
+   If you don't have Node deps available (e.g. a constrained sandbox), you can still validate the
+   Rust side with `cargo xtask input --rust-only` (but it won't run the TypeScript fixture tests).
+
 (The mapping is still not intended to be exhaustive, but the fixture is intentionally thorough so a
 change on either side requires updating the shared list.)
 

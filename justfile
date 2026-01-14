@@ -420,6 +420,9 @@ test-all:
 test-input:
   cargo xtask input
 
+test-input-rust:
+  cargo xtask input --rust-only
+
 test-input-e2e:
   cargo xtask input --e2e
 
