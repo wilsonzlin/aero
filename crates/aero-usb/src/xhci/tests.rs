@@ -1018,6 +1018,78 @@ fn command_ring_context_commands_reset_ep0_control_td_state() {
 }
 
 #[test]
+fn command_ring_address_device_resets_ep0_control_td_state() {
+    let mut mem = TestMem::new(0x20_000);
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+    let input_ctx = 0x3000u64;
+    let cmd_ring = 0x4000u64;
+
+    let mut ctrl = super::XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+
+    // Provide a device on root port 1 so Address Device can resolve the topology.
+    ctrl.attach_device(0, Box::new(DummyUsbDevice));
+
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    let slot_id = completion.slot_id;
+    assert_ne!(slot_id, 0);
+
+    // Install a Device Context pointer for the slot.
+    mem.write_u64(dcbaa + (u64::from(slot_id) * 8), dev_ctx);
+
+    // Input Control Context: Drop=0, Add = Slot + EP0 (required for Address Device).
+    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
+
+    // Slot Context: bind to root port 1 with an empty route string.
+    mem.write_u32(input_ctx + 0x20 + 0, 0);
+    mem.write_u32(input_ctx + 0x20 + 4, 1u32 << 16);
+
+    // EP0 context: seed TRDP + DCS=1.
+    let trdp = 0x9000u64;
+    let trdp_raw = trdp | 1;
+    mem.write_u32(input_ctx + 0x40 + 8, trdp_raw as u32);
+    mem.write_u32(input_ctx + 0x40 + 12, (trdp_raw >> 32) as u32);
+
+    // Command ring: Address Device for the enabled slot.
+    {
+        let mut trb0 = Trb::new(input_ctx, 0, 0);
+        trb0.set_trb_type(TrbType::AddressDeviceCommand);
+        trb0.set_slot_id(slot_id);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+
+    ctrl.set_command_ring(cmd_ring, true);
+
+    // If a control TD was in-flight, Address Device updates EP0's dequeue pointer and must reset
+    // internal TD tracking to avoid consuming stale cursor state.
+    ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        td_start: None,
+        td_cursor: None,
+        data_expected: 7,
+        data_transferred: 3,
+        completion_code: CompletionCode::TrbError,
+    };
+
+    ctrl.process_command_ring(&mut mem, 1);
+
+    assert_eq!(
+        ctrl.ep0_control_td[usize::from(slot_id)],
+        super::ControlTdState::default()
+    );
+    let ring = ctrl
+        .slot_state(slot_id)
+        .unwrap()
+        .transfer_ring(1)
+        .expect("EP0 transfer ring cursor should be updated");
+    assert_eq!(ring.dequeue_ptr(), trdp);
+    assert!(ring.cycle_state());
+}
+
+#[test]
 fn controller_snapshot_roundtrip_is_deterministic() {
     use aero_io_snapshot::io::state::IoSnapshot;
 

@@ -1224,6 +1224,9 @@ impl XhciController {
         slot_state.endpoint_contexts[0] = ep0_ctx;
         slot_state.transfer_rings[0] =
             Some(RingCursor::new(ep0_ctx.tr_dequeue_pointer(), ep0_ctx.dcs()));
+        if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+            *state = ControlTdState::default();
+        }
 
         self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
     }
