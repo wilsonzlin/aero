@@ -390,3 +390,25 @@ fn tier1_codegen_read_only_flags_loads_without_spill() {
         "expected CpuState.rflags not to be spilled when flags are only read"
     );
 }
+
+#[test]
+fn tier1_codegen_flag_writes_spill_rflags() {
+    let entry = 0x1000u64;
+    let mut b = IrBuilder::new(entry);
+    let lhs = b.const_int(Width::W64, 1);
+    let rhs = b.const_int(Width::W64, 2);
+    let _ = b.binop(BinOp::Add, Width::W64, lhs, rhs, FlagSet::ALU);
+    let block = b.finish(IrTerminator::Jump { target: entry + 1 });
+    block.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&block);
+    let (loads, stores) = collect_cpu_ptr_i64_load_store_offsets(&wasm);
+    assert!(
+        loads.contains(&(abi::CPU_RFLAGS_OFF as u64)),
+        "expected CpuState.rflags to be loaded when flags are written"
+    );
+    assert!(
+        stores.contains(&(abi::CPU_RFLAGS_OFF as u64)),
+        "expected CpuState.rflags to be spilled when flags are written"
+    );
+}

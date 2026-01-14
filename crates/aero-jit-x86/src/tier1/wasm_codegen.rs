@@ -669,9 +669,11 @@ impl Tier1WasmCodegen {
         }
 
         if state_usage.rflags_written {
-            emitter
-                .func
-                .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            // Ensure the architectural "always-1" RFLAGS bit stays set.
+            //
+            // Note: We update the `rflags` local first and then emit the final store using the
+            // simple `local.get cpu_ptr; local.get rflags; i64.store` pattern. Several WASM IR
+            // inspection tests rely on that adjacency to detect spills.
             emitter
                 .func
                 .instruction(&Instruction::LocalGet(layout.rflags_local()));
@@ -679,6 +681,16 @@ impl Tier1WasmCodegen {
                 .func
                 .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
             emitter.func.instruction(&Instruction::I64Or);
+            emitter
+                .func
+                .instruction(&Instruction::LocalSet(layout.rflags_local()));
+
+            emitter
+                .func
+                .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            emitter
+                .func
+                .instruction(&Instruction::LocalGet(layout.rflags_local()));
             emitter
                 .func
                 .instruction(&Instruction::I64Store(memarg(abi::CPU_RFLAGS_OFF, 3)));
