@@ -43,6 +43,8 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     xhci.set_dcbaap(dcbaa);
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
+    // Transfer execution is gated on USBCMD.RUN.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
@@ -87,10 +89,6 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     stop_marker.set_trb_type(TrbType::NoOp);
     stop_marker.set_cycle(false);
     stop_marker.write_to(&mut mem, transfer_ring + 2 * TRB_LEN as u64);
-
-    // Start the controller so transfer ring processing is enabled. Transfer execution is gated on
-    // USBCMD.RUN (matching real xHCI controllers).
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Doorbell the endpoint and execute one transfer. Since another TRB is ready, the controller
     // keeps the endpoint active without requiring another doorbell.
