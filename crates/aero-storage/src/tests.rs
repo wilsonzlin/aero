@@ -226,6 +226,62 @@ fn cow_disk_reads_from_base_and_writes_to_overlay() {
 }
 
 #[test]
+fn disk_image_discard_range_forwards_to_sparse_variant() {
+    // Regression test: `DiskImage` implements `VirtualDisk` and must forward discard requests to
+    // its concrete variant (otherwise discards silently turn into validated no-ops).
+    let capacity_bytes = 2 * 1024 * 1024u64;
+    let block_size_bytes = 1024 * 1024u32;
+
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: capacity_bytes,
+            block_size_bytes,
+        },
+    )
+    .unwrap();
+
+    let backend = disk.into_backend();
+    let mut image = DiskImage::open_auto(backend).unwrap();
+    assert_eq!(image.format(), crate::DiskFormat::AeroSparse);
+
+    // Allocate the first block by writing non-zero data.
+    image.write_at(0, &[0x5A; SECTOR_SIZE]).unwrap();
+
+    // Discard the entire first block; AeroSparse should deallocate and read as zeros.
+    image
+        .discard_range(0, u64::from(block_size_bytes))
+        .unwrap();
+
+    let mut out = [0u8; SECTOR_SIZE];
+    image.read_at(0, &mut out).unwrap();
+    assert_eq!(out, [0u8; SECTOR_SIZE]);
+}
+
+#[test]
+fn cow_disk_discard_range_deallocates_overlay_blocks() {
+    let block_size_bytes = 4096u32;
+    let capacity_bytes = (block_size_bytes as u64) * 2;
+
+    // Base disk is prefilled with 0x11.
+    let mut base = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
+    base.write_at(0, &vec![0x11u8; SECTOR_SIZE]).unwrap();
+
+    let mut cow = AeroCowDisk::create(base, MemBackend::new(), block_size_bytes).unwrap();
+    cow.write_at(0, &vec![0xAAu8; SECTOR_SIZE]).unwrap();
+    cow.flush().unwrap();
+    assert!(cow.overlay().is_block_allocated(0));
+
+    // Discard the entire first overlay block; reads should fall back to the base disk.
+    cow.discard_range(0, u64::from(block_size_bytes)).unwrap();
+    assert!(!cow.overlay().is_block_allocated(0));
+
+    let mut out = [0u8; SECTOR_SIZE];
+    cow.read_at(0, &mut out).unwrap();
+    assert_eq!(out, [0x11u8; SECTOR_SIZE]);
+}
+
+#[test]
 fn block_cache_eviction_writes_back_dirty_blocks() {
     let raw = RawDisk::create(MemBackend::new(), 48).unwrap();
     let mut cached = BlockCachedDisk::new(raw, 16, 2).unwrap();

@@ -299,4 +299,13 @@ impl<B: StorageBackend> crate::VirtualDisk for DiskImage<B> {
             Self::Vhd(d) => d.flush(),
         }
     }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        match self {
+            Self::Raw(d) => d.discard_range(offset, len),
+            Self::AeroSparse(d) => d.discard_range(offset, len),
+            Self::Qcow2(d) => d.discard_range(offset, len),
+            Self::Vhd(d) => d.discard_range(offset, len),
+        }
+    }
 }
