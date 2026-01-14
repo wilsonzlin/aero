@@ -100,6 +100,76 @@ static VOID VioInputInputUnlock(_In_opt_ PVOID Context)
     WdfSpinLockRelease((WDFSPINLOCK)Context);
 }
 
+static NTSTATUS VioInputValidateAndCacheQueueNotifyAddresses(_Inout_ PDEVICE_CONTEXT Ctx)
+{
+    USHORT notifyOff0;
+    USHORT notifyOff1;
+    ULONGLONG notifyOffsetBytes0;
+    ULONGLONG notifyOffsetBytes1;
+
+    if (Ctx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Ctx->PciDevice.QueueNotifyAddrCache == NULL || Ctx->PciDevice.QueueNotifyAddrCacheCount < VIRTIO_INPUT_QUEUE_COUNT) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    /*
+     * Contract v1 fixed layout: NOTIFY capability must be mapped and
+     * notify_off_multiplier must be nonzero.
+     */
+    if (Ctx->PciDevice.NotifyBase == NULL || Ctx->PciDevice.NotifyOffMultiplier == 0 || Ctx->PciDevice.NotifyLength < sizeof(UINT16)) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "virtio-input notify capability invalid: base=%p mult=%lu len=%Iu\n",
+            Ctx->PciDevice.NotifyBase,
+            Ctx->PciDevice.NotifyOffMultiplier,
+            Ctx->PciDevice.NotifyLength);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    /*
+     * Contract v1 requires `queue_notify_off(q) = q` (docs/windows7-virtio-driver-contract.md §1.6).
+     *
+     * Validate this so we can safely use the cached notify addresses from hot
+     * paths without taking the CommonCfg lock.
+     */
+    notifyOff0 = VirtioPciReadQueueNotifyOffset(&Ctx->PciDevice, 0);
+    notifyOff1 = VirtioPciReadQueueNotifyOffset(&Ctx->PciDevice, 1);
+
+    if (notifyOff0 != 0 || notifyOff1 != 1) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "virtio-input queue_notify_off mismatch: q0=%u q1=%u (expected 0/1)\n",
+            (ULONG)notifyOff0,
+            (ULONG)notifyOff1);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    notifyOffsetBytes0 = (ULONGLONG)notifyOff0 * (ULONGLONG)Ctx->PciDevice.NotifyOffMultiplier;
+    notifyOffsetBytes1 = (ULONGLONG)notifyOff1 * (ULONGLONG)Ctx->PciDevice.NotifyOffMultiplier;
+
+    if (notifyOffsetBytes0 + sizeof(UINT16) > (ULONGLONG)Ctx->PciDevice.NotifyLength ||
+        notifyOffsetBytes1 + sizeof(UINT16) > (ULONGLONG)Ctx->PciDevice.NotifyLength) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "virtio-input notify offsets out of range: q0_off=%u q1_off=%u mult=%lu notify_len=%Iu\n",
+            (ULONG)notifyOff0,
+            (ULONG)notifyOff1,
+            Ctx->PciDevice.NotifyOffMultiplier,
+            Ctx->PciDevice.NotifyLength);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    Ctx->PciDevice.QueueNotifyAddrCache[0] =
+        (volatile UINT16 *)((volatile UCHAR *)Ctx->PciDevice.NotifyBase + (SIZE_T)notifyOffsetBytes0);
+    Ctx->PciDevice.QueueNotifyAddrCache[1] =
+        (volatile UINT16 *)((volatile UCHAR *)Ctx->PciDevice.NotifyBase + (SIZE_T)notifyOffsetBytes1);
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS VioInputReadPciIdentity(_Inout_ PDEVICE_CONTEXT Ctx)
 {
     ULONG bytesRead;
@@ -1310,74 +1380,18 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         }
 
         /*
-         * Contract v1 requires `queue_notify_off(q) = q` (docs/windows7-virtio-driver-contract.md §1.6).
+         * Pre-cache per-queue notify MMIO addresses.
          *
-         * The transport can function with arbitrary notify offsets, but validate
-         * this to catch device-model contract regressions early.
+         * VirtioPciNotifyQueue() populates Dev->QueueNotifyAddrCache on-demand,
+         * but that requires taking the CommonCfg lock the first time each queue
+         * is notified (to read queue_notify_off). The virtio-input driver may
+         * notify from hot paths while holding per-queue locks (eventq) and the
+         * internal statusq lock, so pre-caching keeps notifications lock-free.
          */
-        {
-            USHORT notifyOff0;
-            USHORT notifyOff1;
-            ULONGLONG notifyOffsetBytes0;
-            ULONGLONG notifyOffsetBytes1;
-
-            notifyOff0 = VirtioPciReadQueueNotifyOffset(&deviceContext->PciDevice, 0);
-            notifyOff1 = VirtioPciReadQueueNotifyOffset(&deviceContext->PciDevice, 1);
-
-            if (notifyOff0 != 0 || notifyOff1 != 1) {
-                VIOINPUT_LOG(
-                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                    "virtio-input queue_notify_off mismatch: q0=%u q1=%u (expected 0/1)\n",
-                    (ULONG)notifyOff0,
-                    (ULONG)notifyOff1);
-                VirtioPciModernUninit(&deviceContext->PciDevice);
-                return STATUS_DEVICE_CONFIGURATION_ERROR;
-            }
-
-            /*
-             * Pre-cache per-queue notify MMIO addresses.
-             *
-             * VirtioPciNotifyQueue() populates Dev->QueueNotifyAddrCache on-demand,
-             * but that requires taking the CommonCfg lock the first time each queue
-             * is notified (to read queue_notify_off). The virtio-input driver may
-             * notify from hot paths while holding per-queue locks (eventq) and the
-             * internal statusq lock, so pre-caching keeps notifications lock-free.
-             *
-             * Contract v1 additionally requires queue_notify_off(q)=q, but we use
-             * the queried offsets to build the addresses defensively.
-             */
-            if (deviceContext->PciDevice.NotifyBase == NULL || deviceContext->PciDevice.NotifyOffMultiplier == 0 ||
-                deviceContext->PciDevice.NotifyLength < sizeof(UINT16)) {
-                VIOINPUT_LOG(
-                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                    "virtio-input notify capability invalid: base=%p mult=%lu len=%Iu\n",
-                    deviceContext->PciDevice.NotifyBase,
-                    deviceContext->PciDevice.NotifyOffMultiplier,
-                    deviceContext->PciDevice.NotifyLength);
-                VirtioPciModernUninit(&deviceContext->PciDevice);
-                return STATUS_DEVICE_CONFIGURATION_ERROR;
-            }
-
-            notifyOffsetBytes0 = (ULONGLONG)notifyOff0 * (ULONGLONG)deviceContext->PciDevice.NotifyOffMultiplier;
-            notifyOffsetBytes1 = (ULONGLONG)notifyOff1 * (ULONGLONG)deviceContext->PciDevice.NotifyOffMultiplier;
-
-            if (notifyOffsetBytes0 + sizeof(UINT16) > (ULONGLONG)deviceContext->PciDevice.NotifyLength ||
-                notifyOffsetBytes1 + sizeof(UINT16) > (ULONGLONG)deviceContext->PciDevice.NotifyLength) {
-                VIOINPUT_LOG(
-                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                    "virtio-input notify offsets out of range: q0_off=%u q1_off=%u mult=%lu notify_len=%Iu\n",
-                    (ULONG)notifyOff0,
-                    (ULONG)notifyOff1,
-                    deviceContext->PciDevice.NotifyOffMultiplier,
-                    deviceContext->PciDevice.NotifyLength);
-                VirtioPciModernUninit(&deviceContext->PciDevice);
-                return STATUS_DEVICE_CONFIGURATION_ERROR;
-            }
-
-            deviceContext->QueueNotifyAddrCache[0] =
-                (volatile UINT16*)((volatile UCHAR*)deviceContext->PciDevice.NotifyBase + (SIZE_T)notifyOffsetBytes0);
-            deviceContext->QueueNotifyAddrCache[1] =
-                (volatile UINT16*)((volatile UCHAR*)deviceContext->PciDevice.NotifyBase + (SIZE_T)notifyOffsetBytes1);
+        status = VioInputValidateAndCacheQueueNotifyAddresses(deviceContext);
+        if (!NT_SUCCESS(status)) {
+            VirtioPciModernUninit(&deviceContext->PciDevice);
+            return status;
         }
 
         status = VioInputEventQInitialize(deviceContext, deviceContext->DmaEnabler, qsz0);
@@ -1585,6 +1599,49 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         return status;
     }
     (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, (LONG64)negotiated);
+
+    /*
+     * Re-validate transport assumptions on each bring-up so config-change driven
+     * reinitialization (D0Exit->D0Entry) does not rely on PrepareHardware-only
+     * checks.
+     *
+     * This also refreshes the per-queue notify address cache after a device reset.
+     */
+    {
+        USHORT qsz0;
+        USHORT qsz1;
+
+        qsz0 = 0;
+        status = VirtioPciGetQueueSize(&deviceContext->PciDevice, 0, &qsz0);
+        if (!NT_SUCCESS(status) || qsz0 != 64) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio-input queue0 size mismatch: %u (expected 64) status=%!STATUS!\n",
+                (ULONG)qsz0,
+                status);
+            VirtioPciResetDevice(&deviceContext->PciDevice);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        qsz1 = 0;
+        status = VirtioPciGetQueueSize(&deviceContext->PciDevice, 1, &qsz1);
+        if (!NT_SUCCESS(status) || qsz1 != 64) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "virtio-input queue1 size mismatch: %u (expected 64) status=%!STATUS!\n",
+                (ULONG)qsz1,
+                status);
+            VirtioPciResetDevice(&deviceContext->PciDevice);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        status = VioInputValidateAndCacheQueueNotifyAddresses(deviceContext);
+        if (!NT_SUCCESS(status)) {
+            RtlZeroMemory(deviceContext->QueueNotifyAddrCache, sizeof(deviceContext->QueueNotifyAddrCache));
+            VirtioPciResetDevice(&deviceContext->PciDevice);
+            return status;
+        }
+    }
 
     /*
      * Contract v1: drivers MUST NOT negotiate EVENT_IDX (split-ring event index).
