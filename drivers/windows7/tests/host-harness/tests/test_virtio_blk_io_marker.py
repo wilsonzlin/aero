@@ -58,6 +58,21 @@ class VirtioBlkIoMarkerTests(unittest.TestCase):
             "flush_ok=0|read_ok=0|read_bytes=0|read_mbps=0.00",
         )
 
+    def test_emits_pass_ignoring_extra_fields(self) -> None:
+        # The guest virtio-blk marker may include non-perf diagnostic fields (IRQ mode, recovery counters, etc).
+        # Ensure the stable VIRTIO_BLK_IO host marker remains parseable and unchanged.
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|abort_srb=0|reset_device_srb=1|"
+            b"reset_bus_srb=0|pnp_srb=0|ioctl_reset=0|write_ok=1|write_bytes=33554432|write_mbps=123.45|"
+            b"flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|PASS|write_ok=1|write_bytes=33554432|"
+            "write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56",
+        )
+
     def test_no_output_when_no_perf_fields(self) -> None:
         # Backward compatible old marker.
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
@@ -73,4 +88,3 @@ class VirtioBlkIoMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
