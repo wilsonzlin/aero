@@ -1758,6 +1758,10 @@ impl XhciController {
     pub fn tick_1ms_and_service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
         self.tick_1ms();
         self.tick(mem);
+        // Command completion events flow through the guest event ring as well. Command ring
+        // processing is kicked via doorbell 0 and is otherwise controller-local state, so make sure
+        // it continues to make forward progress even if the guest does not perform additional MMIO.
+        self.maybe_process_command_ring(mem);
         self.service_event_ring(mem);
     }
 
