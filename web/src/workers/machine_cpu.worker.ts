@@ -5,6 +5,9 @@ import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/pro
 import { RingBuffer } from "../ipc/ring_buffer";
 import { UART_COM1 } from "../io/devices/uart16550";
 import { InputEventType } from "../input/event_queue";
+import { chooseKeyboardInputBackend, chooseMouseInputBackend, type InputBackend } from "../input/input_backend_selection";
+import { encodeInputBackendStatus } from "../input/input_backend_status";
+import { hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
 import {
   DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
   normalizeSetBootDisksMessage,
@@ -325,6 +328,25 @@ const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Ar
 const pressedKeyboardHidUsages = new Uint8Array(256);
 let pressedKeyboardHidUsageCount = 0;
 let mouseButtonsMask = 0;
+let virtioMouseButtonsInjectedMask = 0;
+
+let keyboardInputBackend: InputBackend = "ps2";
+let mouseInputBackend: InputBackend = "ps2";
+let keyboardUsbOk = false;
+let mouseUsbOk = false;
+
+const warnedForcedKeyboardBackendUnavailable = new Set<string>();
+const warnedForcedMouseBackendUnavailable = new Set<string>();
+
+// Linux input button codes (EV_KEY) used by virtio-input. Kept in sync with `web/src/io/devices/virtio_input.ts`.
+const VIRTIO_BTN_LEFT = 0x110;
+const VIRTIO_BTN_RIGHT = 0x111;
+const VIRTIO_BTN_MIDDLE = 0x112;
+const VIRTIO_BTN_SIDE = 0x113;
+const VIRTIO_BTN_EXTRA = 0x114;
+const VIRTIO_BTN_FORWARD = 0x115;
+const VIRTIO_BTN_BACK = 0x116;
+const VIRTIO_BTN_TASK = 0x117;
 
 function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
   const idx = usage & 0xff;
@@ -352,6 +374,13 @@ function initInputDiagnosticsTelemetry(): void {
   pressedKeyboardHidUsages.fill(0);
   pressedKeyboardHidUsageCount = 0;
   mouseButtonsMask = 0;
+  virtioMouseButtonsInjectedMask = 0;
+  keyboardInputBackend = "ps2";
+  mouseInputBackend = "ps2";
+  keyboardUsbOk = false;
+  mouseUsbOk = false;
+  warnedForcedKeyboardBackendUnavailable.clear();
+  warnedForcedMouseBackendUnavailable.clear();
 
   ioInputLatencyMaxWindowStartMs = 0;
   ioInputBatchSendLatencyEwmaUs = 0;
@@ -392,6 +421,229 @@ function initInputDiagnosticsTelemetry(): void {
   }
 }
 
+function safeCallBool(thisArg: unknown, fn: unknown): boolean {
+  if (typeof fn !== "function") return false;
+  try {
+    return !!(fn as () => unknown).call(thisArg);
+  } catch {
+    return false;
+  }
+}
+
+function injectVirtioMouseButtons(m: unknown, nextMask: number): void {
+  const injectFn = (m as unknown as { inject_virtio_mouse_button?: unknown; inject_virtio_button?: unknown }).inject_virtio_mouse_button;
+  const fallback = (m as unknown as { inject_virtio_button?: unknown }).inject_virtio_button;
+  const inject = typeof injectFn === "function" ? injectFn : typeof fallback === "function" ? fallback : null;
+  if (!inject) {
+    virtioMouseButtonsInjectedMask = nextMask & 0xff;
+    return;
+  }
+
+  const prev = virtioMouseButtonsInjectedMask & 0xff;
+  const next = nextMask & 0xff;
+  const delta = prev ^ next;
+  if (delta === 0) {
+    virtioMouseButtonsInjectedMask = next;
+    return;
+  }
+
+  const call = (code: number, pressed: boolean) => {
+    try {
+      (inject as (btn: number, pressed: boolean) => void).call(m, code >>> 0, pressed);
+    } catch {
+      // ignore
+    }
+  };
+
+  if (delta & 0x01) call(VIRTIO_BTN_LEFT, (next & 0x01) !== 0);
+  if (delta & 0x02) call(VIRTIO_BTN_RIGHT, (next & 0x02) !== 0);
+  if (delta & 0x04) call(VIRTIO_BTN_MIDDLE, (next & 0x04) !== 0);
+  if (delta & 0x08) call(VIRTIO_BTN_SIDE, (next & 0x08) !== 0);
+  if (delta & 0x10) call(VIRTIO_BTN_EXTRA, (next & 0x10) !== 0);
+  if (delta & 0x20) call(VIRTIO_BTN_FORWARD, (next & 0x20) !== 0);
+  if (delta & 0x40) call(VIRTIO_BTN_BACK, (next & 0x40) !== 0);
+  if (delta & 0x80) call(VIRTIO_BTN_TASK, (next & 0x80) !== 0);
+
+  virtioMouseButtonsInjectedMask = next;
+}
+
+function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): void {
+  const m = machine;
+  if (!m) return;
+
+  const anyMachine = m as unknown as {
+    inject_virtio_key?: unknown;
+    inject_usb_hid_keyboard_usage?: unknown;
+    usb_hid_keyboard_configured?: unknown;
+  };
+
+  keyboardUsbOk = safeCallBool(m, anyMachine.usb_hid_keyboard_configured);
+  const virtioOk = opts.virtioKeyboardOk && typeof anyMachine.inject_virtio_key === "function";
+  const usbOk = keyboardUsbOk && typeof anyMachine.inject_usb_hid_keyboard_usage === "function";
+
+  const force = currentConfig?.forceKeyboardBackend;
+  if (force && force !== "auto") {
+    const forcedOk = force === "ps2" || (force === "virtio" && virtioOk) || (force === "usb" && usbOk);
+    if (!forcedOk && !warnedForcedKeyboardBackendUnavailable.has(force)) {
+      warnedForcedKeyboardBackendUnavailable.add(force);
+      const reason =
+        force === "virtio"
+          ? typeof anyMachine.inject_virtio_key === "function"
+            ? "virtio-input keyboard is not ready (DRIVER_OK not set)"
+            : "virtio-input keyboard device is unavailable"
+          : force === "usb"
+            ? typeof anyMachine.inject_usb_hid_keyboard_usage !== "function"
+              ? "synthetic USB HID keyboard device is unavailable"
+              : "synthetic USB keyboard is not configured by the guest yet"
+            : "requested backend is unavailable";
+      const message = `[machine_cpu.worker] forceKeyboardBackend=${force} requested, but ${reason}; falling back to auto selection.`;
+      // eslint-disable-next-line no-console
+      console.warn(message);
+      pushEvent({ kind: "log", level: "warn", message });
+    }
+  }
+
+  const prevBackend = keyboardInputBackend;
+  const nextBackend = chooseKeyboardInputBackend({
+    current: keyboardInputBackend,
+    keysHeld: pressedKeyboardHidUsageCount !== 0,
+    virtioOk,
+    usbOk,
+    force,
+  });
+  if (nextBackend !== prevBackend) {
+    // Low-overhead telemetry (u32 wrap semantics).
+    if (status) Atomics.add(status, StatusIndex.IoKeyboardBackendSwitchCounter, 1);
+  }
+  keyboardInputBackend = nextBackend;
+}
+
+function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
+  const m = machine;
+  if (!m) return;
+
+  const anyMachine = m as unknown as {
+    inject_ps2_mouse_motion?: unknown;
+    inject_mouse_motion?: unknown;
+    inject_mouse_buttons_mask?: unknown;
+    inject_ps2_mouse_buttons?: unknown;
+    inject_virtio_rel?: unknown;
+    inject_virtio_mouse_rel?: unknown;
+    inject_usb_hid_mouse_move?: unknown;
+    inject_usb_hid_mouse_buttons?: unknown;
+    usb_hid_mouse_configured?: unknown;
+  };
+
+  const ps2Available =
+    typeof anyMachine.inject_ps2_mouse_motion === "function" ||
+    typeof anyMachine.inject_mouse_motion === "function" ||
+    typeof anyMachine.inject_mouse_buttons_mask === "function" ||
+    typeof anyMachine.inject_ps2_mouse_buttons === "function";
+
+  const usbConfigured = safeCallBool(m, anyMachine.usb_hid_mouse_configured);
+  // Expose "configured" (not merely selected) status for diagnostics/HUDs.
+  mouseUsbOk = usbConfigured;
+
+  const virtioOk =
+    opts.virtioMouseOk &&
+    (typeof anyMachine.inject_virtio_mouse_rel === "function" || typeof anyMachine.inject_virtio_rel === "function");
+  const usbOk = typeof anyMachine.inject_usb_hid_mouse_move === "function" && (!ps2Available || usbConfigured);
+
+  const prevBackend = mouseInputBackend;
+  const force = currentConfig?.forceMouseBackend;
+  const nextBackend = chooseMouseInputBackend({
+    current: mouseInputBackend,
+    buttonsHeld: (mouseButtonsMask & 0xff) !== 0,
+    virtioOk,
+    // Use PS/2 injection until the synthetic USB mouse is configured; once configured, route via
+    // the USB HID path to avoid duplicate devices in the guest.
+    usbOk,
+    force,
+  });
+
+  if (force && force !== "auto") {
+    const forcedOk = force === "ps2" || (force === "virtio" && virtioOk) || (force === "usb" && usbOk);
+    if (!forcedOk && !warnedForcedMouseBackendUnavailable.has(force)) {
+      warnedForcedMouseBackendUnavailable.add(force);
+      const reason =
+        force === "virtio"
+          ? typeof anyMachine.inject_virtio_mouse_rel === "function" || typeof anyMachine.inject_virtio_rel === "function"
+            ? "virtio-input mouse is not ready (DRIVER_OK not set)"
+            : "virtio-input mouse device is unavailable"
+          : force === "usb"
+            ? typeof anyMachine.inject_usb_hid_mouse_move !== "function"
+              ? "synthetic USB HID mouse device is unavailable"
+              : ps2Available && !usbConfigured
+                ? "synthetic USB mouse is not configured by the guest yet"
+                : "USB mouse backend is unavailable"
+            : "requested backend is unavailable";
+      const message = `[machine_cpu.worker] forceMouseBackend=${force} requested, but ${reason}; falling back to auto selection.`;
+      // eslint-disable-next-line no-console
+      console.warn(message);
+      pushEvent({ kind: "log", level: "warn", message });
+    }
+  }
+
+  if (nextBackend !== prevBackend) {
+    // Low-overhead telemetry (u32 wrap semantics).
+    if (status) Atomics.add(status, StatusIndex.IoMouseBackendSwitchCounter, 1);
+  }
+
+  // Optional extra robustness: when we *do* switch backends, send a "buttons=0" update to the
+  // previous backend. This should be redundant because backend switching is gated on
+  // `mouseButtonsMask===0`, but it provides a safety net in case a prior button-up was dropped.
+  if (nextBackend !== prevBackend && (mouseButtonsMask & 0xff) === 0) {
+    if (prevBackend === "virtio") {
+      injectVirtioMouseButtons(m, 0);
+    } else if (prevBackend === "usb") {
+      const injectButtons = anyMachine.inject_usb_hid_mouse_buttons;
+      if (typeof injectButtons === "function") {
+        try {
+          (injectButtons as (mask: number) => void).call(m, 0);
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      const injectButtons = anyMachine.inject_mouse_buttons_mask;
+      if (typeof injectButtons === "function") {
+        try {
+          (injectButtons as (mask: number) => void).call(m, 0);
+        } catch {
+          // ignore
+        }
+      } else if (typeof anyMachine.inject_ps2_mouse_buttons === "function") {
+        try {
+          (anyMachine.inject_ps2_mouse_buttons as (buttons: number) => void).call(m, 0);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  mouseInputBackend = nextBackend;
+}
+
+function publishInputBackendStatus(opts: { virtioKeyboardOk: boolean; virtioMouseOk: boolean }): void {
+  const st = status;
+  if (!st) return;
+  // These values are best-effort debug telemetry only; the emulator must keep running even if
+  // Atomics stores fail for any reason.
+  try {
+    Atomics.store(st, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus(keyboardInputBackend));
+    Atomics.store(st, StatusIndex.IoInputMouseBackend, encodeInputBackendStatus(mouseInputBackend));
+    Atomics.store(st, StatusIndex.IoInputVirtioKeyboardDriverOk, opts.virtioKeyboardOk ? 1 : 0);
+    Atomics.store(st, StatusIndex.IoInputVirtioMouseDriverOk, opts.virtioMouseOk ? 1 : 0);
+    Atomics.store(st, StatusIndex.IoInputUsbKeyboardOk, keyboardUsbOk ? 1 : 0);
+    Atomics.store(st, StatusIndex.IoInputUsbMouseOk, mouseUsbOk ? 1 : 0);
+    Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, pressedKeyboardHidUsageCount | 0);
+    Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
 function publishInputBackendStatusFromMachine(): void {
   // Best-effort status publishing for the input diagnostics panel.
   //
@@ -404,20 +656,17 @@ function publishInputBackendStatusFromMachine(): void {
 
   // Be defensive: older WASM builds may not expose these probes.
   const anyMachine = m as unknown as {
-    virtio_input_keyboard_driver_ok?: () => boolean;
-    virtio_input_mouse_driver_ok?: () => boolean;
+    virtio_input_keyboard_driver_ok?: unknown;
+    virtio_input_mouse_driver_ok?: unknown;
   };
-  try {
-    const virtioKeyboardOk =
-      typeof anyMachine.virtio_input_keyboard_driver_ok === "function" ? anyMachine.virtio_input_keyboard_driver_ok() : false;
-    const virtioMouseOk =
-      typeof anyMachine.virtio_input_mouse_driver_ok === "function" ? anyMachine.virtio_input_mouse_driver_ok() : false;
+  const virtioKeyboardOk = safeCallBool(m, anyMachine.virtio_input_keyboard_driver_ok);
+  const virtioMouseOk = safeCallBool(m, anyMachine.virtio_input_mouse_driver_ok);
 
-    Atomics.store(st, StatusIndex.IoInputVirtioKeyboardDriverOk, virtioKeyboardOk ? 1 : 0);
-    Atomics.store(st, StatusIndex.IoInputVirtioMouseDriverOk, virtioMouseOk ? 1 : 0);
-  } catch {
-    // ignore (best-effort)
-  }
+  // Allow backend switching even when no input is flowing so diagnostics/HUDs
+  // reflect driver readiness promptly (mirrors legacy io.worker.ts behavior).
+  maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+  maybeUpdateMouseInputBackend({ virtioMouseOk });
+  publishInputBackendStatus({ virtioKeyboardOk, virtioMouseOk });
 }
 
 // End-to-end input latency telemetry (main thread capture -> CPU worker injection).
@@ -844,6 +1093,20 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     return;
   }
 
+  // Snapshot the current virtio driver readiness state so backend selection +
+  // input routing for this batch is consistent.
+  const anyMachine = m as unknown as {
+    virtio_input_keyboard_driver_ok?: unknown;
+    virtio_input_mouse_driver_ok?: unknown;
+  };
+  const virtioKeyboardOk = safeCallBool(m, anyMachine.virtio_input_keyboard_driver_ok);
+  const virtioMouseOk = safeCallBool(m, anyMachine.virtio_input_mouse_driver_ok);
+
+  // Ensure backend selection is evaluated before processing this batch so we
+  // can correctly decide whether to consume PS/2 scancodes or USB HID usages.
+  maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+  maybeUpdateMouseInputBackend({ virtioMouseOk });
+
   const base = INPUT_BATCH_HEADER_WORDS;
   let eventLatencySumUs = 0;
   let eventLatencyMaxUsBatch = 0;
@@ -861,7 +1124,35 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const usage = packed & 0xff;
       const pressed = ((packed >>> 8) & 1) !== 0;
       updatePressedKeyboardHidUsage(usage, pressed);
+      if (keyboardInputBackend === "virtio") {
+        if (virtioKeyboardOk) {
+          const keyCode = hidUsageToLinuxKeyCode(usage);
+          if (keyCode !== null) {
+            const injectKey = (m as unknown as { inject_virtio_key?: unknown }).inject_virtio_key;
+            if (typeof injectKey === "function") {
+              try {
+                (injectKey as (linuxKey: number, pressed: boolean) => void).call(m, keyCode >>> 0, pressed);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      } else if (keyboardInputBackend === "usb") {
+        const inject = (m as unknown as { inject_usb_hid_keyboard_usage?: unknown }).inject_usb_hid_keyboard_usage;
+        if (typeof inject === "function") {
+          try {
+            (inject as (usage: number, pressed: boolean) => void).call(m, usage >>> 0, pressed);
+          } catch {
+            // ignore
+          }
+        }
+      }
     } else if (type === InputEventType.KeyScancode) {
+      // Only inject PS/2 scancodes when the PS/2 backend is active. Other backends
+      // (virtio-input / synthetic USB HID) rely on `KeyHidUsage` events and would
+      // otherwise cause duplicated input in the guest.
+      if (keyboardInputBackend !== "ps2") continue;
       const packed = words[off + 2] >>> 0;
       const len = Math.min(words[off + 3] >>> 0, 4);
       if (len === 0) continue;
@@ -879,39 +1170,144 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     } else if (type === InputEventType.MouseMove) {
       const dx = words[off + 2] | 0;
       const dyPs2 = words[off + 3] | 0;
-      try {
-        if (typeof m.inject_ps2_mouse_motion === "function") {
-          m.inject_ps2_mouse_motion(dx, dyPs2, 0);
-        } else if (typeof m.inject_mouse_motion === "function") {
-          m.inject_mouse_motion(dx, -dyPs2, 0);
+      if (mouseInputBackend === "virtio") {
+        if (virtioMouseOk) {
+          // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
+          const injectRel =
+            (m as unknown as { inject_virtio_mouse_rel?: unknown }).inject_virtio_mouse_rel ??
+            (m as unknown as { inject_virtio_rel?: unknown }).inject_virtio_rel;
+          if (typeof injectRel === "function") {
+            try {
+              (injectRel as (dx: number, dy: number) => void).call(m, dx | 0, (-dyPs2) | 0);
+            } catch {
+              // ignore
+            }
+          }
         }
-      } catch {
-        // ignore
+      } else if (mouseInputBackend === "ps2") {
+        try {
+          if (typeof m.inject_ps2_mouse_motion === "function") {
+            m.inject_ps2_mouse_motion(dx, dyPs2, 0);
+          } else if (typeof m.inject_mouse_motion === "function") {
+            // PS/2 convention: positive is up. HID convention: positive is down.
+            m.inject_mouse_motion(dx, -dyPs2, 0);
+          }
+        } catch {
+          // ignore
+        }
+      } else {
+        // Synthetic USB HID convention matches browser coordinates: positive = down.
+        const inject = (m as unknown as { inject_usb_hid_mouse_move?: unknown }).inject_usb_hid_mouse_move;
+        if (typeof inject === "function") {
+          try {
+            (inject as (dx: number, dy: number) => void).call(m, dx | 0, (-dyPs2) | 0);
+          } catch {
+            // ignore
+          }
+        }
       }
     } else if (type === InputEventType.MouseWheel) {
       const dz = words[off + 2] | 0;
-      if (dz === 0) continue;
-      try {
-        if (typeof m.inject_ps2_mouse_motion === "function") {
-          m.inject_ps2_mouse_motion(0, 0, dz);
-        } else if (typeof m.inject_mouse_motion === "function") {
-          m.inject_mouse_motion(0, 0, dz);
+      const dx = words[off + 3] | 0;
+      if (mouseInputBackend === "virtio") {
+        if (virtioMouseOk) {
+          const wheel2 = (m as unknown as { inject_virtio_wheel2?: unknown }).inject_virtio_wheel2;
+          if (typeof wheel2 === "function") {
+            if (dz !== 0 || dx !== 0) {
+              try {
+                (wheel2 as (wheel: number, hwheel: number) => void).call(m, dz | 0, dx | 0);
+              } catch {
+                // ignore
+              }
+            }
+          } else {
+            const wheel = (m as unknown as { inject_virtio_wheel?: unknown }).inject_virtio_wheel;
+            const hwheel = (m as unknown as { inject_virtio_hwheel?: unknown }).inject_virtio_hwheel;
+            if (dz !== 0 && typeof wheel === "function") {
+              try {
+                (wheel as (delta: number) => void).call(m, dz | 0);
+              } catch {
+                // ignore
+              }
+            }
+            if (dx !== 0 && typeof hwheel === "function") {
+              try {
+                (hwheel as (delta: number) => void).call(m, dx | 0);
+              } catch {
+                // ignore
+              }
+            }
+          }
         }
-      } catch {
-        // ignore
+      } else if (mouseInputBackend === "ps2") {
+        if (dz === 0) continue;
+        try {
+          if (typeof m.inject_ps2_mouse_motion === "function") {
+            m.inject_ps2_mouse_motion(0, 0, dz);
+          } else if (typeof m.inject_mouse_motion === "function") {
+            m.inject_mouse_motion(0, 0, dz);
+          }
+        } catch {
+          // ignore
+        }
+      } else {
+        // Prefer a combined wheel2 API when available so diagonal scroll events can be represented
+        // as a single HID report (matching `InputEventType.MouseWheel`, which carries both axes).
+        const wheel2 = (m as unknown as { inject_usb_hid_mouse_wheel2?: unknown }).inject_usb_hid_mouse_wheel2;
+        if (dz !== 0 && dx !== 0 && typeof wheel2 === "function") {
+          try {
+            (wheel2 as (wheel: number, hwheel: number) => void).call(m, dz | 0, dx | 0);
+          } catch {
+            // ignore
+          }
+        } else {
+          const wheel = (m as unknown as { inject_usb_hid_mouse_wheel?: unknown }).inject_usb_hid_mouse_wheel;
+          const hwheel = (m as unknown as { inject_usb_hid_mouse_hwheel?: unknown }).inject_usb_hid_mouse_hwheel;
+          if (dz !== 0 && typeof wheel === "function") {
+            try {
+              (wheel as (delta: number) => void).call(m, dz | 0);
+            } catch {
+              // ignore
+            }
+          }
+          if (dx !== 0 && typeof hwheel === "function") {
+            try {
+              (hwheel as (delta: number) => void).call(m, dx | 0);
+            } catch {
+              // ignore
+            }
+          }
+        }
       }
     } else if (type === InputEventType.MouseButtons) {
       const buttons = words[off + 2] & 0xff;
-      const mask = buttons & 0x1f;
-      mouseButtonsMask = mask;
-      try {
-        if (typeof m.inject_mouse_buttons_mask === "function") {
-          m.inject_mouse_buttons_mask(mask);
-        } else if (typeof m.inject_ps2_mouse_buttons === "function") {
-          m.inject_ps2_mouse_buttons(mask);
+      mouseButtonsMask = buttons;
+      if (mouseInputBackend === "virtio") {
+        if (virtioMouseOk) {
+          injectVirtioMouseButtons(m, buttons);
         }
-      } catch {
-        // ignore
+      } else {
+        const mask = buttons & 0x1f;
+        if (mouseInputBackend === "ps2") {
+          try {
+            if (typeof m.inject_mouse_buttons_mask === "function") {
+              m.inject_mouse_buttons_mask(mask);
+            } else if (typeof m.inject_ps2_mouse_buttons === "function") {
+              m.inject_ps2_mouse_buttons(mask);
+            }
+          } catch {
+            // ignore
+          }
+        } else {
+          const inject = (m as unknown as { inject_usb_hid_mouse_buttons?: unknown }).inject_usb_hid_mouse_buttons;
+          if (typeof inject === "function") {
+            try {
+              (inject as (mask: number) => void).call(m, mask >>> 0);
+            } catch {
+              // ignore
+            }
+          }
+        }
       }
     } else if (type === InputEventType.HidUsage16) {
       const a = words[off + 2] >>> 0;
@@ -943,6 +1339,12 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     }
   }
 
+  // Re-evaluate backend selection after processing this batch; key-up events can make it safe to
+  // transition away from PS/2 scancode injection.
+  maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+  maybeUpdateMouseInputBackend({ virtioMouseOk });
+  publishInputBackendStatus({ virtioKeyboardOk, virtioMouseOk });
+
   if (st) {
     const eventLatencyAvgUs = Math.round(eventLatencySumUs / count) >>> 0;
     ioInputEventLatencyEwmaUs =
@@ -959,9 +1361,6 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     Atomics.store(st, StatusIndex.IoInputEventLatencyAvgUs, eventLatencyAvgUs | 0);
     Atomics.store(st, StatusIndex.IoInputEventLatencyEwmaUs, ioInputEventLatencyEwmaUs | 0);
     Atomics.store(st, StatusIndex.IoInputEventLatencyMaxUs, ioInputEventLatencyMaxUs | 0);
-
-    Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, pressedKeyboardHidUsageCount | 0);
-    Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
   }
 }
 

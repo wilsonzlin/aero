@@ -603,6 +603,15 @@ export type MachineHandle = {
      *
      * Optional for older WASM builds.
      */
+    /** Whether the guest has configured the synthetic USB HID keyboard device (`SET_CONFIGURATION != 0`). */
+    usb_hid_keyboard_configured?(): boolean;
+    /** Whether the guest has configured the synthetic USB HID mouse device (`SET_CONFIGURATION != 0`). */
+    usb_hid_mouse_configured?(): boolean;
+    /** Whether the guest has configured the synthetic USB HID gamepad device (`SET_CONFIGURATION != 0`). */
+    usb_hid_gamepad_configured?(): boolean;
+    /** Whether the guest has configured the synthetic USB HID consumer-control device (`SET_CONFIGURATION != 0`). */
+    usb_hid_consumer_control_configured?(): boolean;
+
     inject_usb_hid_keyboard_usage?(usage: number, pressed: boolean): void;
     /**
      * Inject a Consumer Control (HID Usage Page 0x0C) usage transition (media keys).

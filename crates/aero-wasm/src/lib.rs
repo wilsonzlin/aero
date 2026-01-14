@@ -6094,6 +6094,38 @@ impl Machine {
     // Synthetic USB HID injection (UHCI external hub)
     // -------------------------------------------------------------------------
 
+    /// Whether the guest has configured the synthetic USB HID keyboard device (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_keyboard_configured(&self) -> bool {
+        self.inner
+            .usb_hid_keyboard_handle()
+            .map(|h| h.configured())
+            .unwrap_or(false)
+    }
+
+    /// Whether the guest has configured the synthetic USB HID mouse device (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_mouse_configured(&self) -> bool {
+        self.inner
+            .usb_hid_mouse_handle()
+            .map(|h| h.configured())
+            .unwrap_or(false)
+    }
+
+    /// Whether the guest has configured the synthetic USB HID gamepad device (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_gamepad_configured(&self) -> bool {
+        self.inner
+            .usb_hid_gamepad_handle()
+            .map(|h| h.configured())
+            .unwrap_or(false)
+    }
+
+    /// Whether the guest has configured the synthetic USB HID consumer-control device (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_consumer_control_configured(&self) -> bool {
+        self.inner
+            .usb_hid_consumer_control_handle()
+            .map(|h| h.configured())
+            .unwrap_or(false)
+    }
+
     /// Inject a USB HID keyboard usage into the synthetic USB HID keyboard device (if enabled).
     pub fn inject_usb_hid_keyboard_usage(&mut self, usage: u32, pressed: bool) {
         let Ok(usage) = u8::try_from(usage) else {
