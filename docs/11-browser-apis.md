@@ -1051,7 +1051,7 @@ self.onmessage = async (event) => {
     switch (msg.kind) {
         case "init": {
             guestMemory = msg.guestMemory;
-            status = new Int32Array(msg.controlSab, 0, STATUS_INTS);
+            status = new Int32Array(msg.controlSab, STATUS_OFFSET_BYTES, STATUS_INTS);
 
             const { api } = await initWasmForContext({
                 variant: msg.wasmVariant ?? "auto",

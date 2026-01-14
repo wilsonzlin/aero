@@ -39,7 +39,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
   test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
 
   const result = await page.evaluate(async () => {
-    const { CONTROL_BYTES, STATUS_INTS, StatusIndex, ringRegionsForWorker, createIoIpcSab, RUNTIME_RESERVED_BYTES } = await import(
+    const { CONTROL_BYTES, STATUS_OFFSET_BYTES, STATUS_INTS, StatusIndex, ringRegionsForWorker, createIoIpcSab, RUNTIME_RESERVED_BYTES } = await import(
       "/web/src/runtime/shared_layout.ts"
     );
     const { ringCtrl } = await import("/web/src/ipc/layout.ts");
@@ -57,7 +57,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     const guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
 
     const controlSab = new SharedArrayBuffer(CONTROL_BYTES);
-    const status = new Int32Array(controlSab, 0, STATUS_INTS);
+    const status = new Int32Array(controlSab, STATUS_OFFSET_BYTES, STATUS_INTS);
     Atomics.store(status, StatusIndex.GuestBase, guestBase | 0);
     Atomics.store(status, StatusIndex.GuestSize, guestSize | 0);
     Atomics.store(status, StatusIndex.RuntimeReserved, guestBase | 0);
