@@ -22142,13 +22142,44 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
       static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
   const uint64_t src_index_size = static_cast<uint64_t>(index_count) * index_size;
 
-  // Read indices on the CPU so we can validate `min_index/num_vertices` and,
+  // Read indices on the CPU so we can derive the referenced vertex range and,
   // for TRIANGLELIST/LINELIST/POINTLIST, expand them for a single concatenated draw.
   ScopedResourceRead index_src;
   hr = index_src.lock(dev, dev->index_buffer, src_index_offset, src_index_size, "instancing IB");
   if (FAILED(hr) || !index_src.data) {
     return FAILED(hr) ? hr : E_INVALIDARG;
   }
+
+  // `min_index` and `num_vertices` are advisory at the D3D9 API boundary. Some apps
+  // pass conservative/incorrect values. To keep the instancing emulation robust
+  // (and to size the per-instance scratch streams correctly), derive the actual
+  // [min,max] index range from the index buffer contents.
+  uint32_t min_index_actual = std::numeric_limits<uint32_t>::max();
+  uint32_t max_index_actual = 0;
+  for (uint32_t i = 0; i < index_count; ++i) {
+    uint32_t idx = 0;
+    if (index_size == 4) {
+      std::memcpy(&idx, index_src.data + static_cast<size_t>(i) * 4u, sizeof(idx));
+    } else {
+      uint16_t idx16 = 0;
+      std::memcpy(&idx16, index_src.data + static_cast<size_t>(i) * 2u, sizeof(idx16));
+      idx = idx16;
+    }
+    min_index_actual = std::min(min_index_actual, idx);
+    max_index_actual = std::max(max_index_actual, idx);
+  }
+  if (min_index_actual == std::numeric_limits<uint32_t>::max()) {
+    // No indices.
+    return S_OK;
+  }
+
+  const uint64_t num_vertices_u64 = static_cast<uint64_t>(max_index_actual) -
+                                    static_cast<uint64_t>(min_index_actual) + 1u;
+  if (num_vertices_u64 == 0 || num_vertices_u64 > std::numeric_limits<uint32_t>::max()) {
+    return kD3DErrInvalidCall;
+  }
+  min_index = min_index_actual;
+  num_vertices = static_cast<uint32_t>(num_vertices_u64);
 
   const uint64_t max_index_excl_u64 = static_cast<uint64_t>(min_index) + static_cast<uint64_t>(num_vertices);
   if (max_index_excl_u64 == 0 || max_index_excl_u64 > 0x1'0000'0000ull) {
