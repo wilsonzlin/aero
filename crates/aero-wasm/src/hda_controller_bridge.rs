@@ -116,9 +116,6 @@ impl HdaControllerBridge {
         };
         // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
         let guest_size_u64 = guest_size_u64.min(crate::guest_layout::PCI_MMIO_BASE);
-        if guest_size_u64 == 0 {
-            return Err(js_error("guest_size must be non-zero"));
-        }
 
         let end = (guest_base as u64)
             .checked_add(guest_size_u64)
@@ -127,6 +124,9 @@ impl HdaControllerBridge {
             return Err(js_error(format!(
                 "guest RAM out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} wasm_mem=0x{mem_bytes:x}"
             )));
+        }
+        if guest_size_u64 == 0 {
+            return Err(js_error("guest_size must be non-zero"));
         }
 
         Ok(Self {
