@@ -655,21 +655,21 @@ impl AeroGpuMmioDevice {
             return false;
         }
 
-        // WDDM scanout is currently limited to 32-bit formats that the host scanout path can
-        // render deterministically.
+        // WDDM scanout is currently limited to 32-bit pixel formats that the host scanout/present
+        // paths can render deterministically.
         //
-        // Note: the shared scanout descriptor used by the browser presentation pipeline only
-        // supports B8G8R8X8-compatible layouts today, but the native `Machine::display_present`
-        // path can also render RGBA formats. Keep this validation aligned with what
-        // `AeroGpuScanout0State::read_rgba8888` supports so unit tests can exercise scanout without
-        // requiring a specific channel ordering.
+        // Note: the shared scanout descriptor (`ScanoutStateUpdate`) currently only supports a
+        // subset of these formats (BGRA/BGRX), but `wddm_scanout_active` is a machine-internal
+        // handoff latch that also gates the synchronous `Machine::display_present()` path used by
+        // tests. Keep the validation aligned with what the machine can actually render via
+        // `AeroGpuScanout0State::read_rgba8888`.
         match self.scanout0_format {
             x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
                 || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
                 || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
                 || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
                 || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
                 || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {}
             _ => return false,

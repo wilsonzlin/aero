@@ -244,6 +244,21 @@ fn browser_defaults_preset_is_valid_and_stable() {
 }
 
 #[test]
+fn cpu_by_index_nonzero_is_accessible_when_cpu_count_gt_1() {
+    // `cpu_count > 1` is supported for SMP bring-up tests. The canonical machine exposes AP vCPUs
+    // via `cpu_by_index` so tests can inspect per-vCPU state deterministically.
+    let machine = Machine::new(MachineConfig {
+        cpu_count: 2,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // vCPU1 (APIC ID 1) should exist and start in a halted wait-for-SIPI state.
+    let ap = machine.cpu_by_index(1);
+    assert!(ap.halted, "expected AP to start halted waiting for SIPI");
+}
+
+#[test]
 fn cpu_by_index_out_of_range_panics_with_message() {
     let machine = Machine::new(MachineConfig {
         cpu_count: 2,

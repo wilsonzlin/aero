@@ -553,7 +553,6 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
-    AeroGpuRequiresPcPlatform,
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -562,6 +561,7 @@ pub enum MachineError {
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
     XhciRequiresPcPlatform,
+    AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -4884,20 +4884,44 @@ impl Machine {
             .attach_secondary_master_atapi(dev);
     }
 
-    /// Attach a host ISO backend to the canonical install media / ATAPI CD-ROM (`disk_id=1`)
-    /// without mutating guest-visible tray/media state.
+    /// Attach an ISO backend as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`).
     ///
-    /// This is intended for snapshot-restore flows: the IDE controller snapshot restores the ATAPI
-    /// device's internal tray/media state (tray open/closed, sense/media_changed, etc.), but drops
-    /// the host-side ISO backend reference. Restoring the snapshot must therefore re-attach the
-    /// backend *without* altering the already-restored device-visible state.
+    /// This models the media as inserted (updates guest-visible tray/media state) and also updates
+    /// the BIOS' `install_media` backend so El Torito boot + INT13 reads can be routed to the ISO
+    /// bytes when `boot_drive` selects a CD-ROM (`0xE0..=0xEF`).
     ///
-    /// Note: this helper does **not** update snapshot disk overlay refs. Use
-    /// [`Machine::attach_install_media_iso_and_set_overlay_ref`] if you want to both attach install
-    /// media and record a stable overlay ref for snapshot restore.
+    /// This should be used when initially attaching install media before booting the machine. For
+    /// snapshot restore flows (where the guest-visible tray/media state is restored from the IDE
+    /// snapshot and only the host backend needs re-attaching), use
+    /// [`Machine::attach_install_media_iso_for_restore`].
     ///
     /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so this method has a
     /// wasm32-specific signature without the `Send` bound.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn attach_install_media_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> io::Result<()> {
+        self.attach_ide_secondary_master_iso(disk)
+    }
+
+    /// wasm32 variant of [`Machine::attach_install_media_iso`].
+    ///
+    /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
+    /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_install_media_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> io::Result<()> {
+        self.attach_ide_secondary_master_iso(disk)
+    }
+
+    /// Attach an ISO backend as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`)
+    /// without changing guest-visible tray/media state.
+    ///
+    /// This is intended for snapshot restore flows: snapshot restore keeps the ATAPI device's
+    /// internal tray/media state but drops the host-side ISO backend.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_install_media_iso_for_restore(
         &mut self,
@@ -4907,9 +4931,6 @@ impl Machine {
     }
 
     /// wasm32 variant of [`Machine::attach_install_media_iso_for_restore`].
-    ///
-    /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
-    /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
     #[cfg(target_arch = "wasm32")]
     pub fn attach_install_media_iso_for_restore(
         &mut self,
@@ -5027,7 +5048,7 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
         base_image: impl Into<String>,
     ) -> std::io::Result<()> {
-        self.attach_install_media_iso_for_restore(disk)?;
+        self.attach_install_media_iso(disk)?;
         self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
         Ok(())
     }
@@ -5040,7 +5061,7 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk>,
         base_image: impl Into<String>,
     ) -> std::io::Result<()> {
-        self.attach_install_media_iso_for_restore(disk)?;
+        self.attach_install_media_iso(disk)?;
         self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
         Ok(())
     }
