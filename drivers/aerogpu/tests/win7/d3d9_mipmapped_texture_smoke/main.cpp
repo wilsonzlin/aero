@@ -613,29 +613,70 @@ static int RunD3D9MipmappedTextureSmoke(int argc, char** argv) {
     return reporter.FailHresult("UpdateTexture(SYSTEMMEM->DEFAULT mipchain)", hr);
   }
 
-  // Make this check deterministic: force mip0 sampling regardless of quad size.
-  hr = dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("SetSamplerState(MIPFILTER=NONE)", hr);
-  }
   hr = dev->SetTexture(0, sys_upload_tex.get());
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTexture(sys_upload_tex)", hr);
   }
 
-  hr = DrawQuad(dev.get(), vb_full.get(), D3DCOLOR_XRGB(0, 0, 0));
+  // Make this check deterministic: force the sampler to treat mip N as the base
+  // level via MAXMIPLEVEL, then render with magnification so we always sample
+  // exactly that base level.
+  hr = dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
   if (FAILED(hr)) {
-    return reporter.FailHresult("DrawQuad(UpdateTexture fullscreen)", hr);
+    return reporter.FailHresult("SetSamplerState(MINFILTER)", hr);
   }
-  px = 0;
-  hr = ReadBackbufferCenterPixel(dev.get(), dump, &reporter, L"d3d9_mipmapped_texture_smoke_update.bmp", &px);
+  hr = dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
   if (FAILED(hr)) {
-    return reporter.FailHresult("ReadBackbufferCenterPixel(UpdateTexture)", hr);
+    return reporter.FailHresult("SetSamplerState(MAGFILTER)", hr);
   }
-  if ((px & 0x00FFFFFFu) != (kSysMipColors[0] & 0x00FFFFFFu)) {
-    return reporter.Fail("UpdateTexture sample mismatch: got 0x%08lX expected 0x%08lX",
-                         (unsigned long)px,
-                         (unsigned long)kSysMipColors[0]);
+  hr = dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_POINT);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(MIPFILTER)", hr);
+  }
+
+  // Avoid using a non-literal array bound so the test stays buildable with older
+  // MSVC toolchains (VS2010 build scripts).
+  const wchar_t* const kSysUpdateBmps[4] = {
+      L"d3d9_mipmapped_texture_smoke_update_mip0.bmp",
+      L"d3d9_mipmapped_texture_smoke_update_mip1.bmp",
+      L"d3d9_mipmapped_texture_smoke_update_mip2.bmp",
+      L"d3d9_mipmapped_texture_smoke_update_mip3.bmp",
+  };
+
+  for (UINT sample_level = 0; sample_level < kSysLevels; ++sample_level) {
+    hr = dev->SetSamplerState(0, D3DSAMP_MAXMIPLEVEL, sample_level);
+    if (FAILED(hr)) {
+      return reporter.FailHresult(aerogpu_test::FormatString("SetSamplerState(MAXMIPLEVEL=%u)",
+                                                            (unsigned)sample_level).c_str(),
+                                  hr);
+    }
+
+    hr = DrawQuad(dev.get(), vb_full.get(), D3DCOLOR_XRGB(0, 0, 0));
+    if (FAILED(hr)) {
+      return reporter.FailHresult(aerogpu_test::FormatString("DrawQuad(UpdateTexture mip=%u)",
+                                                            (unsigned)sample_level).c_str(),
+                                  hr);
+    }
+    px = 0;
+    hr = ReadBackbufferCenterPixel(dev.get(), dump, &reporter, kSysUpdateBmps[sample_level], &px);
+    if (FAILED(hr)) {
+      return reporter.FailHresult(aerogpu_test::FormatString("ReadBackbufferCenterPixel(UpdateTexture mip=%u)",
+                                                            (unsigned)sample_level).c_str(),
+                                  hr);
+    }
+    if ((px & 0x00FFFFFFu) != (kSysMipColors[sample_level] & 0x00FFFFFFu)) {
+      return reporter.Fail("UpdateTexture sample mismatch mip=%u: got 0x%08lX expected 0x%08lX",
+                           (unsigned)sample_level,
+                           (unsigned long)px,
+                           (unsigned long)kSysMipColors[sample_level]);
+    }
+  }
+
+  // Restore default base mip level for any subsequent draws (should be a no-op,
+  // but keeps the state machine tidy).
+  hr = dev->SetSamplerState(0, D3DSAMP_MAXMIPLEVEL, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetSamplerState(MAXMIPLEVEL=0)", hr);
   }
 
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
