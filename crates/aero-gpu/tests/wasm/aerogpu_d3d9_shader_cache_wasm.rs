@@ -1563,6 +1563,83 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_binding_mismatch()
 }
 
 #[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_binding_mismatch_multiline_attrs() {
+    // Same as `*_sampler_binding_mismatch`, but with `@group/@binding` split across lines to ensure
+    // the cache-hit WGSL validator can't be bypassed by formatting changes.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let ps_bytes = assemble_ps_texld_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    let wgsl_before = Reflect::get(&cached, &JsValue::from_str("wgsl"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert!(
+        wgsl_before.contains("@group(2) @binding(0) var tex0"),
+        "expected cached WGSL to contain a tex0 declaration for PS sampler group"
+    );
+
+    let wgsl_corrupt = wgsl_before.replace(
+        "@group(2) @binding(0) var tex0",
+        "@group(2)\n@binding(4) var tex0",
+    );
+    let cached_obj: Object = cached
+        .clone()
+        .dyn_into()
+        .expect("cached entry should be an object");
+    Reflect::set(
+        &cached_obj,
+        &JsValue::from_str("wgsl"),
+        &JsValue::from_str(&wgsl_corrupt),
+    )
+    .expect("set cached.wgsl");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 3, "expected invalidate+retry after mismatch");
+    assert_eq!(put_calls, 2, "expected corrected shader to be persisted");
+    assert_eq!(
+        delete_calls, 1,
+        "expected corrupted cached entry to be deleted"
+    );
+}
+
+#[wasm_bindgen_test(async)]
 async fn d3d9_executor_retranslates_on_persisted_wgsl_half_pixel_uniform_binding_mismatch() {
     // When half-pixel-center support is enabled, vertex shaders include an extra uniform binding
     // in group(3). If the cached WGSL is corrupt (wrong group/binding), pipeline creation would
