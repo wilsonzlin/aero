@@ -105,6 +105,10 @@ pub enum PersistedBindingKind {
     SrvBuffer { slot: u32 },
     Sampler { slot: u32 },
     UavBuffer { slot: u32 },
+    UavTexture2DWriteOnly {
+        slot: u32,
+        format: crate::StorageTextureFormat,
+    },
 }
 
 impl PersistedBindingKind {
@@ -118,6 +122,12 @@ impl PersistedBindingKind {
             crate::BindingKind::SrvBuffer { slot } => Self::SrvBuffer { slot: *slot },
             crate::BindingKind::Sampler { slot } => Self::Sampler { slot: *slot },
             crate::BindingKind::UavBuffer { slot } => Self::UavBuffer { slot: *slot },
+            crate::BindingKind::UavTexture2DWriteOnly { slot, format } => {
+                Self::UavTexture2DWriteOnly {
+                    slot: *slot,
+                    format: *format,
+                }
+            }
         }
     }
 
@@ -131,6 +141,12 @@ impl PersistedBindingKind {
             Self::SrvBuffer { slot } => crate::BindingKind::SrvBuffer { slot: *slot },
             Self::Sampler { slot } => crate::BindingKind::Sampler { slot: *slot },
             Self::UavBuffer { slot } => crate::BindingKind::UavBuffer { slot: *slot },
+            Self::UavTexture2DWriteOnly { slot, format } => {
+                crate::BindingKind::UavTexture2DWriteOnly {
+                    slot: *slot,
+                    format: *format,
+                }
+            }
         }
     }
 }

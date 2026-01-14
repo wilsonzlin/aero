@@ -102,6 +102,7 @@ pub enum BindingKind {
 ///
 /// This is intentionally small for now: we only map a handful of DXGI formats that can be
 /// expressed as WGSL/WGPU storage textures.
+#[cfg_attr(target_arch = "wasm32", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StorageTextureFormat {
     Rgba8Unorm,
