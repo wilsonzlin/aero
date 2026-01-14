@@ -849,8 +849,12 @@ impl MachineConfig {
     /// - an in-process backend (`Machine::aerogpu_set_backend_*`, including the feature-gated
     ///   native wgpu backend).
     ///
-    /// Host-side scanout presentation (`Machine::display_present`) can present WDDM scanout once it
-    /// is claimed by a valid scanout0 configuration.
+    /// Host-side scanout presentation (`Machine::display_present`) can present:
+    ///
+    /// - BAR0-programmed scanout0 (guest-programmed WDDM scanout) once claimed by a valid
+    ///   `SCANOUT0_*` configuration, or
+    /// - backend-provided scanout output when an in-process AeroGPU command backend is installed
+    ///   (ACMD `PRESENT` without requiring scanout0 registers).
     #[must_use]
     pub fn win7_graphics(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage(ram_size_bytes);
@@ -4960,7 +4964,11 @@ pub struct Machine {
     restore_error: Option<snapshot::SnapshotError>,
 }
 
-/// Active scanout source selected by [`Machine::display_present`].
+/// Active scanout source category selected by the machine's scanout handoff policy.
+///
+/// This primarily reflects *guest-programmed* scanout ownership (legacy VGA/VBE vs BAR0 scanout0
+/// WDDM). Note that [`Machine::display_present`] may also present a backend-provided scanout when an
+/// in-process AeroGPU command backend is installed (even if the guest has not claimed scanout0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanoutSource {
     /// Legacy VGA text mode.
@@ -6041,6 +6049,9 @@ impl Machine {
 
     /// Returns the currently active scanout source according to the scanout handoff policy.
     ///
+    /// Note: this does not account for scanout output sourced from an in-process AeroGPU command
+    /// backend (see [`Machine::display_present`]).
+    ///
     /// Policy summary:
     /// - Before the guest claims the AeroGPU WDDM scanout, legacy VGA/VBE output is presented.
     /// - Once the guest claims WDDM scanout (writes a valid `SCANOUT0_*` config and enables it),
@@ -6105,6 +6116,7 @@ impl Machine {
     /// presents (in priority order):
     ///
     /// - the guest-programmed AeroGPU scanout (WDDM scanout0), if claimed, or
+    /// - the last-presented in-process backend scanout (AeroGPU ACMD `PRESENT`), if available, or
     /// - the active VBE linear framebuffer (if a VBE mode is set), or
     /// - VGA mode 13h (320x200x256) if selected via BIOS INT 10h, or
     /// - BIOS/boot text mode output by rendering the legacy text buffer at `0xB8000` using BIOS
