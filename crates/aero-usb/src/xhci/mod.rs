@@ -735,6 +735,8 @@ impl XhciController {
             TrbType::EnableSlotCommand => self.cmd_enable_slot(mem, cmd_paddr),
             TrbType::DisableSlotCommand => self.cmd_disable_slot(mem, cmd_paddr, trb),
             TrbType::AddressDeviceCommand => self.cmd_address_device(mem, cmd_paddr, trb),
+            TrbType::EvaluateContextCommand => self.cmd_evaluate_context(mem, cmd_paddr, trb),
+            TrbType::ConfigureEndpointCommand => self.cmd_configure_endpoint(mem, cmd_paddr, trb),
             TrbType::StopEndpointCommand => self.cmd_stop_endpoint(mem, cmd_paddr, trb),
             TrbType::ResetEndpointCommand => self.cmd_reset_endpoint(mem, cmd_paddr, trb),
             TrbType::SetTrDequeuePointerCommand => self.cmd_set_tr_dequeue_pointer(mem, cmd_paddr, trb),
@@ -971,6 +973,170 @@ impl XhciController {
         slot_state.endpoint_contexts[0] = ep0_ctx;
         slot_state.transfer_rings[0] =
             Some(RingCursor::new(ep0_ctx.tr_dequeue_pointer(), ep0_ctx.dcs()));
+
+        self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
+    }
+
+    fn cmd_evaluate_context<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        cmd_paddr: u64,
+        trb: Trb,
+    ) {
+        let slot_id = trb.slot_id();
+        let slot_idx = usize::from(slot_id);
+
+        if slot_id == 0 || slot_idx >= self.slots.len() || !self.slots[slot_idx].enabled {
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::SlotNotEnabledError,
+                slot_id,
+            );
+            return;
+        }
+
+        // Input Context Pointer is 64-byte aligned; low bits are reserved.
+        let input_ctx_raw = trb.parameter;
+        let input_ctx_ptr = input_ctx_raw & !0x3f;
+        if input_ctx_ptr == 0 || (input_ctx_raw & 0x3f) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let icc = InputControlContext::read_from(mem, input_ctx_ptr);
+        if icc.drop_flags() != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        // MVP: only support updating Slot Context (bit0) and/or EP0 (bit1).
+        if !icc.add_context(1) {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+        let add = icc.add_flags();
+        let supported = (1u32 << 0) | (1u32 << 1);
+        if (add & !supported) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(CommandCompletionCode::ParameterError) => {
+                self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+                return;
+            }
+            Err(_) => {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ContextStateError,
+                    slot_id,
+                );
+                return;
+            }
+        };
+
+        if icc.add_context(0) {
+            let slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+            slot_ctx.write_to(mem, dev_ctx_ptr);
+            let slot_state = &mut self.slots[slot_idx];
+            slot_state.slot_context = slot_ctx;
+            slot_state.device_context_ptr = dev_ctx_ptr;
+        }
+
+        let ep0_ctx = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+        ep0_ctx.write_to(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+
+        let slot_state = &mut self.slots[slot_idx];
+        slot_state.endpoint_contexts[0] = ep0_ctx;
+        slot_state.transfer_rings[0] =
+            Some(RingCursor::new(ep0_ctx.tr_dequeue_pointer(), ep0_ctx.dcs()));
+        slot_state.device_context_ptr = dev_ctx_ptr;
+
+        self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
+    }
+
+    fn cmd_configure_endpoint<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        cmd_paddr: u64,
+        trb: Trb,
+    ) {
+        let slot_id = trb.slot_id();
+        let slot_idx = usize::from(slot_id);
+
+        if slot_id == 0 || slot_idx >= self.slots.len() || !self.slots[slot_idx].enabled {
+            self.queue_command_completion_event(
+                cmd_paddr,
+                CompletionCode::SlotNotEnabledError,
+                slot_id,
+            );
+            return;
+        }
+
+        // Input Context Pointer is 64-byte aligned; low bits are reserved.
+        let input_ctx_raw = trb.parameter;
+        let input_ctx_ptr = input_ctx_raw & !0x3f;
+        if input_ctx_ptr == 0 || (input_ctx_raw & 0x3f) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let icc = InputControlContext::read_from(mem, input_ctx_ptr);
+        if icc.drop_flags() != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+        if icc.add_flags() == 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(CommandCompletionCode::ParameterError) => {
+                self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+                return;
+            }
+            Err(_) => {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ContextStateError,
+                    slot_id,
+                );
+                return;
+            }
+        };
+
+        // Slot Context (bit0) is optional.
+        if icc.add_context(0) {
+            let slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+            slot_ctx.write_to(mem, dev_ctx_ptr);
+            let slot_state = &mut self.slots[slot_idx];
+            slot_state.slot_context = slot_ctx;
+            slot_state.device_context_ptr = dev_ctx_ptr;
+        }
+
+        // Configure all added endpoint contexts.
+        for endpoint_id in 1u8..=31 {
+            if !icc.add_context(endpoint_id) {
+                continue;
+            }
+
+            // Input context layout: [ICC][Slot][EP0][EP1 OUT][EP1 IN]...
+            let input_off = (endpoint_id as u64 + 1) * CONTEXT_SIZE as u64;
+            let ep_ctx = EndpointContext::read_from(mem, input_ctx_ptr + input_off);
+
+            ep_ctx.write_to(mem, dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64));
+
+            let slot_state = &mut self.slots[slot_idx];
+            let idx = usize::from(endpoint_id - 1);
+            slot_state.endpoint_contexts[idx] = ep_ctx;
+            slot_state.transfer_rings[idx] =
+                Some(RingCursor::new(ep_ctx.tr_dequeue_pointer(), ep_ctx.dcs()));
+            slot_state.device_context_ptr = dev_ctx_ptr;
+        }
 
         self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
     }
