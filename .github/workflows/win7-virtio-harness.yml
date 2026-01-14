@@ -33,6 +33,11 @@ on:
         required: false
         default: false
         type: boolean
+      qemu_preflight_pci:
+        description: Run a QMP query-pci preflight to validate QEMU-emitted virtio PCI IDs (VEN/DEV/REV) before waiting for guest results
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_events:
         description: Inject deterministic virtio-input events via QMP (keyboard + mouse) and require virtio-input-events to PASS (requires a guest image provisioned with --test-input-events)
         required: false
@@ -142,6 +147,7 @@ jobs:
             echo "  http_port: '${{ inputs.http_port }}'"
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
+            echo "  qemu_preflight_pci: '${{ inputs.qemu_preflight_pci }}'"
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
@@ -231,6 +237,9 @@ jobs:
             fi
             if [[ "${{ inputs.follow_serial }}" == "true" ]]; then
               args+=(--follow-serial)
+            fi
+            if [[ "${{ inputs.qemu_preflight_pci }}" == "true" ]]; then
+              args+=(--qemu-preflight-pci)
             fi
             if [[ "${with_virtio_input_events}" == "true" ]]; then
               args+=(--with-input-events)
@@ -340,13 +349,14 @@ jobs:
           input_events_buttons_marker=""
           input_events_wheel_marker=""
           input_tablet_marker=""
-          input_inject_marker=""
-          input_media_keys_inject_marker=""
-          input_tablet_inject_marker=""
-          snd_capture_marker=""
-          snd_duplex_marker=""
-          snd_buffer_limits_marker=""
-          wav_marker=""
+           input_inject_marker=""
+           input_media_keys_inject_marker=""
+           input_tablet_inject_marker=""
+           pci_preflight_marker=""
+           snd_capture_marker=""
+           snd_duplex_marker=""
+           snd_buffer_limits_marker=""
+           wav_marker=""
           failure_token=""
           failure_line=""
           error_line=""
@@ -364,14 +374,15 @@ jobs:
             snd_duplex_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_buffer_limits_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
           fi
-          if [[ -f "${harness_log}" ]]; then
-            wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
-            input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
-            input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
-            input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
-            # Extract the last structured failure token from the harness output, if present.
-            # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
-            failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
+           if [[ -f "${harness_log}" ]]; then
+             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
+             input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+             input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+             input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+             pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
+             # Extract the last structured failure token from the harness output, if present.
+             # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
+             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
             # Fallback: the full last failure line (useful when no structured token is present).
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
             # Fallback: last explicit "ERROR:" line.
@@ -425,12 +436,15 @@ jobs:
             if [[ -n "${input_tablet_marker}" ]]; then
               echo "- Guest virtio-input-tablet-events marker: ${input_tablet_marker}"
             fi
-            if [[ -n "${input_tablet_inject_marker}" ]]; then
-              echo "- Host virtio-input tablet injection marker: \`${input_tablet_inject_marker}\`"
-            fi
-            if [[ -n "${snd_capture_marker}" ]]; then
-              echo "- Guest virtio-snd-capture marker: ${snd_capture_marker}"
-            fi
+             if [[ -n "${input_tablet_inject_marker}" ]]; then
+               echo "- Host virtio-input tablet injection marker: \`${input_tablet_inject_marker}\`"
+             fi
+             if [[ -n "${pci_preflight_marker}" ]]; then
+               echo "- Host QEMU PCI preflight marker: \`${pci_preflight_marker}\`"
+             fi
+             if [[ -n "${snd_capture_marker}" ]]; then
+               echo "- Guest virtio-snd-capture marker: ${snd_capture_marker}"
+             fi
             if [[ -n "${snd_duplex_marker}" ]]; then
               echo "- Guest virtio-snd-duplex marker: ${snd_duplex_marker}"
             fi
