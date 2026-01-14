@@ -22,10 +22,15 @@ In Aero’s BIOS:
 
 * **Externally (INT 13h for CD drives):** CD-ROM media is exposed as **2048-byte sectors** (and
   `AH=48h` reports `bytes_per_sector = 2048`).
-* **Internally (firmware `BlockDevice`):** the disk backend is **512-byte sectors**.
+* **Internally:** there are two relevant backends:
+  * **El Torito boot/catalog scanning** uses the firmware `BlockDevice` interface (**512-byte
+    sectors**) and converts ISO LBAs (`2048-byte sectors`) into 512-byte LBAs.
+  * **INT 13h CD-ROM reads** may be backed either by a firmware `CdromDevice` (**2048-byte sectors**)
+    or (legacy fallback) by exposing the raw ISO bytes via `BlockDevice` (**512-byte sectors**) and
+    letting the BIOS perform the conversion.
 
-For CD boot and CD INT 13h I/O, this creates a critical conversion rule between **2048-byte LBAs**
-and the underlying 512-byte sector backend:
+When using the 512-byte `BlockDevice` path for ISO media, this creates a critical conversion rule
+between **2048-byte LBAs** and the underlying 512-byte sector backend:
 
 * `lba512 = lba2048 * 4` (and similarly `count512 = count2048 * 4`)
 
@@ -329,7 +334,9 @@ In Aero, the “sector” unit for the DAP depends on the drive class:
 
 * **HDD (`DL=0x80..=0xDF`)**: DAP `count`/`lba` are in **512-byte sectors** (standard EDD behavior).
 * **CD-ROM (`DL=0xE0..=0xEF`)**: DAP `count`/`lba` are in **2048-byte sectors**.
-  * Internally our BIOS reads from a 512-byte-sector [`BlockDevice`] and converts:
+  * Internally, the BIOS reads from a 2048-byte-sector `CdromDevice` backend when provided.
+    Otherwise it falls back to reading raw ISO bytes from a 512-byte-sector [`BlockDevice`] and
+    converts:
     * `lba512 = lba2048 * 4`
     * `count512 = count2048 * 4`
 
@@ -393,7 +400,7 @@ All multi-byte fields are little-endian.
 
 `boot image LBA` and `boot catalog LBA` use **ISO logical block addressing** (2048-byte sectors, the
 same unit as ISO9660 and the El Torito boot catalog). If you need underlying 512-byte LBAs:
-`lba512 = lba2048 * 4`.
+`lba512 = lba2048 * 4` (only relevant when the ISO is exposed via a 512-byte-sector `BlockDevice`).
 
 ---
 

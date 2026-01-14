@@ -44,7 +44,12 @@ allowing BIOS services to live in Rust.
 
 #### Boot device wiring (HDD/floppy vs CD-ROM/ISO)
 
-The BIOS uses a single host-side [`BlockDevice`] (512-byte sectors) as its boot medium.
+The BIOS uses a host-side [`BlockDevice`] (512-byte sectors) as its boot medium during POST
+(MBR/boot-sector reads and El Torito catalog scanning).
+
+For BIOS INT 13h, the firmware also supports an optional separate CD-ROM backend:
+
+- [`CdromDevice`] (2048-byte sectors), used for CD drive numbers (`DL=0xE0..=0xEF`).
 
 To boot from different kinds of media, configure [`BiosConfig::boot_drive`] and provide the
 corresponding bytes through that [`BlockDevice`]:
@@ -113,15 +118,18 @@ The BIOS uses the following **drive numbers** in `DL`:
 > Note: The configured [`BiosConfig::boot_drive`] determines which device’s boot path is executed
 > during POST (HDD/MBR vs El Torito) and what value is passed to the boot image in `DL`.
 >
-> Also note that this BIOS currently models **exactly one boot device** (backed by the single
-> [`BlockDevice`] passed to POST/interrupt handlers). In particular, when booting from a CD-ROM
-> drive number, the BIOS reports no fixed disks in the BDA (see `bios::ivt::init_bda`).
->
 > INT 13h note: for CD drive numbers, the BIOS implements **INT 13h Extensions** (at minimum
 > AH=41h/42h/48h) and treats the DAP `LBA` and `count` fields as **2048-byte logical blocks**
-> (ISO LBAs), even though the host-side backing store is exposed as 512-byte sectors.
-> Classic CHS INT 13h functions are not supported for CD drives; boot images are expected to use the
-> extensions path.
+> (ISO LBAs), with `AH=48h` reporting `bytes_per_sector = 2048`.
+>
+> Backend note: for CD drive numbers, INT 13h can be backed either by:
+>
+> - a 2048-byte-sector [`CdromDevice`] (preferred), or
+> - a legacy fallback where the raw ISO bytes are exposed via the 512-byte-sector [`BlockDevice`],
+>   and the BIOS converts `lba2048 -> lba512 = lba2048 * 4`.
+>
+> Classic CHS INT 13h functions are not supported for CD drives; boot images are expected to use
+> the extensions path.
 >
 > When booting via El Torito, the BIOS also captures boot-catalog metadata during POST and exposes
 > it via **INT 13h AH=4Bh** ("El Torito disk emulation services"), which some CD boot images use.
@@ -132,12 +140,11 @@ The BIOS uses the following **drive numbers** in `DL`:
 #### Firmware lifecycle wiring
 
 - On reset:
-  - Choose a boot drive number via [`BiosConfig::boot_drive`]. There are currently no separate
-    CD-specific POST/dispatch entrypoints; CD boot/reads are selected purely by the `DL` drive
-    number.
-  - Pass the matching boot medium as the `disk: &mut dyn BlockDevice` argument to POST/interrupt
-    dispatch (i.e., when booting from `DL=0xE0`, the BIOS expects the `BlockDevice` to contain the
-    ISO image, not the HDD image).
+  - Choose a boot drive number via [`BiosConfig::boot_drive`].
+  - Pass the boot medium as the `disk: &mut dyn BlockDevice` argument to POST:
+    - When booting from `DL=0x80`, `disk` should be the HDD image.
+    - When booting from `DL=0xE0`, `disk` should expose the raw ISO bytes (so El Torito catalog
+      scanning can read ISO blocks via `read_sector`).
   - Call [`Bios::post`] (or [`Bios::post_with_pci`] if you want PCI IRQ routing).
   - Resume execution at the CPU state configured by POST:
     - MBR boot: `CS:IP = 0000:7C00`
@@ -145,6 +152,8 @@ The BIOS uses the following **drive numbers** in `DL`:
       i.e. physical `0x7C00`)
 - On CPU exit:
   - If the CPU exits due to a BIOS stub `HLT`, call [`Bios::dispatch_interrupt`].
+    - For INT 13h, you may additionally provide a `cdrom: Option<&mut dyn CdromDevice>` so the BIOS
+      can service `DL=0xE0..=0xEF` requests using 2048-byte sectors directly.
 - Keyboard input:
   - Push keys into the BIOS buffer via [`Bios::push_key`] (`(scan_code << 8) | ascii`).
 
@@ -179,9 +188,9 @@ for CD drives in Aero BIOS; the EDD path is the compatibility surface.
 
 #### VM integration note (wiring a disk vs an ISO)
 
-[`Bios::post`] and [`Bios::dispatch_interrupt`] take a single `&mut dyn BlockDevice`. This BIOS
-models **exactly one** INT 13h “boot device” at a time: the embedding VM is responsible for passing
-the correct `BlockDevice` backend depending on the configured `boot_drive`.
+[`Bios::post`] takes a `&mut dyn BlockDevice` for the selected boot medium. [`Bios::dispatch_interrupt`]
+takes that same `BlockDevice` plus an optional `cdrom: Option<&mut dyn CdromDevice>` for servicing
+CD drive numbers (`DL=0xE0..`).
 
 - If booting from HDD (`boot_drive = 0x80`), pass the HDD backend (512-byte sectors).
 - If booting from CD (`boot_drive = 0xE0`), pass the ISO backend and expose CD semantics via EDD

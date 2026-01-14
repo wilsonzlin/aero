@@ -51,8 +51,15 @@ Sector units by drive class:
 - For CD drive numbers (`DL=0xE0..=0xEF`), EDD DAP `lba`/`count` are in **2048-byte logical blocks**
   (ISO LBAs).
 
+Implementation note: in `firmware::bios`, this is expressed by the BIOS interrupt entrypoint taking
+both:
+
+- a 512-byte-sector `BlockDevice` backend (for HDD drive numbers `0x80..=0xDF`), and
+- an optional 2048-byte-sector `CdromDevice` backend (for CD drive numbers `0xE0..=0xEF`).
+
 To boot install media, the host must select CD boot (`boot_drive=0xE0`) before reset (see
-[`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md)).
+[`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md)). When booting install media,
+early Windows boot code reads ISO9660 logical blocks from the CD via the EDD path (`AH=42h`/`48h`).
 
 UEFI is **not** the canonical path today. If you see older docs implying an external BIOS blob or a
 still-unimplemented firmware stack, treat those as outdated.
@@ -154,6 +161,12 @@ Note: the BIOS currently models only the selected boot drive as “present” to
 numbers are treated as not present. The host selects which medium firmware sees by setting
 `boot_drive` (via `MachineConfig::boot_drive` at construction time, or via
 `Machine::set_boot_drive(...)` + `Machine::reset()`).
+
+For CD boots/reads, the BIOS supports two backend shapes:
+
+- Prefer a 2048-byte-sector `CdromDevice` backend when servicing `DL=0xE0..=0xEF`.
+- Or use the legacy fallback where the raw ISO bytes are exposed via the 512-byte-sector
+  `BlockDevice` interface and the BIOS performs the 2048↔512 conversions internally.
 
 Boot selection note: `Machine` defaults to `boot_drive=0x80`. For install-media boot, callers
 should attach an ISO and select CD boot (`boot_drive=0xE0`) either:
