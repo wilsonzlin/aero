@@ -341,6 +341,7 @@ fn bios_post_boots_from_cd_eltorito_no_emulation() {
     assert_eq!(cpu.segments.cs.selector, 0x07C0);
     assert_eq!(cpu.rip(), 0);
     assert_eq!(cpu.gpr[gpr::RDX] as u8, 0xE0);
+    assert!(bios.booted_from_cdrom());
 
     // CD boot drive numbers (`0xE0..=0xEF`) must not inflate the BIOS Data Area hard disk count
     // field (0x40:0x75). With only a CD/ISO backend, there are no fixed disks to advertise.
