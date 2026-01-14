@@ -466,6 +466,8 @@ They live under the device instance’s `Device Parameters\\Parameters` subkey:
   - Default: `0`
   - Set to `1` to allow polling-only mode when *no usable interrupt* (neither MSI/MSI-X nor INTx) can be wired up. (Modern virtio-pci transport packages only.)
 
+Note: the shipped INFs seed these values with `FLG_ADDREG_NOCLOBBER`, so driver reinstall/upgrade does **not** reset them.
+
 You can find `<DeviceInstancePath>` via **Device Manager → Details → “Device instance path”**.
 
 After changing a toggle, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.

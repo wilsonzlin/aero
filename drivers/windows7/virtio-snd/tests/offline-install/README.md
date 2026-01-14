@@ -282,6 +282,8 @@ The virtio-snd INFs create per-device bring-up toggles with safe defaults (`0`) 
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` (`REG_DWORD`)
   - `1`: allow polling-only mode if no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx)
 
+Note: the shipped INFs seed these values with `FLG_ADDREG_NOCLOBBER`, so driver reinstall/upgrade does **not** reset them.
+
 Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 
 After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
