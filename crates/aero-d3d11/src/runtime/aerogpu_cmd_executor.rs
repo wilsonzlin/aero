@@ -8126,22 +8126,6 @@ impl AerogpuD3d11Executor {
         let shader_handle = cmd.shader_handle;
         let stage_raw = cmd.stage;
         let stage_ex = cmd.reserved0;
-
-        // Geometry shaders are representable in the legacy `AerogpuShaderStage` enum, but the
-        // WebGPU-backed executor does not support them directly.
-        //
-        // Geometry/tessellation shaders are instead forwarded through the `stage_ex` ABI extension
-        // (stage=COMPUTE + reserved0=stage_ex).
-        if stage_raw == AerogpuShaderStage::Geometry as u32 {
-            return Ok(());
-        }
-
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
-            })?;
-
-        let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
         let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
 
@@ -8161,9 +8145,32 @@ impl AerogpuD3d11Executor {
             crate::ShaderStage::Domain => ShaderStage::Domain,
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
+
+        // Geometry shaders are representable in the legacy `AerogpuShaderStage` enum, but the
+        // WebGPU-backed executor does not support them directly.
+        //
+        // Geometry/tessellation shaders are instead forwarded through the `stage_ex` ABI extension
+        // (stage=COMPUTE + reserved0=stage_ex).
+        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+            if parsed_stage != ShaderStage::Geometry {
+                bail!(
+                    "CREATE_SHADER_DXBC: stage mismatch (cmd=Geometry, dxbc={parsed_stage:?})"
+                );
+            }
+            // Accept the create to keep the command stream robust, but ignore the shader since it
+            // can never be executed by the WebGPU backend.
+            return Ok(());
+        }
+
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+                anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+            })?;
         if parsed_stage != stage {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
+
+        let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
 
