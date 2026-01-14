@@ -1449,6 +1449,180 @@ bool TestFvfXyzDiffuseRedundantSetFvfDoesNotReuploadWvp() {
   return true;
 }
 
+bool TestSetShaderConstFDedupSkipsRedundantUpload() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  const float data[8] = {
+      1.0f, 2.0f, 3.0f, 4.0f,
+      5.0f, 6.0f, 7.0f, 8.0f,
+  };
+  HRESULT hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                                       kD3dShaderStageVs,
+                                                       /*start_reg=*/0,
+                                                       data,
+                                                       /*vec4_count=*/2);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, c0..c1) first")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                               kD3dShaderStageVs,
+                                               /*start_reg=*/0,
+                                               data,
+                                               /*vec4_count=*/2);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, c0..c1) second (redundant)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(shader const dedup)")) {
+    return false;
+  }
+
+  size_t uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 0 || sc->vec4_count != 2) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(data);
+    if (!Check(hdr->size_bytes >= need, "SET_SHADER_CONSTANTS_F contains payload")) {
+      return false;
+    }
+    const float* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (std::memcmp(payload, data, sizeof(data)) == 0) {
+      ++uploads;
+    }
+  }
+  if (!Check(uploads == 1, "SetShaderConstF dedup emits one upload")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestSetShaderConstFStateBlockCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Seed a known constant value.
+  const float a[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+  const float b[4] = {9.0f, 10.0f, 11.0f, 12.0f};
+  HRESULT hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                                       kD3dShaderStageVs,
+                                                       /*start_reg=*/0,
+                                                       a,
+                                                       /*vec4_count=*/1);
+  if (!Check(hr == S_OK, "SetShaderConstF seed")) {
+    return false;
+  }
+
+  // Record a state block that redundantly sets the same constant again.
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                               kD3dShaderStageVs,
+                                               /*start_reg=*/0,
+                                               a,
+                                               /*vec4_count=*/1);
+  if (!Check(hr == S_OK, "SetShaderConstF redundant (recorded)")) {
+    return false;
+  }
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Change the constant to a different value so ApplyStateBlock must re-upload.
+  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
+                                               kD3dShaderStageVs,
+                                               /*start_reg=*/0,
+                                               b,
+                                               /*vec4_count=*/1);
+  if (!Check(hr == S_OK, "SetShaderConstF change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock const)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_a = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 0 || sc->vec4_count != 1) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(a);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (std::memcmp(payload, a, sizeof(a)) == 0) {
+      saw_a = true;
+      break;
+    }
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return Check(saw_a, "ApplyStateBlock re-uploads recorded constants");
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6907,6 +7081,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetShaderConstFDedupSkipsRedundantUpload()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetShaderConstFStateBlockCapturesRedundantSet()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {

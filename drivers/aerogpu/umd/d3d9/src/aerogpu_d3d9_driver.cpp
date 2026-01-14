@@ -14695,8 +14695,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   float* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
-  std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(vec4_count) * 4 * sizeof(float));
   stateblock_record_shader_const_f_locked(dev, stage_norm, start_reg, pData, vec4_count);
+  const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
+  if (std::memcmp(dst + start_reg * 4, pData, payload_size) == 0) {
+    // Skip redundant constant uploads: setting identical constant data again is
+    // a no-op, but still record it for state blocks above.
+    return trace.ret(S_OK);
+  }
+
+  std::memcpy(dst + start_reg * 4, pData, payload_size);
 
   // If the app writes to the fixed-function reserved matrix constant range,
   // treat it as clobbered and re-upload on the next fixed-function draw.
@@ -14719,7 +14726,6 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
     }
   }
 
-  const size_t payload_size = static_cast<size_t>(vec4_count) * 4 * sizeof(float);
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
       dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_F, pData, payload_size);
   if (!cmd) {
