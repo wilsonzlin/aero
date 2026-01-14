@@ -118,16 +118,32 @@ The BIOS uses the following **drive numbers** in `DL`:
 > Note: The configured [`BiosConfig::boot_drive`] determines which device’s boot path is executed
 > during POST (HDD/MBR vs El Torito) and what value is passed to the boot image in `DL`.
 >
-> Also note that this BIOS currently models **exactly one** INT 13h “boot device” at a time: the
-> selected `boot_drive` is treated as present, and other drive numbers are treated as not present.
+> When the optional "CD-first when present" policy is enabled (`BiosConfig::boot_from_cd_if_present`),
+> POST may *temporarily* boot from CD (setting `DL=0xE0`) while keeping `BiosConfig::boot_drive` as the
+> HDD fallback. Use [`Bios::booted_from_cdrom()`] to query what firmware actually booted from for the
+> current session.
+>
+> **Drive presence (INT 13h):**
 >
 > - For HDD drive numbers (`0x80..=0xDF`), presence is derived from the BDA “fixed disk count”
->   field (0x40:0x75), which the BIOS initializes based on `boot_drive`.
-> - For CD drive numbers (`0xE0..=0xEF`), presence is `drive == boot_drive`.
+>   field (0x40:0x75). [`ivt::init_bda`] seeds this based on the configured `boot_drive`, but
+>   integrations that expose an HDD alongside a CD-ROM (for example, by passing a `cdrom` backend to
+>   POST/interrupt dispatch) patch the BDA so **HDD0 remains present even when booting from CD**.
+> - For CD drive numbers (`0xE0..=0xEF`), presence is `cdrom_present || drive == boot_drive`:
+>   - If a [`CdromDevice`] is supplied to [`Bios::dispatch_interrupt`], the BIOS treats CD drive
+>     numbers as present and services them using 2048-byte sectors directly.
+>   - In legacy "ISO as BlockDevice" wiring (no `CdromDevice`), the configured `boot_drive` is still
+>     treated as present so El Torito boot images can access the ISO via INT 13h Extensions.
 >
-> In particular, when booting from a CD drive number, the BIOS reports **no fixed disks** via the
-> BDA and HDD drive numbers (`0x80..`) are not present. Conversely, when booting from an HDD drive
-> number, CD drive numbers are not present.
+> In minimal wiring where only a single `disk: &mut dyn BlockDevice` is provided (no `CdromDevice`
+> and no BDA patching), this effectively behaves like a **single boot device** model: CD drive
+> numbers are only present when `boot_drive` selects a CD (`0xE0..=0xEF`), and HDD drive numbers are
+> only present when the BDA fixed-disk count is non-zero (typically when `boot_drive` selects an
+> HDD).
+>
+> In the canonical full-system machine stack, both **HDD0 (`DL=0x80`) and CD0 (`DL=0xE0`) can be
+> present at the same time**, which is required for Windows install media (boot from CD while still
+> allowing the installer to access the HDD via INT 13h).
 >
 > INT 13h note: for CD drive numbers, the BIOS implements **INT 13h Extensions** (at minimum
 > AH=41h/42h/48h) and treats the DAP `LBA` and `count` fields as **2048-byte logical blocks**
