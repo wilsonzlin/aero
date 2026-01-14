@@ -82,7 +82,15 @@ async function fetchIceServers(baseUrl: string, authToken?: string): Promise<RTC
 
   let res: Response;
   try {
-    res = await fetchWithTimeout(url.toString(), { method: "GET", mode: "cors", headers }, DEFAULT_HTTP_TIMEOUT_MS);
+    // Treat ICE discovery as non-cacheable even on the client side. The relay
+    // already returns `Cache-Control: no-store`, but setting this option makes
+    // the intent explicit and avoids relying on intermediaries preserving
+    // response headers.
+    res = await fetchWithTimeout(
+      url.toString(),
+      { method: "GET", mode: "cors", headers, cache: "no-store" },
+      DEFAULT_HTTP_TIMEOUT_MS,
+    );
   } catch (err) {
     if (isAbortError(err)) {
       throw new Error("failed to fetch ICE servers (timeout)");
