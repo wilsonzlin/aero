@@ -55,7 +55,18 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "AeroVirtioWin7QemuArgs.ps1")
 
+if ($QemuSystem -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuSystem -PathType Container)) {
+  throw "-QemuSystem must be a QEMU system binary path (got a directory): $QemuSystem"
+}
+
 $Win7IsoPath = (Resolve-Path -LiteralPath $Win7IsoPath).Path
+if (Test-Path -LiteralPath $Win7IsoPath -PathType Container) {
+  throw "-Win7IsoPath must be a file path (got a directory): $Win7IsoPath"
+}
+
+if (Test-Path -LiteralPath $DiskImagePath -PathType Container) {
+  throw "-DiskImagePath must be a disk image file path (got a directory): $DiskImagePath"
+}
 
 if (-not (Test-Path -LiteralPath $DiskImagePath)) {
   if (-not $CreateDisk) {
@@ -74,6 +85,9 @@ if (-not (Test-Path -LiteralPath $DiskImagePath)) {
 
 if (-not [string]::IsNullOrEmpty($ProvisioningIsoPath)) {
   $ProvisioningIsoPath = (Resolve-Path -LiteralPath $ProvisioningIsoPath).Path
+  if (Test-Path -LiteralPath $ProvisioningIsoPath -PathType Container) {
+    throw "-ProvisioningIsoPath must be a file path (got a directory): $ProvisioningIsoPath"
+  }
 }
 
 Write-Host ""
