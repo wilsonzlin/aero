@@ -1365,6 +1365,50 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("responds with ok:false when hid.getFeatureReport is dropped due to a full send queue", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const limit = 1;
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: limit });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      device.sendReport.mockImplementationOnce(() => new Promise<void>(() => {}));
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // Start one in-flight send that never resolves.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      // Fill the bounded pending queue.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(broker.getOutputSendStats().pendingTotal).toBe(limit);
+
+      // This getFeatureReport must be dropped immediately and responded to with ok:false.
+      port.emit({ type: "hid.getFeatureReport", requestId: 99, deviceId: id, reportId: 7 });
+      await new Promise((r) => setTimeout(r, 0));
+
+      const res = port.posted
+        .slice()
+        .reverse()
+        .find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 99) as any;
+      expect(res).toBeTruthy();
+      expect(res.msg).toMatchObject({ requestId: 99, deviceId: id, reportId: 7, ok: false });
+      expect(String(res.msg.error)).toMatch(/Too many pending HID report tasks/i);
+
+      expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("executes output ring reports sequentially per device", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
