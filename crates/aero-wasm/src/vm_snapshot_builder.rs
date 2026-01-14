@@ -243,8 +243,23 @@ impl aero_snapshot::SnapshotSource for WasmSnapshotSource {
             .checked_add(offset as u64)
             .ok_or(SnapshotError::Corrupt("ram base overflow"))?;
 
-        // Safety: we bounds-check against `guest_size` computed from the wasm linear memory size.
+        // Shared-memory (`+atomics`) builds: use atomic byte reads to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = ptr_u64 as *const AtomicU8;
+            for (i, slot) in buf.iter_mut().enumerate() {
+                // Safety: bounds-checked above and `AtomicU8` has alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: we bounds-check against `guest_size` computed from the wasm linear memory
+            // size.
             core::ptr::copy_nonoverlapping(ptr_u64 as *const u8, buf.as_mut_ptr(), buf.len());
         }
         Ok(())
@@ -312,8 +327,22 @@ impl aero_snapshot::SnapshotTarget for WasmSnapshotTarget {
             .checked_add(offset as u64)
             .ok_or(SnapshotError::Corrupt("ram base overflow"))?;
 
-        // Safety: bounds-checked above.
+        // Shared-memory (`+atomics`) builds: use atomic byte writes to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = ptr_u64 as *const AtomicU8;
+            for (i, byte) in data.iter().copied().enumerate() {
+                // Safety: bounds-checked above and `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: bounds-checked above.
             core::ptr::copy_nonoverlapping(data.as_ptr(), ptr_u64 as *mut u8, data.len());
         }
         Ok(())

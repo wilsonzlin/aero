@@ -317,12 +317,29 @@ impl WasmBus {
     #[inline]
     fn read_scalar<const N: usize>(&self, vaddr: u64) -> Result<[u8; N], Exception> {
         let ptr = self.ptr(vaddr, N)?;
-        // Safety: `ptr()` bounds-checks against the configured guest region.
-        unsafe {
-            let mut out = [0u8; N];
-            core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
-            Ok(out)
+        let mut out = [0u8; N];
+
+        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = ptr as *const AtomicU8;
+            for (i, slot) in out.iter_mut().enumerate() {
+                // Safety: `ptr()` bounds-checks against the configured guest region and `AtomicU8`
+                // has alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
         }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
+        unsafe {
+            // Safety: `ptr()` bounds-checks against the configured guest region.
+            core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
+        }
+
+        Ok(out)
     }
 
     #[inline]
@@ -333,8 +350,23 @@ impl WasmBus {
     ) -> Result<(), Exception> {
         let ptr = self.ptr_mut(vaddr, N)?;
         self.log_write(vaddr, N);
-        // Safety: `ptr_mut()` bounds-checks against the configured guest region.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = ptr as *const AtomicU8;
+            for (i, byte) in bytes.into_iter().enumerate() {
+                // Safety: `ptr_mut()` bounds-checks against the configured guest region and
+                // `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: `ptr_mut()` bounds-checks against the configured guest region.
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, N);
         }
         Ok(())
@@ -533,8 +565,24 @@ impl CpuBus for WasmBus {
 
         if self.range_in_ram(vaddr, dst.len()) {
             let ptr = self.ptr(vaddr, dst.len())?;
-            // Safety: `ptr()` bounds-checks.
+
+            // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB
+            // when guest RAM lives in a shared `WebAssembly.Memory`.
+            #[cfg(target_feature = "atomics")]
+            {
+                use core::sync::atomic::{AtomicU8, Ordering};
+                let src = ptr as *const AtomicU8;
+                for (i, slot) in dst.iter_mut().enumerate() {
+                    // Safety: `ptr()` bounds-checks and `AtomicU8` has alignment 1.
+                    *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+                }
+            }
+
+            // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is
+            // fine.
+            #[cfg(not(target_feature = "atomics"))]
             unsafe {
+                // Safety: `ptr()` bounds-checks.
                 core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), dst.len());
             }
             Ok(())
@@ -555,8 +603,23 @@ impl CpuBus for WasmBus {
         if self.range_in_ram(vaddr, src.len()) {
             let ptr = self.ptr_mut(vaddr, src.len())?;
             self.log_write(vaddr, src.len());
-            // Safety: `ptr_mut()` bounds-checks.
+            // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB
+            // when guest RAM lives in a shared `WebAssembly.Memory`.
+            #[cfg(target_feature = "atomics")]
+            {
+                use core::sync::atomic::{AtomicU8, Ordering};
+                let dst = ptr as *const AtomicU8;
+                for (i, byte) in src.iter().copied().enumerate() {
+                    // Safety: `ptr_mut()` bounds-checks and `AtomicU8` has alignment 1.
+                    unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                }
+            }
+
+            // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is
+            // fine.
+            #[cfg(not(target_feature = "atomics"))]
             unsafe {
+                // Safety: `ptr_mut()` bounds-checks.
                 core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
             }
             Ok(())
@@ -598,8 +661,38 @@ impl CpuBus for WasmBus {
         let dst_ptr = self.ptr_mut(dst, len)?;
         let src_ptr = self.ptr(src, len)?;
         self.log_write(dst, len);
-        // Safety: pointers are in-bounds and `copy` preserves overlap semantics.
+        // Shared-memory (`+atomics`) builds: implement memmove semantics with atomic byte
+        // operations to avoid Rust data-race UB when guest RAM lives in a shared
+        // `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+
+            let src = src_ptr as usize;
+            let dst = dst_ptr as usize;
+            let overlap = src < dst && src.saturating_add(len) > dst;
+
+            let src = src_ptr as *const AtomicU8;
+            let dst = dst_ptr as *const AtomicU8;
+            if overlap {
+                for i in (0..len).rev() {
+                    // Safety: pointers are in-bounds; `AtomicU8` has alignment 1.
+                    let byte = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+                    unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                }
+            } else {
+                for i in 0..len {
+                    // Safety: pointers are in-bounds; `AtomicU8` has alignment 1.
+                    let byte = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+                    unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                }
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so `copy` is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: pointers are in-bounds and `copy` preserves overlap semantics.
             core::ptr::copy(src_ptr, dst_ptr, len);
         }
         Ok(true)
@@ -622,8 +715,26 @@ impl CpuBus for WasmBus {
         }
         let dst_ptr = self.ptr_mut(dst, total)?;
         self.log_write(dst, total);
-        // Safety: `dst_ptr` covers `total` bytes.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+
+            let dst = dst_ptr as *const AtomicU8;
+            for i in 0..repeat {
+                let base_off = i * pattern.len();
+                for (j, byte) in pattern.iter().copied().enumerate() {
+                    // Safety: `dst_ptr` covers `total` bytes and `AtomicU8` has alignment 1.
+                    unsafe { (&*dst.add(base_off + j)).store(byte, Ordering::Relaxed) };
+                }
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: `dst_ptr` covers `total` bytes.
             for i in 0..repeat {
                 let off = i * pattern.len();
                 core::ptr::copy_nonoverlapping(pattern.as_ptr(), dst_ptr.add(off), pattern.len());

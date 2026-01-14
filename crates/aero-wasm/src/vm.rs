@@ -101,12 +101,29 @@ impl WasmPhysBus {
     #[inline]
     fn read_scalar<const N: usize>(&self, paddr: u64) -> Option<[u8; N]> {
         let ptr = self.ptr(paddr, N)?;
-        // Safety: `ptr()` bounds-checks against the configured guest region.
-        unsafe {
-            let mut out = [0u8; N];
-            core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
-            Some(out)
+        let mut out = [0u8; N];
+
+        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = ptr as *const AtomicU8;
+            for (i, slot) in out.iter_mut().enumerate() {
+                // Safety: `ptr()` bounds-checks against the configured guest region and `AtomicU8`
+                // has alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
         }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
+        unsafe {
+            // Safety: `ptr()` bounds-checks against the configured guest region.
+            core::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N);
+        }
+
+        Some(out)
     }
 
     #[inline]
@@ -114,8 +131,23 @@ impl WasmPhysBus {
         let Some(ptr) = self.ptr_mut(paddr, N) else {
             return false;
         };
-        // Safety: `ptr_mut()` bounds-checks against the configured guest region.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = ptr as *const AtomicU8;
+            for (i, byte) in bytes.into_iter().enumerate() {
+                // Safety: `ptr_mut()` bounds-checks against the configured guest region and
+                // `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: `ptr_mut()` bounds-checks against the configured guest region.
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, N);
         }
         true
