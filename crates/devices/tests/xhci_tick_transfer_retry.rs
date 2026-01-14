@@ -85,6 +85,8 @@ fn configure_event_ring(
     mem.write_u32(erstba + 8, ring_size_trbs);
     mem.write_u32(erstba + 12, 0);
 
+    // xHCI MMIO programming is separate from guest physical memory; the controller's MMIO helpers
+    // no longer take a MemoryBus argument.
     ctrl.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
     ctrl.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba & 0xffff_ffff);
     ctrl.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
