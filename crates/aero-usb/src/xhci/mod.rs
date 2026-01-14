@@ -2294,11 +2294,6 @@ impl XhciController {
         if self.host_controller_error {
             return;
         }
-        // Mirror the command-ring gating: endpoint transfers only make progress while the
-        // controller is running.
-        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
-            return;
-        }
 
         let mut trb_budget = max_trbs;
         // Process each currently-active endpoint at most once per tick. This ensures deterministic
@@ -2508,13 +2503,17 @@ impl XhciController {
             self.cmd_kick = false;
         }
 
-        self.tick_transfer_rings_budgeted(
-            mem,
-            budget::MAX_TRANSFER_TRBS_PER_FRAME,
-            budget::MAX_DOORBELLS_PER_FRAME,
-            &mut ring_poll_budget,
-            &mut work,
-        );
+        // Transfer-ring execution is gated on `USBCMD.RUN` (a halted controller does not execute
+        // transfers, even if the guest rings endpoint doorbells).
+        if (self.usbcmd & regs::USBCMD_RUN) != 0 {
+            self.tick_transfer_rings_budgeted(
+                mem,
+                budget::MAX_TRANSFER_TRBS_PER_FRAME,
+                budget::MAX_DOORBELLS_PER_FRAME,
+                &mut ring_poll_budget,
+                &mut work,
+            );
+        }
 
         work.event_trbs_written =
             self.service_event_ring_budgeted(mem, budget::MAX_EVENT_TRBS_PER_FRAME);
