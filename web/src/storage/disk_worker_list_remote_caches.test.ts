@@ -116,6 +116,9 @@ describe("disk_worker list_remote_caches", () => {
     const list = resp.result as { caches: any[]; corruptKeys: string[] };
     expect(list.caches).toHaveLength(2);
 
+    // Results should be deterministically ordered by `lastAccessedAtMs` desc then `cacheKey`.
+    expect(list.caches.map((c) => c.cacheKey)).toEqual([openedLru.cacheKey, opened.cacheKey]);
+
     const fromRanges = list.caches.find((c) => c.cacheKey === opened.cacheKey);
     expect(fromRanges).toMatchObject({
       cacheKey: opened.cacheKey,
@@ -130,5 +133,69 @@ describe("disk_worker list_remote_caches", () => {
       lastAccessedAtMs: indexWriteMs,
       cachedChunks: 2,
     });
+  });
+
+  it("sorts caches by lastAccessedAtMs desc, then cacheKey", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    const nowMs = 1_700_000_000_000;
+    vi.setSystemTime(nowMs);
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    const { RemoteCacheManager, remoteRangeDeliveryType } = await import("./remote_cache_manager");
+
+    const manager = await RemoteCacheManager.openOpfs();
+    const a = await manager.openCache(
+      { imageId: "a", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
+      { chunkSizeBytes: 1024, validators: { sizeBytes: 1024 * 1024 } },
+    );
+    const b = await manager.openCache(
+      { imageId: "b", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
+      { chunkSizeBytes: 1024, validators: { sizeBytes: 1024 * 1024 } },
+    );
+    const c = await manager.openCache(
+      { imageId: "c", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
+      { chunkSizeBytes: 1024, validators: { sizeBytes: 1024 * 1024 } },
+    );
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "list_remote_caches",
+        payload: {},
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(true);
+    expect(resp.result).toMatchObject({ ok: true, corruptKeys: [] });
+
+    const list = resp.result as { caches: any[] };
+    const expectedKeys = [a.cacheKey, b.cacheKey, c.cacheKey].sort((x, y) => x.localeCompare(y));
+    expect(list.caches.map((x) => x.cacheKey)).toEqual(expectedKeys);
   });
 });
