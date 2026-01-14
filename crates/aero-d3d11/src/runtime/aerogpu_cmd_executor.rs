@@ -225,6 +225,15 @@ struct DepthParams {
 @group(0) @binding(4) var<uniform> params: Params;
 @group(0) @binding(5) var<uniform> depth_params: DepthParams;
 
+fn write_varyings(vid: u32, v: vec4<f32>) {
+    // Keep placeholder prepass behavior location-agnostic by filling every varying slot.
+    // The expanded-draw passthrough VS will only read the subset of locations actually used by
+    // the current pixel shader.
+    for (var i: u32 = 0u; i < 32u; i = i + 1u) {
+        out_vertices[vid].varyings[i] = v;
+    }
+}
+
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Compute-based GS emulation system values.
@@ -264,9 +273,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
         }
 
-        out_vertices[0].varyings[1u] = c;
-        out_vertices[1].varyings[1u] = c;
-        out_vertices[2].varyings[1u] = c;
+        write_varyings(0u, c);
+        write_varyings(1u, c);
+        write_varyings(2u, c);
 
         // Indices for indexed draws.
         out_indices[0] = 0u;
@@ -290,9 +299,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
         out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
 
-        out_vertices[base + 0u].varyings[1u] = c;
-        out_vertices[base + 1u].varyings[1u] = c;
-        out_vertices[base + 2u].varyings[1u] = c;
+        write_varyings(base + 0u, c);
+        write_varyings(base + 1u, c);
+        write_varyings(base + 2u, c);
 
         out_indices[base + 0u] = base + 0u;
         out_indices[base + 1u] = base + 1u;
@@ -348,6 +357,15 @@ struct DepthParams {
 @group(0) @binding(4) var<uniform> params: Params;
 @group(0) @binding(5) var<uniform> depth_params: DepthParams;
 
+fn write_varyings(vid: u32, v: vec4<f32>) {
+    // Keep placeholder prepass behavior location-agnostic by filling every varying slot.
+    // The expanded-draw passthrough VS will only read the subset of locations actually used by
+    // the current pixel shader.
+    for (var i: u32 = 0u; i < 32u; i = i + 1u) {
+        out_vertices[vid].varyings[i] = v;
+    }
+}
+
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Compute-based GS emulation system values.
@@ -385,9 +403,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
         }
 
-        out_vertices[0].varyings[1u] = c;
-        out_vertices[1].varyings[1u] = c;
-        out_vertices[2].varyings[1u] = c;
+        write_varyings(0u, c);
+        write_varyings(1u, c);
+        write_varyings(2u, c);
 
         // Indices for indexed draws.
         out_indices[0] = 0u;
@@ -411,9 +429,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
         out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
 
-        out_vertices[base + 0u].varyings[1u] = c;
-        out_vertices[base + 1u].varyings[1u] = c;
-        out_vertices[base + 2u].varyings[1u] = c;
+        write_varyings(base + 0u, c);
+        write_varyings(base + 1u, c);
+        write_varyings(base + 2u, c);
 
         out_indices[base + 0u] = base + 0u;
         out_indices[base + 1u] = base + 1u;
