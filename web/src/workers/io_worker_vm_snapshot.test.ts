@@ -3,8 +3,8 @@ import { vi } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
 import { serializeRuntimeDiskSnapshot } from "../storage/runtime_disk_snapshot";
-import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs, snapshotUsbDeviceState, restoreUsbDeviceState } from "./io_worker_vm_snapshot";
-import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_UHCI, USB_SNAPSHOT_TAG_XHCI } from "./usb_snapshot_container";
+import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs, restoreUsbDeviceState } from "./io_worker_vm_snapshot";
+import { encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_EHCI, USB_SNAPSHOT_TAG_UHCI, USB_SNAPSHOT_TAG_XHCI } from "./usb_snapshot_container";
 import {
   IO_WORKER_RUNTIME_DISK_SNAPSHOT_KIND,
   appendRuntimeDiskWorkerSnapshotDeviceBlob,
@@ -23,6 +23,24 @@ import {
 
 const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
 const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
+function makeAeroIoSnapshotHeader(tag: string): Uint8Array {
+  const bytes = new Uint8Array(16);
+  bytes[0] = 0x41;
+  bytes[1] = 0x45;
+  bytes[2] = 0x52;
+  bytes[3] = 0x4f;
+  const padded = (tag + "____").slice(0, 4);
+  bytes[8] = padded.charCodeAt(0) & 0xff;
+  bytes[9] = padded.charCodeAt(1) & 0xff;
+  bytes[10] = padded.charCodeAt(2) & 0xff;
+  bytes[11] = padded.charCodeAt(3) & 0xff;
+  // major=1 minor=0
+  bytes[12] = 0x01;
+  bytes[13] = 0x00;
+  bytes[14] = 0x00;
+  bytes[15] = 0x00;
+  return bytes;
+}
 
 describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   it("forwards device blobs to vm_snapshot_save_to_opfs when save_state hooks exist", async () => {
@@ -93,45 +111,48 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     ]);
   });
 
-  it("prefers xHCI USB state when present", async () => {
-    const calls: Array<{ devices: unknown }> = [];
-    const api = {
-      vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
-        calls.push({ devices });
-      },
-    } as unknown as WasmApi;
+  it("prefers xHCI USB state when both xHCI + UHCI are present (emits one blob + warns)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const calls: Array<{ devices: unknown }> = [];
+      const api = {
+        vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
+          calls.push({ devices });
+        },
+      } as unknown as WasmApi;
 
-    const xhciState = new Uint8Array([0xaa, 0xbb]);
-    const uhciState = new Uint8Array([0x01, 0x02]);
-    const usbXhciControllerBridge = { save_state: () => xhciState };
-    const usbUhciRuntime = { save_state: () => uhciState };
+      const xhciState = new Uint8Array([0xaa, 0xbb]);
+      const uhciState = new Uint8Array([0x01, 0x02]);
+      const usbXhciControllerBridge = { save_state: () => xhciState };
+      const usbUhciRuntime = { save_state: () => uhciState };
 
-    await saveIoWorkerVmSnapshotToOpfs({
-      api,
-      path: "state/test.snap",
-      cpu: new ArrayBuffer(4),
-      mmu: new ArrayBuffer(8),
-      guestBase: 0,
-      guestSize: 0x1000,
-      runtimes: {
-        usbXhciControllerBridge,
-        usbUhciRuntime,
-        usbUhciControllerBridge: null,
-        usbEhciControllerBridge: null,
-        netE1000: null,
-        netStack: null,
-      },
-    });
+      await saveIoWorkerVmSnapshotToOpfs({
+        api,
+        path: "state/test.snap",
+        cpu: new ArrayBuffer(4),
+        mmu: new ArrayBuffer(8),
+        guestBase: 0,
+        guestSize: 0x1000,
+        runtimes: {
+          usbXhciControllerBridge,
+          usbUhciRuntime,
+          usbUhciControllerBridge: null,
+          usbEhciControllerBridge: null,
+          netE1000: null,
+          netStack: null,
+        },
+      });
 
-    expect(calls).toHaveLength(1);
-    const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
-    expect(devices).toHaveLength(1);
-    expect(devices[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_USB}`);
+      expect(calls).toHaveLength(1);
+      const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
+      expect(devices).toHaveLength(1);
+      expect(devices[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_USB}`);
+      expect(devices[0]!.bytes).toBe(xhciState);
 
-    const decoded = decodeUsbSnapshotContainer(devices[0]!.bytes);
-    expect(decoded).not.toBeNull();
-    expect(decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes).toEqual(xhciState);
-    expect(decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes).toEqual(uhciState);
+      expect(warn.mock.calls.some((args) => String(args[0]).includes("snapshotting xHCI only"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("normalizes device.<id> kinds on restore and applies net.stack TCP restore policy=drop", async () => {
@@ -335,7 +356,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(uhciLoad).not.toHaveBeenCalled();
   });
 
-  it("does not treat corrupt AUSB bytes as a legacy UHCI blob during restore → save merge", async () => {
+  it("does not let corrupt cached AUSB USB bytes affect a subsequent save", async () => {
     const xhciState = new Uint8Array([0xaa]);
     const corrupt = new Uint8Array([0x41, 0x55, 0x53, 0x42, 0x01, 0x00, 0x00, 0x00, 0xff]);
 
@@ -368,11 +389,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
     expect(devices).toHaveLength(1);
     expect(devices[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_USB}`);
-
-    const decoded = decodeUsbSnapshotContainer(devices[0]!.bytes);
-    expect(decoded).not.toBeNull();
-    expect(decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes).toEqual(xhciState);
-    expect(decoded!.entries.some((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)).toBe(false);
+    // The IO worker should snapshot a single controller, overriding any cached/corrupt USB blob.
+    expect(devices[0]!.bytes).toBe(xhciState);
   });
 
   it("forwards device blobs to WorkerVmSnapshot builder when free-function exports are absent", async () => {
@@ -693,32 +711,27 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     }
   });
 
-  it("round-trips a synthetic USB snapshot container with UHCI + EHCI + xHCI controller blobs", () => {
+  it("restores a USB snapshot container with UHCI + EHCI + xHCI controller blobs", () => {
     const uhciBytes = new Uint8Array([0x01, 0x02, 0x03]);
     const ehciBytes = new Uint8Array([0x04, 0x05]);
     const xhciBytes = new Uint8Array([0x06]);
-
-    const usbBlob = snapshotUsbDeviceState({
-      usbUhciRuntime: { save_state: () => uhciBytes },
-      usbUhciControllerBridge: null,
-      usbEhciControllerBridge: { save_state: () => ehciBytes },
-      usbXhciControllerBridge: { save_state: () => xhciBytes },
-    });
-
-    expect(usbBlob?.kind).toBe("usb");
-    expect(usbBlob?.bytes).toBeInstanceOf(Uint8Array);
+    const container = encodeUsbSnapshotContainer([
+      { tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciBytes },
+      { tag: USB_SNAPSHOT_TAG_EHCI, bytes: ehciBytes },
+      { tag: USB_SNAPSHOT_TAG_XHCI, bytes: xhciBytes },
+    ]);
 
     const uhciLoad = vi.fn();
     const ehciLoad = vi.fn();
     const xhciLoad = vi.fn();
     restoreUsbDeviceState(
       {
+        usbXhciControllerBridge: { load_state: xhciLoad },
         usbUhciRuntime: { load_state: uhciLoad },
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: { load_state: ehciLoad },
-        usbXhciControllerBridge: { load_state: xhciLoad },
       },
-      usbBlob!.bytes,
+      container,
     );
 
     expect(uhciLoad).toHaveBeenCalledWith(expect.any(Uint8Array));
@@ -729,7 +742,70 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect((xhciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(xhciBytes);
   });
 
-  it("canonicalizes legacy usb.uhci blobs on restore and re-saves them as canonical usb (device list merge semantics)", async () => {
+  it("does not attempt to add two USB device blobs when both xHCI + UHCI controllers are present (WorkerVmSnapshot builder)", async () => {
+    const addCalls: Array<{ id: number; version: number; flags: number; data: Uint8Array }> = [];
+    class FakeBuilder {
+      set_cpu_state_v2(_cpu: Uint8Array, _mmu: Uint8Array): void {
+        // ignore
+      }
+      add_device_state(id: number, version: number, flags: number, data: Uint8Array): void {
+        addCalls.push({ id, version, flags, data });
+      }
+      async snapshot_full_to_opfs(_path: string): Promise<void> {
+        // ignore
+      }
+      free(): void {
+        // ignore
+      }
+    }
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    const xhciBytes = new Uint8Array([0x06]);
+    const uhciBytes = new Uint8Array([0x01]);
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: { save_state: () => xhciBytes },
+        usbUhciRuntime: { save_state: () => uhciBytes },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    const usbAdds = addCalls.filter((c) => c.id === VM_SNAPSHOT_DEVICE_ID_USB);
+    expect(usbAdds).toHaveLength(1);
+    expect(usbAdds[0]!.data).toBe(xhciBytes);
+  });
+
+  it("ignores xHCI USB restore blobs when xHCI runtime is unavailable", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const xhciBytes = makeAeroIoSnapshotHeader("XHCB");
+      const uhciLoad = vi.fn();
+      restoreUsbDeviceState(
+        {
+          usbXhciControllerBridge: null,
+          usbUhciRuntime: { load_state: uhciLoad },
+          usbUhciControllerBridge: null,
+          usbEhciControllerBridge: null,
+        },
+        xhciBytes,
+      );
+      expect(uhciLoad).not.toHaveBeenCalled();
+      expect(warn.mock.calls.some((args) => String(args[0]).includes("xHCI") && String(args[0]).includes("ignoring"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("preserves unknown device blobs across restore → save (device list merge semantics)", async () => {
     const unknownBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
     const usbOld = new Uint8Array([0x01]);
     const usbFresh = new Uint8Array([0x02]);
@@ -798,7 +874,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     ]);
   });
 
-  it("preserves USB controller sub-blobs across restore → save (USB container merge semantics)", async () => {
+  it("does not preserve cached USB container sub-blobs across restore → save (snapshots a single controller)", async () => {
     const uhciOld = new Uint8Array([0x01]);
     const xhciOld = new Uint8Array([0x02, 0x03]);
     const cachedContainer = encodeUsbSnapshotContainer([
@@ -837,14 +913,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const payload = saveCalls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
     expect(payload).toHaveLength(1);
     expect(payload[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_USB}`);
-
-    // Should produce a container preserving the cached XHCI bytes while updating UHCI bytes.
-    const decoded = decodeUsbSnapshotContainer(payload[0]!.bytes);
-    expect(decoded).not.toBeNull();
-    const uhci = decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
-    const xhci = decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes ?? null;
-    expect(uhci).toEqual(uhciFresh);
-    expect(xhci).toEqual(xhciOld);
+    expect(payload[0]!.bytes).toBe(uhciFresh);
   });
 
   it("includes RuntimeDiskWorker snapshot state as an extra device.<id> blob on save and applies it on restore", async () => {

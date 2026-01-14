@@ -276,23 +276,31 @@ Restore behavior: when restoring the `DSKC` wrapper, snapshot consumers should a
 
 For the browser USB stack (guest-visible USB controller(s) + runtime/bridge state), store a single device entry:
 
+Snapshot policy (multiple controllers):
+
+- The `DEVICES` list rejects duplicate `(DeviceId, version, flags)` keys, and the web runtime maps all guest USB controllers to the single outer `DeviceId::USB` slot.
+- Therefore, the snapshot producer must emit **at most one** `DeviceId::USB` entry.
+- If multiple controllers are present, snapshot **only one** controller:
+  - Prefer **xHCI** if present; otherwise snapshot **UHCI**.
+  - Log a warning if a secondary controller exists but is not snapshotted.
+
 - Outer `DeviceState.id = DeviceId::USB`
-- `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
-  - Inner `DEVICE_ID` examples:
-    - UHCI: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
-    - xHCI: `XHCI` for the core controller (`aero_usb::xhci::XhciController`), `XHCB` for the WASM
-      bridge (`aero_wasm::XhciControllerBridge`), and `XHCP` for the native PCI wrapper
-      (`aero_devices::usb::xhci::XhciPciDevice`).
-  - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
-- `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
+  - `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
+    - Inner `DEVICE_ID` examples:
+      - UHCI: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
+      - xHCI: `XHCI` for the core controller (`aero_usb::xhci::XhciController`), `XHCB` for the WASM
+        bridge (`aero_wasm::XhciControllerBridge`), and `XHCP` for the native PCI wrapper
+        (`aero_devices::usb::xhci::XhciPciDevice`).
+    - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
+  - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
 
 Note (current browser runtime wiring):
 
-- The outer web snapshot `kind` for `DeviceId::USB` is `usb` (legacy/compat: `usb.uhci`;
-  see `web/src/workers/vm_snapshot_wasm.ts`).
-- Newer snapshots may encode multiple controller blobs inside a single `"AUSB"` container so UHCI
-  state can coexist with EHCI/xHCI state:
+- The outer web snapshot `kind` for `DeviceId::USB` is `usb` (legacy kind `usb.uhci` accepted; see
+  `web/src/workers/vm_snapshot_wasm.ts`).
+- Some older/experimental snapshots may encode multiple controller blobs inside a single `"AUSB"` container:
   - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`, `USB_SNAPSHOT_TAG_XHCI`)
+  - The current web runtime snapshot policy (documented above) snapshots only **one** controller (xHCI preferred) and does not emit new `"AUSB"` containers.
 
 Restore note: USB snapshots capture guest-visible controller/runtime state only. Any host-side "action" state (e.g. in-flight WebUSB/WebHID requests) should be treated as reset on restore; the host integration is responsible for resuming action execution post-restore.
 
