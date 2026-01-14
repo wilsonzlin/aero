@@ -293,8 +293,9 @@ DefinitionBlock ("dsdt_pcie.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 Package () { 0x001FFFFF, 1, Zero, 10 },
                 Package () { 0x001FFFFF, 2, Zero, 11 },
                 Package () { 0x001FFFFF, 3, Zero, 12 },
-             })
+            })
 
+            // PCIe OS capability negotiation. We grant the OS-requested features by returning Arg3.
             Method (_OSC, 4, NotSerialized)
             {
                 Return (Arg3)

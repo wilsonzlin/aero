@@ -208,7 +208,7 @@ validation/diffing:
 
 - Fixtures (used by tests and `scripts/validate-acpi.sh`):
   - `crates/firmware/acpi/dsdt.aml` (legacy PCI root bridge; ECAM/MMCONFIG disabled)
-  - `crates/firmware/acpi/dsdt_pcie.aml` (PCIe root bridge + ECAM/MMCONFIG enabled)
+  - `crates/firmware/acpi/dsdt_pcie.aml` (PCIe root bridge; ECAM/MMCONFIG enabled)
 
 Note: the canonical PC platform enables PCIe ECAM/MMCONFIG, so `firmware::bios` typically emits
 DSDT content matching `dsdt_pcie.aml` (and also publishes an `MCFG` table describing the ECAM
