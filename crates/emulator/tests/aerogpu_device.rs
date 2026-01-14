@@ -1127,13 +1127,24 @@ fn vsynced_present_does_not_complete_on_elapsed_vblank_before_submission() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
     assert_eq!(dev.regs.completed_fence, 0);
 
-    // No completion before the next vblank.
-    dev.tick(&mut mem, t0 + Duration::from_millis(19));
+    // DOORBELL's internal catch-up should have processed the vblank edge at t=10ms (and possibly
+    // more if the host clock advanced further than expected). The vsynced fence must not complete
+    // on any already-elapsed vblank edges.
+    let vblank_seq = u32::try_from(dev.regs.scanout0_vblank_seq).expect("vblank seq fits u32");
+    assert!(
+        vblank_seq >= 1,
+        "expected DOORBELL to catch up vblank scheduling before accepting work"
+    );
+    let period = Duration::from_nanos(dev.regs.scanout0_vblank_period_ns as u64);
+    let next_vblank = t0 + period * (vblank_seq + 1);
+
+    // No completion before the next vblank after the submission.
+    dev.tick(&mut mem, next_vblank - Duration::from_nanos(1));
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
 
-    // Fence completes on (or after) the next vblank at t=20ms.
-    dev.tick(&mut mem, t0 + Duration::from_millis(20));
+    // Fence completes on the next vblank after the submission (>=20ms).
+    dev.tick(&mut mem, next_vblank);
     assert_eq!(dev.regs.completed_fence, 42);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
 }
