@@ -9,6 +9,7 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
 type recordedLog struct {
@@ -474,7 +475,7 @@ func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
 
 	// Mirror the typical runtime defaults for the WebRTC DoS hardening caps.
 	minDataChannelMax := config.DefaultL2MaxMessageBytes
-	if max := config.DefaultMaxDatagramPayloadBytes + 24; max > minDataChannelMax {
+	if max := config.DefaultMaxDatagramPayloadBytes + udpproto.MaxFrameOverheadBytes; max > minDataChannelMax {
 		minDataChannelMax = max
 	}
 	webrtcDataChannelMaxMessageBytes := minDataChannelMax + config.DefaultWebRTCDataChannelMaxMessageOverheadBytes
