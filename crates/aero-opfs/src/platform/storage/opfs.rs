@@ -137,220 +137,6 @@ mod wasm {
         DiskError::Io(format!("{err:?}"))
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use js_sys::{Array, Function, Object, Promise, Reflect};
-        use std::cell::Cell;
-        use std::rc::Rc;
-        use wasm_bindgen::closure::Closure;
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::JsValue;
-        use wasm_bindgen_test::wasm_bindgen_test;
-
-        fn dom_exception(name: &str, message: &str) -> JsValue {
-            // `new DOMException(message, name)`
-            let ctor = Reflect::get(&js_sys::global(), &JsValue::from_str("DOMException"))
-                .expect("DOMException global should exist");
-            let ctor: Function = ctor
-                .dyn_into()
-                .expect("DOMException should be a constructor");
-            let args = Array::new();
-            args.push(&JsValue::from_str(message));
-            args.push(&JsValue::from_str(name));
-            Reflect::construct(&ctor, &args).expect("construct DOMException")
-        }
-
-        #[wasm_bindgen_test]
-        fn dom_exception_security_error_maps_to_backend_unavailable() {
-            let err = dom_exception("SecurityError", "blocked");
-            assert!(matches!(
-                disk_error_from_js(err),
-                DiskError::BackendUnavailable
-            ));
-        }
-
-        #[wasm_bindgen_test]
-        fn dom_exception_not_allowed_error_maps_to_backend_unavailable() {
-            let err = dom_exception("NotAllowedError", "blocked");
-            assert!(matches!(
-                disk_error_from_js(err),
-                DiskError::BackendUnavailable
-            ));
-        }
-
-        #[wasm_bindgen_test]
-        fn dom_exception_quota_exceeded_maps_to_quota_exceeded() {
-            let err = dom_exception("QuotaExceededError", "quota exceeded");
-            assert!(matches!(disk_error_from_js(err), DiskError::QuotaExceeded));
-        }
-
-        #[wasm_bindgen_test]
-        fn dom_exception_not_supported_maps_to_not_supported() {
-            let err = dom_exception("NotSupportedError", "nope");
-            assert!(matches!(
-                disk_error_from_js(err),
-                DiskError::NotSupported(msg) if msg == "nope"
-            ));
-        }
-
-        #[wasm_bindgen_test]
-        fn js_type_error_maps_to_not_supported() {
-            let err = js_sys::TypeError::new("bad").into();
-            assert!(matches!(
-                disk_error_from_js(err),
-                DiskError::NotSupported(msg) if msg == "bad"
-            ));
-        }
-
-        #[wasm_bindgen_test]
-        fn js_error_maps_to_io() {
-            let err = js_sys::Error::new("boom").into();
-            assert!(matches!(
-                disk_error_from_js(err),
-                DiskError::Io(msg) if msg == "boom"
-            ));
-        }
-
-        fn unique_path(prefix: &str) -> String {
-            let now = js_sys::Date::now() as u64;
-            format!("tests/{prefix}-{now}.tmp")
-        }
-
-        #[wasm_bindgen_test(async)]
-        async fn create_writable_stream_falls_back_when_options_bag_rejected() {
-            if !is_opfs_supported() {
-                return;
-            }
-
-            let real = match open_file(&unique_path("create-writable-fallback"), true).await {
-                Ok(f) => f,
-                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
-                Err(e) => panic!("open_file failed: {e:?}"),
-            };
-
-            let create_writable = Reflect::get(real.as_ref(), &JsValue::from_str("createWritable"))
-                .expect("FileSystemFileHandle.createWritable should exist");
-            let create_writable: Function = create_writable
-                .dyn_into()
-                .expect("FileSystemFileHandle.createWritable should be a function");
-
-            let called_with_opts = Rc::new(Cell::new(false));
-            let called_no_args = Rc::new(Cell::new(false));
-
-            // Wrap a real file handle to simulate an environment where
-            // `createWritable({ keepExistingData })` throws, but `createWritable()` works.
-            let wrapper = Object::new();
-            let real_clone = real.clone();
-            let create_writable_clone = create_writable.clone();
-            let called_with_opts_c = called_with_opts.clone();
-            let called_no_args_c = called_no_args.clone();
-
-            let closure =
-                Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
-                    if opts.is_undefined() {
-                        called_no_args_c.set(true);
-                        let promise = create_writable_clone.call0(real_clone.as_ref())?;
-                        promise.dyn_into::<Promise>()
-                    } else {
-                        called_with_opts_c.set(true);
-                        Err(js_sys::TypeError::new("options bag unsupported").into())
-                    }
-                })
-                    as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
-
-            Reflect::set(
-                &wrapper,
-                &JsValue::from_str("createWritable"),
-                closure.as_ref(),
-            )
-            .expect("set wrapper.createWritable");
-            let wrapper: FileSystemFileHandle = wrapper.unchecked_into();
-
-            let stream = create_writable_stream(&wrapper, true)
-                .await
-                .expect("create_writable_stream should fall back to createWritable()");
-
-            assert!(
-                called_with_opts.get(),
-                "expected createWritable(options) attempt"
-            );
-            assert!(called_no_args.get(), "expected createWritable() fallback");
-
-            // Close the stream so the file isn't left locked for subsequent tests.
-            writable_close(&stream)
-                .await
-                .expect("writable_close should succeed");
-
-            // Keep the closure alive until after the stream has been created/closed.
-            drop(closure);
-        }
-
-        #[wasm_bindgen_test(async)]
-        async fn create_writable_stream_invalid_state_maps_to_in_use_without_fallback() {
-            if !is_opfs_supported() {
-                return;
-            }
-
-            let real = match open_file(&unique_path("create-writable-in-use"), true).await {
-                Ok(f) => f,
-                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
-                Err(e) => panic!("open_file failed: {e:?}"),
-            };
-
-            let create_writable = Reflect::get(real.as_ref(), &JsValue::from_str("createWritable"))
-                .expect("FileSystemFileHandle.createWritable should exist");
-            let create_writable: Function = create_writable
-                .dyn_into()
-                .expect("FileSystemFileHandle.createWritable should be a function");
-
-            let called_no_args = Rc::new(Cell::new(false));
-
-            // Wrap a real file handle but have the options call return a rejected Promise with an
-            // `InvalidStateError`, which should map to `DiskError::InUse` and *not* trigger the
-            // no-args fallback.
-            let wrapper = Object::new();
-            let real_clone = real.clone();
-            let create_writable_clone = create_writable.clone();
-            let called_no_args_c = called_no_args.clone();
-
-            let closure =
-                Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
-                    if opts.is_undefined() {
-                        called_no_args_c.set(true);
-                        let promise = create_writable_clone.call0(real_clone.as_ref())?;
-                        promise.dyn_into::<Promise>()
-                    } else {
-                        Ok(Promise::reject(&dom_exception(
-                            "InvalidStateError",
-                            "file is in use",
-                        )))
-                    }
-                })
-                    as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
-
-            Reflect::set(
-                &wrapper,
-                &JsValue::from_str("createWritable"),
-                closure.as_ref(),
-            )
-            .expect("set wrapper.createWritable");
-            let wrapper: FileSystemFileHandle = wrapper.unchecked_into();
-
-            let err = match create_writable_stream(&wrapper, true).await {
-                Ok(_) => panic!("expected InvalidStateError to map to InUse"),
-                Err(e) => e,
-            };
-            assert!(matches!(err, DiskError::InUse), "got {err:?}");
-            assert!(
-                !called_no_args.get(),
-                "no-args fallback should not be attempted for InvalidStateError"
-            );
-
-            drop(closure);
-        }
-    }
-
     async fn await_promise(promise: Promise) -> core::result::Result<JsValue, DiskError> {
         JsFuture::from(promise).await.map_err(disk_error_from_js)
     }
@@ -619,6 +405,220 @@ mod wasm {
     pub use FileSystemFileHandle as FileHandle;
     pub use FileSystemSyncAccessHandle as SyncAccessHandle;
     pub use FileSystemWritableFileStream as WritableStream;
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use js_sys::{Array, Function, Object, Promise, Reflect};
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsValue;
+        use wasm_bindgen_test::wasm_bindgen_test;
+
+        fn dom_exception(name: &str, message: &str) -> JsValue {
+            // `new DOMException(message, name)`
+            let ctor = Reflect::get(&js_sys::global(), &JsValue::from_str("DOMException"))
+                .expect("DOMException global should exist");
+            let ctor: Function = ctor
+                .dyn_into()
+                .expect("DOMException should be a constructor");
+            let args = Array::new();
+            args.push(&JsValue::from_str(message));
+            args.push(&JsValue::from_str(name));
+            Reflect::construct(&ctor, &args).expect("construct DOMException")
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_security_error_maps_to_backend_unavailable() {
+            let err = dom_exception("SecurityError", "blocked");
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::BackendUnavailable
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_not_allowed_error_maps_to_backend_unavailable() {
+            let err = dom_exception("NotAllowedError", "blocked");
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::BackendUnavailable
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_quota_exceeded_maps_to_quota_exceeded() {
+            let err = dom_exception("QuotaExceededError", "quota exceeded");
+            assert!(matches!(disk_error_from_js(err), DiskError::QuotaExceeded));
+        }
+
+        #[wasm_bindgen_test]
+        fn dom_exception_not_supported_maps_to_not_supported() {
+            let err = dom_exception("NotSupportedError", "nope");
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::NotSupported(msg) if msg == "nope"
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn js_type_error_maps_to_not_supported() {
+            let err = js_sys::TypeError::new("bad").into();
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::NotSupported(msg) if msg == "bad"
+            ));
+        }
+
+        #[wasm_bindgen_test]
+        fn js_error_maps_to_io() {
+            let err = js_sys::Error::new("boom").into();
+            assert!(matches!(
+                disk_error_from_js(err),
+                DiskError::Io(msg) if msg == "boom"
+            ));
+        }
+
+        fn unique_path(prefix: &str) -> String {
+            let now = js_sys::Date::now() as u64;
+            format!("tests/{prefix}-{now}.tmp")
+        }
+
+        #[wasm_bindgen_test(async)]
+        async fn create_writable_stream_falls_back_when_options_bag_rejected() {
+            if !is_opfs_supported() {
+                return;
+            }
+
+            let real = match open_file(&unique_path("create-writable-fallback"), true).await {
+                Ok(f) => f,
+                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+                Err(e) => panic!("open_file failed: {e:?}"),
+            };
+
+            let create_writable = Reflect::get(real.as_ref(), &JsValue::from_str("createWritable"))
+                .expect("FileSystemFileHandle.createWritable should exist");
+            let create_writable: Function = create_writable
+                .dyn_into()
+                .expect("FileSystemFileHandle.createWritable should be a function");
+
+            let called_with_opts = Rc::new(Cell::new(false));
+            let called_no_args = Rc::new(Cell::new(false));
+
+            // Wrap a real file handle to simulate an environment where
+            // `createWritable({ keepExistingData })` throws, but `createWritable()` works.
+            let wrapper = Object::new();
+            let real_clone = real.clone();
+            let create_writable_clone = create_writable.clone();
+            let called_with_opts_c = called_with_opts.clone();
+            let called_no_args_c = called_no_args.clone();
+
+            let closure =
+                Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
+                    if opts.is_undefined() {
+                        called_no_args_c.set(true);
+                        let promise = create_writable_clone.call0(real_clone.as_ref())?;
+                        promise.dyn_into::<Promise>()
+                    } else {
+                        called_with_opts_c.set(true);
+                        Err(js_sys::TypeError::new("options bag unsupported").into())
+                    }
+                })
+                    as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
+
+            Reflect::set(
+                &wrapper,
+                &JsValue::from_str("createWritable"),
+                closure.as_ref(),
+            )
+            .expect("set wrapper.createWritable");
+            let wrapper: FileSystemFileHandle = wrapper.unchecked_into();
+
+            let stream = create_writable_stream(&wrapper, true)
+                .await
+                .expect("create_writable_stream should fall back to createWritable()");
+
+            assert!(
+                called_with_opts.get(),
+                "expected createWritable(options) attempt"
+            );
+            assert!(called_no_args.get(), "expected createWritable() fallback");
+
+            // Close the stream so the file isn't left locked for subsequent tests.
+            writable_close(&stream)
+                .await
+                .expect("writable_close should succeed");
+
+            // Keep the closure alive until after the stream has been created/closed.
+            drop(closure);
+        }
+
+        #[wasm_bindgen_test(async)]
+        async fn create_writable_stream_invalid_state_maps_to_in_use_without_fallback() {
+            if !is_opfs_supported() {
+                return;
+            }
+
+            let real = match open_file(&unique_path("create-writable-in-use"), true).await {
+                Ok(f) => f,
+                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+                Err(e) => panic!("open_file failed: {e:?}"),
+            };
+
+            let create_writable = Reflect::get(real.as_ref(), &JsValue::from_str("createWritable"))
+                .expect("FileSystemFileHandle.createWritable should exist");
+            let create_writable: Function = create_writable
+                .dyn_into()
+                .expect("FileSystemFileHandle.createWritable should be a function");
+
+            let called_no_args = Rc::new(Cell::new(false));
+
+            // Wrap a real file handle but have the options call return a rejected Promise with an
+            // `InvalidStateError`, which should map to `DiskError::InUse` and *not* trigger the
+            // no-args fallback.
+            let wrapper = Object::new();
+            let real_clone = real.clone();
+            let create_writable_clone = create_writable.clone();
+            let called_no_args_c = called_no_args.clone();
+
+            let closure =
+                Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
+                    if opts.is_undefined() {
+                        called_no_args_c.set(true);
+                        let promise = create_writable_clone.call0(real_clone.as_ref())?;
+                        promise.dyn_into::<Promise>()
+                    } else {
+                        Ok(Promise::reject(&dom_exception(
+                            "InvalidStateError",
+                            "file is in use",
+                        )))
+                    }
+                })
+                    as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
+
+            Reflect::set(
+                &wrapper,
+                &JsValue::from_str("createWritable"),
+                closure.as_ref(),
+            )
+            .expect("set wrapper.createWritable");
+            let wrapper: FileSystemFileHandle = wrapper.unchecked_into();
+
+            let err = match create_writable_stream(&wrapper, true).await {
+                Ok(_) => panic!("expected InvalidStateError to map to InUse"),
+                Err(e) => e,
+            };
+            assert!(matches!(err, DiskError::InUse), "got {err:?}");
+            assert!(
+                !called_no_args.get(),
+                "no-args fallback should not be attempted for InvalidStateError"
+            );
+
+            drop(closure);
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
