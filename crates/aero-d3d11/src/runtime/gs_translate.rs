@@ -14,6 +14,7 @@
 //! stream 0).
 
 use core::fmt;
+use std::collections::HashMap;
 
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
@@ -39,6 +40,18 @@ const D3D10_SB_PRIMITIVE_TRIANGLE_ADJ: u32 = 7;
 // - Tokenized shader format encodes `triangle_strip` as 3.
 // - Some toolchains/fixtures use D3D primitive-topology constants (`triangle_strip` = 5).
 const D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP: u32 = 3;
+
+// D3D system-value IDs used by `Sm4Decl::InputSiv`.
+// Values match the tokenized shader format (`d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`)
+// and Aero's own signature-driven translator (`shader_translate.rs`).
+const D3D_NAME_PRIMITIVE_ID: u32 = 7;
+const D3D_NAME_GS_INSTANCE_ID: u32 = 11;
+
+#[derive(Clone, Copy, Debug)]
+struct InputSivInfo {
+    sys_value: u32,
+    mask: WriteMask,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GsTranslateError {
@@ -195,11 +208,31 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     let mut input_primitive: Option<u32> = None;
     let mut output_topology: Option<u32> = None;
     let mut max_output_vertices: Option<u32> = None;
+    let mut input_sivs: HashMap<u32, InputSivInfo> = HashMap::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
             Sm4Decl::GsOutputTopology { topology } => output_topology = Some(*topology),
             Sm4Decl::GsMaxOutputVertexCount { max } => max_output_vertices = Some(*max),
+            Sm4Decl::InputSiv {
+                reg,
+                mask,
+                sys_value,
+            } => {
+                // Ignore duplicates as long as they agree on the sysvalue. Some toolchains may emit
+                // redundant declarations.
+                input_sivs
+                    .entry(*reg)
+                    .and_modify(|existing| {
+                        if existing.sys_value == *sys_value {
+                            existing.mask = WriteMask(existing.mask.0 | mask.0);
+                        }
+                    })
+                    .or_insert(InputSivInfo {
+                        sys_value: *sys_value,
+                        mask: *mask,
+                    });
+            }
             _ => {}
         }
     }
@@ -253,6 +286,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                     verts_per_primitive,
                     inst_index,
                     "mov",
+                    &input_sivs,
                 )?;
             }
             Sm4Inst::Add { dst, a, b } => {
@@ -265,6 +299,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                     verts_per_primitive,
                     inst_index,
                     "add",
+                    &input_sivs,
                 )?;
                 scan_src_operand(
                     b,
@@ -274,6 +309,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                     verts_per_primitive,
                     inst_index,
                     "add",
+                    &input_sivs,
                 )?;
             }
             Sm4Inst::Emit { stream } => {
@@ -511,17 +547,21 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     w.line("var strip_prev0: u32 = 0u;");
     w.line("var strip_prev1: u32 = 0u;");
     w.line("");
+    w.line("// Synthetic system values for compute-based GS emulation.");
+    w.line("let primitive_id: u32 = prim_id;"); // SV_PrimitiveID
+    w.line("let gs_instance_id: u32 = 0u;"); // SV_GSInstanceID (GS instancing not implemented yet)
+    w.line("");
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
             Sm4Inst::Mov { dst, src } => {
-                let rhs = emit_src_vec4(inst_index, "mov", src)?;
+                let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;
                 let rhs = maybe_saturate(dst.saturate, rhs);
                 emit_write_masked(&mut w, inst_index, "mov", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Add { dst, a, b } => {
-                let a = emit_src_vec4(inst_index, "add", a)?;
-                let b = emit_src_vec4(inst_index, "add", b)?;
+                let a = emit_src_vec4(inst_index, "add", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "add", b, &input_sivs)?;
                 let rhs = maybe_saturate(dst.saturate, format!("({a}) + ({b})"));
                 emit_write_masked(&mut w, inst_index, "add", dst.reg, dst.mask, rhs)?;
             }
@@ -619,15 +659,40 @@ fn scan_src_operand(
     verts_per_primitive: u32,
     inst_index: usize,
     opcode: &'static str,
+    input_sivs: &HashMap<u32, InputSivInfo>,
 ) -> Result<(), GsTranslateError> {
     match &src.kind {
         SrcKind::Register(reg) => {
             bump_reg_max(*reg, max_temp_reg, max_output_reg);
             match reg.file {
                 RegFile::Temp | RegFile::Output => {}
+                RegFile::Input => {
+                    let info = input_sivs.get(&reg.index).ok_or_else(|| {
+                        GsTranslateError::UnsupportedOperand {
+                            inst_index,
+                            opcode,
+                            msg: format!(
+                                "unsupported input register v{} (expected v#[]/SrcKind::GsInput or a supported system value via dcl_input_siv)",
+                                reg.index
+                            ),
+                        }
+                    })?;
+                    match info.sys_value {
+                        D3D_NAME_PRIMITIVE_ID | D3D_NAME_GS_INSTANCE_ID => {}
+                        other => {
+                            return Err(GsTranslateError::UnsupportedOperand {
+                                inst_index,
+                                opcode,
+                                msg: format!(
+                                    "unsupported input system value {other} for v{} (only SV_PrimitiveID/SV_GSInstanceID are supported)",
+                                    reg.index
+                                ),
+                            })
+                        }
+                    }
+                }
                 other => {
                     let msg = match other {
-                        RegFile::Input => "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
                         RegFile::OutputDepth => {
                             "RegFile::OutputDepth is not supported in GS prepass".to_owned()
                         }
@@ -712,17 +777,50 @@ fn emit_src_vec4(
     inst_index: usize,
     opcode: &'static str,
     src: &crate::sm4_ir::SrcOperand,
+    input_sivs: &HashMap<u32, InputSivInfo>,
 ) -> Result<String, GsTranslateError> {
     let base = match &src.kind {
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("r{}", reg.index),
             RegFile::Output => format!("o{}", reg.index),
             RegFile::Input => {
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
-                })
+                let info = input_sivs.get(&reg.index).ok_or_else(|| {
+                    GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: format!(
+                            "unsupported input register v{} (expected v#[]/SrcKind::GsInput or a supported system value via dcl_input_siv)",
+                            reg.index
+                        ),
+                    }
+                })?;
+
+                let u32_expr = match info.sys_value {
+                    D3D_NAME_PRIMITIVE_ID => "primitive_id",
+                    D3D_NAME_GS_INSTANCE_ID => "gs_instance_id",
+                    other => {
+                        return Err(GsTranslateError::UnsupportedOperand {
+                            inst_index,
+                            opcode,
+                            msg: format!(
+                                "unsupported input system value {other} for v{} (only SV_PrimitiveID/SV_GSInstanceID are supported)",
+                                reg.index
+                            ),
+                        })
+                    }
+                };
+
+                let mut lanes = [String::new(), String::new(), String::new(), String::new()];
+                for (i, bit) in [1u8, 2, 4, 8].into_iter().enumerate() {
+                    if (info.mask.0 & bit) != 0 {
+                        lanes[i] = format!("bitcast<f32>({u32_expr})");
+                    } else if i == 3 {
+                        lanes[i] = "1.0".to_owned();
+                    } else {
+                        lanes[i] = "0.0".to_owned();
+                    }
+                }
+                format!("vec4<f32>({}, {}, {}, {})", lanes[0], lanes[1], lanes[2], lanes[3])
             }
             other => {
                 // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
@@ -829,5 +927,105 @@ impl WgslWriter {
 
     fn finish(self) -> String {
         self.out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sm4::ShaderModel;
+    use crate::sm4_ir::{DstOperand, OperandModifier, RegisterRef, SrcKind, SrcOperand, Swizzle};
+
+    #[test]
+    fn gs_translate_supports_primitive_id_and_gs_instance_id_sivs() {
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: D3D10_SB_PRIMITIVE_POINT,
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+                Sm4Decl::InputSiv {
+                    reg: 2,
+                    mask: WriteMask::X,
+                    sys_value: D3D_NAME_PRIMITIVE_ID,
+                },
+                Sm4Decl::InputSiv {
+                    reg: 3,
+                    mask: WriteMask::X,
+                    sys_value: D3D_NAME_GS_INSTANCE_ID,
+                },
+            ],
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::X,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 2,
+                        }),
+                        swizzle: Swizzle::XXXX,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Add {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 1,
+                        },
+                        mask: WriteMask::X,
+                        saturate: false,
+                    },
+                    a: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XXXX,
+                        modifier: OperandModifier::None,
+                    },
+                    b: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 3,
+                        }),
+                        swizzle: Swizzle::XXXX,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl =
+            translate_gs_module_to_wgsl_compute_prepass(&module).expect("translation should succeed");
+        assert!(
+            wgsl.contains("let primitive_id: u32 = prim_id;"),
+            "expected primitive_id mapping in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("let gs_instance_id: u32 = 0u;"),
+            "expected gs_instance_id mapping in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("bitcast<f32>(primitive_id)"),
+            "expected primitive_id bitcast in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("bitcast<f32>(gs_instance_id)"),
+            "expected gs_instance_id bitcast in WGSL:\n{wgsl}"
+        );
     }
 }
