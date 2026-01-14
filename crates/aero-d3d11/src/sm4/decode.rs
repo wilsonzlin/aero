@@ -634,24 +634,55 @@ pub fn decode_instruction(
     inst_toks: &[u32],
     at: usize,
 ) -> Result<Sm4Inst, Sm4DecodeError> {
+    // SM4/SM5 predicated instructions show up in the wild in two encodings:
+    // - Most commonly, as a leading predicate operand (`(+p0.x) mov ...`) placed before the
+    //   regular operand list.
+    // - Some blobs appear to encode predication as a *trailing* predicate operand (mirroring the
+    //   legacy SM2/SM3 token stream format). This would otherwise show up as unexpected trailing
+    //   tokens once we've decoded the fixed operand list for the opcode.
+    //
+    // Peel off a trailing predicate operand up front so the main opcode decoder sees a normal
+    // operand list.
+    let mut inst_toks = inst_toks;
+    let mut trailing_predication: Option<PredicateOperand> = None;
+    if inst_toks.len() >= 3 {
+        let len = inst_toks.len();
+        // The predicate operand is always small: `operand_token + reg_index`, plus at most one
+        // extended operand token for the `-p0.x` invert modifier. Probe the last few DWORDs to see
+        // if they form a well-formed predicate operand that consumes the remainder of the
+        // instruction.
+        let min_start = len.saturating_sub(5).max(1);
+        for start in (min_start..=len - 2).rev() {
+            let mut rr = InstrReader::new(&inst_toks[start..], at + start);
+            let Ok(pred) = decode_predicate_operand(&mut rr) else {
+                continue;
+            };
+            if rr.is_eof() {
+                trailing_predication = Some(pred);
+                inst_toks = &inst_toks[..start];
+                break;
+            }
+        }
+    }
+
     let mut r = InstrReader::new(inst_toks, at);
     let opcode_token = r.read_u32()?;
     let saturate = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
 
     // ---- Predication ----
     //
-    // SM4/SM5 instruction predication is encoded by adding a predicate operand (`p#`) before the
-    // regular operand list (e.g. `(+p0.x) mov ...`).
+    // At this point we may already have stripped a trailing predicate operand. We also support the
+    // leading-operand encoding by recognizing a predicate operand in the first position.
     //
     // `setp` itself writes to the predicate register file, so it can appear in both predicated and
-    // non-predicated forms. Detect the predicated form by looking for two consecutive predicate
-    // operands (first = condition, second = destination).
+    // non-predicated forms. For the leading-operand encoding, detect the predicated form by
+    // looking for two consecutive predicate operands (first = condition, second = destination).
     let peek_operand_type = |r: &InstrReader<'_>| {
         r.peek_u32()
             .map(|t| (t >> OPERAND_TYPE_SHIFT) & OPERAND_TYPE_MASK)
     };
 
-    let mut predication: Option<PredicateOperand> = None;
+    let mut predication: Option<PredicateOperand> = trailing_predication;
 
     if opcode == OPCODE_SETP {
         // Non-predicated `setp` starts with a single predicate operand (destination).
@@ -687,7 +718,14 @@ pub fn decode_instruction(
             let a = decode_src(&mut r)?;
             let b = decode_src(&mut r)?;
             r.expect_eof()?;
-            return Ok(Sm4Inst::Setp { dst, op, a, b });
+            let inst = Sm4Inst::Setp { dst, op, a, b };
+            if let Some(pred) = predication {
+                return Ok(Sm4Inst::Predicated {
+                    pred,
+                    inner: Box::new(inst),
+                });
+            }
+            return Ok(inst);
         }
 
         return Ok(Sm4Inst::Unknown { opcode });
@@ -696,6 +734,14 @@ pub fn decode_instruction(
     // All other instructions: if the first operand is a predicate register, treat it as the
     // predication operand.
     if peek_operand_type(&r) == Some(OPERAND_TYPE_PREDICATE) {
+        if predication.is_some() {
+            return Err(Sm4DecodeError {
+                at_dword: r.base_at + r.pos,
+                kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                    "multiple predicate operands found for instruction predication",
+                ),
+            });
+        }
         predication = Some(decode_predicate_operand(&mut r)?);
     }
 
