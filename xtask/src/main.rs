@@ -168,13 +168,7 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
 
     // BIOS ROM image.
     let bios_rom = firmware::bios::build_bios_rom();
-    if bios_rom.len() != 0x10000 {
-        return Err(format!(
-            "firmware::bios::build_bios_rom() returned {} bytes (expected 65536)",
-            bios_rom.len()
-        )
-        .into());
-    }
+    cmd_bios_rom::validate_bios_rom(&bios_rom)?;
     ensure_file(&root.join("assets/bios.bin"), &bios_rom, check)?;
 
     Ok(())

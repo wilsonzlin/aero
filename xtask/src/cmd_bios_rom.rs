@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 
 const BIOS_ROM_LEN: usize = 0x10000; // 64KiB
+const RESET_VECTOR_OFF: usize = 0xFFF0;
 
 pub fn print_help() {
     println!(
@@ -29,14 +30,42 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let out_path = repo_root.join("assets/bios.bin");
 
     let rom = firmware::bios::build_bios_rom();
+    validate_bios_rom(&rom)?;
+
+    ensure_file(&out_path, &rom, check)
+}
+
+pub(crate) fn validate_bios_rom(rom: &[u8]) -> Result<()> {
+    // Keep these checks in-sync with `crates/firmware/src/bios/mod.rs` tests.
+    if firmware::bios::BIOS_SIZE != BIOS_ROM_LEN {
+        return Err(XtaskError::Message(format!(
+            "firmware::bios::BIOS_SIZE is {} bytes but xtask expects {BIOS_ROM_LEN} bytes",
+            firmware::bios::BIOS_SIZE
+        )));
+    }
+
     if rom.len() != BIOS_ROM_LEN {
         return Err(XtaskError::Message(format!(
-            "firmware::bios::build_bios_rom() returned {} bytes (expected {BIOS_ROM_LEN})",
+            "generated BIOS ROM has incorrect length: {} bytes (expected {BIOS_ROM_LEN})",
             rom.len()
         )));
     }
 
-    ensure_file(&out_path, &rom, check)
+    if rom.get(RESET_VECTOR_OFF..RESET_VECTOR_OFF + 5) != Some(&[0xEA, 0x00, 0xE0, 0x00, 0xF0]) {
+        let got = rom.get(RESET_VECTOR_OFF..RESET_VECTOR_OFF + 5).unwrap_or(&[]);
+        return Err(XtaskError::Message(format!(
+            "generated BIOS ROM reset vector is invalid at 0x{RESET_VECTOR_OFF:04x}: expected [ea, 00, e0, 00, f0], got {got:02x?}"
+        )));
+    }
+
+    if rom.get(BIOS_ROM_LEN - 2..) != Some(&[0x55, 0xAA]) {
+        let got = rom.get(BIOS_ROM_LEN - 2..).unwrap_or(&[]);
+        return Err(XtaskError::Message(format!(
+            "generated BIOS ROM signature is invalid: expected [55, aa], got {got:02x?}"
+        )));
+    }
+
+    Ok(())
 }
 
 fn parse_args(args: Vec<String>) -> Result<Option<bool>> {
