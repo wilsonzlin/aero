@@ -501,14 +501,48 @@ impl EhciController {
     }
 
     pub fn mmio_read(&self, offset: u64, size: usize) -> u32 {
-        let mut out = 0u32;
-        for i in 0..size.min(4) {
-            out |= (self.mmio_read_u8(offset.wrapping_add(i as u64)) as u32) << (i * 8);
+        let size = size.min(4);
+        if size == 0 {
+            return 0;
         }
-        out
+
+        // Treat invalid/out-of-range reads as open bus. Do not allow `offset + i` to wrap around to
+        // low MMIO offsets (which would alias valid registers) when callers pass large/overflowing
+        // offsets.
+        let open_bus = if size >= 4 {
+            u32::MAX
+        } else {
+            (1u32 << (size * 8)) - 1
+        };
+        let Some(end) = offset.checked_add(size as u64) else {
+            return open_bus;
+        };
+        if end > u64::from(regs::MMIO_SIZE) {
+            return open_bus;
+        }
+
+        let mut out = 0u32;
+        for i in 0..size {
+            let off = offset + i as u64;
+            out |= (self.mmio_read_u8(off) as u32) << (i * 8);
+        }
+        out & open_bus
     }
 
     pub fn mmio_write(&mut self, offset: u64, size: usize, value: u32) {
+        let size_bytes = size.min(4);
+        if size_bytes == 0 {
+            return;
+        }
+        // Treat out-of-range writes as no-ops. Use checked arithmetic so callers cannot cause MMIO
+        // offset wraparound (e.g. writing to `u64::MAX - 1` would otherwise alias offsets 0..=2).
+        let Some(end) = offset.checked_add(size_bytes as u64) else {
+            return;
+        };
+        if end > u64::from(regs::MMIO_SIZE) {
+            return;
+        }
+
         match (offset, size) {
             (REG_USBCMD, 4) => self.write_usbcmd(value),
             (REG_USBSTS, 4) => self.write_usbsts_masked(value, 0xffff_ffff),
@@ -528,16 +562,16 @@ impl EhciController {
                         self.regs.usbsts |= USBSTS_PCD;
                     }
                 } else {
-                    for i in 0..size.min(4) {
+                    for i in 0..size_bytes {
                         let byte = ((value >> (i * 8)) & 0xff) as u8;
-                        self.mmio_write_u8(offset.wrapping_add(i as u64), byte);
+                        self.mmio_write_u8(offset + i as u64, byte);
                     }
                 }
             }
             _ => {
-                for i in 0..size.min(4) {
+                for i in 0..size_bytes {
                     let byte = ((value >> (i * 8)) & 0xff) as u8;
-                    self.mmio_write_u8(offset.wrapping_add(i as u64), byte);
+                    self.mmio_write_u8(offset + i as u64, byte);
                 }
             }
         }
