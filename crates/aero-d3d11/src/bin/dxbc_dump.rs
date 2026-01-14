@@ -5,11 +5,12 @@ use std::process;
 
 use aero_d3d11::sm4::decode::{decode_decl, decode_instruction};
 use aero_d3d11::sm4::opcode::{
-    CUSTOMDATA_CLASS_COMMENT, CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER, OPCODE_CUSTOMDATA,
-    OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_NOP,
+    opcode_name, CUSTOMDATA_CLASS_COMMENT, CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER,
+    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+    OPCODE_NOP,
 };
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
-use aero_d3d11::{DxbcFile, Sm4Decl, Sm4Program};
+use aero_d3d11::{DxbcFile, Sm4Program};
 use anyhow::{bail, Context};
 
 const DEFAULT_HEAD_DWORDS: usize = 32;
@@ -161,6 +162,9 @@ fn real_main() -> anyhow::Result<()> {
         let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
 
         print!("  {i:04}: opcode={opcode:04x} len={len:04} token=0x{opcode_token:08x}",);
+        if let Some(name) = opcode_name(opcode) {
+            print!(" ({name})");
+        }
 
         if len == 0 {
             println!("  !! invalid length 0");
@@ -202,17 +206,19 @@ fn real_main() -> anyhow::Result<()> {
                 .get(class_pos)
                 .copied()
                 .unwrap_or(CUSTOMDATA_CLASS_COMMENT);
-            let decl = if class == CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER {
-                Sm4Decl::ImmediateConstantBuffer {
-                    dwords: inst_toks.get(class_pos + 1..).unwrap_or(&[]).to_vec(),
-                }
-            } else {
-                Sm4Decl::CustomData {
-                    class,
-                    len_dwords: len as u32,
-                }
+            let class_name = match class {
+                CUSTOMDATA_CLASS_COMMENT => "comment",
+                CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER => "immediate_constant_buffer",
+                _ => "custom",
             };
-            println!("  => decl {decl:?}");
+            if class == CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER {
+                let payload_dwords = inst_toks.len().saturating_sub(class_pos.saturating_add(1));
+                println!(
+                    "  => decl customdata class={class} ({class_name}) payload_dwords={payload_dwords}"
+                );
+            } else {
+                println!("  => decl customdata class={class} ({class_name})");
+            }
         } else if opcode == OPCODE_NOP {
             println!("  ; nop");
         } else if in_decls && opcode >= DECLARATION_OPCODE_MIN {
