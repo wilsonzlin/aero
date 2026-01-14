@@ -132,7 +132,10 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::EndLoop => "endloop",
         Sm4Inst::Mov { .. } => "mov",
         Sm4Inst::Movc { .. } => "movc",
+        Sm4Inst::Itof { .. } => "itof",
         Sm4Inst::Utof { .. } => "utof",
+        Sm4Inst::Ftoi { .. } => "ftoi",
+        Sm4Inst::Ftou { .. } => "ftou",
         Sm4Inst::And { .. } => "and",
         Sm4Inst::Add { .. } => "add",
         Sm4Inst::IAddC { .. } => "iaddc",
@@ -325,6 +328,22 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         &input_sivs,
                     )?;
                 }
+            }
+            Sm4Inst::Itof { dst, src }
+            | Sm4Inst::Utof { dst, src }
+            | Sm4Inst::Ftoi { dst, src }
+            | Sm4Inst::Ftou { dst, src } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    src,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    opcode_name(inst),
+                    &input_sivs,
+                )?;
             }
             Sm4Inst::Add { dst, a, b } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
@@ -700,6 +719,26 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 );
                 emit_write_masked(&mut w, inst_index, "movc", dst.reg, dst.mask, rhs)?;
             }
+            Sm4Inst::Itof { dst, src } => {
+                let src_i = emit_src_vec4_i32(inst_index, "itof", src, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({src_i})"));
+                emit_write_masked(&mut w, inst_index, "itof", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Utof { dst, src } => {
+                let src_u = emit_src_vec4_u32(inst_index, "utof", src, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({src_u})"));
+                emit_write_masked(&mut w, inst_index, "utof", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Ftoi { dst, src } => {
+                let src_f = emit_src_vec4(inst_index, "ftoi", src, &input_sivs)?;
+                let rhs = format!("bitcast<vec4<f32>>(vec4<i32>({src_f}))");
+                emit_write_masked(&mut w, inst_index, "ftoi", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Ftou { dst, src } => {
+                let src_f = emit_src_vec4(inst_index, "ftou", src, &input_sivs)?;
+                let rhs = format!("bitcast<vec4<f32>>(vec4<u32>({src_f}))");
+                emit_write_masked(&mut w, inst_index, "ftou", dst.reg, dst.mask, rhs)?;
+            }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(inst_index, "add", a, &input_sivs)?;
                 let b = emit_src_vec4(inst_index, "add", b, &input_sivs)?;
@@ -1050,6 +1089,157 @@ fn emit_src_vec4(
     Ok(expr)
 }
 
+fn emit_src_vec4_u32(
+    inst_index: usize,
+    opcode: &'static str,
+    src: &crate::sm4_ir::SrcOperand,
+    input_sivs: &HashMap<u32, InputSivInfo>,
+) -> Result<String, GsTranslateError> {
+    let base = match &src.kind {
+        SrcKind::Register(reg) => match reg.file {
+            RegFile::Temp => format!("bitcast<vec4<u32>>(r{})", reg.index),
+            RegFile::Output => format!("bitcast<vec4<u32>>(o{})", reg.index),
+            RegFile::Input => {
+                let info = input_sivs.get(&reg.index).ok_or_else(|| {
+                    GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: format!(
+                            "unsupported input register v{} (expected v#[]/SrcKind::GsInput or a supported system value via dcl_input_siv)",
+                            reg.index
+                        ),
+                    }
+                })?;
+                let u32_expr = match info.sys_value {
+                    D3D_NAME_PRIMITIVE_ID => "primitive_id",
+                    D3D_NAME_GS_INSTANCE_ID => "gs_instance_id",
+                    other => {
+                        return Err(GsTranslateError::UnsupportedOperand {
+                            inst_index,
+                            opcode,
+                            msg: format!(
+                                "unsupported input system value {other} for v{} (only SV_PrimitiveID/SV_GSInstanceID are supported)",
+                                reg.index
+                            ),
+                        })
+                    }
+                };
+                let f = expand_u32_to_vec4(u32_expr, info.mask);
+                format!("bitcast<vec4<u32>>({f})")
+            }
+            RegFile::OutputDepth => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                })
+            }
+        },
+        SrcKind::GsInput { reg, vertex } => {
+            format!("bitcast<vec4<u32>>(gs_load_input(prim_id, {reg}u, {vertex}u))")
+        }
+        SrcKind::ImmediateF32(vals) => {
+            let lanes: Vec<String> = vals.iter().map(|v| format!("0x{v:08x}u")).collect();
+            format!(
+                "vec4<u32>({}, {}, {}, {})",
+                lanes[0], lanes[1], lanes[2], lanes[3]
+            )
+        }
+        other => {
+            return Err(GsTranslateError::UnsupportedOperand {
+                inst_index,
+                opcode,
+                msg: format!("unsupported source kind {other:?}"),
+            })
+        }
+    };
+
+    let mut expr = base;
+    if !src.swizzle.is_identity() {
+        let s = swizzle_suffix(src.swizzle);
+        expr = format!("({expr}).{s}");
+    }
+    expr = apply_modifier_u32(expr, src.modifier);
+    Ok(expr)
+}
+
+fn emit_src_vec4_i32(
+    inst_index: usize,
+    opcode: &'static str,
+    src: &crate::sm4_ir::SrcOperand,
+    input_sivs: &HashMap<u32, InputSivInfo>,
+) -> Result<String, GsTranslateError> {
+    let base = match &src.kind {
+        SrcKind::Register(reg) => match reg.file {
+            RegFile::Temp => format!("bitcast<vec4<i32>>(r{})", reg.index),
+            RegFile::Output => format!("bitcast<vec4<i32>>(o{})", reg.index),
+            RegFile::Input => {
+                let info = input_sivs.get(&reg.index).ok_or_else(|| {
+                    GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: format!(
+                            "unsupported input register v{} (expected v#[]/SrcKind::GsInput or a supported system value via dcl_input_siv)",
+                            reg.index
+                        ),
+                    }
+                })?;
+                let u32_expr = match info.sys_value {
+                    D3D_NAME_PRIMITIVE_ID => "primitive_id",
+                    D3D_NAME_GS_INSTANCE_ID => "gs_instance_id",
+                    other => {
+                        return Err(GsTranslateError::UnsupportedOperand {
+                            inst_index,
+                            opcode,
+                            msg: format!(
+                                "unsupported input system value {other} for v{} (only SV_PrimitiveID/SV_GSInstanceID are supported)",
+                                reg.index
+                            ),
+                        })
+                    }
+                };
+                let f = expand_u32_to_vec4(u32_expr, info.mask);
+                format!("bitcast<vec4<i32>>({f})")
+            }
+            RegFile::OutputDepth => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                })
+            }
+        },
+        SrcKind::GsInput { reg, vertex } => {
+            format!("bitcast<vec4<i32>>(gs_load_input(prim_id, {reg}u, {vertex}u))")
+        }
+        SrcKind::ImmediateF32(vals) => {
+            let lanes: Vec<String> = vals
+                .iter()
+                .map(|v| format!("bitcast<i32>(0x{v:08x}u)"))
+                .collect();
+            format!(
+                "vec4<i32>({}, {}, {}, {})",
+                lanes[0], lanes[1], lanes[2], lanes[3]
+            )
+        }
+        other => {
+            return Err(GsTranslateError::UnsupportedOperand {
+                inst_index,
+                opcode,
+                msg: format!("unsupported source kind {other:?}"),
+            })
+        }
+    };
+
+    let mut expr = base;
+    if !src.swizzle.is_identity() {
+        let s = swizzle_suffix(src.swizzle);
+        expr = format!("({expr}).{s}");
+    }
+    expr = apply_modifier(expr, src.modifier);
+    Ok(expr)
+}
+
 fn expand_u32_to_vec4(expr_u32: &str, mask: WriteMask) -> String {
     // For system values, follow the same missing-component defaults as regular vertex inputs:
     // (0, 0, 0, 1).
@@ -1094,6 +1284,17 @@ fn apply_modifier(expr: String, modifier: OperandModifier) -> String {
         OperandModifier::Neg => format!("-({expr})"),
         OperandModifier::Abs => format!("abs({expr})"),
         OperandModifier::AbsNeg => format!("-abs({expr})"),
+    }
+}
+
+fn apply_modifier_u32(expr: String, modifier: OperandModifier) -> String {
+    match modifier {
+        OperandModifier::None => expr,
+        // WGSL does not support unary negation on `u32`. DXBC operand modifiers are defined over
+        // raw 32-bit values, so model `-x` as wrapping subtraction from 0.
+        OperandModifier::Neg | OperandModifier::AbsNeg => format!("vec4<u32>(0u) - ({expr})"),
+        // `abs` is a no-op for unsigned integers.
+        OperandModifier::Abs => expr,
     }
 }
 
@@ -1288,6 +1489,93 @@ mod tests {
         assert!(
             wgsl.contains("gs_exec_primitive(prim_id, gs_instance_id,"),
             "expected primitive invocation to receive gs_instance_id:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn gs_translate_emits_numeric_conversions() {
+        // Ensure GS prepass translation supports explicit SM4 numeric conversion ops, which are
+        // commonly emitted by HLSL when mixing integer and float math.
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point,
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip,
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![
+                // r0 = raw integer bits [1,2,3,4]
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([1, 2, 3, 4]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                // r1 = itof(r0)
+                Sm4Inst::Itof {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                // r2 = ftoi(r1)
+                Sm4Inst::Ftoi {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 2,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl =
+            translate_gs_module_to_wgsl_compute_prepass(&module).expect("translation should succeed");
+        assert!(
+            wgsl.contains("vec4<f32>(bitcast<vec4<i32>>(r0))"),
+            "expected itof to lower via bitcast<i32> then numeric cast:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("bitcast<vec4<f32>>(vec4<i32>(r1))"),
+            "expected ftoi to lower via numeric cast to i32 then bitcast back to f32 bits:\n{wgsl}"
         );
     }
 }
