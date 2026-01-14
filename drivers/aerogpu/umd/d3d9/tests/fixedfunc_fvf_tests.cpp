@@ -20007,6 +20007,169 @@ bool TestFixedfuncFogRhwTex1SelectsFogVsAndUsesWDivision() {
   return true;
 }
 
+bool TestVsOnlyInteropIgnoresFogState() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateShader != nullptr, "pfnCreateShader is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShader != nullptr, "pfnSetShader is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+
+  // Use a vertex format + stage state that produces a non-trivial fixed-function
+  // PS (one texld). We'll then enable fog and verify that in VS-only interop
+  // mode the PS does *not* gain fog behavior or fog constant uploads.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: modulate tex0 * diffuse.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "stage0 COLORARG2=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  // Bind only a user VS (PS stays NULL) to enter VS-only interop mode.
+  D3D9DDI_HSHADER hUserVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStageVs,
+                                            fixedfunc::kVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor)),
+                                            &hUserVs);
+  if (!Check(hr == S_OK, "CreateShader(user VS)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hUserVs);
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hUserVs);
+  if (!Check(hr == S_OK, "SetShader(VS=user)")) {
+    return false;
+  }
+
+  // Enable fog while still in VS-only interop. The fixed-function PS key
+  // intentionally ignores fog in this mode so the PS input layout remains stable.
+  constexpr float fog_start = 0.25f;
+  constexpr float fog_end = 0.75f;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1; VS-only interop)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR; VS-only interop)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red; VS-only interop)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART; VS-only interop)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND; VS-only interop)")) {
+    return false;
+  }
+
+  // Draw once and ensure the command stream does not upload fog constants (c1..c2).
+  dev->cmd.reset();
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      // Treat POSITIONT as clip-space (since the user VS does a pass-through mov oPos, v0).
+      {-1.0f, -1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only interop; fog enabled)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->user_vs != nullptr && dev->vs == dev->user_vs, "VS-only interop: user VS bound")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "VS-only interop: PS bound")) {
+      return false;
+    }
+    if (!Check(ShaderCountToken(dev->ps, kPsOpTexld) == 1, "VS-only interop: stage0 PS contains 1 texld")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, 0x20E40001u), "VS-only interop: PS does not reference fog c1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only interop fog)")) {
+    return false;
+  }
+  size_t fog_uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1u && sc->vec4_count == 2u) {
+      ++fog_uploads;
+    }
+  }
+  if (!Check(fog_uploads == 0, "VS-only interop: does not upload fog constants")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogTableModeTakesPrecedenceOverVertexMode() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -20916,6 +21079,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogRhwTex1SelectsFogVsAndUsesWDivision()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyInteropIgnoresFogState()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogRhwColorSelectsFogVsAndUsesWDivision()) {
