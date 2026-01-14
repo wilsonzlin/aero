@@ -1068,25 +1068,15 @@ static IrqQueryResult QueryDevInstIrqModeWithParentFallback(DEVINST devinst) {
   return last;
 }
 
-static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::vector<std::wstring>& hwid_needles,
-                                const std::vector<std::wstring>& fallback_needles = {}) {
+static void EmitVirtioIrqMarkerForDevInst(Logger& log, const char* dev_name, DEVINST devinst) {
   if (!dev_name) return;
-
-  // Fast path: restrict to PCI enumerated devices.
-  auto matches = FindPresentDevNodesByHwidSubstrings(L"PCI", hwid_needles);
-  if (matches.empty() && !fallback_needles.empty()) {
-    matches = FindPresentDevNodesByHwidSubstrings(nullptr, fallback_needles);
-  }
-
-  if (matches.empty()) {
+  if (devinst == 0) {
     log.Logf("%s-irq|WARN|reason=device_missing", dev_name);
     return;
   }
 
-  const DEVINST dn = matches.front().devinst;
-  const auto irq = QueryDevInstIrqModeWithParentFallback(dn);
+  const auto irq = QueryDevInstIrqModeWithParentFallback(devinst);
   if (!irq.ok) {
-    // Keep the marker format stable for host-side parsing: always a single `reason=...` payload.
     log.Logf("%s-irq|WARN|reason=%s", dev_name,
              irq.reason.empty() ? "resource_query_failed" : irq.reason.c_str());
     return;
@@ -1098,6 +1088,24 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
   }
 
   log.Logf("%s-irq|INFO|mode=msi|messages=%lu", dev_name, static_cast<unsigned long>(irq.info.messages));
+}
+
+static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::vector<std::wstring>& hwid_needles,
+                                const std::vector<std::wstring>& fallback_needles = {}) {
+  if (!dev_name) return;
+
+  // Fast path: restrict to PCI enumerated devices.
+  auto matches = FindPresentDevNodesByHwidSubstrings(L"PCI", hwid_needles);
+  if (matches.empty() && !fallback_needles.empty()) {
+    matches = FindPresentDevNodesByHwidSubstrings(nullptr, fallback_needles);
+  }
+
+  if (matches.empty()) {
+    EmitVirtioIrqMarkerForDevInst(log, dev_name, 0);
+    return;
+  }
+
+  EmitVirtioIrqMarkerForDevInst(log, dev_name, matches.front().devinst);
 }
 
 struct VirtioSndPciIdInfo {
@@ -1488,6 +1496,7 @@ static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_
 }
 
 struct VirtioSndPciDevice {
+  DEVINST devinst = 0;
   std::wstring instance_id;
   std::wstring description;
   std::vector<std::wstring> hwids;
@@ -1543,6 +1552,7 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (!id_info.modern && !id_info.transitional) continue;
 
     VirtioSndPciDevice snd{};
+    snd.devinst = dev.DevInst;
     snd.hwids = hwids;
     snd.is_modern = id_info.modern;
     snd.has_rev_01 = id_info.modern_rev01;
@@ -2379,6 +2389,9 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
 
 struct VirtioInputTestResult {
   bool ok = false;
+  // Best-effort devnode handle for a matching virtio-input HID device. This can be used to walk up the device tree
+  // to the owning PCI function and query interrupt resources via cfgmgr32.
+  DEVINST devinst = 0;
   int matched_devices = 0;
   int keyboard_devices = 0;
   int mouse_devices = 0;
@@ -2743,6 +2756,7 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     }
 
     out.matched_devices++;
+    if (out.devinst == 0) out.devinst = dev.DevInst;
 
     auto desc = GetDevicePropertyString(devinfo, &dev, SPDRP_DEVICEDESC);
     if (desc) {
@@ -3750,8 +3764,12 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
 }
 
 struct VirtioNetAdapter {
-  DEVINST devinst = 0; // CM devnode instance handle (for resource queries)
+  // NetCfg instance GUID (used by GetAdaptersAddresses).
   std::wstring instance_id;   // e.g. "{GUID}"
+  // PnP devnode for the adapter (used for cfgmgr32 resource queries).
+  DEVINST devinst = 0;
+  // PnP device instance ID string (diagnostics only).
+  std::wstring pnp_instance_id;
   std::wstring friendly_name; // optional
   std::wstring service;       // SPDRP_SERVICE (bound driver service name)
   std::vector<std::wstring> hardware_ids; // SPDRP_HARDWAREID (optional; for debugging/contract checks)
@@ -3780,6 +3798,9 @@ static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
     VirtioNetAdapter adapter{};
     adapter.devinst = dev.DevInst;
     adapter.hardware_ids = hwids;
+    if (auto inst_id = GetDeviceInstanceIdString(devinfo, &dev)) {
+      adapter.pnp_instance_id = *inst_id;
+    }
     if (auto inst = GetDevicePropertyString(devinfo, &dev, SPDRP_NETCFG_INSTANCE_ID)) {
       adapter.instance_id = *inst;
     }
@@ -4523,6 +4544,8 @@ static bool HttpPostLargeDeterministic(Logger& log, const std::wstring& url, uin
 
 struct VirtioNetTestResult {
   bool ok = false;
+  // Best-effort devnode for the selected adapter (if any).
+  DEVINST devinst = 0;
   bool large_ok = false;
   uint64_t large_bytes = 0;
   uint64_t large_hash = 0;
@@ -4570,6 +4593,7 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
     log.LogLine("virtio-net: timed out waiting for adapter to be UP with non-APIPA IPv4");
     return out;
   }
+  out.devinst = chosen->devinst;
 
   // Ensure the selected NIC is using the in-tree Aero virtio-net miniport, not a third-party
   // virtio driver (e.g. virtio-win netkvm). Also ensure the device matches the Aero contract HWID.
@@ -7496,8 +7520,13 @@ int wmain(int argc, wchar_t** argv) {
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.tablet_devices, input.tablet_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
-  EmitVirtioIrqMarker(log, "virtio-input", {L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
-                      {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
+  if (input.devinst != 0) {
+    EmitVirtioIrqMarkerForDevInst(log, "virtio-input", input.devinst);
+  } else {
+    EmitVirtioIrqMarker(log, "virtio-input", {L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
+                        {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
+                         L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
+  }
   all_ok = all_ok && input.ok;
 
   if (!opt.test_input_events) {
@@ -7917,13 +7946,16 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
-  if (opt.allow_virtio_snd_transitional) {
+  if (!snd_pci.empty() && snd_pci.front().devinst != 0) {
+    EmitVirtioIrqMarkerForDevInst(log, "virtio-snd", snd_pci.front().devinst);
+  } else if (opt.allow_virtio_snd_transitional) {
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"});
   } else {
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059"});
   }
 
   // Network tests require Winsock initialized for getaddrinfo.
+  DEVINST net_devinst = 0;
   WSADATA wsa{};
   const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &wsa);
   if (wsa_rc != 0) {
@@ -7932,6 +7964,7 @@ int wmain(int argc, wchar_t** argv) {
     all_ok = false;
   } else {
     const auto net = VirtioNetTest(log, opt);
+    net_devinst = net.devinst;
     log.Logf(
         "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
         "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d",
@@ -7943,7 +7976,11 @@ int wmain(int argc, wchar_t** argv) {
     WSACleanup();
   }
 
-  EmitVirtioIrqMarker(log, "virtio-net", {L"PCI\\VEN_1AF4&DEV_1041"});
+  if (net_devinst != 0) {
+    EmitVirtioIrqMarkerForDevInst(log, "virtio-net", net_devinst);
+  } else {
+    EmitVirtioIrqMarker(log, "virtio-net", {L"PCI\\VEN_1AF4&DEV_1041"});
+  }
 
   log.Logf("AERO_VIRTIO_SELFTEST|RESULT|%s", all_ok ? "PASS" : "FAIL");
   return all_ok ? 0 : 1;
