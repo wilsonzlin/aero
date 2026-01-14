@@ -757,6 +757,46 @@ describe("io/bus/pci", () => {
     expect(base % 0x4000n).toBe(0n);
   });
 
+  it("rounds MMIO reservations up to 4KiB", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    pciBus.reserveMmio(1);
+
+    const dev: PciDevice = {
+      name: "reserved_align_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    const base = BigInt(bar0) & 0xffff_fff0n;
+    expect(base).toBe(BigInt(PCI_MMIO_BASE) + 0x1000n);
+  });
+
+  it("rejects reserving MMIO space after allocating a MMIO BAR base", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const dev: PciDevice = {
+      name: "reserve_too_late_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+    };
+    pciBus.registerDevice(dev, { device: 0, function: 0 });
+
+    expect(() => pciBus.reserveMmio(0x1000)).toThrow(/before MMIO BAR allocation/i);
+  });
+
   it("prevents initPciConfig() from changing the header type (BAR writes must still remap)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
