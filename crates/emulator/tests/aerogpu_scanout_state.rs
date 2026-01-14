@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use aero_shared::scanout_state::{
     ScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8,
-    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
+    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_FORMAT_R8G8B8A8, SCANOUT_FORMAT_R8G8B8A8_SRGB,
+    SCANOUT_FORMAT_R8G8B8X8, SCANOUT_FORMAT_R8G8B8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT,
+    SCANOUT_SOURCE_WDDM,
 };
 use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
@@ -127,7 +129,7 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
 }
 
 #[test]
-fn preserves_bgra_and_srgb_scanout_formats_in_shared_state() {
+fn preserves_supported_scanout_formats_in_shared_state() {
     let mut mem = DummyMemory;
     let scanout = Arc::new(ScanoutState::new());
 
@@ -174,4 +176,42 @@ fn preserves_bgra_and_srgb_scanout_formats_in_shared_state() {
     );
     let snap = scanout.snapshot();
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
+
+    // RGBA/RGBX should also be preserved (scanout consumer supports both channel orderings).
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8A8Unorm as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8A8);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8X8Unorm as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8X8);
+
+    // sRGB RGBA/RGBX variants should preserve their discriminants as well.
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8A8UnormSrgb as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8A8_SRGB);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8X8UnormSrgb as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8X8_SRGB);
 }
