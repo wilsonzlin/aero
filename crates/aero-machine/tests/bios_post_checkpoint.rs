@@ -52,32 +52,6 @@ fn checksum_ok(bytes: &[u8]) -> bool {
     bytes.iter().fold(0u8, |acc, b| acc.wrapping_add(*b)) == 0
 }
 
-struct MachineMemory<'a> {
-    m: &'a mut Machine,
-}
-
-impl<'a> firmware::memory::MemoryBus for MachineMemory<'a> {
-    fn read_u8(&mut self, addr: u64) -> u8 {
-        self.m.read_physical_u8(addr)
-    }
-
-    fn write_u8(&mut self, addr: u64, value: u8) {
-        self.m.write_physical_u8(addr, value);
-    }
-
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        }
-        let bytes = self.m.read_physical_bytes(paddr, buf.len());
-        buf.copy_from_slice(&bytes);
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        self.m.write_physical(paddr, buf);
-    }
-}
-
 #[test]
 fn boots_mbr_and_writes_to_serial_integration() {
     let mut m = Machine::new(MachineConfig {
@@ -124,10 +98,7 @@ fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
     assert!(checksum_ok(&rsdp));
 
     // SMBIOS EPS should be discoverable by spec search rules.
-    let eps_addr = {
-        let mut bus = MachineMemory { m: &mut m };
-        find_eps(&mut bus).expect("SMBIOS EPS not found after BIOS POST")
-    };
+    let eps_addr = find_eps(&mut m).expect("SMBIOS EPS not found after BIOS POST");
     assert!((EBDA_BASE..EBDA_BASE + 1024).contains(&eps_addr));
 
     let eps = m.read_physical_bytes(eps_addr, 0x1F);

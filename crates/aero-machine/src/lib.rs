@@ -9082,6 +9082,16 @@ impl snapshot::SnapshotTarget for Machine {
     }
 }
 
+impl memory::MemoryBus for Machine {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        self.mem.read_physical(paddr, buf);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        self.mem.write_physical(paddr, buf);
+    }
+}
+
 #[cfg(test)]
 mod virtio_intx_tests;
 

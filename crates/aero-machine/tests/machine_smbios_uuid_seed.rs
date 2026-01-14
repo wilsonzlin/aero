@@ -9,32 +9,6 @@ fn boot_sector() -> [u8; 512] {
     sector
 }
 
-struct MachineMemory<'a> {
-    m: &'a mut Machine,
-}
-
-impl<'a> firmware::memory::MemoryBus for MachineMemory<'a> {
-    fn read_u8(&mut self, addr: u64) -> u8 {
-        self.m.read_physical_u8(addr)
-    }
-
-    fn write_u8(&mut self, addr: u64, value: u8) {
-        self.m.write_physical_u8(addr, value);
-    }
-
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        }
-        let bytes = self.m.read_physical_bytes(paddr, buf.len());
-        buf.copy_from_slice(&bytes);
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        self.m.write_physical(paddr, buf);
-    }
-}
-
 fn find_type1_uuid(table: &[u8]) -> Option<[u8; 16]> {
     let mut i = 0usize;
     while i < table.len() {
@@ -115,10 +89,7 @@ fn smbios_system_uuid_uses_machine_config_seed() {
     m.set_disk_image(boot_sector().to_vec()).unwrap();
     m.reset();
 
-    let eps_addr = {
-        let mut bus = MachineMemory { m: &mut m };
-        find_eps(&mut bus).expect("SMBIOS EPS not found after BIOS POST")
-    };
+    let eps_addr = find_eps(&mut m).expect("SMBIOS EPS not found after BIOS POST");
     let eps = m.read_physical_bytes(eps_addr, 0x1F);
     assert_eq!(&eps[0..4], b"_SM_");
     assert!(validate_eps_checksum(&eps));

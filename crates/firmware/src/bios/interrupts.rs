@@ -622,8 +622,7 @@ fn handle_int13(
                 let buf_off = bus.read_u16(dap_addr + 4);
                 let buf_seg = bus.read_u16(dap_addr + 6);
                 let lba_2048 = bus.read_u64(dap_addr + 8);
-                let mut dst =
-                    cpu.apply_a20(((buf_seg as u64) << 4).wrapping_add(buf_off as u64));
+                let mut dst = cpu.apply_a20(((buf_seg as u64) << 4).wrapping_add(buf_off as u64));
 
                 if dap_size == 0x18 {
                     // 24-byte DAP includes a 64-bit flat pointer at offset 16.
@@ -1897,7 +1896,7 @@ mod tests {
 
         // Drive the rate limiter past the suppression threshold on the first BIOS instance.
         for _ in 0..(LOG_LIMIT + 1) {
-            bios1.dispatch_interrupt(0x77, &mut cpu1, &mut mem1, &mut disk1);
+            bios1.dispatch_interrupt(0x77, &mut cpu1, &mut mem1, &mut disk1, None);
         }
 
         let out1 = String::from_utf8_lossy(bios1.tty_output());
@@ -1922,7 +1921,7 @@ mod tests {
         cpu2.gpr[gpr::RSP] = 0x1000;
         mem2.write_u16(0x1000 + 4, 0x0002);
 
-        bios2.dispatch_interrupt(0x78, &mut cpu2, &mut mem2, &mut disk2);
+        bios2.dispatch_interrupt(0x78, &mut cpu2, &mut mem2, &mut disk2, None);
 
         let out2 = String::from_utf8_lossy(bios2.tty_output());
         assert_eq!(out2.matches("BIOS: unhandled interrupt 78\n").count(), 1);
@@ -3676,7 +3675,7 @@ mod tests {
             },
             Variant {
                 name: "acpi_low_nvs_high",
-                acpi: Some((0x0020_0000, 0x0001_0000)),            // 2MiB..2MiB+64KiB
+                acpi: Some((0x0020_0000, 0x0001_0000)), // 2MiB..2MiB+64KiB
                 nvs: Some((FOUR_GIB + 0x0020_0000, 0x0001_0000)), // 4GiB+2MiB..+64KiB
             },
             Variant {
@@ -3823,7 +3822,9 @@ mod tests {
                         "PCI/MMIO hole",
                     );
                     assert!(
-                        map.iter().any(|e| e.base == FOUR_GIB && e.region_type == E820_RAM && e.length != 0),
+                        map.iter().any(|e| e.base == FOUR_GIB
+                            && e.region_type == E820_RAM
+                            && e.length != 0),
                         "{ctx}: expected remapped high RAM entry starting at 4GiB, map={map:?}"
                     );
 

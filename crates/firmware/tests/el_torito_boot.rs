@@ -279,15 +279,13 @@ fn test_iso_builder_produces_a_minimal_el_torito_layout() {
     assert_eq!(brvd[0], 0x00);
     assert_eq!(&brvd[1..6], b"CD001");
     assert_eq!(brvd[6], 0x01);
-    assert_eq!(
-        &brvd[7..7 + 23],
-        b"EL TORITO SPECIFICATION"
-    );
+    assert_eq!(&brvd[7..7 + 23], b"EL TORITO SPECIFICATION");
     let catalog_lba = u32::from_le_bytes(brvd[0x47..0x47 + 4].try_into().unwrap());
     assert_eq!(catalog_lba, iso.boot_catalog_lba);
 
     // Boot catalog validation entry should contain the 0x55AA key bytes and a correct checksum.
-    let catalog = &iso.bytes[lba_offset(iso.boot_catalog_lba)..lba_offset(iso.boot_catalog_lba) + 64];
+    let catalog =
+        &iso.bytes[lba_offset(iso.boot_catalog_lba)..lba_offset(iso.boot_catalog_lba) + 64];
     assert_eq!(catalog[0], 0x01);
     assert_eq!(catalog[30], 0x55);
     assert_eq!(catalog[31], 0xAA);
@@ -310,7 +308,7 @@ fn test_iso_builder_produces_a_minimal_el_torito_layout() {
     assert_eq!(&iso.boot_image[..8], b"AEROISO!");
     assert_eq!(&iso.boot_image[0x10..0x13], &[0xF4, 0xEB, 0xFE]);
     assert_eq!(&iso.boot_image[510..512], &[0x55, 0xAA]);
- }
+}
 
 #[test]
 fn bios_post_boots_from_cd_eltorito_no_emulation() {
@@ -384,7 +382,11 @@ fn int13_ext_read_cd_via_dispatch_interrupt_reads_2048_sector() {
 
     let flags = bus.read_u16(0x0104);
     assert_eq!(flags & 0x0001, 0, "CF should be cleared on success");
-    assert_ne!(flags & 0x0200, 0, "IF should be preserved from the interrupt frame");
+    assert_ne!(
+        flags & 0x0200,
+        0,
+        "IF should be preserved from the interrupt frame"
+    );
 
     let dst = 0x20000u64;
     let buf = bus.read_bytes(dst, ISO_SECTOR_SIZE);

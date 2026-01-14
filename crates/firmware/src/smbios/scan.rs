@@ -34,6 +34,17 @@ pub struct EpsTableInfo {
     pub table_len: usize,
 }
 
+/// Parsed SMBIOS structure header fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmbiosStructureHeader {
+    /// SMBIOS structure type.
+    pub ty: u8,
+    /// Length of the formatted section, including the 4-byte header.
+    pub len: u8,
+    /// SMBIOS structure handle.
+    pub handle: u16,
+}
+
 /// Scan guest memory for an SMBIOS 2.x Entry Point Structure (EPS) and return
 /// its physical address.
 ///
@@ -165,29 +176,43 @@ pub fn parse_eps_table_info(eps: &[u8]) -> Option<EpsTableInfo> {
 /// - Formatted section (`len` bytes total including header)
 /// - String-set terminated by a double-NUL (`0x00 0x00`)
 pub fn parse_structure_types(table: &[u8]) -> Vec<u8> {
+    parse_structure_headers(table)
+        .into_iter()
+        .map(|h| h.ty)
+        .collect()
+}
+
+/// Walk an SMBIOS structure table and return the structure headers encountered.
+///
+/// The parser stops after the first Type 127 ("End-of-table") structure, or
+/// earlier if the input is malformed/truncated.
+pub fn parse_structure_headers(table: &[u8]) -> Vec<SmbiosStructureHeader> {
     let mut out = Vec::new();
     let mut i = 0usize;
 
     while i < table.len() {
-        // Need at least type + length.
-        if table.len() - i < 2 {
+        // Need at least type + length + handle.
+        if table.len() - i < 4 {
             break;
         }
         let ty = table[i];
-        let len = table[i + 1] as usize;
+        let len = table[i + 1];
+        let len_usize = len as usize;
 
         // `len` includes the 4-byte header (type/len/handle).
-        if len < 4 {
+        if len_usize < 4 {
             break;
         }
 
-        let formatted_end = match i.checked_add(len) {
+        let formatted_end = match i.checked_add(len_usize) {
             Some(v) => v,
             None => break,
         };
         if formatted_end > table.len() {
             break;
         }
+
+        let handle = u16::from_le_bytes([table[i + 2], table[i + 3]]);
 
         // Walk the string-set until the double-NUL terminator.
         let mut j = formatted_end;
@@ -204,7 +229,7 @@ pub fn parse_structure_types(table: &[u8]) -> Vec<u8> {
             break;
         }
 
-        out.push(ty);
+        out.push(SmbiosStructureHeader { ty, len, handle });
         i = j;
 
         if ty == 127 {

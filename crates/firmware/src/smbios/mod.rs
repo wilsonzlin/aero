@@ -12,7 +12,8 @@ mod structures;
 use crate::memory::MemoryBus;
 
 pub use scan::{
-    find_eps, parse_eps_table_info, parse_structure_types, validate_eps_checksum, EpsTableInfo,
+    find_eps, parse_eps_table_info, parse_structure_headers, parse_structure_types,
+    validate_eps_checksum, EpsTableInfo, SmbiosStructureHeader,
 };
 
 /// Configuration for SMBIOS table generation.
