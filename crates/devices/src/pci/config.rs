@@ -652,7 +652,10 @@ impl PciConfigSpace {
             //
             // We enforce this at the config-space write layer rather than inside `MsiCapability` so
             // snapshot restore can still round-trip pending bits via `PciConfigSpaceState::bytes`.
-            if let Some(msi) = cap.as_any().downcast_ref::<crate::pci::msi::MsiCapability>() {
+            if let Some(msi) = cap
+                .as_any()
+                .downcast_ref::<crate::pci::msi::MsiCapability>()
+            {
                 if msi.per_vector_masking() {
                     let pending_off = base + if msi.is_64bit() { 0x14 } else { 0x10 };
                     if addr >= pending_off && addr < pending_off + 4 {

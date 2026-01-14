@@ -17,11 +17,13 @@ fn aerogpu_bar0_base_is_allocated_by_bios_post() {
     };
 
     let m = Machine::new(cfg).expect("machine should construct");
-    assert!(m.aerogpu().is_some(), "expected aerogpu handle when enabled");
+    assert!(
+        m.aerogpu().is_some(),
+        "expected aerogpu handle when enabled"
+    );
 
     let bar0 = m
         .aerogpu_bar0_base()
         .expect("expected AeroGPU BAR0 base after BIOS POST");
     assert_ne!(bar0, 0, "AeroGPU BAR0 base should be non-zero");
 }
-

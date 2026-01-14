@@ -65,7 +65,7 @@ fn aerogpu_mode13h_render_uses_vga_dac_palette_and_pel_mask() {
     m.io_write(0x3C9, 1, 0); // R
     m.io_write(0x3C9, 1, 63); // G
     m.io_write(0x3C9, 1, 0); // B
-    // entry 1: red
+                             // entry 1: red
     m.io_write(0x3C9, 1, 63); // R
     m.io_write(0x3C9, 1, 0); // G
     m.io_write(0x3C9, 1, 0); // B
@@ -82,4 +82,3 @@ fn aerogpu_mode13h_render_uses_vga_dac_palette_and_pel_mask() {
     assert_eq!(m.display_framebuffer()[0], 0xFF00_FF00);
     assert_eq!(m.io_read(0x3C6, 1) as u8, 0x00);
 }
-

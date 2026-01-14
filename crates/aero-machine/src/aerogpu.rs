@@ -5,12 +5,12 @@ use std::collections::{HashSet, VecDeque};
 use aero_devices::clock::{Clock as _, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
-use aero_devices_gpu::AeroGpuFormat;
 use aero_devices_gpu::ring::{
     write_fence_page, AEROGPU_RING_HEADER_SIZE_BYTES as RING_HEADER_SIZE_BYTES, RING_HEAD_OFFSET,
     RING_TAIL_OFFSET,
 };
 use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
+use aero_devices_gpu::AeroGpuFormat;
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
@@ -1069,7 +1069,10 @@ impl AeroGpuMmioDevice {
                 || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
                 || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
                 || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 => 4u64,
+                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
+            {
+                4u64
+            }
             x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
                 || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
             {
@@ -1748,10 +1751,7 @@ impl AeroGpuMmioDevice {
                         // Only applies when the bridge is enabled; otherwise fences are completed
                         // immediately (legacy bring-up behaviour).
                         if self.submission_bridge_enabled && dropped.signal_fence != 0 {
-                            self.record_error(
-                                pci::AerogpuErrorCode::Backend,
-                                dropped.signal_fence,
-                            );
+                            self.record_error(pci::AerogpuErrorCode::Backend, dropped.signal_fence);
                             self.backend_completed_fences.insert(dropped.signal_fence);
                         }
                     }

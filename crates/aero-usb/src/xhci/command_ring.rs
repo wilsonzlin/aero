@@ -2239,12 +2239,19 @@ mod tests {
         let dev = processor
             .port_device(1)
             .expect("root port device must still exist");
-        assert_eq!(dev.address(), 0, "device must not observe SET_ADDRESS side effects");
+        assert_eq!(
+            dev.address(),
+            0,
+            "device must not observe SET_ADDRESS side effects"
+        );
 
         let slot = processor.slots[usize::from(slot_id)]
             .as_ref()
             .expect("slot state must exist");
-        assert_eq!(slot.address, 0, "controller must not allocate an address on failure");
+        assert_eq!(
+            slot.address, 0,
+            "controller must not allocate an address on failure"
+        );
 
         let out_slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
         assert_eq!(

@@ -1413,18 +1413,24 @@ fn decodes_and_translates_loop_with_breakc_and_continuec() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
     assert!(
-        module
-            .instructions
-            .iter()
-            .any(|i| matches!(i, Sm4Inst::BreakC { op: Sm4CmpOp::Lt, .. })),
+        module.instructions.iter().any(|i| matches!(
+            i,
+            Sm4Inst::BreakC {
+                op: Sm4CmpOp::Lt,
+                ..
+            }
+        )),
         "expected BreakC instruction in decoded module: {:#?}",
         module.instructions
     );
     assert!(
-        module
-            .instructions
-            .iter()
-            .any(|i| matches!(i, Sm4Inst::ContinueC { op: Sm4CmpOp::Gt, .. })),
+        module.instructions.iter().any(|i| matches!(
+            i,
+            Sm4Inst::ContinueC {
+                op: Sm4CmpOp::Gt,
+                ..
+            }
+        )),
         "expected ContinueC instruction in decoded module: {:#?}",
         module.instructions
     );

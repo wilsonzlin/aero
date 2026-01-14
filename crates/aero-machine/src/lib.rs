@@ -63,9 +63,9 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
     bios_post_with_extra_reservations, msix::PCI_CAP_ID_MSIX, register_pci_config_ports,
-    MsiCapability, MsixCapability, PciBarDefinition, PciBarKind, PciBarMmioHandler, PciBarMmioRouter,
-    PciBarRange, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    MsiCapability, MsixCapability, PciBarDefinition, PciBarKind, PciBarMmioHandler,
+    PciBarMmioRouter, PciBarRange, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot,
+    PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -9554,7 +9554,7 @@ impl Machine {
                     &mut allocator,
                     legacy_vga_lfb_reservation.into_iter(),
                 )
-                    .expect("PCI BIOS POST resource assignment should succeed");
+                .expect("PCI BIOS POST resource assignment should succeed");
             }
 
             // Keep the device model's internal PCI command register mirrored from the canonical PCI

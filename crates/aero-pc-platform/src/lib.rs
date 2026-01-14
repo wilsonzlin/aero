@@ -2111,7 +2111,11 @@ impl PcPlatform {
                         let mut dev = virtio_for_intx.borrow_mut();
                         // Mirror MSI-X enable/mask bits into the runtime virtio transport so INTx
                         // is suppressed once MSI-X is enabled in canonical PCI config space.
-                        sync_msix_capability_into_config(dev.config_mut(), msix_enabled, msix_masked);
+                        sync_msix_capability_into_config(
+                            dev.config_mut(),
+                            msix_enabled,
+                            msix_masked,
+                        );
                         dev.set_pci_command(command);
                         dev.irq_level()
                     }),

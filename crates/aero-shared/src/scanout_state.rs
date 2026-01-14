@@ -429,10 +429,7 @@ mod tests {
         assert_eq!(SCANOUT_FORMAT_R8G8B8A8, AerogpuFormat::R8G8B8A8Unorm as u32);
         assert_eq!(SCANOUT_FORMAT_R8G8B8X8, AerogpuFormat::R8G8B8X8Unorm as u32);
         assert_eq!(SCANOUT_FORMAT_B5G6R5, AerogpuFormat::B5G6R5Unorm as u32);
-        assert_eq!(
-            SCANOUT_FORMAT_B5G5R5A1,
-            AerogpuFormat::B5G5R5A1Unorm as u32
-        );
+        assert_eq!(SCANOUT_FORMAT_B5G5R5A1, AerogpuFormat::B5G5R5A1Unorm as u32);
         assert_eq!(
             SCANOUT_FORMAT_B8G8R8X8_SRGB,
             AerogpuFormat::B8G8R8X8UnormSrgb as u32

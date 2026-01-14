@@ -1049,11 +1049,10 @@ impl D3D11Runtime {
 
         let mut linked_fs_wgsl = Cow::Borrowed(fs.wgsl.as_str());
         if ps_can_trim_inputs && ps_link_locations != ps_declared_inputs {
-            linked_fs_wgsl =
-                Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-                    linked_fs_wgsl.as_ref(),
-                    &ps_link_locations,
-                ));
+            linked_fs_wgsl = Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                linked_fs_wgsl.as_ref(),
+                &ps_link_locations,
+            ));
         }
 
         // WebGPU requires every fragment `@location(N)` output to have a corresponding

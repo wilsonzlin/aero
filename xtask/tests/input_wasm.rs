@@ -398,7 +398,9 @@ fn said_wasm_reports_missing_wasm_pack() -> Result<(), Box<dyn std::error::Error
         .assert()
         .failure()
         .code(1)
-        .stderr(predicates::str::contains("missing required command: wasm-pack"))
+        .stderr(predicates::str::contains(
+            "missing required command: wasm-pack",
+        ))
         .stderr(predicates::str::contains("Install wasm-pack"));
 
     Ok(())

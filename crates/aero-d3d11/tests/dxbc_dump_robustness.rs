@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
 use aero_d3d11::DxbcFile;
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 #[test]
 fn dxbc_dump_warns_and_truncates_misaligned_shader_chunk() {

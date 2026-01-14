@@ -3765,16 +3765,10 @@ fn translate_entrypoint_rejects_predicate_register_as_dst_operand() {
 fn translate_entrypoint_rejects_addr_register_write_with_mov() {
     // Address registers (`a#`) are only writable via `mova` in D3D9.
     let mut words = vec![0xFFFE_0300]; // vs_3_0
-    // mov a0.x, a0.x
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(3, 0, 0x1), enc_src(3, 0, 0xE4)],
-    ));
+                                       // mov a0.x, a0.x
+    words.extend(enc_inst(0x0001, &[enc_dst(3, 0, 0x1), enc_src(3, 0, 0xE4)]));
     // mov oPos, v0 (otherwise-valid VS output)
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
     let err = shader_translate::translate_d3d9_shader_to_wgsl(

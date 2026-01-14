@@ -3224,7 +3224,9 @@ impl XhciController {
             let step_budget = *ring_poll_budget;
             let poll_work = exec.poll_endpoint_counted(mem, ep_addr, step_budget);
             *ring_poll_budget = ring_poll_budget.saturating_sub(poll_work.ring_poll_steps);
-            work.ring_poll_steps = work.ring_poll_steps.saturating_add(poll_work.ring_poll_steps);
+            work.ring_poll_steps = work
+                .ring_poll_steps
+                .saturating_add(poll_work.ring_poll_steps);
 
             let after = exec
                 .endpoint_state(ep_addr)

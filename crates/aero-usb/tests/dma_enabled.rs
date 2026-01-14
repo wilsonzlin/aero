@@ -4,8 +4,8 @@ use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs as uhci_regs;
 use aero_usb::uhci::UhciController;
 use aero_usb::xhci::regs as xhci_regs;
-use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::transfer::{Ep0TransferEngine, XhciTransferExecutor};
+use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
 

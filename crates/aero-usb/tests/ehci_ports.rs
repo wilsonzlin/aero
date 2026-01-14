@@ -749,5 +749,9 @@ fn ehci_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_h
         0,
         "port should remain suspended when hub remote wake is disabled"
     );
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state while suspended");
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b10 << 10,
+        "expected J-state while suspended"
+    );
 }

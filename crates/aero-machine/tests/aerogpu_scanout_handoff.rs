@@ -263,7 +263,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until the guest explicitly
     // disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets. Explicit disable releases WDDM
     // ownership and allows falling back to the legacy presentation paths.
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        0,
+    );
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
