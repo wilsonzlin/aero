@@ -212,7 +212,27 @@ impl MouseInterface {
     }
 
     fn flush_motion(&mut self, configured: bool) {
+        // USB interrupt endpoints are inactive until the device is configured; align with
+        // `push_report` semantics by dropping accumulated motion immediately.
+        if !configured {
+            self.dx = 0;
+            self.dy = 0;
+            self.wheel = 0;
+            self.hwheel = 0;
+            return;
+        }
+
+        // Cap per-flush work so absurd/hostile deltas can't spin in an unbounded loop producing
+        // reports that will be dropped by the bounded queue anyway.
+        let mut emitted = 0usize;
         while self.dx != 0 || self.dy != 0 || self.wheel != 0 || self.hwheel != 0 {
+            if emitted >= MAX_PENDING_MOUSE_REPORTS {
+                self.dx = 0;
+                self.dy = 0;
+                self.wheel = 0;
+                self.hwheel = 0;
+                break;
+            }
             let step_x = self.dx.clamp(-127, 127) as i8;
             let step_y = self.dy.clamp(-127, 127) as i8;
             let step_wheel = self.wheel.clamp(-127, 127) as i8;
@@ -233,6 +253,7 @@ impl MouseInterface {
                 },
                 configured,
             );
+            emitted += 1;
         }
     }
 

@@ -386,7 +386,29 @@ impl UsbHidMouse {
     }
 
     fn flush_motion(&mut self) {
+        // USB interrupt endpoints are inactive until the guest sets a configuration. Align with
+        // `push_report` semantics by dropping any accumulated motion immediately rather than
+        // looping to "split" a delta into reports that will be discarded anyway.
+        if self.configuration == 0 {
+            self.dx = 0;
+            self.dy = 0;
+            self.wheel = 0;
+            self.hwheel = 0;
+            return;
+        }
+
+        // Host input is untrusted and can be arbitrarily large. Don't allow a single injected
+        // delta to spin in an unbounded loop trying to produce millions of reports; cap per-flush
+        // work to the size of the pending report queue and drop any remainder.
+        let mut emitted = 0usize;
         while self.dx != 0 || self.dy != 0 || self.wheel != 0 || self.hwheel != 0 {
+            if emitted >= MAX_PENDING_REPORTS {
+                self.dx = 0;
+                self.dy = 0;
+                self.wheel = 0;
+                self.hwheel = 0;
+                break;
+            }
             let step_x = self.dx.clamp(-127, 127) as i8;
             let step_y = self.dy.clamp(-127, 127) as i8;
             let step_wheel = self.wheel.clamp(-127, 127) as i8;
@@ -404,6 +426,7 @@ impl UsbHidMouse {
                 wheel: step_wheel,
                 hwheel: step_hwheel,
             });
+            emitted += 1;
         }
     }
 

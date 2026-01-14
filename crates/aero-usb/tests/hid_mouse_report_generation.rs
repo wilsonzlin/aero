@@ -125,6 +125,27 @@ fn mouse_motion_splits_large_dx_dy_into_multiple_reports() {
 }
 
 #[test]
+fn mouse_motion_bounds_packet_generation_for_extreme_deltas() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    // Chosen to require >128 reports (127*200 + 1). Without a work cap this would produce 201
+    // reports and rely on queue eviction; with a cap we should not reach the final remainder.
+    mouse.movement(127 * 200 + 1, 0);
+
+    let reports = drain_interrupt_reports(&mut mouse);
+    assert_eq!(
+        reports.len(),
+        128,
+        "expected extreme motion to be capped to the pending report limit"
+    );
+
+    let last = reports.last().expect("expected at least one report");
+    let (_buttons, x, _y, _wheel, _hwheel) = parse_report(last);
+    assert_eq!(x, 127, "expected capped motion to drop the final remainder report");
+}
+
+#[test]
 fn mouse_wheel_splits_deltas_with_saturation_and_remainder() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);
