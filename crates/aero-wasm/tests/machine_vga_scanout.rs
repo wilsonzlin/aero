@@ -355,3 +355,45 @@ fn machine_vbe_scanout_reflects_programmed_mode_and_pixels() {
     assert_eq!(disp_copy.len(), 64 * 64 * 4);
     assert_eq!(&disp_copy[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }
+
+#[test]
+fn machine_aerogpu_display_scanout_exports_non_empty_rgba8888_framebuffer() {
+    // Reuse the legacy text-mode boot sector and validate that the unified `display_*` API can
+    // surface scanout even when the standalone VGA/VBE device is disabled (AeroGPU path).
+    let boot = boot_sector_write_a_to_b8000();
+
+    let mut m = Machine::new_with_config(16 * 1024 * 1024, true, Some(false), None)
+        .expect("Machine::new_with_config(enable_aerogpu=true, enable_vga=false) should succeed");
+    assert!(
+        m.aerogpu_present(),
+        "expected AeroGPU to be present when enable_aerogpu=true"
+    );
+    m.set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+    m.reset();
+    run_until_halt(&mut m);
+
+    // This should render the AeroGPU-backed legacy text mode into the unified display buffer.
+    m.display_present();
+    let width = m.display_width();
+    let height = m.display_height();
+    assert!(width > 0, "display_width must be non-zero when scanout is present");
+    assert!(
+        height > 0,
+        "display_height must be non-zero when scanout is present"
+    );
+    assert_eq!(m.display_stride_bytes(), width.saturating_mul(4));
+
+    let copy = m.display_framebuffer_copy_rgba8888();
+    assert!(!copy.is_empty(), "copied display framebuffer should be non-empty");
+
+    let blank = fnv1a_blank_rgba8(copy.len());
+    let hash = fnv1a(&copy);
+    assert_ne!(
+        hash, blank,
+        "expected AeroGPU display framebuffer hash to differ from blank screen"
+    );
+
+    // The raw pointer view is only meaningful for wasm32 builds; native builds return 0.
+    assert_eq!(m.display_framebuffer_ptr(), 0);
+}
