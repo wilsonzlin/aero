@@ -178,10 +178,6 @@ async fn cow_opfs_open_unavailable_error_includes_operation_and_both_paths_and_h
 
 #[wasm_bindgen_test(async)]
 async fn install_media_iso_opfs_existing_unavailable_error_includes_operation_and_hint() {
-    if cfg!(target_feature = "atomics") {
-        // This API is intentionally unsupported in threaded WASM builds.
-        return;
-    }
     if aero_opfs::opfs_sync_access_supported() {
         return;
     }
