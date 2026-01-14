@@ -971,7 +971,7 @@ fn wgsl_predicated_derivative_avoids_non_uniform_control_flow() {
         opcode_token(31, 1) | (5u32 << 16),
         dst_token(1, 0, 0xF),
         // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
-        opcode_token(78, 3) | (0u32 << 16),
+        opcode_token(78, 3),
         dst_token(19, 0, 0xF),
         src_token(1, 0, 0x00, 0), // v0.xxxx
         src_token(2, 0, 0x00, 0), // c0.xxxx
