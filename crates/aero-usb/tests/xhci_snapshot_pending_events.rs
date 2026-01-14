@@ -254,7 +254,7 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     }
 
     let mut xhci = XhciController::new();
-    let mem_no_dma = NoDmaMem::default();
+    let mut mem_no_dma = NoDmaMem::default();
 
     // Program CRCR and set RUN while DMA is disabled: the controller should latch the RUN edge but
     // must not DMA or raise an interrupt yet.

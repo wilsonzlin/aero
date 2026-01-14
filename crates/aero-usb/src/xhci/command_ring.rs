@@ -32,9 +32,16 @@ const DEVICE_EP0_CTX_OFFSET: u64 = CONTEXT_SIZE;
 // - DW3 bits 0..=7: USB Device Address (xHC-owned after Address Device)
 // - DW3 bits 27..=31: Slot State (xHC-owned)
 //
+// Additionally, for this minimal controller model, we treat the topology binding fields as
+// controller-owned *after* Address Device has established the slot's topology:
+// - DW0 bits 0..=19: Route String
+// - DW1 bits 16..=23: Root Hub Port Number
+//
 // When copying Slot Contexts from guest-provided Input Contexts into the output Device Context we
 // must preserve controller-owned fields.
+const SLOT_ROUTE_STRING_MASK_DWORD0: u32 = 0x000F_FFFF;
 const SLOT_SPEED_MASK_DWORD0: u32 = 0x00F0_0000;
+const SLOT_ROOT_HUB_PORT_MASK_DWORD1: u32 = 0x00FF_0000;
 const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_00FF;
 
 const ICC_DROP_FLAGS_OFFSET: u64 = 0;
@@ -839,7 +846,15 @@ impl CommandRingProcessor {
         if (add_flags & ICC_CTX_FLAG_SLOT) != 0 {
             let in_slot = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
             let out_slot = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
-            if let Err(code) = self.copy_slot_context_preserve_state(mem, in_slot, out_slot) {
+            let preserve_topology = self
+                .slots
+                .get(idx)
+                .and_then(|s| s.as_ref())
+                .and_then(|s| s.root_port)
+                .is_some();
+            if let Err(code) =
+                self.copy_slot_context_preserve_state(mem, in_slot, out_slot, preserve_topology)
+            {
                 return code;
             }
         }
@@ -989,7 +1004,9 @@ impl CommandRingProcessor {
         // Apply Slot Context (preserve Slot State field).
         let in_slot_addr = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
         let out_slot_addr = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
-        if let Err(code) = self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr) {
+        if let Err(code) =
+            self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr, false)
+        {
             return code;
         }
         // Slot Context DW3 bits 0..=7 are the USB device address, which is assigned by the
@@ -1315,8 +1332,12 @@ impl CommandRingProcessor {
         if (add_flags & ICC_CTX_FLAG_SLOT) != 0 {
             let in_slot_addr = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
             let out_slot_addr = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
-            if let Err(code) =
-                self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr)
+            if let Err(code) = self.copy_slot_context_preserve_state(
+                mem,
+                in_slot_addr,
+                out_slot_addr,
+                true,
+            )
             {
                 return code;
             }
@@ -1391,6 +1412,7 @@ impl CommandRingProcessor {
         mem: &mut dyn MemoryBus,
         in_slot: u64,
         out_slot: u64,
+        preserve_topology: bool,
     ) -> Result<(), CompletionCode> {
         for i in 0..8u64 {
             let in_dw = self
@@ -1402,7 +1424,18 @@ impl CommandRingProcessor {
                     let out_dw = self
                         .read_u32(mem, out_addr)
                         .map_err(|_| CompletionCode::ParameterError)?;
-                    (in_dw & !SLOT_SPEED_MASK_DWORD0) | (out_dw & SLOT_SPEED_MASK_DWORD0)
+                    let mut preserve = SLOT_SPEED_MASK_DWORD0;
+                    if preserve_topology {
+                        preserve |= SLOT_ROUTE_STRING_MASK_DWORD0;
+                    }
+                    (in_dw & !preserve) | (out_dw & preserve)
+                }
+                1 if preserve_topology => {
+                    let out_dw = self
+                        .read_u32(mem, out_addr)
+                        .map_err(|_| CompletionCode::ParameterError)?;
+                    (in_dw & !SLOT_ROOT_HUB_PORT_MASK_DWORD1)
+                        | (out_dw & SLOT_ROOT_HUB_PORT_MASK_DWORD1)
                 }
                 3 => {
                     let out_dw = self
@@ -1832,7 +1865,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_slot_context_preserve_state_preserves_speed_address_and_slot_state() {
+    fn copy_slot_context_preserve_state_preserves_topology_and_xhc_owned_fields() {
         let mut mem = TestMem::new(0x1000);
         let mem_size = mem.data.len() as u64;
 
@@ -1869,13 +1902,13 @@ mod tests {
         in_ctx.write_to(&mut mem, in_slot);
 
         processor
-            .copy_slot_context_preserve_state(&mut mem, in_slot, out_slot)
+            .copy_slot_context_preserve_state(&mut mem, in_slot, out_slot, true)
             .expect("slot context copy should succeed");
 
         let merged = SlotContext::read_from(&mut mem, out_slot);
-        assert_eq!(merged.route_string(), 0x22222);
+        assert_eq!(merged.route_string(), 0x11111);
         assert_eq!(merged.context_entries(), 3);
-        assert_eq!(merged.root_hub_port_number(), 1);
+        assert_eq!(merged.root_hub_port_number(), 9);
 
         // Controller-owned fields should be preserved from the existing output Slot Context.
         assert_eq!(merged.speed(), 3);
