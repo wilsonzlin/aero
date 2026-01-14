@@ -3246,7 +3246,9 @@ static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptCon
 
   if (Adapter->MsixAllOnVector0) {
     if (MessageId != (ULONG)Adapter->MsixConfigVector) {
-      return FALSE;
+      // Claim the interrupt to avoid spurious-unhandled MSI accounting, but do
+      // not queue any DPC work for an unexpected message ID.
+      return TRUE;
     }
     *QueueDefaultInterruptDpc = TRUE;
     return TRUE;
@@ -3258,7 +3260,9 @@ static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptCon
     return TRUE;
   }
 
-  return FALSE;
+  // Not one of the vectors we programmed, but still an interrupt targeted at
+  // this miniport. Claim it (no DPC) to avoid spurious MSI accounting.
+  return TRUE;
 }
 
 static VOID AerovNetMessageInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext,
