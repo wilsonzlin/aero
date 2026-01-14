@@ -10,6 +10,8 @@ test("aerogpuFormatName returns enum variant names for known formats", () => {
 
 test("aerogpuFormatName returns null for unknown/invalid values", () => {
   assert.equal(aerogpuFormatName(0xffff_ffff), null);
+  assert.equal(aerogpuFormatName(1.5), null);
+  assert.equal(aerogpuFormatName(0x1_0000_0000), null);
   assert.equal(aerogpuFormatName(Number.NaN), null);
 });
 
@@ -27,3 +29,7 @@ test("aerogpuFormatToString returns \"n/a\" for non-finite values", () => {
   assert.equal(aerogpuFormatToString(Number.POSITIVE_INFINITY), "n/a");
 });
 
+test("aerogpuFormatToString preserves non-integer / out-of-range inputs as raw strings", () => {
+  assert.equal(aerogpuFormatToString(1.5), "1.5");
+  assert.equal(aerogpuFormatToString(0x1_0000_0000), String(0x1_0000_0000));
+});

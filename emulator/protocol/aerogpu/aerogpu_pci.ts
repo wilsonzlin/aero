@@ -197,14 +197,24 @@ const AEROGPU_FORMAT_NAME_BY_VALUE: Record<number, string> = (() => {
   return out;
 })();
 
+function normalizeU32Like(value: number): number | null {
+  if (!Number.isFinite(value)) return null;
+  if (!Number.isInteger(value)) return null;
+  // Accept signed 32-bit integers (e.g. values read from `Int32Array`) and raw unsigned values.
+  // Reject numbers outside the u32 domain to avoid silent JS `>>> 0` wrapping.
+  if (value < -0x8000_0000 || value > 0xffff_ffff) return null;
+  return value >>> 0;
+}
+
 /**
  * Best-effort mapping from `AerogpuFormat` discriminant -> enum variant name.
  *
  * Returns `null` for unknown/invalid values.
  */
 export function aerogpuFormatName(format: number): string | null {
-  if (!Number.isFinite(format)) return null;
-  return AEROGPU_FORMAT_NAME_BY_VALUE[format >>> 0] ?? null;
+  const u32 = normalizeU32Like(format);
+  if (u32 === null) return null;
+  return AEROGPU_FORMAT_NAME_BY_VALUE[u32] ?? null;
 }
 
 /**
@@ -216,7 +226,8 @@ export function aerogpuFormatName(format: number): string | null {
  */
 export function aerogpuFormatToString(format: number): string {
   if (!Number.isFinite(format)) return "n/a";
-  const u32 = format >>> 0;
+  const u32 = normalizeU32Like(format);
+  if (u32 === null) return String(format);
   const name = AEROGPU_FORMAT_NAME_BY_VALUE[u32];
   return name ? `${name} (${u32})` : String(u32);
 }
