@@ -6429,7 +6429,8 @@ impl AerogpuD3d11Executor {
                     )
             })
             .count() as u32;
-        let total_storage_buffers = internal_storage_buffers.saturating_add(gs_resource_storage_buffers);
+        let total_storage_buffers =
+            internal_storage_buffers.saturating_add(gs_resource_storage_buffers);
         let max_storage_buffers = self.device.limits().max_storage_buffers_per_shader_stage;
         if total_storage_buffers > max_storage_buffers {
             bail!(
@@ -26393,12 +26394,14 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                    buffer: VB,
-                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                    offset_bytes: 0,
-                    reserved0: 0,
-                }],
+                &[
+                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                        buffer: VB,
+                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                        offset_bytes: 0,
+                        reserved0: 0,
+                    },
+                ],
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
@@ -26530,12 +26533,14 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                    buffer: VB,
-                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                    offset_bytes: 0,
-                    reserved0: 0,
-                }],
+                &[
+                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                        buffer: VB,
+                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                        offset_bytes: 0,
+                        reserved0: 0,
+                    },
+                ],
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);

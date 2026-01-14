@@ -1,3 +1,4 @@
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu_trace::{AerogpuSubmissionCapture, TraceMeta, TraceReader, TraceWriter};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuConstantBufferBinding, AerogpuPrimitiveTopology, AerogpuShaderStage,
@@ -7,7 +8,6 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_SUBMIT_FLAG_PRESENT;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};

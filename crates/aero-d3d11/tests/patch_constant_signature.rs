@@ -1,5 +1,5 @@
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::{parse_signatures, DxbcFile, FourCC};
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 const FOURCC_PCSG: FourCC = FourCC(*b"PCSG");
 const FOURCC_PCG1: FourCC = FourCC(*b"PCG1");

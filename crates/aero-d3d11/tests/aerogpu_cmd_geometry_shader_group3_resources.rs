@@ -44,7 +44,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -106,7 +107,10 @@ fn build_gs_reads_cb0_and_writes_color_dxbc() -> Vec<u8> {
     const PRIM_POINT: u32 = 1;
     const TOPO_TRIANGLE_STRIP: u32 = 5;
 
-    let mut tokens = vec![0x0002_0040u32 /* gs_4_0 */, 0 /* length patched below */];
+    let mut tokens = vec![
+        0x0002_0040u32, /* gs_4_0 */
+        0,              /* length patched below */
+    ];
     tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
     tokens.push(PRIM_POINT);
     tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
@@ -117,11 +121,23 @@ fn build_gs_reads_cb0_and_writes_color_dxbc() -> Vec<u8> {
     // Declarations for outputs (not strictly required, but keeps the token stream realistic).
     // dcl_output o0.xyzw
     tokens.push(opcode_token(0x100, 3));
-    tokens.push(operand_token(OPERAND_TYPE_OUTPUT, 2, OPERAND_SEL_MASK, 0x0f, 1));
+    tokens.push(operand_token(
+        OPERAND_TYPE_OUTPUT,
+        2,
+        OPERAND_SEL_MASK,
+        0x0f,
+        1,
+    ));
     tokens.push(0);
     // dcl_output o1.xyzw
     tokens.push(opcode_token(0x100, 3));
-    tokens.push(operand_token(OPERAND_TYPE_OUTPUT, 2, OPERAND_SEL_MASK, 0x0f, 1));
+    tokens.push(operand_token(
+        OPERAND_TYPE_OUTPUT,
+        2,
+        OPERAND_SEL_MASK,
+        0x0f,
+        1,
+    ));
     tokens.push(1);
 
     // dcl_constantbuffer cb0[1]
@@ -365,4 +381,3 @@ fn aerogpu_cmd_geometry_shader_group3_constant_buffer_is_visible_to_prepass() {
         );
     });
 }
-

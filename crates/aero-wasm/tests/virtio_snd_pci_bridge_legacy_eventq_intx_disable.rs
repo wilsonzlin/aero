@@ -52,8 +52,8 @@ fn expected_speaker_connected() -> [u8; 8] {
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_legacy_only_eventq_intx_disable_suppresses_line_but_retains_pending_interrupt(
-) {
+fn virtio_snd_pci_bridge_legacy_only_eventq_intx_disable_suppresses_line_but_retains_pending_interrupt()
+ {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
         base: guest_base,
@@ -139,8 +139,8 @@ fn virtio_snd_pci_bridge_legacy_only_eventq_intx_disable_suppresses_line_but_ret
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_transitional_eventq_intx_disable_suppresses_line_but_retains_pending_interrupt_via_legacy_io(
-) {
+fn virtio_snd_pci_bridge_transitional_eventq_intx_disable_suppresses_line_but_retains_pending_interrupt_via_legacy_io()
+ {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
         base: guest_base,
@@ -215,4 +215,3 @@ fn virtio_snd_pci_bridge_transitional_eventq_intx_disable_suppresses_line_but_re
     assert_ne!(isr & VIRTIO_PCI_LEGACY_ISR_QUEUE, 0);
     assert!(!bridge.irq_asserted());
 }
-
