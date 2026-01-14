@@ -794,6 +794,8 @@ struct AeroGpuDevice {
   AeroGpuResource* current_dsv_res = nullptr;
   AeroGpuResource* current_vb_res = nullptr;
   std::array<AeroGpuResource*, kMaxVertexBufferSlots> current_vb_resources{};
+  std::array<uint32_t, kMaxVertexBufferSlots> current_vb_strides{};
+  std::array<uint32_t, kMaxVertexBufferSlots> current_vb_offsets{};
   AeroGpuResource* current_ib_res = nullptr;
   uint32_t current_vb_stride = 0;
   uint32_t current_vb_offset = 0;
@@ -3715,6 +3717,8 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
       continue;
     }
     dev->current_vb_resources[slot] = nullptr;
+    dev->current_vb_strides[slot] = 0;
+    dev->current_vb_offsets[slot] = 0;
     if (slot == 0) {
       dev->current_vb_res = nullptr;
       dev->current_vb_stride = 0;
@@ -6567,11 +6571,12 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
       return;
     }
   } else {
-    // Treat NumBuffers==0 as an unbind request for the single slot at StartSlot.
+    // Treat NumBuffers==0 as an unbind request from StartSlot to the end of the
+    // slot range (used by some D3D10 runtimes for state clearing).
     if (start_slot == kMaxVertexBufferSlots) {
       return;
     }
-    bind_count = 1;
+    bind_count = kMaxVertexBufferSlots - start_slot;
   }
 
   AEROGPU_D3D10_TRACEF_VERBOSE("IaSetVertexBuffers hDevice=%p start_slot=%u count=%u",
@@ -6599,6 +6604,8 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
     bindings[i] = b;
 
     dev->current_vb_resources[slot] = vb_res;
+    dev->current_vb_strides[slot] = b.stride_bytes;
+    dev->current_vb_offsets[slot] = b.offset_bytes;
     if (slot == 0) {
       dev->current_vb_res = vb_res;
       dev->current_vb_stride = b.stride_bytes;
@@ -7105,6 +7112,8 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   dev->current_vb_res = nullptr;
   dev->current_vb_resources.fill(nullptr);
+  dev->current_vb_strides.fill(0);
+  dev->current_vb_offsets.fill(0);
   dev->current_vb_stride = 0;
   dev->current_vb_offset = 0;
   std::array<aerogpu_vertex_buffer_binding, kMaxVertexBufferSlots> vb_zeros{};
