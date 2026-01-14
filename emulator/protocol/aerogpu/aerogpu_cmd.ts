@@ -815,7 +815,7 @@ export const AEROGPU_CMD_BIND_SHADERS_EX_PAYLOAD_SIZE = AEROGPU_CMD_BIND_SHADERS
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE = 24;
 // Payload: aerogpu_cmd_set_shader_constants_i + int32 data[vec4_count * 4] + 4-byte alignment padding.
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE = 24;
-// Payload: aerogpu_cmd_set_shader_constants_b + u32 data[bool_count] + 4-byte alignment padding.
+// Payload: aerogpu_cmd_set_shader_constants_b + vec4<u32> data[bool_count] + 4-byte alignment padding.
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE = 24;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
@@ -1745,18 +1745,28 @@ export function decodeCmdSetShaderConstantsBPayloadFromPacket(
   const boolCount = view.getUint32(8, true);
   const reserved0 = view.getUint32(12, true);
 
-  const payloadBytesBig = BigInt(boolCount) * 4n;
+  // Bool constants are encoded as `vec4<u32>` per bool register (matching D3D9's 4-lane register ABI).
+  //
+  // Layout:
+  //   u32 stage;
+  //   u32 start_register;
+  //   u32 bool_count;   // number of bool registers
+  //   u32 reserved0;
+  //   u32 data[bool_count * 4]; // vec4<u32> per bool register
+  const u32CountBig = BigInt(boolCount) * 4n;
+  const payloadBytesBig = u32CountBig * 4n;
   const payloadStart = 16;
   const payloadEndBig = BigInt(payloadStart) + payloadBytesBig;
   if (payloadEndBig > BigInt(packet.payload.byteLength)) {
     throw new Error(`SET_SHADER_CONSTANTS_B packet too small for bool_count=${boolCount}`);
   }
-  if (BigInt(boolCount) > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (u32CountBig > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error(`SET_SHADER_CONSTANTS_B data too large: bool_count=${boolCount}`);
   }
 
-  const data = new Uint32Array(boolCount);
-  for (let i = 0; i < boolCount; i++) {
+  const u32Count = Number(u32CountBig);
+  const data = new Uint32Array(u32Count);
+  for (let i = 0; i < u32Count; i++) {
     data[i] = view.getUint32(payloadStart + i * 4, true);
   }
 
@@ -2182,9 +2192,12 @@ export class AerogpuCmdWriter {
   /**
    * SET_SHADER_CONSTANTS_B.
    *
-   * `data` is a contiguous range of scalar bool registers, represented as booleans or 0/1 numbers.
+   * `data` is a contiguous range of scalar bool registers, represented as booleans or numbers.
    *
-   * Payload encoding: one `u32` per bool register (0 or 1).
+   * Values are normalized: `0`/`false` => `0`, any non-zero / `true` => `1`.
+   *
+   * Payload encoding: one `vec4<u32>` per bool register (16 bytes/register), with the normalized
+   * scalar replicated across all 4 lanes.
    */
   setShaderConstantsB(
     stage: AerogpuShaderStage,
@@ -2193,7 +2206,7 @@ export class AerogpuCmdWriter {
     stageEx?: AerogpuShaderStageEx | null,
   ): void {
     const boolCount = data.length;
-    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 4;
+    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 16;
     const stageEnc = stageEx === null || stageEx === undefined ? stage : AerogpuShaderStage.Compute;
     const reserved0 = encodeStageExReserved0(stageEnc, stageEx);
     const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsB, unpadded);
@@ -2203,11 +2216,12 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 20, reserved0, true);
     for (let i = 0; i < boolCount; i++) {
       const inValue = data[i]!;
-      const v = typeof inValue === "boolean" ? (inValue ? 1 : 0) : inValue;
-      if (v !== 0 && v !== 1) {
-        throw new Error(`SET_SHADER_CONSTANTS_B data must be 0/1 (got ${v} at index ${i})`);
+      const scalar = typeof inValue === "boolean" ? (inValue ? 1 : 0) : inValue;
+      const normalized = scalar === 0 ? 0 : 1;
+      const regBase = base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + i * 16;
+      for (let lane = 0; lane < 4; lane++) {
+        this.view.setUint32(regBase + lane * 4, normalized, true);
       }
-      this.view.setUint32(base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + i * 4, v, true);
     }
   }
 
