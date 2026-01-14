@@ -338,10 +338,38 @@ export type MachineHandle = {
      * storage topology (primary HDD + install media) and accept OPFS *path strings* (relative to
      * `navigator.storage.getDirectory()`).
      *
-    * Optional for older WASM builds.
+     * Optional for older WASM builds.
      */
     set_primary_hdd_opfs_cow?(base_image: string, overlay_image: string): Promise<void>;
+    /**
+     * Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM (`disk_id=1`).
+     *
+     * Newer wasm builds export this as `attach_install_media_iso_opfs`; older builds used
+     * `attach_install_media_opfs_iso`. Accept both for back-compat.
+     */
+    attach_install_media_iso_opfs?(path: string): Promise<void>;
     attach_install_media_opfs_iso?(path: string): Promise<void>;
+    /**
+     * Attach an existing OPFS-backed ISO image as install media and set the snapshot overlay ref
+     * (`DISKS` entry) for `disk_id=1` in one call.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs_and_set_overlay_ref?(path: string): Promise<void>;
+    /**
+     * Attach an existing OPFS-backed ISO image as install media, preserving guest-visible ATAPI
+     * media state (intended for snapshot restore flows).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs_for_restore?(path: string): Promise<void>;
+    /**
+     * Attach an existing OPFS-backed ISO image as install media for restore flows and set the
+     * snapshot overlay ref (`DISKS` entry) for `disk_id=1`.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs_for_restore_and_set_overlay_ref?(path: string): Promise<void>;
     /**
      * Eject/detach the canonical install media (IDE secondary master ATAPI, `disk_id=1`) and clear its snapshot overlay ref.
      *
