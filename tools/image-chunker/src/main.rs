@@ -802,6 +802,9 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
         }));
     }
     drop(failure_tx);
+    // Drop the unused receiver handle so if all workers exit early (e.g. due to an internal error),
+    // the producer will observe the channel closing instead of deadlocking on a full queue.
+    drop(work_rx);
 
     if let Some(indices) = indices {
         for index in indices {
@@ -1919,6 +1922,9 @@ async fn verify_chunks(
         }));
     }
     drop(failure_tx);
+    // Drop the unused receiver handle so if all workers exit early (e.g. due to an internal error),
+    // the producer will observe the channel closing instead of deadlocking on a full queue.
+    drop(work_rx);
 
     let send_result = if let Some(indices) = indices {
         for index in indices {
