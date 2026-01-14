@@ -304,4 +304,30 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn detects_nonzero_stream_with_multiple_extended_opcode_and_operand_tokens() {
+        let mut operand = operand_token_immediate32(1);
+        operand |= sm4_opcode::OPERAND_EXTENDED_BIT;
+        let program = make_program(vec![
+            0,
+            0,
+            // len = opcode + 2 opcode-ext + operand + 2 operand-ext + imm32 value
+            opcode_token_extended(sm4_opcode::OPCODE_EMIT_STREAM, 7),
+            sm4_opcode::OPCODE_EXTENDED_BIT, // opcode extension token 0 (more to follow)
+            0,                               // opcode extension token 1 (terminates)
+            operand,
+            sm4_opcode::OPERAND_EXTENDED_BIT, // operand extension token 0 (more to follow)
+            0,                                // operand extension token 1 (terminates)
+            1,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: "emit_stream",
+                stream: 1,
+                at_dword: 2,
+            })
+        );
+    }
 }
