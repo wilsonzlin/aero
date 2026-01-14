@@ -1348,7 +1348,7 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * - Do NOT use the numeric value of the user-mode shared `HANDLE` as `share_token`:
  *   for real NT handles it is process-local (commonly different after
  *   `DuplicateHandle`), and even token-style shared handles must not be treated
- *   as stable protocol keys.
+ *   as stable protocol keys (and should not be passed to `CloseHandle`).
  * - The host stores a mapping of (share_token -> resource).
  * - MVP limitation: the shared resource must be backed by a single guest
  *   allocation (i.e. one contiguous guest memory range).

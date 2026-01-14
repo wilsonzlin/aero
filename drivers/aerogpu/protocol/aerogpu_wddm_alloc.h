@@ -161,7 +161,7 @@ typedef struct aerogpu_wddm_alloc_priv {
    * Do NOT derive this from the numeric value of the user-mode shared `HANDLE`:
    * for real NT handles it is process-local (commonly different after
    * `DuplicateHandle`), and even token-style shared handles must not be treated
-   * as stable protocol keys.
+   * as stable protocol keys (and should not be passed to `CloseHandle`).
    */
   aerogpu_wddm_u64 share_token;
 
