@@ -35,6 +35,11 @@ class VirtioInputLedGatingTests(unittest.TestCase):
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS|sent=2\n"
         self.assertIsNone(h._virtio_input_led_required_failure_message(tail))
 
+    def test_required_pass_marker_via_saw_flag_even_if_tail_truncated(self) -> None:
+        h = self.harness
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        self.assertIsNone(h._virtio_input_led_required_failure_message(tail, saw_pass=True))
+
     def test_required_fail_marker_fails_gating(self) -> None:
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|reason=timeout|err=1460\n"
@@ -62,4 +67,3 @@ class VirtioInputLedGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

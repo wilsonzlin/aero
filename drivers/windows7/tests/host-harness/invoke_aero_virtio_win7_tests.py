@@ -2225,20 +2225,29 @@ def _virtio_input_led_skip_failure_message(tail: bytes) -> str:
     )
 
 
-def _virtio_input_led_required_failure_message(tail: bytes) -> Optional[str]:
+def _virtio_input_led_required_failure_message(
+    tail: bytes,
+    *,
+    saw_pass: bool = False,
+    saw_fail: bool = False,
+    saw_skip: bool = False,
+) -> Optional[str]:
     """
     Enforce that virtio-input-led ran and PASSed.
 
     Returns:
         A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
     """
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS" in tail:
+    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
+    # but keep a tail scan fallback to support direct unit tests.
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|"
+    if saw_pass or prefix + b"PASS" in tail:
         return None
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL" in tail:
+    if saw_fail or prefix + b"FAIL" in tail:
         return (
             "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled"
         )
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP" in tail:
+    if saw_skip or prefix + b"SKIP" in tail:
         return _virtio_input_led_skip_failure_message(tail)
     return (
         "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led PASS marker while --with-input-led was enabled "
@@ -5524,7 +5533,12 @@ def main() -> int:
                                 break
 
                         if need_input_led:
-                            msg = _virtio_input_led_required_failure_message(tail)
+                            msg = _virtio_input_led_required_failure_message(
+                                tail,
+                                saw_pass=saw_virtio_input_led_pass,
+                                saw_fail=saw_virtio_input_led_fail,
+                                saw_skip=saw_virtio_input_led_skip,
+                            )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
@@ -6911,7 +6925,12 @@ def main() -> int:
                                     break
 
                             if need_input_led:
-                                msg = _virtio_input_led_required_failure_message(tail)
+                                msg = _virtio_input_led_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_input_led_pass,
+                                    saw_fail=saw_virtio_input_led_fail,
+                                    saw_skip=saw_virtio_input_led_skip,
+                                )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
