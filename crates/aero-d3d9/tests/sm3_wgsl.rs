@@ -3170,6 +3170,10 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    // Keep shader execution deterministic (avoid uninitialized uniform buffer contents during the
+    // draw below).
+    let constants_init = vec![0u8; CONSTANTS_SIZE_BYTES as usize];
+    queue.write_buffer(&constants_buffer, 0, &constants_init);
     let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("sm3-wgsl-test.constants_bg"),
         layout: &constants_bgl,
