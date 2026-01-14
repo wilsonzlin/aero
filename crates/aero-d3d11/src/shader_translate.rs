@@ -5528,11 +5528,12 @@ fn emit_instructions(
                 // WGSL `pack2x16float` returns a `u32` containing 2 packed half floats; pack the
                 // input into the low half with a zero high half and mask to the low 16 bits so the
                 // resulting lane matches DXBC's per-component layout.
-                let src = emit_src_vec4(src, inst_index, "f32tof16", ctx)?;
-                let pack_x = format!("pack2x16float(vec2<f32>(({src}).x, 0.0)) & 0xffffu");
-                let pack_y = format!("pack2x16float(vec2<f32>(({src}).y, 0.0)) & 0xffffu");
-                let pack_z = format!("pack2x16float(vec2<f32>(({src}).z, 0.0)) & 0xffffu");
-                let pack_w = format!("pack2x16float(vec2<f32>(({src}).w, 0.0)) & 0xffffu");
+                let src_f = emit_src_vec4(src, inst_index, "f32tof16", ctx)?;
+                let src_f = maybe_saturate(dst, src_f);
+                let pack_x = format!("pack2x16float(vec2<f32>(({src_f}).x, 0.0)) & 0xffffu");
+                let pack_y = format!("pack2x16float(vec2<f32>(({src_f}).y, 0.0)) & 0xffffu");
+                let pack_z = format!("pack2x16float(vec2<f32>(({src_f}).z, 0.0)) & 0xffffu");
+                let pack_w = format!("pack2x16float(vec2<f32>(({src_f}).w, 0.0)) & 0xffffu");
                 let expr = format!(
                     "bitcast<vec4<f32>>(vec4<u32>({pack_x}, {pack_y}, {pack_z}, {pack_w}))"
                 );

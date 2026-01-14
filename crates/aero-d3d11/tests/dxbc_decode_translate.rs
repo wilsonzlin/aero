@@ -3828,3 +3828,86 @@ fn decodes_and_translates_half_float_conversions() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_f32tof16_sat_clamps_input_before_packing() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // f32tof16_sat r0, l(2.0, -1.0, 0.5, 42.0)
+    let f32tof16_dst = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let f32tof16_src = imm32_vec4([
+        2.0f32.to_bits(),
+        (-1.0f32).to_bits(),
+        0.5f32.to_bits(),
+        42.0f32.to_bits(),
+    ]);
+    let f32tof16_len_without_ext =
+        1u32 + f32tof16_dst.len() as u32 + f32tof16_src.len() as u32;
+    body.extend_from_slice(&opcode_token_with_sat(
+        OPCODE_F32TOF16,
+        f32tof16_len_without_ext,
+    ));
+    body.extend_from_slice(&f32tof16_dst);
+    body.extend_from_slice(&f32tof16_src);
+
+    // f16tof32 r1, r0
+    body.push(opcode_token(OPCODE_F16TOF32, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // mov o0, r1
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        matches!(&module.instructions[0], Sm4Inst::F32ToF16 { dst, .. } if dst.saturate),
+        "expected first instruction to decode as f32tof16_sat: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Saturate should clamp the float source before converting to half bits.
+    assert!(
+        translated.wgsl.contains("clamp(("),
+        "expected f32tof16_sat lowering to clamp float values:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("pack2x16float"),
+        "expected WGSL to contain pack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("& 0xffffu"),
+        "expected f32tof16 lowering to mask low 16 bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected WGSL to contain unpack2x16float:\n{}",
+        translated.wgsl
+    );
+}
