@@ -410,8 +410,8 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxFrameBytes)
 
-	codec, err := udpproto.NewCodec(s.relayCfg.MaxDatagramPayloadBytes)
-	if err != nil {
+	codec := udpproto.Codec{MaxPayload: s.relayCfg.MaxDatagramPayloadBytes}
+	if codec.MaxPayload < 0 {
 		codec = udpproto.DefaultCodec
 	}
 

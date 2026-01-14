@@ -54,8 +54,8 @@ type sessionRelay struct {
 
 func NewSessionRelay(dc dataChannelSender, cfg Config, policy destinationPolicy, session *Session, m *metrics.Metrics) *sessionRelay {
 	cfg = cfg.withDefaults()
-	codec, err := udpproto.NewCodec(cfg.MaxDatagramPayloadBytes)
-	if err != nil {
+	codec := udpproto.Codec{MaxPayload: cfg.MaxDatagramPayloadBytes}
+	if codec.MaxPayload < 0 {
 		codec = udpproto.DefaultCodec
 	}
 

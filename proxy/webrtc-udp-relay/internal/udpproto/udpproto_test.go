@@ -8,9 +8,9 @@ import (
 )
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
-	c, err := NewCodec(64)
+	c, err := newCodec(64)
 	if err != nil {
-		t.Fatalf("NewCodec: %v", err)
+		t.Fatalf("newCodec: %v", err)
 	}
 
 	in := datagram{
@@ -55,9 +55,9 @@ func TestDecodeTooShort(t *testing.T) {
 }
 
 func TestMaxPayloadEnforced(t *testing.T) {
-	c, err := NewCodec(3)
+	c, err := newCodec(3)
 	if err != nil {
-		t.Fatalf("NewCodec: %v", err)
+		t.Fatalf("newCodec: %v", err)
 	}
 
 	// Encode should reject payloads over max.

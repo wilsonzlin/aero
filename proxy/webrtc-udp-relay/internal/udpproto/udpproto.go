@@ -77,7 +77,7 @@ type Codec struct {
 // DefaultCodec is used by the relay for encoding/decoding UDP frames.
 var DefaultCodec = Codec{MaxPayload: DefaultMaxPayload}
 
-func NewCodec(maxPayload int) (Codec, error) {
+func newCodec(maxPayload int) (Codec, error) {
 	if maxPayload < 0 {
 		return Codec{}, fmt.Errorf("udpproto: max payload must be >= 0")
 	}
