@@ -1191,6 +1191,13 @@ To also require the optional virtio-input LED/statusq marker (`virtio-input-led`
 `with_virtio_input_led=true`. This requires a guest image provisioned with `--test-input-led` (for example via
 `New-AeroWin7TestImage.ps1 -TestInputLed`).
 
+For compatibility with older automation that gates on the legacy `virtio-input-leds` marker, set the workflow input
+`with_virtio_input_leds=true`. This passes `--with-input-leds` to the Python harness and requires the guest marker
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
+
+- Provisioning: older guest images require `--test-input-leds` / `New-AeroWin7TestImage.ps1 -TestInputLeds`. Newer guest
+  selftest binaries also accept `--test-input-led` and still emit the legacy marker for compatibility.
+
 To require virtio-input PCI binding/service validation (at least one virtio-input PCI device bound to the expected
 driver service), set the workflow input `require_virtio_input_binding=true`. This requires a guest selftest new enough
 to emit the marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|...` (older images may fail with

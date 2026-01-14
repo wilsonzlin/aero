@@ -445,11 +445,11 @@ This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrappe
   - [`.github/workflows/win7-virtio-harness.yml`](../../../.github/workflows/win7-virtio-harness.yml)
     - Set `qemu_preflight_pci=true` to enable the optional host-side QMP `query-pci` preflight (validates QEMU-emitted `VEN/DEV/REV`).
   - Use workflow inputs `with_virtio_input_events=true`, `with_virtio_input_wheel=true`, `with_virtio_input_media_keys=true`,
-    `with_virtio_input_led=true`, `with_virtio_input_events_extended=true`, and/or `with_virtio_input_tablet_events=true` to enable optional
-    end-to-end virtio-input tests.
+    `with_virtio_input_led=true` (compat: `with_virtio_input_leds=true`), `with_virtio_input_events_extended=true`, and/or
+    `with_virtio_input_tablet_events=true` to enable optional end-to-end virtio-input tests.
     (Requires a guest image provisioned with `--test-input-events` for events/wheel, `--test-input-media-keys` for media keys, also
-    `--test-input-led` for LED/statusq, also `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events`
-    (alias: `--test-tablet-events`) for tablet.)
+    `--test-input-led` for LED/statusq (compat: `--test-input-leds`), also `--test-input-events-extended` for the extended markers,
+    and `--test-input-tablet-events` (alias: `--test-tablet-events`) for tablet.)
   - To require the virtio-snd buffer limits stress test, set `with_virtio_snd=true` and `with_snd_buffer_limits=true` (requires a
     guest image provisioned with `--test-snd-buffer-limits`).
 
