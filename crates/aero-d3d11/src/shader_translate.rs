@@ -4704,6 +4704,26 @@ fn emit_instructions(
                             opcode: "predicated_continuec".to_owned(),
                         })
                     }
+                    Sm4Inst::Sync { flags } => {
+                        // Predication is lowered to WGSL `if` control flow. Barrier operations must
+                        // be executed uniformly; even fence-only `sync` (lowered via
+                        // `storageBarrier()`) is treated as a workgroup-level barrier by
+                        // WebGPU/Naga and can deadlock when not reached by all invocations.
+                        //
+                        // We conservatively reject any predicated `sync` that would emit a WGSL
+                        // barrier built-in.
+                        if ctx.stage == ShaderStage::Compute {
+                            let group_sync =
+                                (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SYNC) != 0;
+                            let uav_fence = (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0;
+                            if group_sync || uav_fence {
+                                return Err(ShaderTranslateError::UnsupportedInstruction {
+                                    inst_index,
+                                    opcode: "predicated_sync".to_owned(),
+                                });
+                            }
+                        }
+                    }
                     _ => {}
                 }
 

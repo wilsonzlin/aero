@@ -3,8 +3,8 @@ use aero_d3d11::sm4::opcode::{
 };
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderModel, ShaderStage,
-    OperandModifier, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
-    SrcOperand, Swizzle,
+    OperandModifier, PredicateOperand, PredicateRef, ShaderTranslateError, Sm4Decl, Sm4Inst,
+    Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -128,6 +128,43 @@ fn rejects_sync_uav_fence_only_inside_control_flow() {
             assert_eq!(opcode, "sync_fence_only_in_control_flow");
         }
         other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_predicated_sync_uav_fence_only() {
+    // Predication is lowered to WGSL `if` control flow; barriers must be executed uniformly.
+    // We conservatively reject predicated `sync` when it would emit a barrier built-in.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Predicated {
+                pred: PredicateOperand {
+                    reg: PredicateRef { index: 0 },
+                    component: 0,
+                    invert: false,
+                },
+                inner: Box::new(Sm4Inst::Sync {
+                    flags: SYNC_FLAG_UAV_MEMORY,
+                }),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    match err {
+        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+            assert_eq!(inst_index, 0);
+            assert_eq!(opcode, "predicated_sync");
+        }
+        other => panic!("expected UnsupportedInstruction for predicated sync, got {other:?}"),
     }
 }
 
