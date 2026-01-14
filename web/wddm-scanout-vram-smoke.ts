@@ -472,8 +472,10 @@ async function main(): Promise<void> {
     // Mutate a single pixel in the scanout backing store, force a present pass via the
     // deterministic screenshot API (which calls into `handleTick()` in scanout mode), then
     // confirm the presented output updates accordingly.
-    const scanoutUpdateX = 8;
-    const scanoutUpdateY = 8;
+    // Pick a point inside the top-left (red) quadrant, but avoid the other sampled points
+    // (cursor nearby, quadrant probes) so debug samples stay consistent.
+    const scanoutUpdateX = 16;
+    const scanoutUpdateY = 16;
     const scanoutUpdateBefore = sample(presentedRgba8, presentedWidth, scanoutUpdateX, scanoutUpdateY);
     let scanoutUpdateAfter = scanoutUpdateBefore;
     if (pass) {

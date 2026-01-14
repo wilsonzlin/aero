@@ -67,8 +67,8 @@ test("wddm scanout smoke: presents from VRAM aperture base_paddr (BGRX->RGBA, al
   // change without a generation bump). The smoke harness mutates a pixel and expects the
   // presented output to reflect it.
   expect(result.samples.scanoutUpdate).toBeTruthy();
-  expect(result.samples.scanoutUpdate.x).toBe(8);
-  expect(result.samples.scanoutUpdate.y).toBe(8);
+  expect(result.samples.scanoutUpdate.x).toBe(16);
+  expect(result.samples.scanoutUpdate.y).toBe(16);
   expect(result.samples.scanoutUpdate.before).toEqual([255, 0, 0, 255]);
   expect(result.samples.scanoutUpdate.after).toEqual([0, 255, 0, 255]);
 
