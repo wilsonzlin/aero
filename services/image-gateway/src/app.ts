@@ -66,13 +66,34 @@ function stripWeakEtagPrefix(value: string): string {
   return trimmed.replace(/^w\//i, "");
 }
 
+function splitCommaHeaderOutsideQuotes(value: string): string[] {
+  // `If-None-Match` is a comma-separated list of entity-tags, but commas are allowed inside a
+  // quoted entity-tag value. Split only on commas that occur outside quotes.
+  const out: string[] = [];
+  let start = 0;
+  let inQuotes = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      out.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out;
+}
+
 function ifNoneMatchMatches(ifNoneMatch: string, currentEtag: string): boolean {
   const raw = ifNoneMatch.trim();
   if (!raw) return false;
   if (raw === "*") return true;
 
   const current = stripWeakEtagPrefix(normalizeEtag(currentEtag));
-  for (const part of raw.split(",")) {
+  for (const part of splitCommaHeaderOutsideQuotes(raw)) {
     const candidate = part.trim();
     if (!candidate) continue;
     if (candidate === "*") return true;

@@ -699,6 +699,52 @@ describe("app", () => {
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
   });
 
+  it("handles commas inside quoted entity-tags in If-None-Match", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"a,b"',
+      lastModified: lastModified.toISOString(),
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for a satisfied conditional request");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        // Commas are valid inside a quoted entity-tag.
+        "if-none-match": '"a,b"',
+      },
+    });
+
+    expect(res.statusCode).toBe(304);
+    expect(res.payload).toBe("");
+    expect(res.headers["etag"]).toBe('"a,b"');
+    expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
+    expect(res.headers["cache-control"]).toBe("private, no-store, no-transform");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+  });
+
   it("returns 304 for GET If-Modified-Since when last-modified is not newer (no S3 call)", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
