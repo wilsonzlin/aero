@@ -3126,8 +3126,9 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForArrayTexture() {
   // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
   constexpr uint32_t kD3dRTypeTexture = 3u;
 
+  // Keep this square to match cube-texture semantics (array_layers=6).
   constexpr uint32_t kWidth = 8;
-  constexpr uint32_t kHeight = 4;
+  constexpr uint32_t kHeight = 8;
   constexpr uint32_t kArrayLayers = 6;
 
   D3D9DDIARG_CREATERESOURCE create_res{};
@@ -3159,7 +3160,7 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForArrayTexture() {
   }
 
   constexpr uint32_t kExpectedMipLevels = 4; // log2(8) + 1
-  if (!Check(res->mip_levels == kExpectedMipLevels, "resource mip_levels == 4 for 8x4 array with MipLevels=0")) {
+  if (!Check(res->mip_levels == kExpectedMipLevels, "resource mip_levels == 4 for 8x8 array with MipLevels=0")) {
     return false;
   }
 
