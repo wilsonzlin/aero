@@ -163,8 +163,9 @@ Already implemented:
   - `WebUsbPassthroughRuntime` (`web/src/usb/webusb_passthrough_runtime.ts`) drains actions from
     the guest-visible WebUSB passthrough device (via the selected guest USB controller bridge) and applies completions.
 - **Guest-visible USB controllers + topology wiring (TypeScript + WASM)**
-  - `web/src/io/devices/uhci.ts` / `web/src/io/devices/xhci.ts` expose guest-visible UHCI/xHCI PCI functions
-    backed by `UhciControllerBridge` / `XhciControllerBridge` WASM exports.
+  - `web/src/io/devices/uhci.ts` / `web/src/io/devices/ehci.ts` / `web/src/io/devices/xhci.ts` expose
+    guest-visible UHCI/EHCI/xHCI PCI functions backed by the corresponding WASM controller bridges
+    (`UhciControllerBridge` / `EhciControllerBridge` / `XhciControllerBridge`).
   - `web/src/hid/uhci_hid_topology.ts` and `web/src/hid/xhci_hid_topology.ts` wire WebHID passthrough bridges
     into the guest USB topology (including attaching an external hub when a `guestPath` requires it).
   - The I/O worker prefers routing WebHID passthrough attachments to xHCI when the xHCI topology exports are
@@ -611,6 +612,8 @@ Recommended guardrails:
     - `WebHidPassthroughBridge`
     - `UsbPassthroughBridge`
     - `UhciControllerBridge` (guest-visible UHCI controller; also exposes the WebUSB passthrough device lifecycle)
+    - `EhciControllerBridge` (guest-visible EHCI controller; optionally exposes the WebUSB passthrough device lifecycle)
+    - `XhciControllerBridge` (guest-visible xHCI controller; optionally exposes WebHID topology helpers + the WebUSB passthrough device lifecycle)
     - `WebUsbUhciBridge` (standalone UHCI + WebUSB passthrough bridge used by harness/tests)
 - **Rust device models**
   - WebHID → HID report descriptor synthesis: `crates/aero-usb/src/hid/webhid.rs`
@@ -625,7 +628,10 @@ Recommended guardrails:
   - WebUSB broker/executor: `web/src/usb/usb_broker.ts`, `web/src/usb/webusb_backend.ts`
   - WebUSB proxy protocol + SAB ring fast path: `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`, `web/src/usb/usb_proxy_ring_dispatcher.ts`
   - Worker-side WebUSB passthrough runtime: `web/src/usb/webusb_passthrough_runtime.ts`
-  - Guest-visible UHCI PCI device (production): `web/src/io/devices/uhci.ts`
+  - Guest-visible USB PCI devices (worker runtime):
+    - UHCI (default): `web/src/io/devices/uhci.ts`
+    - EHCI (optional): `web/src/io/devices/ehci.ts`
+    - xHCI (optional): `web/src/io/devices/xhci.ts`
   - (Dev/harness) Standalone WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
   - Guest USB attachment path schema (root port index + downstream hub ports): `web/src/platform/hid_passthrough_protocol.ts`
   - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`

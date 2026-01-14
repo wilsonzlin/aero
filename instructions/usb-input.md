@@ -127,7 +127,7 @@ The browser runtime can expose input as guest-visible USB HID devices in two way
 - **Synthetic HID devices** (keyboard/mouse/gamepad/consumer-control) attached behind the external hub on root port 0 (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
 - **Physical device passthrough** via WebHID/WebUSB, bridged into the guest-visible USB controller topology (see `docs/webhid-webusb-passthrough.md`).
 
-Guest-visible topology (UHCI-style external hub):
+Guest-visible topology (external hub on root port 0):
 
 - root port 0: external hub (synthetic HID devices + WebHID passthrough)
 - root port 1: reserved for WebUSB passthrough
