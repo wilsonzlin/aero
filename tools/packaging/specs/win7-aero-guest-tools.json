@@ -37,7 +37,8 @@
       "name": "virtio-input",
       "required": true,
       "expected_inf_files": [
-        "aero_virtio_input.inf"
+        "aero_virtio_input.inf",
+        "aero_virtio_tablet.inf"
       ],
       "expected_add_services_from_devices_cmd_var": "AERO_VIRTIO_INPUT_SERVICE",
       "expected_hardware_ids_from_devices_cmd_var": "AERO_VIRTIO_INPUT_HWIDS"
