@@ -1848,7 +1848,7 @@ pub fn decode_cmd_stream_listing(
                         let bool_count = u32_le_at(pkt.payload, 8).unwrap();
                         let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
                         let payload_len = 16usize
-                            .checked_add((bool_count as usize).checked_mul(16).ok_or(
+                            .checked_add((bool_count as usize).checked_mul(4).ok_or(
                                 CmdStreamDecodeError::MalformedPayload {
                                     offset,
                                     opcode,

@@ -268,18 +268,15 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
 
     // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=2, stage_ex=Domain (4), values=[0,1]).
     //
-    // Each bool register is encoded as a vec4<u32> replicated across all lanes.
+    // Bool constants are encoded as scalar u32 values (0/1), one per bool register.
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 2); // stage=Compute
     push_u32_le(&mut payload, 0); // start_register
     push_u32_le(&mut payload, 2); // bool_count
     push_u32_le(&mut payload, 4); // reserved0 / stage_ex = Domain
-    for &v in &[0u32, 1] {
-        for _lane in 0..4 {
-            push_u32_le(&mut payload, v);
-        }
-    }
-    assert_eq!(payload.len(), 48);
+    push_u32_le(&mut payload, 0);
+    push_u32_le(&mut payload, 1);
+    assert_eq!(payload.len(), 24);
     push_packet(
         &mut out,
         AerogpuCmdOpcode::SetShaderConstantsB as u32,
@@ -564,8 +561,8 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     assert!(listing.contains("SetShaderConstantsB"));
     assert!(listing.contains("bool_count=2"));
-    assert!(listing.contains("data_len=32"));
-    assert!(listing.contains("data_prefix=00000000000000000000000000000000.."));
+    assert!(listing.contains("data_len=8"));
+    assert!(listing.contains("data_prefix=0000000001000000"));
 
     // Texture creation packets should decode their payload fields.
     assert!(listing.contains("CreateTexture2d"), "{listing}");
@@ -819,10 +816,8 @@ fn shader_constants_i_b_stage_ex_is_decoded_in_listings() {
     push_u32_le(&mut payload, 0); // start_register
     push_u32_le(&mut payload, 1); // bool_count
     push_u32_le(&mut payload, 4); // reserved0 / stage_ex = Domain
-    for _lane in 0..4 {
-        push_u32_le(&mut payload, 1); // true replicated
-    }
-    assert_eq!(payload.len(), 32);
+    push_u32_le(&mut payload, 1);
+    assert_eq!(payload.len(), 20);
     push_packet(
         &mut bytes,
         AerogpuCmdOpcode::SetShaderConstantsB as u32,
@@ -1127,11 +1122,8 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(set_consts_b["decoded"]["bool_count"], 2);
     assert_eq!(set_consts_b["decoded"]["stage_ex"], 4);
     assert_eq!(set_consts_b["decoded"]["stage_ex_name"], "Domain");
-    assert_eq!(set_consts_b["decoded"]["data_len"], 32);
-    assert_eq!(
-        set_consts_b["decoded"]["data_prefix"],
-        "00000000000000000000000000000000.."
-    );
+    assert_eq!(set_consts_b["decoded"]["data_len"], 8);
+    assert_eq!(set_consts_b["decoded"]["data_prefix"], "0000000001000000");
 
     let create_texture = find_packet("CreateTexture2d");
     assert_eq!(create_texture["decoded"]["texture_handle"], 0x2000);
