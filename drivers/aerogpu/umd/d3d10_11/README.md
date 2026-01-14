@@ -24,8 +24,9 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | MRT (multiple render targets) | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* |
 | Pipeline state encoding (blend / raster / depth) | **Supported** | **Supported** | **Supported** |
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
-| Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
-| Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; basic filter/address modes) |
+| Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
+| Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/CS supported (16 slots; basic filter/address modes) |
+| Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
 
@@ -35,14 +36,15 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Buffers + Texture2D resources
   - Texture2D **mip chains + array layers** (`MipLevels = 0` → full chain), including initial-data upload + subresource layout packing for guest-backed allocations
   - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
-- Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
-- Vertex/pixel shaders (DXBC payload passthrough)
+  - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
+- Vertex/pixel/compute shaders (DXBC payload passthrough)
 - Input layout + vertex/index buffers, primitive topology
 - VS/PS binding tables:
   - D3D10 + D3D10.1: constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
-  - D3D11: constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers
+  - D3D11: VS/PS/CS constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers; CS UAV buffers
 - Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`), Clear, Draw/DrawIndexed
-- Viewport + scissor
+- Viewport + scissor (protocol supports a **single** viewport/scissor; non-trivial arrays are surfaced via `E_NOTIMPL` and applied best-effort as slot 0)
+- D3D11 compute: `CreateComputeShader` + `CsSet*` bindings + `Dispatch`
 - Resource updates + readback:
   - `Map`/`Unmap` for buffers and Texture2D subresources (uploads via `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` / `AEROGPU_CMD_UPLOAD_RESOURCE`)
   - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
@@ -55,15 +57,16 @@ Feature matrix for the Win7 WDK-backed UMDs:
 ### Not yet supported / requires protocol changes
 
 - **Subresource view selection** (SRV/RTV/DSV mip level + array slice): the UMDs currently only support “full-resource” views (no mip/array slicing; view descriptors must select mip 0 and cover the full resource when accepted) and bindings resolve to the underlying texture handle only. Supporting arbitrary per-view subresource selection requires protocol representation of “views” (or subresource selectors) rather than just raw texture handles.
-- **Unordered access views (UAVs) and compute shaders** (FL11+): the D3D11 UMD reports `E_NOTIMPL` for CS/UAV binding. The protocol and host have support for `AEROGPU_CMD_DISPATCH` and buffer UAV bindings (`AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS`), but full D3D11 UAV support still needs texture UAV representation and D3D11 view/subresource selectors.
+- **Texture UAVs + OM UAV binding**: the D3D11 UMD supports **buffer** UAVs in the CS stage (`AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS`), but does not support UAVs over textures, and rejects OM UAV binding (`OMSetRenderTargetsAndUnorderedAccessViews`) with `E_NOTIMPL`. Full UAV support requires protocol view/subresource selectors and a texture-UAV representation.
+- **Multiple viewports/scissor rects**: the protocol encodes only one viewport and one scissor rect. The UMD validates that any additional entries are identical/disabled; otherwise it reports `E_NOTIMPL`.
 - **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. Adding more DXGI formats requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries **stencil enable + masks**; it does **not** encode stencil funcs/ops (or separate front/back face state).
 - Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors (and unsupported blend ops) are rejected at `CreateBlendState` time (`E_NOTIMPL`) to avoid silent misrendering.
 
 ### Still stubbed / known gaps
 
-- Geometry shaders are **accepted but ignored** (the command stream can represent a GS binding, but the AeroGPU/WebGPU pipeline does not execute geometry shaders yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
-- D3D11-only features outside FL10_0 (compute/tessellation/UAV) are unsupported; related DDIs should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
+- Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
+- Tessellation (HS/DS) and other D3D11 features outside the implemented subset should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
 
@@ -102,7 +105,7 @@ See:
 The initial feature claim is **D3D_FEATURE_LEVEL_10_0**:
 
 - D3D11 runtime compatibility (can create a D3D11 device at FL10_0)
-- Avoids implementing SM5.0-only features (tessellation/CS/etc.) early
+- Avoids implementing SM5.0-only features (tessellation, etc.) early
 - Matches the minimal pipeline required for a triangle sample
 
 ## Command stream mapping
