@@ -3674,6 +3674,92 @@ fn decodes_and_translates_float_cmp_mask_and_movc() {
 }
 
 #[test]
+fn translates_float_ne_as_ordered_comparison() {
+    // `ne` is an **ordered** float compare in SM4/SM5 (false when either operand is NaN).
+    //
+    // WGSL `!=` is unordered for NaNs, so the translator must explicitly guard with `x == x` tests.
+    let mut body = Vec::<u32>::new();
+
+    // ne r0, l(0.0), l(1.0)
+    body.push(opcode_token(OPCODE_NE, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_scalar(0.0f32.to_bits()));
+    body.extend_from_slice(&imm32_scalar(1.0f32.to_bits()));
+
+    // movc o0, r0, l(1,0,0,1), l(0,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    let black = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(
+        OPCODE_MOVC,
+        1 + 2 + 2 + red.len() as u32 + black.len() as u32,
+    ));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+    body.extend_from_slice(&red);
+    body.extend_from_slice(&black);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(
+        module.instructions.get(0),
+        Some(Sm4Inst::Cmp {
+            ty: CmpType::F32,
+            op: CmpOp::Ne,
+            ..
+        })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Compare lowering should materialize D3D-style mask bits.
+    assert!(
+        translated
+            .wgsl
+            .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"),
+        "expected compare to lower to u32 mask select:\n{}",
+        translated.wgsl
+    );
+
+    // Ordered `ne` should include NaN guards of the form `x == x` (per lane). We can't rely on
+    // exact variable naming, so just look for component-wise self-equality checks.
+    assert!(
+        translated.wgsl.contains(".x) == ("),
+        "expected ordered ne to include NaN guard self-equality checks:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("&&"),
+        "expected ordered ne to combine `!=` with NaN guards via &&:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_discard_and_clip_in_pixel_shader() {
     let mut body = Vec::<u32>::new();
 

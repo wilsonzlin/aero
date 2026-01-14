@@ -3371,30 +3371,58 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                 }
                 Sm4Inst::Cmp { dst, a, b, op, ty } => {
                     let opcode = "cmp";
-                    let cmp_expr = |a: &str, b: &str| match op {
-                        CmpOp::Eq => format!("({a}) == ({b})"),
-                        CmpOp::Ne => format!("({a}) != ({b})"),
-                        CmpOp::Lt => format!("({a}) < ({b})"),
-                        CmpOp::Le => format!("({a}) <= ({b})"),
-                        CmpOp::Gt => format!("({a}) > ({b})"),
-                        CmpOp::Ge => format!("({a}) >= ({b})"),
-                    };
 
                     let cmp = match ty {
                         CmpType::F32 => {
-                            let a = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
-                            let b = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
-                            cmp_expr(&a, &b)
+                            // D3D float compare opcodes are ordered. In particular, ordered `ne`
+                            // must be false when either operand is NaN (unlike WGSL `!=`).
+                            //
+                            // Reuse `Sm4CmpOp` semantics (shared with `setp`/`ifc`).
+                            let a_expr = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
+                            let b_expr = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
+
+                            // Avoid repeating potentially complex src expressions per-lane.
+                            let a_var = format!("cmp_a_{inst_index}");
+                            let b_var = format!("cmp_b_{inst_index}");
+                            let cmp_var = format!("cmp_cond_{inst_index}");
+                            w.line(&format!("let {a_var} = {a_expr};"));
+                            w.line(&format!("let {b_var} = {b_expr};"));
+
+                            let sm4_op = match op {
+                                CmpOp::Eq => Sm4CmpOp::Eq,
+                                CmpOp::Ne => Sm4CmpOp::Ne,
+                                CmpOp::Lt => Sm4CmpOp::Lt,
+                                CmpOp::Le => Sm4CmpOp::Le,
+                                CmpOp::Gt => Sm4CmpOp::Gt,
+                                CmpOp::Ge => Sm4CmpOp::Ge,
+                            };
+                            let cmp_expr = emit_sm4_cmp_op_vec4_bool(sm4_op, &a_var, &b_var);
+                            w.line(&format!("let {cmp_var} = {cmp_expr};"));
+                            cmp_var
                         }
                         CmpType::I32 => {
                             let a = emit_src_vec4_i32(inst_index, opcode, a, &input_sivs)?;
                             let b = emit_src_vec4_i32(inst_index, opcode, b, &input_sivs)?;
-                            cmp_expr(&a, &b)
+                            match op {
+                                CmpOp::Eq => format!("({a}) == ({b})"),
+                                CmpOp::Ne => format!("({a}) != ({b})"),
+                                CmpOp::Lt => format!("({a}) < ({b})"),
+                                CmpOp::Le => format!("({a}) <= ({b})"),
+                                CmpOp::Gt => format!("({a}) > ({b})"),
+                                CmpOp::Ge => format!("({a}) >= ({b})"),
+                            }
                         }
                         CmpType::U32 => {
                             let a = emit_src_vec4_u32(inst_index, opcode, a, &input_sivs)?;
                             let b = emit_src_vec4_u32(inst_index, opcode, b, &input_sivs)?;
-                            cmp_expr(&a, &b)
+                            match op {
+                                CmpOp::Eq => format!("({a}) == ({b})"),
+                                CmpOp::Ne => format!("({a}) != ({b})"),
+                                CmpOp::Lt => format!("({a}) < ({b})"),
+                                CmpOp::Le => format!("({a}) <= ({b})"),
+                                CmpOp::Gt => format!("({a}) > ({b})"),
+                                CmpOp::Ge => format!("({a}) >= ({b})"),
+                            }
                         }
                     };
 
