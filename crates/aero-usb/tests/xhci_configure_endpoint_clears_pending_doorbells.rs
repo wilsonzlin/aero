@@ -109,7 +109,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     make_normal_trb(buf_ptr, 8, true, true).write_to(&mut mem, ring_base);
 
     let mut ctrl = XhciController::new();
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
@@ -133,9 +132,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     let mut out_slot_ctx = SlotContext::default();
     out_slot_ctx.set_root_hub_port_number(1);
     out_slot_ctx.write_to(&mut mem, dev_ctx);
-
-    // Transfer-ring execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Queue an endpoint doorbell but do not tick: the coalescing bitmap should mark it pending.
     ctrl.ring_doorbell(slot_id, EP_ID);
@@ -182,7 +178,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     make_normal_trb(buf_ptr, 8, true, true).write_to(&mut mem, ring_base);
 
     let mut ctrl = XhciController::new();
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
@@ -198,9 +193,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     slot_ctx.set_root_hub_port_number(1);
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
-
-    // Transfer execution is gated on USBCMD.RUN.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Ensure the output Slot Context in guest memory is populated. Deconfigure mode reads the Slot
     // Context from the output Device Context and mirrors it back into controller-local state; if we
