@@ -322,3 +322,33 @@ fn rejects_sync_in_non_compute_stage() {
         other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
     }
 }
+
+#[test]
+fn rejects_sync_with_unknown_flags() {
+    // The translator only models a subset of `D3D11_SB_SYNC_FLAGS`; unknown bits should be rejected
+    // to avoid silently dropping ordering semantics.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_UAV_MEMORY | 0x8,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    match err {
+        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+            assert_eq!(inst_index, 0);
+            assert_eq!(opcode, "sync_unknown_flags(0x8)");
+        }
+        other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
+    }
+}

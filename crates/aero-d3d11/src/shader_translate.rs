@@ -5814,6 +5814,18 @@ fn emit_instructions(
                     });
                 }
 
+                // We currently only model a small subset of `D3D11_SB_SYNC_FLAGS`.
+                let known_flags = crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY
+                    | crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY
+                    | crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SYNC;
+                let unknown_flags = flags & !known_flags;
+                if unknown_flags != 0 {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: format!("sync_unknown_flags(0x{unknown_flags:x})"),
+                    });
+                }
+
                 let group_sync = (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SYNC) != 0;
                 if group_sync {
                     // SM5 `sync_*_t` instructions are workgroup barriers that optionally include
