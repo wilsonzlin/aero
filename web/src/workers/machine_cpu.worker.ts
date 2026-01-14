@@ -122,6 +122,10 @@ let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
 let snapshotOpChain: Promise<void> = Promise.resolve();
 let vmSnapshotPaused = false;
 
+const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
+let queuedInputBatchBytes = 0;
+const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
+
 // Avoid per-event allocations when falling back to `inject_keyboard_bytes` (older WASM builds).
 // Preallocate small scancode buffers for len=1..4.
 const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Array(2), new Uint8Array(3), new Uint8Array(4)];
@@ -248,6 +252,18 @@ function postInputBatchRecycle(buffer: ArrayBuffer): void {
   }
 }
 
+function flushQueuedInputBatches(): void {
+  if (queuedInputBatches.length === 0) return;
+  const batches = queuedInputBatches.splice(0, queuedInputBatches.length);
+  queuedInputBatchBytes = 0;
+  for (const entry of batches) {
+    handleInputBatch(entry.buffer);
+    if (entry.recycle) {
+      postInputBatchRecycle(entry.buffer);
+    }
+  }
+}
+
 function handleInputBatch(buffer: ArrayBuffer): void {
   const machine = wasmMachine;
   if (!machine) {
@@ -270,17 +286,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const packed = words[off + 2] >>> 0;
       const len = Math.min(words[off + 3] >>> 0, 4);
       if (len === 0) continue;
-        try {
-          if (typeof machine.inject_key_scancode_bytes === "function") {
-            machine.inject_key_scancode_bytes(packed, len);
-          } else if (typeof machine.inject_keyboard_bytes === "function") {
-            const bytes = packedScancodeScratch[len]!;
-            for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
-            machine.inject_keyboard_bytes(bytes);
-          }
-        } catch {
-          // ignore
+      try {
+        if (typeof machine.inject_key_scancode_bytes === "function") {
+          machine.inject_key_scancode_bytes(packed, len);
+        } else if (typeof machine.inject_keyboard_bytes === "function") {
+          const bytes = packedScancodeScratch[len]!;
+          for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
+          machine.inject_keyboard_bytes(bytes);
         }
+      } catch {
+        // ignore
+      }
     } else if (type === InputEventType.MouseMove) {
       const dx = words[off + 2] | 0;
       const dyPs2 = words[off + 3] | 0;
@@ -334,8 +350,19 @@ ctx.onmessage = (ev) => {
   if (input?.type === "in:input-batch") {
     const buffer = input.buffer;
     if (!(buffer instanceof ArrayBuffer)) return;
+    const recycle = input.recycle === true;
+    if (vmSnapshotPaused) {
+      if (queuedInputBatchBytes + buffer.byteLength <= MAX_QUEUED_INPUT_BATCH_BYTES) {
+        queuedInputBatches.push({ buffer, recycle });
+        queuedInputBatchBytes += buffer.byteLength;
+      } else if (recycle) {
+        // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
+        postInputBatchRecycle(buffer);
+      }
+      return;
+    }
     handleInputBatch(buffer);
-    if (input.recycle === true) {
+    if (recycle) {
       postInputBatchRecycle(buffer);
     }
     return;
@@ -361,6 +388,7 @@ ctx.onmessage = (ev) => {
       }
       case "vm.snapshot.resume": {
         vmSnapshotPaused = false;
+        flushQueuedInputBatches();
         postVmSnapshot({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
         return;
       }
