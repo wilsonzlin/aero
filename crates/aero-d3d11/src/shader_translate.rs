@@ -7687,6 +7687,66 @@ mod tests {
     }
 
     #[test]
+    fn malformed_control_flow_continuec_without_loop_triggers_error() {
+        let isgn = DxbcSignature {
+            parameters: Vec::new(),
+        };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Target", 0, 0)],
+        };
+
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::ContinueC {
+                    op: Sm4CmpOp::Eq,
+                    a: dummy_coord(),
+                    b: dummy_coord(),
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let err = translate_ps(&module, &isgn, &osgn, None).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::MalformedControlFlow { inst_index: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn malformed_control_flow_breakc_without_loop_or_switch_triggers_error() {
+        let isgn = DxbcSignature {
+            parameters: Vec::new(),
+        };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Target", 0, 0)],
+        };
+
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::BreakC {
+                    op: Sm4CmpOp::Eq,
+                    a: dummy_coord(),
+                    b: dummy_coord(),
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let err = translate_ps(&module, &isgn, &osgn, None).unwrap_err();
+        assert!(matches!(
+            err,
+            ShaderTranslateError::MalformedControlFlow { inst_index: 0, .. }
+        ));
+    }
+
+    #[test]
     fn uav_unsupported_format_triggers_error() {
         let module = Sm4Module {
             stage: ShaderStage::Pixel,
