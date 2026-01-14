@@ -1196,15 +1196,6 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioBlkResetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL") {
         $sawVirtioBlkResetFail = $true
       }
-      if (-not $sawVirtioBlkResetPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|PASS") {
-        $sawVirtioBlkResetPass = $true
-      }
-      if (-not $sawVirtioBlkResetSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|SKIP") {
-        $sawVirtioBlkResetSkip = $true
-      }
-      if (-not $sawVirtioBlkResetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL") {
-        $sawVirtioBlkResetFail = $true
-      }
       if ($RequireVirtioBlkResetPass) {
         if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail } }
         if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $tail } }
