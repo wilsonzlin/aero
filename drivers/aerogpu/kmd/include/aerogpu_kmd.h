@@ -127,6 +127,7 @@ typedef struct _AEROGPU_SUBMISSION_LOG {
  * Protected by `Mutex`; callers must be at PASSIVE_LEVEL (BuildAllocTable takes
  * allocation CpuMapMutexes which are FAST_MUTEXes).
  */
+#define AEROGPU_ALLOC_TABLE_SCRATCH_SHARD_COUNT 2u
 typedef struct _AEROGPU_ALLOC_TABLE_SCRATCH {
     FAST_MUTEX Mutex;
 
@@ -556,7 +557,7 @@ typedef struct _AEROGPU_ADAPTER {
 
     AEROGPU_SUBMISSION_LOG SubmissionLog;
 
-    AEROGPU_ALLOC_TABLE_SCRATCH AllocTableScratch;
+    AEROGPU_ALLOC_TABLE_SCRATCH AllocTableScratch[AEROGPU_ALLOC_TABLE_SCRATCH_SHARD_COUNT];
 } AEROGPU_ADAPTER;
 
 /*

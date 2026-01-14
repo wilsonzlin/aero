@@ -2170,17 +2170,23 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         tmpEntriesCap = targetTmpCap;
     }
 
+    const ULONG cpu = KeGetCurrentProcessorNumber();
+    const UINT scratchShard = (UINT)(cpu % (ULONG)AEROGPU_ALLOC_TABLE_SCRATCH_SHARD_COUNT);
+    AEROGPU_ALLOC_TABLE_SCRATCH* scratch = &Adapter->AllocTableScratch[scratchShard];
+
     /*
-     * Use the adapter-owned scratch block when possible; this avoids per-submit
-     * NonPagedPool churn. This is a single shared scratch buffer, so serialize
-     * usage by holding the scratch mutex for the duration of the table build.
+     * Use an adapter-owned sharded scratch block when possible; this avoids per-submit
+     * NonPagedPool churn and reduces contention between concurrent submissions.
+     *
+     * We shard by current CPU to spread concurrent callers across independent scratch
+     * buffers while keeping the implementation simple/deterministic.
      */
-    ExAcquireFastMutex(&Adapter->AllocTableScratch.Mutex);
-    const NTSTATUS scratchSt = AeroGpuAllocTableScratchEnsureCapacityLocked(&Adapter->AllocTableScratch, tmpEntriesCap, cap);
+    ExAcquireFastMutex(&scratch->Mutex);
+    const NTSTATUS scratchSt = AeroGpuAllocTableScratchEnsureCapacityLocked(scratch, tmpEntriesCap, cap);
     if (NT_SUCCESS(scratchSt)) {
-        tmpEntries = Adapter->AllocTableScratch.TmpEntries;
-        seen = Adapter->AllocTableScratch.Seen;
-        seenMeta = Adapter->AllocTableScratch.SeenMeta;
+        tmpEntries = scratch->TmpEntries;
+        seen = scratch->Seen;
+        seenMeta = scratch->SeenMeta;
         usingCache = TRUE;
         scratchLockHeld = TRUE;
     } else {
@@ -2188,12 +2194,13 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         static volatile LONG g_BuildAllocTableScratchFallbackLogCount = 0;
         AEROGPU_LOG_RATELIMITED(g_BuildAllocTableScratchFallbackLogCount,
                                 4,
-                                "BuildAllocTable: scratch cache unavailable (Count=%u alloc_ids=%u cap=%u); falling back to per-call allocations",
+                                "BuildAllocTable: scratch[%u] cache unavailable (Count=%u alloc_ids=%u cap=%u); falling back to per-call allocations",
+                                scratchShard,
                                 Count,
                                 nonZeroAllocIdCount,
                                 cap);
 #endif
-        ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
+        ExReleaseFastMutex(&scratch->Mutex);
         scratchLockHeld = FALSE;
 
         if (scratchSt != STATUS_INSUFFICIENT_RESOURCES) {
@@ -2215,18 +2222,18 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     uint16_t epoch = 1;
     if (usingCache) {
-        epoch = (uint16_t)(Adapter->AllocTableScratch.Epoch + 1);
-        Adapter->AllocTableScratch.Epoch = epoch;
+        epoch = (uint16_t)(scratch->Epoch + 1);
+        scratch->Epoch = epoch;
         if (epoch == 0) {
             /* Epoch wrapped; clear and restart at 1. */
             SIZE_T metaBytes = 0;
-            if (!NT_SUCCESS(RtlSizeTMult((SIZE_T)Adapter->AllocTableScratch.HashCapacity, sizeof(uint32_t), &metaBytes))) {
+            if (!NT_SUCCESS(RtlSizeTMult((SIZE_T)scratch->HashCapacity, sizeof(uint32_t), &metaBytes))) {
                 st = STATUS_INTEGER_OVERFLOW;
                 goto cleanup;
             }
-            RtlZeroMemory(Adapter->AllocTableScratch.SeenMeta, metaBytes);
+            RtlZeroMemory(scratch->SeenMeta, metaBytes);
             epoch = 1;
-            Adapter->AllocTableScratch.Epoch = epoch;
+            scratch->Epoch = epoch;
         }
     }
 
@@ -2256,7 +2263,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         }
         RtlCopyMemory(stackEntries, tmpEntries, stackCopyBytes);
         entriesToCopy = stackEntries;
-        ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
+        ExReleaseFastMutex(&scratch->Mutex);
         scratchLockHeld = FALSE;
     }
 
@@ -2301,7 +2308,7 @@ cleanup:
         AeroGpuFreeContiguousNonCached(Adapter, tableVa, tableSizeBytes);
     }
     if (scratchLockHeld) {
-        ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
+        ExReleaseFastMutex(&scratch->Mutex);
     }
     if (slowBlock) {
         ExFreePoolWithTag(slowBlock, AEROGPU_POOL_TAG);
@@ -3831,7 +3838,9 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
 
     adapter->PhysicalDeviceObject = PhysicalDeviceObject;
     adapter->NonLocalMemorySizeBytes = AeroGpuGetNonLocalMemorySizeBytes(adapter);
-    ExInitializeFastMutex(&adapter->AllocTableScratch.Mutex);
+    for (UINT i = 0; i < AEROGPU_ALLOC_TABLE_SCRATCH_SHARD_COUNT; ++i) {
+        ExInitializeFastMutex(&adapter->AllocTableScratch[i].Mutex);
+    }
     KeInitializeSpinLock(&adapter->RingLock);
     KeInitializeSpinLock(&adapter->IrqEnableLock);
     KeInitializeSpinLock(&adapter->PendingLock);
@@ -5431,44 +5440,48 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     AEROGPU_LOG0("RemoveDevice");
     /* Free cached scratch buffers (BuildAllocTable). */
     {
-        PVOID block = NULL;
-        SIZE_T blockBytes = 0;
-        UINT tmpCap = 0;
-        UINT hashCap = 0;
+        for (UINT shard = 0; shard < AEROGPU_ALLOC_TABLE_SCRATCH_SHARD_COUNT; ++shard) {
+            AEROGPU_ALLOC_TABLE_SCRATCH* scratch = &adapter->AllocTableScratch[shard];
+            PVOID block = NULL;
+            SIZE_T blockBytes = 0;
+            UINT tmpCap = 0;
+            UINT hashCap = 0;
 #if DBG
-        LONG hitCount = 0;
-        LONG growCount = 0;
+            LONG hitCount = 0;
+            LONG growCount = 0;
 #endif
-        ExAcquireFastMutex(&adapter->AllocTableScratch.Mutex);
-        block = adapter->AllocTableScratch.Block;
-        blockBytes = adapter->AllocTableScratch.BlockBytes;
-        tmpCap = adapter->AllocTableScratch.TmpEntriesCapacity;
-        hashCap = adapter->AllocTableScratch.HashCapacity;
+            ExAcquireFastMutex(&scratch->Mutex);
+            block = scratch->Block;
+            blockBytes = scratch->BlockBytes;
+            tmpCap = scratch->TmpEntriesCapacity;
+            hashCap = scratch->HashCapacity;
 #if DBG
-        hitCount = adapter->AllocTableScratch.HitCount;
-        growCount = adapter->AllocTableScratch.GrowCount;
+            hitCount = scratch->HitCount;
+            growCount = scratch->GrowCount;
 #endif
-        adapter->AllocTableScratch.Block = NULL;
-        adapter->AllocTableScratch.BlockBytes = 0;
-        adapter->AllocTableScratch.TmpEntriesCapacity = 0;
-        adapter->AllocTableScratch.HashCapacity = 0;
-        adapter->AllocTableScratch.TmpEntries = NULL;
-        adapter->AllocTableScratch.Seen = NULL;
-        adapter->AllocTableScratch.SeenMeta = NULL;
-        adapter->AllocTableScratch.Epoch = 0;
-        ExReleaseFastMutex(&adapter->AllocTableScratch.Mutex);
+            scratch->Block = NULL;
+            scratch->BlockBytes = 0;
+            scratch->TmpEntriesCapacity = 0;
+            scratch->HashCapacity = 0;
+            scratch->TmpEntries = NULL;
+            scratch->Seen = NULL;
+            scratch->SeenMeta = NULL;
+            scratch->Epoch = 0;
+            ExReleaseFastMutex(&scratch->Mutex);
 #if DBG
-        if (hitCount != 0 || growCount != 0 || blockBytes != 0) {
-            AEROGPU_LOG("BuildAllocTable scratch stats: hits=%ld grows=%ld tmp_cap=%u hash_cap=%u bytes=%Iu",
-                        hitCount,
-                        growCount,
-                        tmpCap,
-                        hashCap,
-                        blockBytes);
-        }
+            if (hitCount != 0 || growCount != 0 || blockBytes != 0) {
+                AEROGPU_LOG("BuildAllocTable scratch[%u] stats: hits=%ld grows=%ld tmp_cap=%u hash_cap=%u bytes=%Iu",
+                            shard,
+                            hitCount,
+                            growCount,
+                            tmpCap,
+                            hashCap,
+                            blockBytes);
+            }
 #endif
-        if (block) {
-            ExFreePoolWithTag(block, AEROGPU_POOL_TAG);
+            if (block) {
+                ExFreePoolWithTag(block, AEROGPU_POOL_TAG);
+            }
         }
     }
     {
