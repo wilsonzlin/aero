@@ -1564,6 +1564,11 @@ function renderMachinePanel(): HTMLElement {
           }
         }
 
+        // Canvas2D expects sRGB-encoded bytes; the scanout/export APIs are treated as linear RGBA8.
+        encodeLinearRgba8ToSrgbInPlace(
+          new Uint8Array(imageDataBytes.buffer, imageDataBytes.byteOffset, imageDataBytes.byteLength),
+        );
+
         ctx2.putImageData(imageData, 0, 0);
         testState.framesPresented += 1;
         testState.width = width;

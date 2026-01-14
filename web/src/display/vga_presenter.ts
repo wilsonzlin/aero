@@ -11,6 +11,7 @@ import {
   type SharedFramebufferView,
 } from "./framebuffer_protocol";
 import { perf } from "../perf/perf";
+import { encodeLinearRgba8ToSrgbInPlace } from "../utils/srgb";
 
 export type VgaScaleMode = "auto" | "pixelated" | "smooth";
 
@@ -356,6 +357,12 @@ export class VgaPresenter {
     } else {
       this.srcImageBytes.set(pixels.subarray(0, width * height * 4));
     }
+
+    // `ImageData` / Canvas2D expects sRGB-encoded bytes. Treat the VGA framebuffer bytes as
+    // linear RGBA8 and encode to sRGB for presentation.
+    encodeLinearRgba8ToSrgbInPlace(
+      new Uint8Array(this.srcImageBytes.buffer, this.srcImageBytes.byteOffset, this.srcImageBytes.byteLength),
+    );
 
     this.srcCtx.putImageData(this.srcImageData, 0, 0);
   }

@@ -6,6 +6,7 @@ import {
   SharedFramebufferHeaderIndex,
   type SharedFramebufferLayout,
 } from "../ipc/shared-layout";
+import { encodeLinearRgba8ToSrgbInPlace } from "../utils/srgb";
 
 export type SharedLayoutPresenterOptions = {
   /**
@@ -191,8 +192,12 @@ export class SharedLayoutPresenter {
       }
     }
 
+    // `ImageData` / Canvas2D expects sRGB-encoded bytes. The shared framebuffer is treated as
+    // linear RGBA8 (consistent with the worker presenter backends), so encode to sRGB before
+    // presenting.
+    encodeLinearRgba8ToSrgbInPlace(new Uint8Array(dst.buffer, dst.byteOffset, dst.byteLength));
+
     this.ctx.putImageData(image, 0, 0);
     this.lastPresentedSeq = seq;
   }
 }
-
