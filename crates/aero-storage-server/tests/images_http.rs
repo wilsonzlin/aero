@@ -132,6 +132,47 @@ async fn request_with_cookie_is_not_publicly_cacheable() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn request_with_authorization_is_not_publicly_cacheable() {
+    let (app, _dir) = setup_app(1024).await;
+
+    for uri in ["/v1/images/test.img", "/v1/images/test.img/data"] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, "Bearer deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            res.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+            "private, no-store, no-transform",
+            "{uri}"
+        );
+        assert_eq!(
+            res.headers()["access-control-allow-origin"]
+                .to_str()
+                .unwrap(),
+            "*",
+            "{uri}"
+        );
+        assert_eq!(
+            res.headers()["cross-origin-resource-policy"]
+                .to_str()
+                .unwrap(),
+            "same-site",
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn head_without_range_returns_headers_only() {
     let (app, _dir) = setup_app(1024).await;
 
