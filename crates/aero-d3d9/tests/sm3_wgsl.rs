@@ -180,6 +180,38 @@ fn wgsl_ps30_reads_vface_compiles() {
 }
 
 #[test]
+fn wgsl_ps30_writes_odepth_compiles() {
+    // ps_3_0:
+    //   mov oDepth, c0.x
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // mov oDepth.x, c0.x
+        opcode_token(1, 2),
+        dst_token(9, 0, 0x1),     // oDepth.x
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.contains("@builtin(frag_depth)"), "{wgsl}");
+    assert!(wgsl.contains("out.frag_depth"), "{wgsl}");
+}
+
+#[test]
 fn wgsl_texld_emits_texture_sample() {
     // ps_2_0:
     //   texld r0, c0, s0

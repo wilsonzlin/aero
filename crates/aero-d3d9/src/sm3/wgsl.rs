@@ -1991,9 +1991,25 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
             color_outputs.insert(0);
 
+            // Pixel depth output (oDepth).
+            let mut writes_depth = false;
+            for (file, index) in &usage.outputs_written {
+                if *file == RegFile::DepthOut {
+                    if *index != 0 {
+                        return Err(err(format!(
+                            "unsupported depth output register oDepth{index} (only oDepth is supported)"
+                        )));
+                    }
+                    writes_depth = true;
+                }
+            }
+
             wgsl.push_str("struct FsOut {\n");
             for idx in &color_outputs {
                 let _ = writeln!(wgsl, "  @location({idx}) oC{idx}: vec4<f32>,");
+            }
+            if writes_depth {
+                wgsl.push_str("  @builtin(frag_depth) frag_depth: f32,\n");
             }
             wgsl.push_str("};\n\n");
 
@@ -2119,6 +2135,9 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             wgsl.push_str("  var out: FsOut;\n");
             for idx in &color_outputs {
                 let _ = writeln!(wgsl, "  out.oC{idx} = oC{idx};");
+            }
+            if writes_depth {
+                wgsl.push_str("  out.frag_depth = oDepth.x;\n");
             }
             wgsl.push_str("  return out;\n}\n");
         }
