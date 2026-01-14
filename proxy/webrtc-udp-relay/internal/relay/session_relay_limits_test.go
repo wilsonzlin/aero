@@ -19,7 +19,7 @@ func TestSessionRelay_EnforcesOutboundUDPRateLimit(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestSessionRelay_EnforcesInboundDataChannelRateLimit(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -17,7 +17,7 @@ func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestSession_HardModeClosesAfterViolations(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestSession_EnforcesUniqueDestinationQuota(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestSession_EnforcesDataChannelBps(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestSession_EnforcesUDPBpsPerSession(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestSession_EnforcesUDPPpsPerDest(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestSession_UDPDestBucketEvictionsMetric(t *testing.T) {
 	}
 	m := metrics.New()
 	sm := NewSessionManager(cfg, m, clk)
-	s, err := sm.CreateSession()
+	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

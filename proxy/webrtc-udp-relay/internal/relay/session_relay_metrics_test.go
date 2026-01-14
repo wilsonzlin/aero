@@ -16,7 +16,7 @@ import (
 func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 	m := metrics.New()
 	sm := NewSessionManager(config.Config{}, m, nil)
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 	m := metrics.New()
 	sm := NewSessionManager(config.Config{}, m, nil)
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 	m := metrics.New()
 	sm := NewSessionManager(config.Config{}, m, nil)
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropped(t *testing.T) {
 	m := metrics.New()
 	sm := NewSessionManager(config.Config{}, m, nil)
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

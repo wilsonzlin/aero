@@ -25,7 +25,7 @@ func TestSession_RejectsOversizedUDPDataChannelMessage_Metrics(t *testing.T) {
 
 	m := metrics.New()
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
-	quota, err := sm.CreateSession()
+	quota, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

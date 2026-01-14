@@ -19,7 +19,7 @@ func TestSessionManager_AssignsHexSessionIDsAndRemovesOnClose(t *testing.T) {
 		return len(sm.sessions)
 	}
 
-	sess, err := sm.CreateSession()
+	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -56,13 +56,13 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 		return len(sm.sessions)
 	}
 
-	s1, err := sm.CreateSession()
+	s1, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	t.Cleanup(s1.Close)
 
-	_, err = sm.CreateSession()
+	_, err = sm.CreateSessionWithKey("")
 	if err != ErrTooManySessions {
 		t.Fatalf("CreateSession err=%v, want %v", err, ErrTooManySessions)
 	}
@@ -79,7 +79,7 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 		t.Fatalf("ActiveSessions=%d, want 0 after Close", got)
 	}
 
-	s2, err := sm.CreateSession()
+	s2, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession after Close: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSessionManager_CreateSession_AvoidsIDCollisionWithKeyedSession(t *testi
 	}
 	t.Cleanup(keyed.Close)
 
-	random, err := sm.CreateSession()
+	random, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestSessionManager_CreateSessionWithKey_AvoidsIDCollisionWithRandomSession(
 	m := metrics.New()
 	sm := NewSessionManager(config.Config{}, m, nil)
 
-	random, err := sm.CreateSession()
+	random, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

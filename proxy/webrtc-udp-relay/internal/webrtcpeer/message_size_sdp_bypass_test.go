@@ -34,7 +34,7 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 
 	m := metrics.New()
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
-	quota, err := sm.CreateSession()
+	quota, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestWebRTCDataChannel_OversizeL2Message_IgnoresSDP_ClosesSession(t *testing
 
 	m := metrics.New()
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
-	quota, err := sm.CreateSession()
+	quota, err := sm.CreateSessionWithKey("")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

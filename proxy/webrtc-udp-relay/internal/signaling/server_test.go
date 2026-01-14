@@ -921,7 +921,7 @@ func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 	_ = resp.Body.Close()
 
 	srv.Close()
-	if sess, err := sm.CreateSession(); err != nil {
+	if sess, err := sm.CreateSessionWithKey(""); err != nil {
 		t.Fatalf("CreateSession after server.Close: %v", err)
 	} else {
 		sess.Close()
@@ -1008,7 +1008,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 		srv.mu.Unlock()
 
 		if webrtcSessions == 0 && m.Get(metrics.WebRTCSessionConnectTimeout) > 0 {
-			sess, err := sm.CreateSession()
+			sess, err := sm.CreateSessionWithKey("")
 			if err == nil {
 				sess.Close()
 				break
@@ -1020,7 +1020,7 @@ func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if sess, err := sm.CreateSession(); err != nil {
+	if sess, err := sm.CreateSessionWithKey(""); err != nil {
 		t.Fatalf("CreateSession after connect timeout: %v", err)
 	} else {
 		sess.Close()

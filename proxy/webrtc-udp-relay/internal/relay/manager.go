@@ -59,7 +59,7 @@ func (sm *SessionManager) ActiveSessions() int {
 	return len(sm.sessions)
 }
 
-func (sm *SessionManager) CreateSession() (*Session, error) {
+func (sm *SessionManager) createSession() (*Session, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		id, err := newSessionID()
 		if err != nil {
@@ -107,7 +107,7 @@ func (sm *SessionManager) deleteSession(id string) {
 // for quota bookkeeping and uniqueness enforcement.
 func (sm *SessionManager) CreateSessionWithKey(key string) (*Session, error) {
 	if key == "" {
-		return sm.CreateSession()
+		return sm.createSession()
 	}
 	mapKey := sidSessionMapKey(key)
 
