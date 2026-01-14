@@ -272,6 +272,16 @@ Notes:
   is the place where PIO commands are implemented for BIOS/early-boot compatibility (see
   [`crates/aero-devices-storage/src/ide.rs`](../crates/aero-devices-storage/src/ide.rs)).
 
+For reference, the current IDE (PIO) ATA command support includes:
+
+- `IDENTIFY DEVICE` (`0xEC`)
+- `READ SECTORS` (28-bit PIO) (`0x20`)
+- `WRITE SECTORS` (28-bit PIO) (`0x30`)
+- `READ SECTORS EXT` (48-bit PIO) (`0x24`)
+- `WRITE SECTORS EXT` (48-bit PIO) (`0x34`)
+- `FLUSH CACHE` (`0xE7`) and `FLUSH CACHE EXT` (`0xEA`)
+- `SET FEATURES` (`0xEF`) (write cache enable/disable, as above)
+
 ### AHCI port reset / COMRESET handling (PxSCTL.DET)
 
 Real AHCI drivers (including Windows 7’s in-box `msahci.sys`) commonly perform a SATA link reset by
