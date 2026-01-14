@@ -2814,7 +2814,7 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
 
 static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTER* Adapter)
 {
-    if (!Adapter || !Adapter->Bar0 || !Adapter->RingVa || !Adapter->RingHeader || Adapter->RingEntryCount == 0) {
+    if (!Adapter || !Adapter->Bar0 || !Adapter->RingVa || Adapter->RingEntryCount == 0) {
         return FALSE;
     }
 
@@ -2822,8 +2822,7 @@ static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTE
         return FALSE;
     }
 
-    /* Ring header lives at the start of the ring mapping. */
-    if ((PVOID)Adapter->RingHeader != Adapter->RingVa) {
+    if (Adapter->RingSizeBytes < sizeof(struct aerogpu_ring_header)) {
         return FALSE;
     }
 
@@ -2840,23 +2839,24 @@ static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTE
         return FALSE;
     }
 
-    if (Adapter->RingHeader->magic != AEROGPU_RING_MAGIC) {
+    const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)Adapter->RingVa;
+    if (ringHeader->magic != AEROGPU_RING_MAGIC) {
         return FALSE;
     }
-    if ((Adapter->RingHeader->abi_version >> 16) != AEROGPU_ABI_MAJOR) {
+    if ((ringHeader->abi_version >> 16) != AEROGPU_ABI_MAJOR) {
         return FALSE;
     }
-    if (Adapter->RingHeader->entry_count != ringEntryCount) {
+    if (ringHeader->entry_count != ringEntryCount) {
         return FALSE;
     }
     /* KMD expects the fixed descriptor stride used by the current ABI. */
-    if (Adapter->RingHeader->entry_stride_bytes != sizeof(struct aerogpu_submit_desc)) {
+    if (ringHeader->entry_stride_bytes != sizeof(struct aerogpu_submit_desc)) {
         return FALSE;
     }
-    if ((ULONGLONG)Adapter->RingHeader->size_bytes < minRingBytes) {
+    if ((ULONGLONG)ringHeader->size_bytes < minRingBytes) {
         return FALSE;
     }
-    if (Adapter->RingHeader->size_bytes > (uint32_t)Adapter->RingSizeBytes) {
+    if (ringHeader->size_bytes > (uint32_t)Adapter->RingSizeBytes) {
         return FALSE;
     }
 
@@ -2990,7 +2990,10 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->RingLock, &oldIrql);
 
-    const uint32_t head = Adapter->RingHeader->head;
+    struct aerogpu_ring_header* ringHeader = (struct aerogpu_ring_header*)Adapter->RingVa;
+    Adapter->RingHeader = ringHeader;
+
+    const uint32_t head = ringHeader->head;
     const uint32_t tail = Adapter->RingTail;
     const uint32_t pending = tail - head;
     if (pending >= Adapter->RingEntryCount) {
@@ -3017,7 +3020,7 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     KeMemoryBarrier();
     Adapter->RingTail = tail + 1;
-    Adapter->RingHeader->tail = Adapter->RingTail;
+    ringHeader->tail = Adapter->RingTail;
     KeMemoryBarrier();
 
     /*
@@ -3650,7 +3653,7 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
-    if (!Adapter->Bar0 || !Adapter->RingVa || !Adapter->RingHeader || Adapter->RingEntryCount == 0) {
+    if (!AeroGpuV1SubmitPathUsable(Adapter)) {
         return;
     }
 
@@ -4971,7 +4974,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
          */
         if (oldState != DxgkDevicePowerStateD0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1 &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG)) &&
-            adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0) {
+            AeroGpuV1SubmitPathUsable(adapter)) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
         }
 
