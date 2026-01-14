@@ -1251,8 +1251,42 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     await Promise.allSettled(inflight);
     this.inflightChunks.clear();
 
+    // Quota pressure can be discovered while waiting for inflight tasks to settle (e.g. a chunk
+    // finishes downloading and hits a quota error during `writeBlock`). If persistence is now
+    // disabled, fall back to the quota-disabled clear path so we don't attempt further OPFS writes.
+    if (this.persistentCacheWritesDisabled) {
+      await this.metaWriteChain.catch(() => {});
+      this.metaWriteChain = Promise.resolve();
+      this.meta = null;
+      this.rangeSet = new RangeSet();
+
+      const oldCache = this.cache;
+      await oldCache?.close?.().catch(() => {});
+      await this.metadataStore.delete(this.cacheId).catch(() => {});
+      this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+
+      this.fetchAbort = new AbortController();
+      this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+      return;
+    }
+
     const oldCache = this.cache;
-    await oldCache?.close?.();
+    try {
+      await oldCache?.close?.();
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        this.disablePersistentCacheWrites();
+      } else {
+        // Ensure the disk remains usable even if the persistent cache handle could not be closed.
+        // This method already bumped the cache generation + aborted inflight downloads, so we must
+        // recreate `fetchAbort` before propagating.
+        this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+        this.fetchAbort = new AbortController();
+        this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+        // Maintain previous behaviour: propagate unexpected close failures.
+        throw err;
+      }
+    }
     this.cache = null;
 
     await this.metaWriteChain.catch(() => {
@@ -1262,12 +1296,46 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.meta = null;
     this.rangeSet = new RangeSet();
 
-    await this.metadataStore.delete(this.cacheId);
+    try {
+      await this.metadataStore.delete(this.cacheId);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        this.disablePersistentCacheWrites();
+      } else {
+        // Make sure the disk stays usable even if cache clearing failed.
+        this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+        this.fetchAbort = new AbortController();
+        this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+        throw err;
+      }
+    }
 
-    const cache = await this.sparseCacheFactory.create(this.cacheId, {
-      diskSizeBytes: this.capacityBytesValue,
-      blockSizeBytes: this.opts.chunkSize,
-    });
+    if (this.persistentCacheWritesDisabled) {
+      this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+      this.fetchAbort = new AbortController();
+      this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+      return;
+    }
+
+    let cache: RemoteRangeDiskSparseCache;
+    try {
+      cache = await this.sparseCacheFactory.create(this.cacheId, {
+        diskSizeBytes: this.capacityBytesValue,
+        blockSizeBytes: this.opts.chunkSize,
+      });
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        this.disablePersistentCacheWrites();
+        this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+        this.fetchAbort = new AbortController();
+        this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+        return;
+      }
+      this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+      this.fetchAbort = new AbortController();
+      this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+      throw err;
+    }
     this.cache = cache;
 
     const now = Date.now();
@@ -1288,7 +1356,27 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     };
     this.meta = metaToPersist;
     this.metaDirty = false;
-    await this.metadataStore.write(this.cacheId, metaToPersist);
+    try {
+      await this.metadataStore.write(this.cacheId, metaToPersist);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        this.disablePersistentCacheWrites();
+        await cache.close?.().catch(() => {});
+        this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+        this.meta = null;
+        this.rangeSet = new RangeSet();
+        this.fetchAbort = new AbortController();
+        this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+        return;
+      }
+      await cache.close?.().catch(() => {});
+      this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+      this.meta = null;
+      this.rangeSet = new RangeSet();
+      this.fetchAbort = new AbortController();
+      this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+      throw err;
+    }
 
     // Allow subsequent reads after the clear completes.
     this.fetchAbort = new AbortController();
