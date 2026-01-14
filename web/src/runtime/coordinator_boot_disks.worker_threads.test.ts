@@ -30,18 +30,20 @@ class MockWorker {
 }
 
 describe("runtime/coordinator (boot disks forwarding)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const originalWorker = (globalThis as any).Worker as unknown;
+  const originalWorkerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const globalWithWorker = globalThis as unknown as { Worker?: unknown };
 
   beforeEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).Worker = MockWorker;
+    globalWithWorker.Worker = MockWorker;
     vi.spyOn(perf, "registerWorker").mockImplementation(() => 0);
   });
 
   afterEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).Worker = originalWorker as any;
+    if (originalWorkerDescriptor) {
+      Object.defineProperty(globalThis, "Worker", originalWorkerDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "Worker");
+    }
     vi.restoreAllMocks();
   });
 
@@ -59,14 +61,23 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
   }
 
+  type CoordinatorTestHarness = {
+    shared: unknown;
+    activeConfig?: Record<string, unknown>;
+    workers: Record<string, { instanceId: number; worker: unknown }>;
+    spawnWorker: (role: string, segments: unknown) => void;
+    terminateWorker: (role: string) => void;
+    onWorkerMessage: (role: string, instanceId: number, message: unknown) => void;
+  };
+
   it("resends boot disk selection to the CPU worker when vmRuntime=machine and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     // Manually wire shared memory so we can spawn workers without invoking `start()`.
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -93,11 +104,11 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     // Spawn the workers; the coordinator should forward `setBootDisks` to CPU (machine runtime)
     // and *not* forward disk metadata to IO.
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const expectedCpuMessage = {
       ...emptySetBootDisksMessage(),
@@ -120,10 +131,10 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
 
     // Simulate the CPU worker being restarted; the replacement instance should inherit the stored selection.
-    (coordinator as any).terminateWorker("cpu");
-    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("cpu");
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
 
-    const restartedCpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const restartedCpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(restartedCpuWorker).not.toBe(cpuWorker);
     expect(restartedCpuWorker.posted).toContainEqual({
       message: expectedCpuMessage,
@@ -136,8 +147,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -162,17 +173,17 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuInfo = (coordinator as any).workers.cpu;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
 
     // Machine runtime boots from CD on the first run, then switches to HDD after the guest requests a reset.
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
 
     // CPU worker restarts must preserve the policy so the guest boots from HDD even if the install ISO remains mounted.
-    (coordinator as any).terminateWorker("cpu");
-    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("cpu");
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
 
-    const restartedCpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const restartedCpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(restartedCpuWorker.posted).toContainEqual({
       message: {
         ...emptySetBootDisksMessage(),
@@ -190,18 +201,18 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuInfo = (coordinator as any).workers.cpu;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
 
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
 
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "cdrom" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "cdrom" });
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe("cdrom");
 
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "hdd" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "hdd" });
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe("hdd");
   });
 
@@ -210,13 +221,13 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine", enableWorkers: true };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine", enableWorkers: true };
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuInfo = (coordinator as any).workers.cpu;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
 
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "cdrom" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "cdrom" });
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe("cdrom");
 
     coordinator.stop();
@@ -228,8 +239,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -254,12 +265,12 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuInfo = (coordinator as any).workers.cpu;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
     const cpuWorker = cpuInfo.worker as MockWorker;
 
     // Simulate the CPU worker switching to HDD boot after the guest rebooted.
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceSelected", bootDevice: "hdd" });
 
     // DiskManager may re-apply the same selection (e.g. after refresh). This must not reset bootDevice back to cdrom.
     const postedBefore = cpuWorker.posted.length;
@@ -291,8 +302,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -316,8 +327,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
 
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     const postedBefore = cpuWorker.posted.length;
 
     // Simulate a DiskManager refresh where mounts still reference the same disk IDs but metadata is missing/late-loaded.
@@ -338,8 +349,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -363,8 +374,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
 
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     const postedBefore = cpuWorker.posted.length;
 
     // Rename the disk (metadata changes, selection does not).
@@ -386,8 +397,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "legacy" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -411,8 +422,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
 
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
-    (coordinator as any).spawnWorker("io", segments);
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
     const postedBefore = ioWorker.posted.length;
 
     // Simulate a refresh where mounts are stable but disk metadata is missing/late-loaded.
@@ -432,8 +443,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "legacy" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -447,8 +458,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
 
     coordinator.setBootDisks({ hddId: hdd.id }, hdd, null);
-    (coordinator as any).spawnWorker("io", segments);
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
     const postedBefore = ioWorker.posted.length;
 
     // Metadata changes (rename) should be reflected in cached bootDisks but must not trigger a remount.
@@ -468,8 +479,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "legacy" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -483,8 +494,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     });
 
     coordinator.setBootDisks({ hddId: hdd.id }, hdd, null);
-    (coordinator as any).spawnWorker("io", segments);
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
     const postedBefore = ioWorker.posted.length;
 
     // Disk resize changes the open contract (`sizeBytes` is validated by the runtime disk worker).
@@ -514,8 +525,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "legacy" };
 
     const remoteHdd: DiskImageMetadata = {
       source: "remote",
@@ -542,8 +553,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     };
 
     coordinator.setBootDisks({ hddId: remoteHdd.id }, remoteHdd, null);
-    (coordinator as any).spawnWorker("io", segments);
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
     const postedBefore = ioWorker.posted.length;
 
     // Changing the remote validator changes the open spec (cache binding), so the IO worker must
@@ -579,8 +590,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = { vmRuntime: "legacy" };
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "legacy" };
 
     const hdd = makeLocalDisk({
       id: "hdd1",
@@ -605,8 +616,8 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
 
-    (coordinator as any).spawnWorker("io", segments);
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const expectedIoMessage = {
       ...emptySetBootDisksMessage(),
@@ -621,10 +632,10 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       transfer: undefined,
     });
 
-    (coordinator as any).terminateWorker("io");
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("io");
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const restartedIoWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const restartedIoWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
     expect(restartedIoWorker).not.toBe(ioWorker);
     expect(restartedIoWorker.posted).toContainEqual({
       message: expectedIoMessage,
@@ -638,17 +649,17 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
     // `scheduleFullRestart` is gated on `enableWorkers`; keep it enabled so this test would fail
     // if we accidentally reintroduced the restart loop.
-    (coordinator as any).activeConfig = { enableWorkers: true, vmRuntime: "machine" };
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { enableWorkers: true, vmRuntime: "machine" };
 
-    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
 
-    const cpuInfo = (coordinator as any).workers.cpu;
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
     expect(cpuInfo).toBeTruthy();
 
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
       type: MessageType.ERROR,
       role: "cpu",
       message: "machine runtime does not yet support remote streaming disks",
