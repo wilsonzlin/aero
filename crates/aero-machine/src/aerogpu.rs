@@ -41,12 +41,19 @@ const _: () = {
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 
 fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    mem.write_u32(
-        gpa + FENCE_PAGE_MAGIC_OFFSET,
-        ring::AEROGPU_FENCE_PAGE_MAGIC,
-    );
-    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
-    mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
+    let Some(magic_addr) = gpa.checked_add(FENCE_PAGE_MAGIC_OFFSET) else {
+        return;
+    };
+    let Some(abi_addr) = gpa.checked_add(FENCE_PAGE_ABI_VERSION_OFFSET) else {
+        return;
+    };
+    let Some(fence_addr) = gpa.checked_add(FENCE_PAGE_COMPLETED_FENCE_OFFSET) else {
+        return;
+    };
+
+    mem.write_u32(magic_addr, ring::AEROGPU_FENCE_PAGE_MAGIC);
+    mem.write_u32(abi_addr, abi_version);
+    mem.write_u64(fence_addr, completed_fence);
 
     // Keep writes within the defined struct size; do not touch the rest of the page.
     let _ = FENCE_PAGE_SIZE_BYTES;
@@ -1194,8 +1201,15 @@ impl AeroGpuMmioDevice {
             self.fence_page_dirty = true;
 
             if dma_enabled && self.ring_gpa != 0 {
-                let tail = mem.read_u32(self.ring_gpa + RING_TAIL_OFFSET);
-                mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, tail);
+                if let (Some(tail_addr), Some(head_addr)) = (
+                    self.ring_gpa.checked_add(RING_TAIL_OFFSET),
+                    self.ring_gpa.checked_add(RING_HEAD_OFFSET),
+                ) {
+                    let tail = mem.read_u32(tail_addr);
+                    mem.write_u32(head_addr, tail);
+                } else {
+                    self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                }
             }
 
             if dma_enabled
@@ -1251,7 +1265,11 @@ impl AeroGpuMmioDevice {
 
                 if pending > ring_hdr.entry_count {
                     // Driver and device are out of sync; drop all pending work to avoid looping forever.
-                    mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, tail);
+                    if let Some(head_addr) = self.ring_gpa.checked_add(RING_HEAD_OFFSET) {
+                        mem.write_u32(head_addr, tail);
+                    } else {
+                        self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                    }
                     self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
                     break 'doorbell;
                 }
@@ -1281,7 +1299,11 @@ impl AeroGpuMmioDevice {
                 self.process_pending_fences_on_doorbell();
 
                 // Publish the new head after processing submissions.
-                mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, head);
+                if let Some(head_addr) = self.ring_gpa.checked_add(RING_HEAD_OFFSET) {
+                    mem.write_u32(head_addr, head);
+                } else {
+                    self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                }
 
                 // Mirror the emulator device model: after consuming a doorbell, publish the current fence
                 // value even if it did not advance (initialization / keeping the fence page coherent).

@@ -149,19 +149,31 @@ impl AeroGpuRingHeader {
     }
 
     pub fn write_head(mem: &mut dyn MemoryBus, gpa: u64, head: u32) {
-        mem.write_u32(gpa + RING_HEAD_OFFSET, head);
+        let Some(addr) = gpa.checked_add(RING_HEAD_OFFSET) else {
+            return;
+        };
+        mem.write_u32(addr, head);
     }
 
     pub fn read_head(mem: &mut dyn MemoryBus, gpa: u64) -> u32 {
-        mem.read_u32(gpa + RING_HEAD_OFFSET)
+        let Some(addr) = gpa.checked_add(RING_HEAD_OFFSET) else {
+            return 0;
+        };
+        mem.read_u32(addr)
     }
 
     pub fn read_tail(mem: &mut dyn MemoryBus, gpa: u64) -> u32 {
-        mem.read_u32(gpa + RING_TAIL_OFFSET)
+        let Some(addr) = gpa.checked_add(RING_TAIL_OFFSET) else {
+            return 0;
+        };
+        mem.read_u32(addr)
     }
 
     pub fn write_tail(mem: &mut dyn MemoryBus, gpa: u64, tail: u32) {
-        mem.write_u32(gpa + RING_TAIL_OFFSET, tail);
+        let Some(addr) = gpa.checked_add(RING_TAIL_OFFSET) else {
+            return;
+        };
+        mem.write_u32(addr, tail);
     }
 
     pub fn slot_index(&self, index: u32) -> u32 {
