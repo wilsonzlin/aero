@@ -74,6 +74,9 @@ Regression tests:
 - `crates/aero-usb/tests/xhci_configure_endpoint_clears_pending_doorbells.rs` asserts that
   `Configure Endpoint` drop/deconfigure clears any pending endpoint doorbells so endpoints can be
   re-doorbelled after reconfiguration.
+- `crates/aero-usb/tests/xhci_stop_endpoint_unschedules.rs` asserts that `Stop Endpoint` unschedules
+  an active endpoint immediately (so it does not continue consuming per-tick budgets without a new
+  doorbell).
 
 ---
 
@@ -538,6 +541,7 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_ports.rs`
 - `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` (detach clears pending doorbell work)
 - `crates/aero-usb/tests/xhci_configure_endpoint_clears_pending_doorbells.rs` (Configure Endpoint clears pending doorbells)
+- `crates/aero-usb/tests/xhci_stop_endpoint_unschedules.rs` (Stop Endpoint unschedules active endpoints)
 - `crates/aero-usb/tests/xhci_snapshot_*.rs` (snapshot/restore, legacy compatibility, determinism)
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
 - `crates/aero-usb/tests/xhci_control_*.rs` (EP0 control transfer behavior)
