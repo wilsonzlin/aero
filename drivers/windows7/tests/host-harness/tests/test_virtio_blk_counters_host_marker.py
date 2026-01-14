@@ -45,6 +45,19 @@ class VirtioBlkCountersHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO|abort=0|reset_device=1|reset_bus=2|pnp=3|ioctl_reset=4|capacity_change_events=5",
         )
 
+    def test_coerces_pass_to_info(self) -> None:
+        # The guest marker is specified as INFO/SKIP, but be defensive: if it ever emits
+        # PASS/FAIL, the host marker should remain stable and report INFO.
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|PASS|abort=0|reset_device=0|"
+            b"reset_bus=0|pnp=0|ioctl_reset=0|capacity_change_events=0\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|ioctl_reset=0|capacity_change_events=0",
+        )
+
     def test_emits_skip_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=32\n"

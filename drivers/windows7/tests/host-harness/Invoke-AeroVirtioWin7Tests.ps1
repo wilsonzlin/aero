@@ -2349,9 +2349,8 @@ function Try-EmitAeroVirtioBlkCountersMarker {
   $status = "INFO"
   if ($toks.Count -ge 4) {
     $s = $toks[3].Trim().ToUpperInvariant()
-    if ($s -eq "PASS" -or $s -eq "FAIL" -or $s -eq "SKIP" -or $s -eq "INFO") {
-      $status = $s
-    }
+    # Keep the host marker stable: treat any non-SKIP guest status as INFO.
+    if ($s -eq "SKIP") { $status = "SKIP" }
   }
 
   $fields = @{}

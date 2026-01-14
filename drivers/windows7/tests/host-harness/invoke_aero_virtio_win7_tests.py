@@ -89,6 +89,7 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_queue_vector=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
@@ -8657,9 +8658,10 @@ def _emit_virtio_blk_counters_host_marker(
         return
 
     toks = marker_line.split("|")
-    status = toks[3] if len(toks) >= 4 else "INFO"
-    if status not in ("PASS", "FAIL", "SKIP", "INFO"):
-        status = "INFO"
+    raw_status = toks[3] if len(toks) >= 4 else "INFO"
+    raw_status = raw_status.strip().upper()
+    # Keep the host marker stable: treat any non-SKIP guest status as INFO.
+    status = "SKIP" if raw_status == "SKIP" else "INFO"
 
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|{status}"]
