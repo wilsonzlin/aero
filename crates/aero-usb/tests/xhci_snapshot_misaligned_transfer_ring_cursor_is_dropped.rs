@@ -19,7 +19,10 @@ fn patch_slots_transfer_ring_ptr(
     // - u32 count
     // - [u32 len][bytes record] * count
     let mut out = slots_field.to_vec();
-    assert!(out.len() >= 4, "slots field too short to contain record count");
+    assert!(
+        out.len() >= 4,
+        "slots field too short to contain record count"
+    );
     let count = u32::from_le_bytes(out[0..4].try_into().unwrap()) as usize;
     let mut pos = 4usize;
 
@@ -47,7 +50,10 @@ fn patch_slots_transfer_ring_ptr(
 
             let ring_idx = usize::from(endpoint_id.saturating_sub(1));
             for cur_idx in 0..31usize {
-                assert!(ring_pos < rec.len(), "slot record missing ring presence flag");
+                assert!(
+                    ring_pos < rec.len(),
+                    "slot record missing ring presence flag"
+                );
                 let present = rec[ring_pos] != 0;
                 ring_pos += 1;
 
@@ -194,19 +200,14 @@ fn xhci_snapshot_drops_misaligned_transfer_ring_cursor() {
 
     // Execute a doorbell and tick. If the ring pointer were incorrectly masked instead of rejected,
     // the controller would DMA the device descriptor into `data_buf` and queue a Transfer Event.
-    restored.mmio_write(
-        regs::REG_USBCMD,
-        4,
-        u64::from(regs::USBCMD_RUN),
-    );
+    restored.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     restored.ring_doorbell(slot_id, 1);
     restored.tick(&mut mem);
 
     let mut got = [0u8; 18];
     mem.read_physical(data_buf, &mut got);
     assert_eq!(
-        got,
-        [0u8; 18],
+        got, [0u8; 18],
         "controller must not DMA using a masked misaligned snapshot ring pointer"
     );
     assert_eq!(
@@ -215,4 +216,3 @@ fn xhci_snapshot_drops_misaligned_transfer_ring_cursor() {
         "controller must not generate transfer events when the restored ring pointer is invalid"
     );
 }
-

@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::passthrough::UsbHostAction;
-use aero_wasm::{UhciControllerBridge, WebUsbUhciBridge, WEBUSB_ROOT_PORT};
+use aero_wasm::{UhciControllerBridge, WEBUSB_ROOT_PORT, WebUsbUhciBridge};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;

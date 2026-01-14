@@ -1,6 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::{UsbHidPassthroughBridge, WebHidPassthroughBridge, XhciControllerBridge, WEBUSB_ROOT_PORT};
+use aero_wasm::{
+    UsbHidPassthroughBridge, WEBUSB_ROOT_PORT, WebHidPassthroughBridge, XhciControllerBridge,
+};
 use js_sys::JSON;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;

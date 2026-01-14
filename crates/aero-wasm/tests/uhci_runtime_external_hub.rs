@@ -29,11 +29,8 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
         serde_wasm_bindgen::to_value(&collections).expect("collections to_value");
 
     // Invalid paths should return a JS error rather than trapping.
-    let invalid_root_path = serde_wasm_bindgen::to_value(&vec![
-        u32::from(WEBUSB_ROOT_PORT),
-        1u32,
-    ])
-    .expect("invalid_root_path to_value");
+    let invalid_root_path = serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT), 1u32])
+        .expect("invalid_root_path to_value");
     assert!(
         rt.webhid_attach_at_path(
             999,

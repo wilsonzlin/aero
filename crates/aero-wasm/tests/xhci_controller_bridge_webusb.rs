@@ -6,7 +6,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use aero_io_snapshot::io::state::SnapshotReader;
 use aero_usb::passthrough::{UsbHostCompletion, UsbHostCompletionIn};
 use aero_usb::xhci::{PORTSC_CCS, regs};
-use aero_wasm::{XhciControllerBridge, WEBUSB_ROOT_PORT};
+use aero_wasm::{WEBUSB_ROOT_PORT, XhciControllerBridge};
 
 mod common;
 

@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::{UsbHidPassthroughBridge, XhciControllerBridge, WEBUSB_ROOT_PORT};
+use aero_wasm::{UsbHidPassthroughBridge, WEBUSB_ROOT_PORT, XhciControllerBridge};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -79,7 +79,8 @@ fn xhci_controller_bridge_topology_rejects_reserved_webusb_root_port() {
         "attach_hub on reserved root port should error"
     );
 
-    let path = serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT)]).expect("path to_value");
+    let path =
+        serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT)]).expect("path to_value");
     assert!(
         bridge.detach_at_path(path).is_err(),
         "detach_at_path on reserved root port should error"

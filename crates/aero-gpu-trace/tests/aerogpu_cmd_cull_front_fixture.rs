@@ -20,7 +20,8 @@ const ILAY_POS3_COLOR: &[u8] =
 
 fn fixture_path() -> PathBuf {
     // `CARGO_MANIFEST_DIR` = `.../crates/aero-gpu-trace`
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/aerogpu_cmd_cull_front.aerogputrace")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_cmd_cull_front.aerogputrace")
 }
 
 fn make_cmd_stream() -> Vec<u8> {
@@ -149,4 +150,3 @@ fn aerogpu_cmd_cull_front_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

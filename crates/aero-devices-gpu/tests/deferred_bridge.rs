@@ -1,23 +1,24 @@
 use aero_devices::pci::PciDevice;
-use aero_devices_gpu::{
-    irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
-    AeroGpuFenceCompletionMode, AeroGpuPciDevice,
-};
 use aero_devices_gpu::cmd::{
     CMD_STREAM_ABI_VERSION_OFFSET, CMD_STREAM_FLAGS_OFFSET, CMD_STREAM_MAGIC_OFFSET,
     CMD_STREAM_RESERVED0_OFFSET, CMD_STREAM_RESERVED1_OFFSET, CMD_STREAM_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::ring::{
-    AeroGpuAllocEntry, AeroGpuSubmitDesc, ALLOC_TABLE_ABI_VERSION_OFFSET, ALLOC_TABLE_ENTRY_COUNT_OFFSET,
+    AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
+    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
+    AEROGPU_RING_MAGIC, ALLOC_TABLE_ABI_VERSION_OFFSET, ALLOC_TABLE_ENTRY_COUNT_OFFSET,
     ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET, ALLOC_TABLE_MAGIC_OFFSET, ALLOC_TABLE_RESERVED0_OFFSET,
-    ALLOC_TABLE_SIZE_BYTES_OFFSET, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES, AEROGPU_ALLOC_TABLE_MAGIC,
-    AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
-    FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET, RING_ABI_VERSION_OFFSET,
-    RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET, RING_HEAD_OFFSET,
-    RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET, SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET,
+    ALLOC_TABLE_SIZE_BYTES_OFFSET, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
+    RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET,
+    RING_FLAGS_OFFSET, RING_HEAD_OFFSET, RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET,
+    RING_TAIL_OFFSET, SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET,
     SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, SUBMIT_DESC_CMD_GPA_OFFSET,
     SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, SUBMIT_DESC_CONTEXT_ID_OFFSET, SUBMIT_DESC_ENGINE_ID_OFFSET,
     SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
+};
+use aero_devices_gpu::{
+    irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
+    AeroGpuFenceCompletionMode, AeroGpuPciDevice,
 };
 use aero_protocol::aerogpu::{aerogpu_cmd, aerogpu_pci};
 use memory::{MemoryBus, MmioHandler};
@@ -78,10 +79,16 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     let entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES;
 
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, aerogpu_pci::AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(
+        ring_gpa + RING_ABI_VERSION_OFFSET,
+        aerogpu_pci::AEROGPU_ABI_VERSION_U32,
+    );
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size_bytes);
     mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
-    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride_bytes);
+    mem.write_u32(
+        ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET,
+        entry_stride_bytes,
+    );
     mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0); // flags
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
@@ -89,8 +96,14 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     // Command stream (header only).
     let cmd_gpa = 0x4000u64;
     let cmd_size_bytes = aerogpu_cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
-    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, aerogpu_pci::AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_MAGIC_OFFSET,
+        aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC,
+    );
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        aerogpu_pci::AEROGPU_ABI_VERSION_U32,
+    );
     mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
     mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
     mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
@@ -99,7 +112,10 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     // Alloc table (header only, 0 entries).
     let alloc_gpa = 0x5000u64;
     let alloc_size_bytes = AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES;
-    mem.write_u32(alloc_gpa + ALLOC_TABLE_MAGIC_OFFSET, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(
+        alloc_gpa + ALLOC_TABLE_MAGIC_OFFSET,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
     mem.write_u32(
         alloc_gpa + ALLOC_TABLE_ABI_VERSION_OFFSET,
         aerogpu_pci::AEROGPU_ABI_VERSION_U32,
@@ -116,7 +132,10 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
 
     // Submit desc at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
     mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0x1234); // context_id
     mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
