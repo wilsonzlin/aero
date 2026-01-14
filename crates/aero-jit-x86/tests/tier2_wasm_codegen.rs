@@ -1544,4 +1544,124 @@ mod random_traces {
             );
         }
     }
+
+    #[test]
+    fn tier2_trace_wasm_matches_interpreter_on_random_traces_without_code_version_guard_import() {
+        // Use a different seed from the legacy-import random test so we cover a wider variety of
+        // traces overall while still remaining deterministic.
+        let mut rng = ChaCha8Rng::seed_from_u64(0x5EED_C0DE);
+        for i in 0..50 {
+            let mut env = RuntimeEnv::default();
+            let mut code_versions: Vec<u32> = (0..8).map(|_| rng.gen()).collect();
+            if code_versions.iter().all(|v| *v == 0) {
+                code_versions[0] = 1;
+            }
+            for (page, version) in code_versions.iter().copied().enumerate() {
+                env.page_versions.set_version(page as u64, version);
+            }
+
+            let instr_count = rng.gen_range(20..=50);
+            let mut trace = gen_random_trace(&mut rng, instr_count, &code_versions);
+
+            // Ensure at least one code-version guard so we actually exercise the inline table-read
+            // path (otherwise the option would be a no-op for this trace).
+            if !trace
+                .prologue
+                .iter()
+                .any(|i| matches!(i, Instr::GuardCodeVersion { .. }))
+            {
+                let table_len = code_versions.len() as u64;
+                let page = rng.gen_range(0..table_len);
+                let expected = if rng.gen_bool(0.8) {
+                    code_versions[page as usize]
+                } else {
+                    code_versions[page as usize].wrapping_add(1)
+                };
+                trace.prologue.insert(
+                    0,
+                    Instr::GuardCodeVersion {
+                        page,
+                        expected,
+                        exit_rip: 0x3000u64 + (rng.gen::<u16>() as u64),
+                    },
+                );
+            }
+
+            let mut guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+            rng.fill_bytes(&mut guest_mem_init);
+
+            let init_state = make_random_state(&mut rng);
+            let init_rip = init_state.cpu.rip;
+
+            // ---- Tier-2 interpreter (reference) -------------------------------------------------
+            let mut interp_state = init_state.clone();
+            let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+            bus.load(0, &guest_mem_init);
+            let expected = run_trace(&trace, &env, &mut bus, &mut interp_state, 1);
+
+            // ---- Optimize + compile to WASM ----------------------------------------------------
+            let mut optimized = trace.clone();
+            let opt = optimize_trace(&mut optimized, &OptConfig::default());
+            let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+                &optimized,
+                &opt.regalloc,
+                Tier2WasmOptions {
+                    code_version_guard_import: false,
+                    ..Default::default()
+                },
+            );
+            validate_wasm(&wasm);
+
+            // ---- Execute the WASM trace via wasmi ----------------------------------------------
+            let (mut store, memory, func) =
+                instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+            memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+            let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+            write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+            memory
+                .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+                .unwrap();
+            install_code_version_table(&memory, &mut store, &code_versions);
+
+            let next_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+            let exit_reason = read_u32_from_memory(
+                &memory,
+                &store,
+                CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+            );
+            let got_exit = wasm_exit_to_run_exit(exit_reason, init_rip, next_rip);
+
+            assert_eq!(
+                expected.exit, got_exit,
+                "exit mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+
+            let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+            memory.read(&store, 0, &mut got_guest_mem).unwrap();
+            assert_eq!(
+                got_guest_mem.as_slice(),
+                bus.mem(),
+                "guest memory mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+
+            let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+            memory
+                .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+                .unwrap();
+            let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+            assert_eq!(
+                got_gpr, interp_state.cpu.gpr,
+                "gpr mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+            assert_eq!(
+                got_rip, interp_state.cpu.rip,
+                "rip mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+            assert_eq!(
+                got_rflags, interp_state.cpu.rflags,
+                "rflags mismatch on iteration {i}\ntrace: {trace:?}\noptimized: {optimized:?}"
+            );
+        }
+    }
 }
