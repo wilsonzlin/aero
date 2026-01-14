@@ -3565,7 +3565,6 @@ static VOID AerovNetMiniportReturnNetBufferLists(_In_ NDIS_HANDLE MiniportAdapte
 static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, _In_ PVOID CancelId) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportAdapterContext;
   PLIST_ENTRY Entry;
-  LIST_ENTRY CancelledReqs;
   PNET_BUFFER_LIST CompleteHead;
   PNET_BUFFER_LIST CompleteTail;
 
@@ -3573,7 +3572,6 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
     return;
   }
 
-  InitializeListHead(&CancelledReqs);
   CompleteHead = NULL;
   CompleteTail = NULL;
 
@@ -3600,12 +3598,26 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
     Entry = Entry->Flink;
 
     if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
+      PSCATTER_GATHER_LIST SgList = TxReq->SgList;
+      PNET_BUFFER Nb = TxReq->Nb;
+      NDIS_HANDLE DmaHandle = Adapter->DmaHandle;
+
       RemoveEntryList(&TxReq->Link);
-      InsertTailList(&CancelledReqs, &TxReq->Link);
+
+      // Free the SG list while the NET_BUFFER is still owned by the miniport.
+      // This avoids races with HaltEx completing the NBL before we get a chance to
+      // return here and free the mapping.
+      TxReq->SgList = NULL;
+      if (SgList && DmaHandle && Nb) {
+        NdisMFreeNetBufferSGList(DmaHandle, SgList, Nb);
+      }
+
       AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_REQUEST_ABORTED, &CompleteHead, &CompleteTail);
 #if DBG
       InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSg);
 #endif
+
+      AerovNetFreeTxRequestNoLock(Adapter, TxReq);
     }
   }
 
@@ -3621,21 +3633,6 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
 #endif
 
   NdisReleaseSpinLock(&Adapter->Lock);
-
-  while (!IsListEmpty(&CancelledReqs)) {
-    PLIST_ENTRY E = RemoveHeadList(&CancelledReqs);
-    AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(E, AEROVNET_TX_REQUEST, Link);
-    PNET_BUFFER Nb = TxReq->Nb;
-
-    if (TxReq->SgList) {
-      NdisMFreeNetBufferSGList(Adapter->DmaHandle, TxReq->SgList, Nb);
-      TxReq->SgList = NULL;
-    }
-
-    NdisAcquireSpinLock(&Adapter->Lock);
-    AerovNetFreeTxRequestNoLock(Adapter, TxReq);
-    NdisReleaseSpinLock(&Adapter->Lock);
-  }
 
   while (CompleteHead) {
     PNET_BUFFER_LIST Nbl = CompleteHead;
