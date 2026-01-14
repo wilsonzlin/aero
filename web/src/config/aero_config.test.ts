@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AERO_GUEST_MEMORY_MAX_MIB,
+  AERO_VRAM_MAX_MIB,
   detectAeroBrowserCapabilities,
   getDefaultAeroConfig,
   parseAeroConfigOverrides,
@@ -19,6 +20,7 @@ describe("AeroConfig", () => {
 
     const resolved = resolveAeroConfigFromSources({ capabilities: caps });
     expect(resolved.effective.guestMemoryMiB).toBe(512);
+    expect(resolved.effective.vramMiB).toBe(64);
     expect(resolved.effective.enableWorkers).toBe(true);
     expect(resolved.effective.enableWebGPU).toBe(false);
     expect(resolved.effective.proxyUrl).toBeNull();
@@ -58,11 +60,13 @@ describe("AeroConfig", () => {
       capabilities: caps,
       storedConfig: {
         guestMemoryMiB: 99999,
+        vramMiB: 99999,
         logLevel: "loud",
       },
     });
 
     expect(resolved.effective.guestMemoryMiB).toBe(AERO_GUEST_MEMORY_MAX_MIB);
+    expect(resolved.effective.vramMiB).toBe(AERO_VRAM_MAX_MIB);
     expect(resolved.effective.logLevel).toBe("info");
   });
 
@@ -90,19 +94,22 @@ describe("AeroConfig", () => {
 
     const resolved = resolveAeroConfigFromSources({
       capabilities: caps,
-      storedConfig: { guestMemoryMiB: 512, logLevel: "warn" },
-      queryString: "?mem=2048&log=debug",
+      storedConfig: { guestMemoryMiB: 512, vramMiB: 16, logLevel: "warn" },
+      queryString: "?mem=2048&vram=32&log=debug",
     });
 
     expect(resolved.effective.guestMemoryMiB).toBe(2048);
+    expect(resolved.effective.vramMiB).toBe(32);
     expect(resolved.effective.logLevel).toBe("debug");
     expect(resolved.lockedKeys.has("guestMemoryMiB")).toBe(true);
+    expect(resolved.lockedKeys.has("vramMiB")).toBe(true);
     expect(resolved.lockedKeys.has("logLevel")).toBe(true);
   });
 
   it("query parsing: locks only valid overrides", () => {
-    const parsed = parseAeroConfigQueryOverrides("?mem=not-a-number&workers=1&proxy=https%3A%2F%2Fexample.com");
+    const parsed = parseAeroConfigQueryOverrides("?mem=not-a-number&vram=not-a-number&workers=1&proxy=https%3A%2F%2Fexample.com");
     expect(parsed.lockedKeys.has("guestMemoryMiB")).toBe(false);
+    expect(parsed.lockedKeys.has("vramMiB")).toBe(false);
     expect(parsed.lockedKeys.has("enableWorkers")).toBe(true);
     expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
     expect(parsed.overrides.proxyUrl).toBe("https://example.com");

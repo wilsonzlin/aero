@@ -169,6 +169,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
 function makeConfig(proxyUrl: string | null, extra: Partial<AeroConfig> = {}): AeroConfig {
   return {
     guestMemoryMiB: 1,
+    vramMiB: 16,
     enableWorkers: true,
     enableWebGPU: false,
     activeDiskImage: null,

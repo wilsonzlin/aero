@@ -461,7 +461,7 @@ export class WorkerCoordinator {
     this.setVmState("starting", "start");
 
     try {
-      const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB });
+      const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB, vramMiB: config.vramMiB });
       const shared = createSharedMemoryViews(segments);
       this.shared = shared;
       this.runId += 1;
@@ -567,6 +567,10 @@ export class WorkerCoordinator {
 
     const desiredLayout = computeGuestRamLayout(config.guestMemoryMiB * 1024 * 1024);
     if (this.shared.guestLayout.guest_size !== desiredLayout.guest_size) {
+      this.restart();
+      return;
+    }
+    if (prevConfig && prevConfig.vramMiB !== config.vramMiB) {
       this.restart();
       return;
     }
@@ -2626,6 +2630,7 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
   return (
     (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&
     a.guestMemoryMiB === b.guestMemoryMiB &&
+    a.vramMiB === b.vramMiB &&
     a.enableWorkers === b.enableWorkers &&
     a.enableWebGPU === b.enableWebGPU &&
     a.proxyUrl === b.proxyUrl &&

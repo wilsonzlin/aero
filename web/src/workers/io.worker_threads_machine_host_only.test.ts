@@ -63,13 +63,14 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
 
 function makeConfig(extra: Partial<AeroConfig> = {}): AeroConfig {
   return {
-    guestMemoryMiB: 1,
-    enableWorkers: true,
-    enableWebGPU: false,
-    activeDiskImage: null,
-    logLevel: "info",
-    proxyUrl: null,
     ...extra,
+    guestMemoryMiB: extra.guestMemoryMiB ?? 1,
+    vramMiB: extra.vramMiB ?? 16,
+    enableWorkers: extra.enableWorkers ?? true,
+    enableWebGPU: extra.enableWebGPU ?? false,
+    activeDiskImage: extra.activeDiskImage ?? null,
+    logLevel: extra.logLevel ?? "info",
+    proxyUrl: extra.proxyUrl ?? null,
   };
 }
 

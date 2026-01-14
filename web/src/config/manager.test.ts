@@ -61,6 +61,7 @@ describe("AeroConfigManager", () => {
       await expect(mgr.init()).resolves.toBeUndefined();
       // Oversized config should be ignored; defaults apply.
       expect(mgr.getState().effective.guestMemoryMiB).toBe(512);
+      expect(mgr.getState().effective.vramMiB).toBe(64);
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -96,6 +96,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).activeConfig = {
       vmRuntime: "machine",
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -123,6 +124,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -137,6 +139,7 @@ describe("runtime/coordinator", () => {
 
     coordinator.updateConfig({
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -155,6 +158,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -170,6 +174,7 @@ describe("runtime/coordinator", () => {
 
     coordinator.updateConfig({
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -189,6 +194,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -204,6 +210,7 @@ describe("runtime/coordinator", () => {
 
     coordinator.updateConfig({
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -211,6 +218,38 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
       virtioNetMode: "modern",
       virtioSndMode: "legacy",
+    });
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts the VM when vramMiB changes (BAR1 VRAM layout change)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      vramMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    coordinator.updateConfig({
+      guestMemoryMiB: 1,
+      vramMiB: 2,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
     });
 
     expect(restartSpy).toHaveBeenCalledTimes(1);
@@ -224,6 +263,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).activeConfig = {
       vmRuntime: "legacy",
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -238,6 +278,7 @@ describe("runtime/coordinator", () => {
     coordinator.updateConfig({
       vmRuntime: "machine",
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -256,6 +297,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).activeConfig = {
       vmRuntime: "machine",
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -270,6 +312,7 @@ describe("runtime/coordinator", () => {
     coordinator.updateConfig({
       vmRuntime: "legacy",
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -288,6 +331,7 @@ describe("runtime/coordinator", () => {
     // Older/compat configs may omit vmRuntime; treat that as legacy.
     (coordinator as any).activeConfig = {
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -303,6 +347,7 @@ describe("runtime/coordinator", () => {
     coordinator.updateConfig({
       vmRuntime: "legacy",
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -320,6 +365,7 @@ describe("runtime/coordinator", () => {
       coordinator.start(
         {
           guestMemoryMiB: 1,
+          vramMiB: 1,
           enableWorkers: true,
           enableWebGPU: false,
           proxyUrl: null,
@@ -352,6 +398,7 @@ describe("runtime/coordinator", () => {
 
     const baseConfig = {
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
@@ -955,6 +1002,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).shared = shared;
     const baseConfig = {
       guestMemoryMiB: 1,
+      vramMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,

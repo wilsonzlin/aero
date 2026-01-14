@@ -71,6 +71,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
 function makeMachineConfig(): AeroConfig {
   return {
     guestMemoryMiB: 1,
+    vramMiB: 16,
     enableWorkers: true,
     enableWebGPU: false,
     proxyUrl: null,

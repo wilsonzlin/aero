@@ -1,6 +1,7 @@
 import {
   AERO_GUEST_MEMORY_PRESETS_MIB,
   AERO_LOG_LEVELS,
+  AERO_VRAM_PRESETS_MIB,
   parseAeroConfigOverrides,
   type AeroConfig,
   type ResolvedAeroConfig,
@@ -51,6 +52,17 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
 
   const memoryHint = document.createElement("div");
   memoryHint.className = "hint";
+
+  const vramSelect = document.createElement("select");
+  let customVramOption: HTMLOptionElement | null = null;
+  for (const mib of AERO_VRAM_PRESETS_MIB) {
+    const option = document.createElement("option");
+    option.value = String(mib);
+    option.textContent = `${mib} MiB`;
+    vramSelect.appendChild(option);
+  }
+  const vramHint = document.createElement("div");
+  vramHint.className = "hint";
 
   const workersCheckbox = document.createElement("input");
   workersCheckbox.type = "checkbox";
@@ -175,6 +187,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   resetButton.textContent = "Reset to defaults";
 
   fieldset.appendChild(makeRow("Guest memory", memorySelect, memoryHint));
+  fieldset.appendChild(makeRow("VRAM", vramSelect, vramHint));
   fieldset.appendChild(makeRow("Enable workers", workersCheckbox, workersHint));
   fieldset.appendChild(makeRow("Enable WebGPU", webgpuCheckbox, webgpuHint));
   fieldset.appendChild(makeRow("VM runtime", vmRuntimeSelect, vmRuntimeHint));
@@ -191,6 +204,9 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
 
   memorySelect.addEventListener("change", () => {
     manager.updateStoredConfig({ guestMemoryMiB: Number(memorySelect.value) });
+  });
+  vramSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({ vramMiB: Number(vramSelect.value) });
   });
   workersCheckbox.addEventListener("change", () => {
     manager.updateStoredConfig({ enableWorkers: workersCheckbox.checked });
@@ -254,6 +270,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
 
   function renderState(state: ResolvedAeroConfig): void {
     setLocked(memorySelect, memoryHint, state, "guestMemoryMiB");
+    setLocked(vramSelect, vramHint, state, "vramMiB");
     setLocked(logSelect, logHint, state, "logLevel");
     setLocked(vmRuntimeSelect, vmRuntimeHint, state, "vmRuntime");
     setLocked(virtioNetModeSelect, virtioNetModeHint, state, "virtioNetMode");
@@ -297,6 +314,21 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
       customMemoryOption = null;
     }
     memorySelect.value = desiredMem;
+
+    const desiredVram = String(state.effective.vramMiB);
+    const hasVramOption = Array.from(vramSelect.options).some((o) => o.value === desiredVram);
+    if (!hasVramOption) {
+      if (customVramOption) customVramOption.remove();
+      customVramOption = document.createElement("option");
+      customVramOption.value = desiredVram;
+      customVramOption.textContent = `${desiredVram} MiB (custom)`;
+      vramSelect.appendChild(customVramOption);
+    } else if (customVramOption && customVramOption.value !== desiredVram) {
+      customVramOption.remove();
+      customVramOption = null;
+    }
+    vramSelect.value = desiredVram;
+
     logSelect.value = state.effective.logLevel;
     vmRuntimeSelect.value = state.effective.vmRuntime ?? "legacy";
     virtioNetModeSelect.value = state.effective.virtioNetMode ?? "modern";

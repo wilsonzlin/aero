@@ -15,6 +15,7 @@ export type AeroVmRuntime = (typeof AERO_VM_RUNTIMES)[number];
 
 export interface AeroConfig {
   guestMemoryMiB: number;
+  vramMiB: number;
   enableWorkers: boolean;
   enableWebGPU: boolean;
   proxyUrl: string | null;
@@ -125,6 +126,10 @@ export type AeroConfigKey = keyof AeroConfig;
 export const AERO_GUEST_MEMORY_MIN_MIB = 256;
 export const AERO_GUEST_MEMORY_MAX_MIB = PCI_MMIO_BASE_MIB;
 export const AERO_GUEST_MEMORY_PRESETS_MIB = [256, 512, 1024, 2048, 3072, AERO_GUEST_MEMORY_MAX_MIB] as const;
+
+export const AERO_VRAM_MIN_MIB = 16;
+export const AERO_VRAM_MAX_MIB = 128;
+export const AERO_VRAM_PRESETS_MIB = [16, 32, 64, 128] as const;
 
 export const AERO_UI_SCALE_MIN = 0.5;
 export const AERO_UI_SCALE_MAX = 3;
@@ -337,6 +342,7 @@ export function getDefaultAeroConfig(
 
   return {
     guestMemoryMiB: 512,
+    vramMiB: 64,
     enableWorkers,
     enableWebGPU,
     proxyUrl: null,
@@ -360,6 +366,20 @@ function parseGuestMemoryMiB(value: unknown): { value: number } | { issue: strin
   if (clamped !== Math.trunc(num)) {
     return {
       issue: `guestMemoryMiB must be an integer between ${AERO_GUEST_MEMORY_MIN_MIB} and ${AERO_GUEST_MEMORY_MAX_MIB} MiB (clamped to ${clamped}).`,
+      value: clamped,
+    };
+  }
+  return { value: clamped };
+}
+
+function parseVramMiB(value: unknown): { value: number } | { issue: string; value: number } | null {
+  const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(num)) return null;
+
+  const clamped = clampInt(num, AERO_VRAM_MIN_MIB, AERO_VRAM_MAX_MIB);
+  if (clamped !== Math.trunc(num)) {
+    return {
+      issue: `vramMiB must be an integer between ${AERO_VRAM_MIN_MIB} and ${AERO_VRAM_MAX_MIB} MiB (clamped to ${clamped}).`,
       value: clamped,
     };
   }
@@ -422,6 +442,14 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     if (parsed) {
       overrides.guestMemoryMiB = parsed.value;
       if ("issue" in parsed) issues.push({ key: "guestMemoryMiB", message: parsed.issue });
+    }
+  }
+
+  if (hasOwn(input, "vramMiB")) {
+    const parsed = parseVramMiB(input.vramMiB);
+    if (parsed) {
+      overrides.vramMiB = parsed.value;
+      if ("issue" in parsed) issues.push({ key: "vramMiB", message: parsed.issue });
     }
   }
 
@@ -580,6 +608,16 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
       overrides.guestMemoryMiB = parsed.value;
       lockedKeys.add("guestMemoryMiB");
       if ("issue" in parsed) issues.push({ key: "guestMemoryMiB", message: parsed.issue });
+    }
+  }
+
+  const vram = params.get("vram");
+  if (vram !== null) {
+    const parsed = parseVramMiB(vram);
+    if (parsed) {
+      overrides.vramMiB = parsed.value;
+      lockedKeys.add("vramMiB");
+      if ("issue" in parsed) issues.push({ key: "vramMiB", message: parsed.issue });
     }
   }
 
