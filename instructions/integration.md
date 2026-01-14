@@ -61,7 +61,7 @@ This is the **coordination hub**. You wire together the work from all other work
   - `aero_machine::Machine` includes basic SMP plumbing (per-vCPU LAPIC MMIO + INIT/SIPI bring-up +
     a bounded cooperative AP run loop inside `Machine::run_slice`; see
     `crates/aero-machine/tests/ap_tsc_sipi_sync.rs`, `lapic_mmio_per_vcpu.rs`,
-    `ioapic_routes_to_apic1.rs`).
+    `ioapic_routes_to_apic1.rs`, and `smp_timer_irq_routed_to_ap.rs` (ignored).
   - `aero_machine::pc::PcMachine` / `aero_pc_platform::PcPlatform` remain **BSP-only execution**
     today; `cpu_count > 1` there is still primarily for firmware-table enumeration tests.
   Full SMP work remains substantial (stable multi-vCPU scheduling, per-vCPU interrupt injection, AP→BSP
@@ -78,7 +78,7 @@ This is the **coordination hub**. You wire together the work from all other work
   `PlatformInterrupts::trigger_msi` decodes the MSI address/data and injects a fixed interrupt into
   the selected LAPIC(s) (see `crates/platform/src/interrupts/msi.rs`). This does **not** depend on
   the platform’s PIC vs APIC routing mode, but it *does* depend on the guest leaving the LAPIC
-  software-enabled (SVR[8]=1).
+  software-enabled (SVR[8]=1). See `crates/platform-compat/tests/smp_msi_routing.rs`.
 ---
 
 ## Key Crates & Directories

@@ -15,8 +15,13 @@ are still **SMP bring-up only**, but progress has landed:
   ICR, and a bounded cooperative AP execution loop inside `Machine::run_slice`.
   This is sufficient for SMP contract/bring-up tests, but it is **not** a full SMP scheduler or
   parallel vCPU execution environment yet.
+  - Tests/coverage: `crates/aero-machine/tests/ap_tsc_sipi_sync.rs`, `lapic_mmio_per_vcpu.rs`,
+    `ioapic_routes_to_apic1.rs`; `smp_timer_irq_routed_to_ap.rs` is an ignored regression test that
+    captures desired PIT→AP IOAPIC destination routing.
 - `aero_machine::PcMachine` and `aero_pc_platform::PcPlatform` still execute only the BSP today;
   `cpu_count > 1` there is primarily for firmware-table enumeration tests.
+- Lower-level interrupt-fabric SMP semantics are covered in `crates/platform-compat/tests/smp_*`
+  (INIT deassert IPI behavior, IOAPIC destination routing, and MSI destination/broadcast routing).
 
 `cpu_count` is allowed to be `>= 1` so firmware can publish SMP-capable CPU topology (ACPI/SMBIOS)
 and platform code can size per-vCPU state (for example LAPIC instances). Multi-vCPU guests are not
