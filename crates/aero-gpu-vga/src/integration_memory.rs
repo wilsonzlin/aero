@@ -51,8 +51,9 @@ impl MmioHandler for VgaLegacyMmioHandler {
 /// [`memory::MmioHandler`] adapter for the VGA/SVGA VRAM aperture (linear framebuffer).
 ///
 /// This is intended to be mapped at the physical base of the VBE linear framebuffer (LFB), such as
-/// [`crate::SVGA_LFB_BASE`], with `offset` interpreted as a byte offset into the VBE framebuffer
-/// region (starting at [`crate::VgaConfig::lfb_offset`] within [`VgaDevice::vram`]).
+/// [`VgaDevice::lfb_base`] (which defaults to [`crate::SVGA_LFB_BASE`]), with `offset` interpreted as
+/// a byte offset into the VBE framebuffer region (starting at [`crate::VgaConfig::lfb_offset`] within
+/// [`VgaDevice::vram`]).
 pub struct VgaLfbMmioHandler {
     pub dev: Rc<RefCell<VgaDevice>>,
 }
