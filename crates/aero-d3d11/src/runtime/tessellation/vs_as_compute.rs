@@ -115,16 +115,16 @@ impl VsAsComputePipeline {
 
         let bgl_group3 = create_vs_as_compute_bind_group_layout(device, vertex_pulling, cfg);
 
-        // The pipeline layout must include group layouts for `0..=VERTEX_PULLING_GROUP`.
-        // Group 0..2 are reserved for the D3D binding model; for this placeholder pipeline they are
+        // The pipeline layout must include group layouts for `0..=VERTEX_PULLING_GROUP`. Group
+        // `0..=2` are reserved for the D3D binding model; for this placeholder pipeline they are
         // empty.
         let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("aero-d3d11 VS-as-compute empty bgl"),
             entries: &[],
         });
-        let layouts: [&wgpu::BindGroupLayout; 4] =
-            [&empty_bgl, &empty_bgl, &empty_bgl, &bgl_group3];
-        debug_assert_eq!(VERTEX_PULLING_GROUP, 3);
+        let mut layouts: Vec<&wgpu::BindGroupLayout> =
+            vec![&empty_bgl; (VERTEX_PULLING_GROUP as usize).saturating_add(1).max(1)];
+        layouts[VERTEX_PULLING_GROUP as usize] = &bgl_group3;
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("aero-d3d11 VS-as-compute pipeline layout"),
