@@ -53,7 +53,10 @@ fn configure_consumer_for_reports(consumer: &mut aero_usb::hid::UsbHidConsumerCo
         matches!(resp, ControlResponse::Ack),
         "expected SET_CONFIGURATION to ACK; got {resp:?}"
     );
-    assert!(consumer.configured(), "consumer-control should now be configured");
+    assert!(
+        consumer.configured(),
+        "consumer-control should now be configured"
+    );
 }
 
 fn poll_keyboard_interrupt_in(m: &mut Machine) -> UsbInResult {
@@ -79,7 +82,9 @@ fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
     let mut dev0 = root
         .port_device_mut(0)
         .expect("UHCI root port 0 should have an external hub attached");
-    let hub = dev0.as_hub_mut().expect("root port 0 device should be a hub");
+    let hub = dev0
+        .as_hub_mut()
+        .expect("root port 0 device should be a hub");
     let consumer = hub
         .downstream_device_mut(3)
         .expect("hub port 4 should contain a consumer-control device");
@@ -235,7 +240,10 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     configure_consumer_for_reports(&mut consumer);
     restored.inject_usb_hid_consumer_usage(0x00cd, true); // Play/Pause
     assert!(
-        matches!(poll_consumer_interrupt_in(&mut restored), UsbInResult::Data(_)),
+        matches!(
+            poll_consumer_interrupt_in(&mut restored),
+            UsbInResult::Data(_)
+        ),
         "expected consumer-control interrupt IN to return data after snapshot restore"
     );
 }

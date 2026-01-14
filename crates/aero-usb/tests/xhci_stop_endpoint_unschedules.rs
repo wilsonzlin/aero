@@ -138,4 +138,3 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     assert_eq!(work1.transfer_trbs_consumed, 0);
     assert_eq!(&mem.data[buf2 as usize..buf2 as usize + 4], &[0, 0, 0, 0]);
 }
-

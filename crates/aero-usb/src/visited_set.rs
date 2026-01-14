@@ -21,10 +21,7 @@ impl VisitedSet {
         // Keep the table at <= 50% load so linear probing stays fast and we always have an empty
         // slot (prevents infinite loops).
         let want = max_elems.saturating_mul(2).max(16);
-        let size = want
-            .checked_next_power_of_two()
-            .unwrap_or(16)
-            .max(16);
+        let size = want.checked_next_power_of_two().unwrap_or(16).max(16);
         Self {
             table: vec![0; size],
             mask: size - 1,

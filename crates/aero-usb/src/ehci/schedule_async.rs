@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
-use crate::SetupPacket;
 use crate::visited_set::VisitedSet;
+use crate::SetupPacket;
 
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
 use super::schedule::{ScheduleError, MAX_ASYNC_QH_VISITS, MAX_QTD_STEPS_PER_QH};

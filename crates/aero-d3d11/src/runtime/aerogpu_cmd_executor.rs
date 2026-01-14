@@ -533,12 +533,14 @@ impl SharedSurfaceTable {
         if share_token == 0 {
             bail!("IMPORT_SHARED_SURFACE: invalid share_token 0");
         }
-        self.inner.import(out_handle, share_token).map_err(|e| match e {
-            SharedSurfaceError::UnknownToken(share_token) => anyhow!(
+        self.inner
+            .import(out_handle, share_token)
+            .map_err(|e| match e {
+                SharedSurfaceError::UnknownToken(share_token) => anyhow!(
                 "IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)"
             ),
-            other => anyhow!("IMPORT_SHARED_SURFACE: {other}"),
-        })
+                other => anyhow!("IMPORT_SHARED_SURFACE: {other}"),
+            })
     }
 
     fn release_token(&mut self, share_token: u64) {

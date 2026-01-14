@@ -3,8 +3,8 @@ use alloc::vec;
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::hub::RootHub;
 use crate::memory::MemoryBus;
-use crate::SetupPacket;
 use crate::visited_set::VisitedSet;
+use crate::SetupPacket;
 
 use super::regs::{
     USBINT_CAUSE_IOC, USBINT_CAUSE_SHORT_PACKET, USBSTS_HSE, USBSTS_USBERRINT, USBSTS_USBINT,
@@ -274,10 +274,10 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
             TdProgress::Nak => return link,
             TdProgress::Advanced { stop, .. } => {
                 if stop {
-                     // Stop further TD processing within this chain for the current frame, but still
-                     // continue walking the schedule at the first non-TD link (QH/terminate).
-                     let mut skip = link;
-                     let mut skip_steps = 0usize;
+                    // Stop further TD processing within this chain for the current frame, but still
+                    // continue walking the schedule at the first non-TD link (QH/terminate).
+                    let mut skip = link;
+                    let mut skip_steps = 0usize;
                     while !skip.terminated() && !skip.is_qh() {
                         let addr = skip.addr();
                         if addr == 0 {
