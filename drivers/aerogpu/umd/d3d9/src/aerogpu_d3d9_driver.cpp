@@ -9749,7 +9749,7 @@ Adapter* acquire_adapter(const LUID& luid,
     return adapter;
   }
 
-  auto* adapter = new (std::nothrow) Adapter();
+  auto adapter = make_unique_nothrow<Adapter>();
   if (!adapter) {
     return nullptr;
   }
@@ -9803,8 +9803,12 @@ Adapter* acquire_adapter(const LUID& luid,
   }
 #endif
 
-  g_adapter_cache.emplace(key, adapter);
-  return adapter;
+  try {
+    g_adapter_cache.emplace(key, adapter.get());
+  } catch (...) {
+    return nullptr;
+  }
+  return adapter.release();
 }
 
 void release_adapter(Adapter* adapter) {
