@@ -23,7 +23,22 @@ When editing the browser runtime input pipeline, treat `web/src/input/*` + `web/
 
 For JS/WASM-side input testing and future in-browser integration, the canonical full-system VM (`aero_machine::Machine`) is exported to JS via `crates/aero-wasm::Machine`.
 
-The WASM-facing wrapper exposes input injection methods that map directly to PS/2 (i8042):
+The WASM-facing `Machine` wrapper exposes **explicit** input injection methods for:
+
+- **PS/2 via i8042** (legacy; always works)
+- **virtio-input** (paravirtualized; requires the Aero Win7 virtio-input driver; opt-in at construction time)
+
+The production browser worker runtime can also expose browser input as **synthetic USB HID devices behind UHCI**; that path is currently driven via other `aero-wasm` exports (see [`USB HID (synthetic devices behind UHCI)`](#usb-hid-synthetic-devices-behind-uhci) below).
+
+#### Coordinate conventions (important)
+
+- For *relative pointer movement* APIs, Aero uses **browser-style deltas**:
+  - `dx > 0` is right
+  - `dy > 0` is down
+- For *wheel* APIs, `wheel > 0` means **wheel up**.
+- Convenience helper: `Machine.inject_ps2_mouse_motion(dx, dy, wheel)` accepts **PS/2-style** `dy > 0` = up and converts internally.
+
+#### PS/2 (i8042)
 
 - Keyboard: `Machine.inject_browser_key(code, pressed)` where `code` is DOM `KeyboardEvent.code`.
 - Keyboard (raw Set-2 bytes, matches `web/src/input/event_queue.ts` packing):
@@ -45,6 +60,40 @@ The WASM-facing wrapper exposes input injection methods that map directly to PS/
   - For ergonomics, `crates/aero-wasm` also exports enums that mirror these DOM mappings:
     - `MouseButton` (`Left=0`, `Middle=1`, `Right=2`, `Back=3`, `Forward=4`)
     - `MouseButtons` bit values (`Left=1`, `Right=2`, `Middle=4`, `Back=8`, `Forward=16`) which can be OR'd into a mask
+
+#### Virtio-input (paravirtualized)
+
+Virtio-input is disabled by default for backwards compatibility. Enable it at construction time via
+`Machine.new_with_options` (see [`Virtio-input injection (WASM-facing)`](#virtio-input-injection-wasm-facing)).
+
+- Keyboard (Linux input key codes): `Machine.inject_virtio_key(linux_key, pressed)`
+- Mouse (relative):
+  - motion: `Machine.inject_virtio_rel(dx, dy)`
+  - buttons: `Machine.inject_virtio_button(btn, pressed)` (Linux `BTN_*` codes)
+  - wheel: `Machine.inject_virtio_wheel(delta)` (`delta > 0` = wheel up)
+
+Driver status helpers exist for routing decisions:
+
+- `Machine.virtio_input_keyboard_driver_ok()`
+- `Machine.virtio_input_mouse_driver_ok()`
+
+These calls are only meaningful once the guest driver has finished initialization (i.e. after the guest sets `DRIVER_OK`).
+
+#### USB HID (synthetic devices behind UHCI)
+
+In the production browser runtime, browser keyboard/mouse/gamepad input can be exposed to the guest as
+**synthetic USB HID devices behind the UHCI external hub** (inbox Win7 drivers).
+
+JS-side input is translated into USB HID reports using the WASM export `UsbHidBridge` (not the full-system `Machine` wrapper):
+
+- Keyboard (USB HID usage IDs, Usage Page 0x07): `UsbHidBridge.keyboard_event(usage, pressed)`
+- Mouse:
+  - motion: `UsbHidBridge.mouse_move(dx, dy)` (`dy > 0` = down)
+  - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
+  - wheel: `UsbHidBridge.mouse_wheel(delta)` (`delta > 0` = wheel up)
+- Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
+
+See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible UHCI external hub topology + reserved ports.
 
 Note: The legacy 3-byte PS/2 packet format only carries left/right/middle in the first status byte.
 Back/forward are only emitted to the guest in PS/2 stream packets if the guest enables the
@@ -770,6 +819,34 @@ root hub ports, async/periodic schedules, IRQ and snapshot requirements), see
 
 For xHCI (USB 3.x) host controller scaffolding, PCI identity, and current limitations, see
 [`docs/usb-xhci.md`](./usb-xhci.md).
+### UHCI external hub topology (reserved ports)
+
+When USB input is enabled, Aero uses a **fixed, guest-visible topology** so synthetic devices and
+passthrough devices can coexist without fighting over port numbers:
+
+- **UHCI root ports (PIIX3 UHCI):**
+  - root port **0**: external USB hub (synthetic HID devices + WebHID passthrough)
+  - root port **1**: reserved for **WebUSB passthrough**
+- **External hub on root port 0**:
+  - default downstream port count: **16**
+  - reserved synthetic devices:
+    - hub port **1**: USB HID keyboard
+    - hub port **2**: USB HID mouse
+    - hub port **3**: USB HID gamepad
+  - dynamic passthrough allocation starts at hub port **4** (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
+
+Source-of-truth constants live in:
+
+- `web/src/usb/uhci_external_hub.ts`
+
+#### Does the canonical `aero_machine::Machine` auto-attach these devices?
+
+No. In the canonical full-system VM, `MachineConfig.enable_uhci` only attaches the UHCI controller (PCI `00:01.2`).
+There is currently no `MachineConfig` flag that auto-attaches an external hub or synthetic HID devices; native hosts
+that want this topology should attach a hub + devices explicitly using `Machine.usb_attach_root` / `Machine.usb_attach_path`.
+
+In the browser runtime, the I/O worker (and the worker-side UHCI runtime) attaches the external hub + synthetic devices
+according to the reserved port layout above.
 
 ### Browser runtime wiring (current implementation)
 
@@ -979,6 +1056,17 @@ Contract v1 exposes virtio-input as a **single multi-function PCI device** with 
 2. Function 1: virtio-input **mouse** (relative pointer, `SUBSYS 0x0011`)
 
 This still avoids composite HID device complexity and lets Windows naturally bind the inbox `kbdhid.sys` and `mouhid.sys` clients, while keeping the PCI topology stable for driver matching.
+
+### `aero_machine::Machine` integration (canonical BDFs)
+
+The canonical full-system VM (`aero_machine::Machine`) can attach virtio-input when:
+
+- `MachineConfig.enable_virtio_input = true` (requires `enable_pc_platform = true`).
+
+Virtio-input is exposed at fixed PCI BDFs (stable across runs/snapshots):
+
+- `00:0A.0` — virtio-input **keyboard** (`aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD`)
+- `00:0A.1` — virtio-input **mouse** (`aero_devices::pci::profile::VIRTIO_INPUT_MOUSE`)
 
 ### Testing notes
 

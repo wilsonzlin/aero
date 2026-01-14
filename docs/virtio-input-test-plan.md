@@ -18,6 +18,12 @@ Overview (device model behavior and motivation):
 
 If a test fails, treat the contract as the source of truth; fix code or bump the contract version.
 
+> Note: once virtio-input is available in the canonical full-system VM (`aero_machine::Machine`,
+> either native or via `crates/aero-wasm::Machine`), you can also do early bring-up there:
+> configure the machine with `MachineConfig.enable_virtio_input = true` and boot a Win7 image with
+> the Aero virtio-input driver installed. This is complementary to the QEMU flows below (QEMU is
+> still the fastest way to compare against a reference virtio implementation).
+
 > **Windows images are not distributed.** This repo does not include proprietary Windows 7 images/ISOs.
 > For QEMU/host-harness testing you must supply your own Win7 media or a locally prepared image.
 > See [`docs/FIXTURES.md`](./FIXTURES.md) and [`docs/13-legal-considerations.md`](./13-legal-considerations.md).
