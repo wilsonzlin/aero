@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_objects.h"
@@ -9,6 +10,14 @@
 #include "aerogpu_cmd.h"
 
 #include "../include/aerogpu_d3d9_umd.h"
+
+// aerogpu_d3d9_driver.cpp helpers (not part of the public UMD header).
+namespace aerogpu {
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(D3DDDI_HDEVICE hDevice,
+                                                         uint32_t stage,
+                                                         uint32_t state,
+                                                         uint32_t value);
+} // namespace aerogpu
 
 namespace {
 
@@ -97,6 +106,43 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
     offset += hdr->size_bytes;
   }
   return count;
+}
+
+bool ValidateNoBindAfterDestroy(const uint8_t* buf, size_t capacity) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (!Check(stream_len != 0, "stream must be non-empty and finalized")) {
+    return false;
+  }
+
+  std::vector<aerogpu_handle_t> destroyed_handles;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_DESTROY_SHADER && hdr->size_bytes >= sizeof(aerogpu_cmd_destroy_shader)) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_destroy_shader*>(hdr);
+      if (cmd->shader_handle != 0) {
+        destroyed_handles.push_back(cmd->shader_handle);
+      }
+    } else if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      for (aerogpu_handle_t h : destroyed_handles) {
+        if (!Check(cmd->vs != h, "BIND_SHADERS observed with VS referencing destroyed handle")) {
+          return false;
+        }
+        if (!Check(cmd->ps != h, "BIND_SHADERS observed with PS referencing destroyed handle")) {
+          return false;
+        }
+      }
+    }
+
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+
+  return true;
 }
 
 bool ValidateNoDrawWithNullShaders(const uint8_t* buf, size_t capacity) {
@@ -382,6 +428,256 @@ bool TestVsOnlyDrawBindsFallbackPs() {
   }
   return ValidateNoDrawWithNullShaders(buf, cap);
 }
+
+bool TestVsOnlyStage0PsUpdateDoesNotRebindDestroyedShader() {
+  D3d9Context ctx;
+  if (!InitD3d9(&ctx)) {
+    return false;
+  }
+  aerogpu::Device* dev = GetDevice(ctx);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use a supported FVF to bind a known input layout; this test is focused on
+  // interop PS replacement + command stream ordering, not on vertex format.
+  if (!Check(ctx.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF")) {
+    return false;
+  }
+  HRESULT hr = ctx.device_funcs.pfnSetFVF(ctx.hDevice, kFvfXyzDiffuse);
+  if (!Check(SUCCEEDED(hr), "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // Bind a user VS and explicitly clear PS (VS-only interop => fixed-function PS fallback).
+  if (!Check(ctx.device_funcs.pfnCreateShader != nullptr, "pfnCreateShader")) {
+    return false;
+  }
+  D3D9DDI_HSHADER hVs{};
+  hr = ctx.device_funcs.pfnCreateShader(ctx.hDevice,
+                                        kD3d9ShaderStageVs,
+                                        kVsPassthroughPosColor,
+                                        static_cast<uint32_t>(sizeof(kVsPassthroughPosColor)),
+                                        &hVs);
+  if (!Check(SUCCEEDED(hr) && hVs.pDrvPrivate != nullptr, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(SUCCEEDED(hr), "SetShader(VS)")) {
+    return false;
+  }
+  D3D9DDI_HSHADER null_ps{};
+  hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStagePs, null_ps);
+  if (!Check(SUCCEEDED(hr), "SetShader(PS=NULL)")) {
+    return false;
+  }
+
+  // Create and bind a dummy texture0 so stage0 PS selection can choose a texture
+  // variant (forcing a fixed-function PS replacement).
+  if (!Check(ctx.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource")) {
+    return false;
+  }
+  D3D9DDIARG_CREATERESOURCE create_tex{};
+  create_tex.type = 3u; // D3DRTYPE_TEXTURE
+  create_tex.format = 22u; // D3DFMT_X8R8G8B8
+  create_tex.width = 1;
+  create_tex.height = 1;
+  create_tex.depth = 1;
+  create_tex.mip_levels = 1;
+  create_tex.usage = 0;
+  create_tex.pool = 0;
+  create_tex.size = 0;
+  create_tex.hResource.pDrvPrivate = nullptr;
+  create_tex.pSharedHandle = nullptr;
+  create_tex.pPrivateDriverData = nullptr;
+  create_tex.PrivateDriverDataSize = 0;
+  create_tex.wddm_hAllocation = 0;
+  hr = ctx.device_funcs.pfnCreateResource(ctx.hDevice, &create_tex);
+  if (!Check(SUCCEEDED(hr) && create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture)")) {
+    return false;
+  }
+  if (!Check(ctx.device_funcs.pfnSetTexture != nullptr, "pfnSetTexture")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetTexture(ctx.hDevice, /*stage=*/0, create_tex.hResource);
+  if (!Check(SUCCEEDED(hr), "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Force stage0 to sample the bound texture.
+  constexpr uint32_t kD3dTssColorOp = 1u;    // D3DTSS_COLOROP
+  constexpr uint32_t kD3dTssColorArg1 = 2u;  // D3DTSS_COLORARG1
+  constexpr uint32_t kD3dTssAlphaOp = 4u;    // D3DTSS_ALPHAOP
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;  // D3DTSS_ALPHAARG1
+  constexpr uint32_t kD3dTopSelectArg1 = 2u; // D3DTOP_SELECTARG1
+  constexpr uint32_t kD3dTaTexture = 2u;     // D3DTA_TEXTURE
+
+  const auto SetTss = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (ctx.device_funcs.pfnSetTextureStageState) {
+      hr2 = ctx.device_funcs.pfnSetTextureStageState(ctx.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(ctx.hDevice, stage, state, value);
+    }
+    return Check(SUCCEEDED(hr2), msg);
+  };
+
+  if (!SetTss(/*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTss(/*stage=*/0, kD3dTssColorArg1, kD3dTaTexture, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  if (!SetTss(/*stage=*/0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTss(/*stage=*/0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+
+  // Draw: select the internal fixed-function PS for stage0 (based on texture stage state)
+  // and ensure we never emit null shader binds.
+  const VertexXyzDiffuse verts[3] = {
+      {-0.5f, -0.5f, 0.0f, 0xFFFFFFFFu},
+      {0.5f, -0.5f, 0.0f, 0xFFFFFFFFu},
+      {0.0f, 0.5f, 0.0f, 0xFFFFFFFFu},
+  };
+  if (!Check(ctx.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
+                                           D3DDDIPT_TRIANGLELIST,
+                                           /*primitive_count=*/1,
+                                           verts,
+                                           static_cast<uint32_t>(sizeof(VertexXyzDiffuse)));
+  if (!Check(SUCCEEDED(hr), "DrawPrimitiveUP(VS-only, stage0 texture)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t cap = dev->cmd.bytes_used();
+  if (!ValidateNoDrawWithNullShaders(buf, cap)) {
+    return false;
+  }
+  return ValidateNoBindAfterDestroy(buf, cap);
+}
+
+bool TestDestroyShaderDoesNotBindAfterDestroy() {
+  D3d9Context ctx;
+  if (!InitD3d9(&ctx)) {
+    return false;
+  }
+  aerogpu::Device* dev = GetDevice(ctx);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF")) {
+    return false;
+  }
+  HRESULT hr = ctx.device_funcs.pfnSetFVF(ctx.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(SUCCEEDED(hr), "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnCreateShader != nullptr, "pfnCreateShader")) {
+    return false;
+  }
+  D3D9DDI_HSHADER hVs{};
+  hr = ctx.device_funcs.pfnCreateShader(ctx.hDevice,
+                                        kD3d9ShaderStageVs,
+                                        kVsPassthroughPosColor,
+                                        static_cast<uint32_t>(sizeof(kVsPassthroughPosColor)),
+                                        &hVs);
+  if (!Check(SUCCEEDED(hr) && hVs.pDrvPrivate != nullptr, "CreateShader(VS)")) {
+    return false;
+  }
+  D3D9DDI_HSHADER hPs1{};
+  hr = ctx.device_funcs.pfnCreateShader(ctx.hDevice,
+                                        kD3d9ShaderStagePs,
+                                        kPsPassthroughColor,
+                                        static_cast<uint32_t>(sizeof(kPsPassthroughColor)),
+                                        &hPs1);
+  if (!Check(SUCCEEDED(hr) && hPs1.pDrvPrivate != nullptr, "CreateShader(PS)")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(SUCCEEDED(hr), "SetShader(VS)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStagePs, hPs1);
+  if (!Check(SUCCEEDED(hr), "SetShader(PS)")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP")) {
+    return false;
+  }
+  const VertexXyzrhwDiffuse verts[3] = {
+      {0.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.5f, 1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.5f, 1.0f, 0xFFFFFFFFu},
+  };
+  hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
+                                           D3DDDIPT_TRIANGLELIST,
+                                           /*primitive_count=*/1,
+                                           verts,
+                                           static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuse)));
+  if (!Check(SUCCEEDED(hr), "DrawPrimitiveUP(before DestroyShader)")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnDestroyShader != nullptr, "pfnDestroyShader")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnDestroyShader(ctx.hDevice, hPs1);
+  if (!Check(SUCCEEDED(hr), "DestroyShader(PS)")) {
+    return false;
+  }
+
+  // Re-bind a new PS after destroying the previous one. This forces a BIND_SHADERS
+  // packet after the DESTROY_SHADER, which our validator checks for stale handles.
+  D3D9DDI_HSHADER hPs2{};
+  hr = ctx.device_funcs.pfnCreateShader(ctx.hDevice,
+                                        kD3d9ShaderStagePs,
+                                        kPsPassthroughColor,
+                                        static_cast<uint32_t>(sizeof(kPsPassthroughColor)),
+                                        &hPs2);
+  if (!Check(SUCCEEDED(hr) && hPs2.pDrvPrivate != nullptr, "CreateShader(PS2)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStagePs, hPs2);
+  if (!Check(SUCCEEDED(hr), "SetShader(PS2)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
+                                           D3DDDIPT_TRIANGLELIST,
+                                           /*primitive_count=*/1,
+                                           verts,
+                                           static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuse)));
+  if (!Check(SUCCEEDED(hr), "DrawPrimitiveUP(after DestroyShader)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t cap = dev->cmd.bytes_used();
+  if (!Check(CountOpcode(buf, cap, AEROGPU_CMD_DESTROY_SHADER) >= 1, "expected DESTROY_SHADER packet")) {
+    return false;
+  }
+  if (!ValidateNoDrawWithNullShaders(buf, cap)) {
+    return false;
+  }
+  return ValidateNoBindAfterDestroy(buf, cap);
+}
 bool TestPsOnlyUnsupportedFvfFailsWithoutDraw() {
   D3d9Context ctx;
   if (!InitD3d9(&ctx)) {
@@ -448,6 +744,8 @@ int main() {
   ok = ok && TestPsOnlyDrawBindsFallbackVs();
   ok = ok && TestPsOnlyDrawBindsFallbackVsXyzDiffuse();
   ok = ok && TestVsOnlyDrawBindsFallbackPs();
+  ok = ok && TestVsOnlyStage0PsUpdateDoesNotRebindDestroyedShader();
+  ok = ok && TestDestroyShaderDoesNotBindAfterDestroy();
   ok = ok && TestPsOnlyUnsupportedFvfFailsWithoutDraw();
   if (ok) {
     std::fprintf(stdout, "PASS\n");
