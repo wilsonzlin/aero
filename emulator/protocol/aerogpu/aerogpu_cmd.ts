@@ -2080,7 +2080,7 @@ export class AerogpuCmdWriter {
    * Leaves VS/PS/CS/GS unbound (0).
    */
   bindShadersHsDs(hs: AerogpuHandle, ds: AerogpuHandle): void {
-    this.bindShadersEx(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ 0, /*gs=*/ 0, hs, ds);
+    this.bindShadersEx(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ 0, { gs: 0, hs, ds });
   }
 
   bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {

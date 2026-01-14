@@ -684,7 +684,7 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
 
 test("AerogpuCmdWriter.bindShadersEx can mirror GS into reserved0 for legacy compatibility", () => {
   const w = new AerogpuCmdWriter();
-  w.bindShadersEx(1, 2, 3, 4, 5, 6, /*mirrorGsToReserved0=*/ true);
+  w.bindShadersEx(1, 2, 3, { gs: 4, hs: 5, ds: 6 }, /*mirrorGsToReserved0=*/ true);
 
   const bytes = w.finish();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
