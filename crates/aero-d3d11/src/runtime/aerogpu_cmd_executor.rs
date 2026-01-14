@@ -14,11 +14,11 @@ use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
 };
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
-use aero_gpu::{GpuCapabilities, GpuError};
 use aero_gpu::{
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
     pack_rgba8_to_b5g6r5_unorm,
 };
+use aero_gpu::{GpuCapabilities, GpuError};
 use aero_gpu::{SharedSurfaceError, SharedSurfaceTable as GpuSharedSurfaceTable};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_bind_shaders_payload_le, decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
@@ -22527,7 +22527,8 @@ fn hs_main() {{
             // SET_CONSTANT_BUFFERS to HS via stage_ex, with an unaligned offset so the scratch-copy
             // path is exercised.
             let mut cmd_bytes = Vec::new();
-            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::SetConstantBuffers as u32).to_le_bytes());
+            cmd_bytes
+                .extend_from_slice(&(AerogpuCmdOpcode::SetConstantBuffers as u32).to_le_bytes());
             cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes (24 + 16)
             cmd_bytes.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes());
             cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_slot

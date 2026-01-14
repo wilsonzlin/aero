@@ -1191,14 +1191,15 @@ impl AerogpuCmdRuntime {
                     |device, vs_module, fs_module| {
                         let pipeline_layout = pipeline_layout.as_ref();
 
-                        let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> = owned_vertex_layouts
-                            .iter()
-                            .map(|l| wgpu::VertexBufferLayout {
-                                array_stride: l.array_stride,
-                                step_mode: l.step_mode,
-                                attributes: &l.attributes,
-                            })
-                            .collect();
+                        let vertex_buffers: Vec<wgpu::VertexBufferLayout<'_>> =
+                            owned_vertex_layouts
+                                .iter()
+                                .map(|l| wgpu::VertexBufferLayout {
+                                    array_stride: l.array_stride,
+                                    step_mode: l.step_mode,
+                                    attributes: &l.attributes,
+                                })
+                                .collect();
 
                         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                             label: Some("aero-d3d11 aerogpu render pipeline"),
@@ -1238,8 +1239,12 @@ impl AerogpuCmdRuntime {
                         recovery_attempts_remaining -= 1;
 
                         let wgsl = match stage {
-                            ShaderStage::Vertex if hash == linked_vs_hash => linked_vs_wgsl.as_ref(),
-                            ShaderStage::Fragment if hash == linked_ps_hash => linked_ps_wgsl.as_ref(),
+                            ShaderStage::Vertex if hash == linked_vs_hash => {
+                                linked_vs_wgsl.as_ref()
+                            }
+                            ShaderStage::Fragment if hash == linked_ps_hash => {
+                                linked_ps_wgsl.as_ref()
+                            }
                             _ => return Err(GpuError::MissingShaderModule { stage, hash }.into()),
                         };
 
