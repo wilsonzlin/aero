@@ -177,21 +177,8 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   }
 
   aerogpu_test::AerogpuScanoutDiag scanout_diag;
-  bool have_scanout_diag = false;
-  {
-    aerogpu_test::kmt::D3DKMT_FUNCS kmt;
-    std::string kmt_err;
-    if (aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
-      aerogpu_test::kmt::D3DKMT_HANDLE adapter = 0;
-      std::string open_err;
-      if (aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
-        have_scanout_diag = aerogpu_test::TryQueryAerogpuScanoutDiagWithKmt(
-            &kmt, (uint32_t)adapter, 0 /* vidpn_source_id */, &scanout_diag);
-        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
-      }
-      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
-    }
-  }
+  const bool have_scanout_diag =
+      aerogpu_test::TryQueryPrimaryAerogpuScanoutDiag(0 /* vidpn_source_id */, &scanout_diag);
   if (have_scanout_diag) {
     aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
                                kTestName,

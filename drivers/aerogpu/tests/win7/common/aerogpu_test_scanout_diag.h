@@ -57,6 +57,33 @@ static inline bool TryQueryAerogpuScanoutDiagWithKmt(const aerogpu_test::kmt::D3
   return true;
 }
 
+// Convenience helper for tests that don't already have a D3DKMT adapter handle handy.
+// Opens the primary adapter (GetDC(NULL) path) and queries QUERY_SCANOUT v2.
+static inline bool TryQueryPrimaryAerogpuScanoutDiag(uint32_t vidpn_source_id, AerogpuScanoutDiag* out_diag) {
+  if (!out_diag) {
+    return false;
+  }
+  InitAerogpuScanoutDiag(out_diag);
+
+  aerogpu_test::kmt::D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
+    return false;
+  }
+
+  aerogpu_test::kmt::D3DKMT_HANDLE adapter = 0;
+  std::string open_err;
+  if (!aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return false;
+  }
+
+  const bool ok = TryQueryAerogpuScanoutDiagWithKmt(&kmt, (uint32_t)adapter, vidpn_source_id, out_diag);
+  aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+  return ok;
+}
+
 static inline bool TryQueryAerogpuScanoutDiag(uint32_t adapter,
                                               uint32_t vidpn_source_id,
                                               AerogpuScanoutDiag* out_diag) {

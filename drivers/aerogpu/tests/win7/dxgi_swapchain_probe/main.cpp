@@ -356,28 +356,6 @@ static int CheckAdapterPolicy(const char* test_name,
   return 0;
 }
 
-static bool QueryScanoutDiag0(aerogpu_test::AerogpuScanoutDiag* out_diag) {
-  if (!out_diag) {
-    return false;
-  }
-  aerogpu_test::kmt::D3DKMT_FUNCS kmt;
-  std::string kmt_err;
-  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
-    return false;
-  }
-  aerogpu_test::kmt::D3DKMT_HANDLE adapter = 0;
-  std::string open_err;
-  if (!aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
-    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
-    return false;
-  }
-  const bool ok = aerogpu_test::TryQueryAerogpuScanoutDiagWithKmt(
-      &kmt, (uint32_t)adapter, 0 /* vidpn_source_id */, out_diag);
-  aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
-  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
-  return ok;
-}
-
 static int RunDxgiSwapchainProbe(int argc, char** argv) {
   const char* kTestName = "dxgi_swapchain_probe";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -419,7 +397,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   }
 
   aerogpu_test::AerogpuScanoutDiag scanout_diag;
-  const bool have_scanout_diag = QueryScanoutDiag0(&scanout_diag);
+  const bool have_scanout_diag =
+      aerogpu_test::TryQueryPrimaryAerogpuScanoutDiag(0 /* vidpn_source_id */, &scanout_diag);
   if (have_scanout_diag) {
     aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
                                kTestName,
