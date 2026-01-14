@@ -361,6 +361,11 @@ impl AeroGpuPciDevice {
             mmio::IRQ_STATUS => self.regs.irq_status,
             mmio::IRQ_ENABLE => self.regs.irq_enable,
 
+            mmio::ERROR_CODE => self.regs.error_code,
+            mmio::ERROR_FENCE_LO => self.regs.error_fence as u32,
+            mmio::ERROR_FENCE_HI => (self.regs.error_fence >> 32) as u32,
+            mmio::ERROR_COUNT => self.regs.error_count,
+
             mmio::SCANOUT0_ENABLE => self.regs.scanout0.enable as u32,
             mmio::SCANOUT0_WIDTH => self.regs.scanout0.width,
             mmio::SCANOUT0_HEIGHT => self.regs.scanout0.height,
