@@ -5697,6 +5697,17 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   EmitRasterizerStateLocked(dev, nullptr);
 
   EmitBindShadersLocked(dev);
+
+  // Reset viewport/scissor state as part of ClearState. The AeroGPU protocol
+  // uses a degenerate (0x0) viewport/scissor to encode "use default".
+  validate_and_emit_viewports_locked(dev,
+                                    /*num_viewports=*/0,
+                                    static_cast<const D3D10_DDI_VIEWPORT*>(nullptr),
+                                    [&](HRESULT hr) { SetError(dev, hr); });
+  validate_and_emit_scissor_rects_locked(dev,
+                                         /*num_rects=*/0,
+                                         static_cast<const D3D10_DDI_RECT*>(nullptr),
+                                         [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,

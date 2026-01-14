@@ -430,6 +430,37 @@ bool TestMultiViewportNaNExtraDoesNotReportNotImplAndEmitsFirst() {
   return true;
 }
 
+bool TestViewportNullPointerReportsInvalidArgAndDoesNotEmit() {
+  Device dev{};
+  std::vector<HRESULT> errors;
+
+  validate_and_emit_viewports_locked(&dev,
+                                     /*num_viewports=*/1,
+                                     /*viewports=*/static_cast<const AEROGPU_DDI_VIEWPORT*>(nullptr),
+                                     [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(errors.size() == 1, "SetViewports(num>0, nullptr) should report exactly one error")) {
+    return false;
+  }
+  if (!Check(errors[0] == E_INVALIDARG, "SetViewports(num>0, nullptr) should report E_INVALIDARG")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.cmd.data();
+  const size_t stream_len = dev.cmd.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    return false;
+  }
+
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_VIEWPORT);
+  if (!Check(hdr == nullptr, "expected SET_VIEWPORT not to be emitted on invalid args")) {
+    return false;
+  }
+
+  return true;
+}
+
 struct TestRect {
   int32_t left;
   int32_t top;
@@ -631,6 +662,37 @@ bool TestScissorClampsPositiveOverflowAndEmitsClampedDimensions() {
     return false;
   }
   if (!Check(cmd->height == std::numeric_limits<int32_t>::max(), "SET_SCISSOR height clamps to INT32_MAX")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestScissorNullPointerReportsInvalidArgAndDoesNotEmit() {
+  Device dev{};
+  std::vector<HRESULT> errors;
+
+  validate_and_emit_scissor_rects_locked(&dev,
+                                         /*num_rects=*/1,
+                                         /*rects=*/static_cast<const TestRect*>(nullptr),
+                                         [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(errors.size() == 1, "SetScissorRects(num>0, nullptr) should report exactly one error")) {
+    return false;
+  }
+  if (!Check(errors[0] == E_INVALIDARG, "SetScissorRects(num>0, nullptr) should report E_INVALIDARG")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.cmd.data();
+  const size_t stream_len = dev.cmd.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    return false;
+  }
+
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_SCISSOR);
+  if (!Check(hdr == nullptr, "expected SET_SCISSOR not to be emitted on invalid args")) {
     return false;
   }
 
@@ -915,6 +977,44 @@ bool TestPortableUmdMultiViewportNaNExtraDoesNotReportNotImplAndEmitsFirst() {
     return false;
   }
   if (!Check(cmd->height_f32 == f32_bits(vp0.Height), "SET_VIEWPORT height matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
+
+bool TestPortableUmdViewportNullPointerReportsInvalidArgAndDoesNotEmit() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable SetViewports invalid args)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnSetViewports(dev.hDevice, /*num_viewports=*/1, /*viewports=*/nullptr);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetViewports(invalid args)")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.size() == 1, "Portable SetViewports(num>0, nullptr) should report exactly one error")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG, "Portable SetViewports(num>0, nullptr) should report E_INVALIDARG")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_VIEWPORT);
+  if (!Check(hdr == nullptr, "expected SET_VIEWPORT not to be emitted on invalid args")) {
     DestroyTestDevice(&dev);
     return false;
   }
@@ -1211,6 +1311,45 @@ bool TestPortableUmdScissorClampsPositiveOverflowAndEmitsClampedDimensions() {
   DestroyTestDevice(&dev);
   return true;
 }
+
+bool TestPortableUmdScissorNullPointerReportsInvalidArgAndDoesNotEmit() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable SetScissorRects invalid args)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnSetScissorRects(dev.hDevice, /*num_rects=*/1, /*rects=*/nullptr);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetScissorRects(invalid args)")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.size() == 1, "Portable SetScissorRects(num>0, nullptr) should report exactly one error")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG,
+             "Portable SetScissorRects(num>0, nullptr) should report E_INVALIDARG")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_SCISSOR);
+  if (!Check(hdr == nullptr, "expected SET_SCISSOR not to be emitted on invalid args")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
 #endif // !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
 
 } // namespace
@@ -1221,21 +1360,25 @@ int main() {
   ok &= TestMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestMultiViewportDisabledExtraDoesNotReportNotImplAndEmitsFirst();
   ok &= TestMultiViewportNaNExtraDoesNotReportNotImplAndEmitsFirst();
+  ok &= TestViewportNullPointerReportsInvalidArgAndDoesNotEmit();
   ok &= TestMultiScissorReportsNotImplAndEmitsFirst();
   ok &= TestMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestMultiScissorDisabledExtraDoesNotReportNotImplAndEmitsFirst();
   ok &= TestScissorClampsPositiveOverflowAndEmitsClampedDimensions();
+  ok &= TestScissorNullPointerReportsInvalidArgAndDoesNotEmit();
   ok &= TestViewportAndScissorDisableEncodesDefaults();
 #if !(defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS)
   ok &= TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiViewportDisabledExtraDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiViewportNaNExtraDoesNotReportNotImplAndEmitsFirst();
+  ok &= TestPortableUmdViewportNullPointerReportsInvalidArgAndDoesNotEmit();
   ok &= TestPortableUmdMultiScissorReportsNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiScissorDisabledExtraDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdDisableEncodesDefaultsAndDoesNotReportErrors();
   ok &= TestPortableUmdScissorClampsPositiveOverflowAndEmitsClampedDimensions();
+  ok &= TestPortableUmdScissorNullPointerReportsInvalidArgAndDoesNotEmit();
 #endif
   if (!ok) {
     return 1;
