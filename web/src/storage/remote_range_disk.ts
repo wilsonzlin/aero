@@ -1930,6 +1930,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       })
       .then(async () => {
         if (generation !== this.cacheGeneration) return;
+        if (this.persistentCacheWritesDisabled) return;
         await this.metadataStore.write(this.cacheId, meta);
       });
     await this.metaWriteChain;
