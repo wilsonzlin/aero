@@ -1293,6 +1293,91 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
 }
 
 #[test]
+fn tier1_inline_tlb_mmio_load_exit_does_not_clobber_unreached_written_gpr() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xF000);
+    let _ = b.load(Width::W32, addr);
+
+    // Regression test: with selective GPR load/spill enabled, Tier-1 must not clobber a GPR that
+    // is only written *after* a potential MMIO exit point.
+    let v0 = b.const_int(Width::W64, 0x1234_5678_9abc_def0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rbx,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let mut cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0xDEAD_BEEF_DEAD_BEEF;
+
+    let ram = vec![0u8; 0x10000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rbx.as_u8() as usize],
+        0xDEAD_BEEF_DEAD_BEEF
+    );
+}
+
+#[test]
+fn tier1_inline_tlb_mmio_store_exit_does_not_clobber_unreached_written_gpr() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xF000);
+    let value = b.const_int(Width::W32, 0xDEAD_BEEF);
+    b.store(Width::W32, addr, value);
+
+    // Same scenario as `tier1_inline_tlb_mmio_load_exit_does_not_clobber_unreached_written_gpr`,
+    // but for inline-TLB stores.
+    let v0 = b.const_int(Width::W64, 0x1234_5678_9abc_def0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rbx,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let mut cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0xDEAD_BEEF_DEAD_BEEF;
+
+    let ram = vec![0u8; 0x10000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rbx.as_u8() as usize],
+        0xDEAD_BEEF_DEAD_BEEF
+    );
+}
+
+#[test]
 fn tier1_inline_tlb_mmio_load_uses_slow_helper_when_configured() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0xF000);
