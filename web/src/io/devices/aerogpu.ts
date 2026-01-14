@@ -95,8 +95,10 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
   readonly subsystemId = AEROGPU_PCI_DEVICE_ID;
   // VGA compatible display controller: base class 0x03, subclass 0x00, progIF 0x00.
   readonly classCode = 0x03_00_00;
-  // Q35 iGPU slot is 00:02.0; keep this stable so guests can cache driver binding.
-  readonly bdf = { bus: 0, device: 2, function: 0 };
+  // Keep the canonical AeroGPU BDF stable for deterministic guest enumeration and driver binding.
+  //
+  // See `docs/pci-device-compatibility.md` / `docs/abi/aerogpu-pci-identity.md`.
+  readonly bdf = { bus: 0, device: 7, function: 0 };
   readonly interruptPin = 1 as const; // INTA#
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: AEROGPU_PCI_BAR0_SIZE_BYTES }, null, null, null, null, null];
