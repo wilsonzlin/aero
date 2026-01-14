@@ -197,6 +197,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-cpu-decoder --locked
 bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-mmu --locked
 
+# Lint (treat warnings as errors)
+bash ./scripts/safe-run.sh cargo clippy -p aero-jit-x86 --all-targets --all-features --locked -- -D warnings
+
 # Focused smoke tests (fast, covers Tier-1 32-bit mode + PF-008 payloads)
 bash ./scripts/safe-run.sh cargo test -p aero-x86 --locked
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked --test pf008_tier1_32
