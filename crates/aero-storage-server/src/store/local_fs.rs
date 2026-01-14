@@ -410,6 +410,10 @@ async fn open_chunked_file(
     let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
 
     let file = fs::File::open(&canonical).await.map_err(map_not_found)?;
+    // Ensure the reader never yields more bytes than the `Content-Length` we will advertise. If the
+    // file grows after we stat it, this prevents us from streaming extra bytes beyond the original
+    // size (which would violate the HTTP framing contract and can confuse clients/intermediaries).
+    let file = file.take(meta.len());
 
     Ok(ChunkedObject {
         meta: ImageMeta {
