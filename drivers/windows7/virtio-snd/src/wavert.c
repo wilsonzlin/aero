@@ -34,7 +34,10 @@ typedef struct _VIRTIOSND_WAVERT_STREAM VIRTIOSND_WAVERT_STREAM, *PVIRTIOSND_WAV
 
 typedef struct _VIRTIOSND_WAVERT_STREAM_FORMAT {
     USHORT Channels;
+    /* WAVEFORMATEXTENSIBLE container bits (wBitsPerSample). */
     USHORT BitsPerSample;
+    /* WAVEFORMATEXTENSIBLE valid bits (wValidBitsPerSample). */
+    USHORT ValidBitsPerSample;
     ULONG SampleRate;
     ULONG BlockAlign;
     ULONG AvgBytesPerSec;
@@ -347,7 +350,13 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
         return FALSE;
     }
 
-    if (validBitsPerSample != bitsPerSample) {
+    if (validBitsPerSample == 0 || validBitsPerSample > bitsPerSample) {
+        return FALSE;
+    }
+    if (wfx->wFormatTag != WAVE_FORMAT_EXTENSIBLE && validBitsPerSample != bitsPerSample) {
+        return FALSE;
+    }
+    if (IsEqualGUID(&subFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) && validBitsPerSample != bitsPerSample) {
         return FALSE;
     }
 
@@ -367,6 +376,7 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
     if (OutFormat != NULL) {
         OutFormat->Channels = channels;
         OutFormat->BitsPerSample = bitsPerSample;
+        OutFormat->ValidBitsPerSample = validBitsPerSample;
         OutFormat->SampleRate = sampleRate;
         OutFormat->BlockAlign = expectedBlockAlign;
         OutFormat->AvgBytesPerSec = expectedAvgBytesPerSec;
@@ -395,6 +405,7 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
             const VIRTIOSND_WAVERT_STREAM_FORMAT* f = &table[i].Format;
             if (f->Channels == channels &&
                 f->BitsPerSample == bitsPerSample &&
+                f->ValidBitsPerSample == validBitsPerSample &&
                 f->SampleRate == sampleRate &&
                 f->ChannelMask == channelMask &&
                 IsEqualGUID(&f->SubFormat, &subFormat)) {
@@ -419,6 +430,7 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
     if (OutFormat != NULL) {
         OutFormat->Channels = channels;
         OutFormat->BitsPerSample = bitsPerSample;
+        OutFormat->ValidBitsPerSample = validBitsPerSample;
         OutFormat->SampleRate = sampleRate;
         OutFormat->BlockAlign = expectedBlockAlign;
         OutFormat->AvgBytesPerSec = expectedAvgBytesPerSec;
@@ -1858,39 +1870,51 @@ VirtIoSndWaveRtMiniport_FreeDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPOR
 }
 
 static BOOLEAN
-VirtIoSndWaveRtMapVirtioFormatToKs(_In_ UCHAR VirtioFormat, _Out_ PUSHORT BitsPerSample, _Out_ GUID* SubFormat)
+VirtIoSndWaveRtMapVirtioFormatToKs(
+    _In_ UCHAR VirtioFormat,
+    _Out_ USHORT* BitsPerSample,
+    _Out_ USHORT* ValidBitsPerSample,
+    _Out_ GUID* SubFormat)
 {
-    if (BitsPerSample == NULL || SubFormat == NULL) {
+    if (BitsPerSample == NULL || ValidBitsPerSample == NULL || SubFormat == NULL) {
         return FALSE;
     }
 
     switch (VirtioFormat) {
     case VIRTIO_SND_PCM_FMT_U8:
         *BitsPerSample = 8u;
+        *ValidBitsPerSample = 8u;
         *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         return TRUE;
     case VIRTIO_SND_PCM_FMT_S16:
         *BitsPerSample = 16u;
+        *ValidBitsPerSample = 16u;
         *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         return TRUE;
     case VIRTIO_SND_PCM_FMT_S24:
-        *BitsPerSample = 24u;
+        /* 24-bit samples in a 32-bit container (see virtio_snd_pcm_fmt spec). */
+        *BitsPerSample = 32u;
+        *ValidBitsPerSample = 24u;
         *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         return TRUE;
     case VIRTIO_SND_PCM_FMT_S32:
         *BitsPerSample = 32u;
+        *ValidBitsPerSample = 32u;
         *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         return TRUE;
     case VIRTIO_SND_PCM_FMT_FLOAT:
         *BitsPerSample = 32u;
+        *ValidBitsPerSample = 32u;
         *SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
         return TRUE;
     case VIRTIO_SND_PCM_FMT_FLOAT64:
         *BitsPerSample = 64u;
+        *ValidBitsPerSample = 64u;
         *SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
         return TRUE;
     default:
         *BitsPerSample = 0;
+        *ValidBitsPerSample = 0;
         *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         return FALSE;
     }
@@ -1965,6 +1989,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
     for (fmtIdx = 0; fmtIdx < RTL_NUMBER_OF(kVirtioFormats); ++fmtIdx) {
         const UCHAR vf = kVirtioFormats[fmtIdx];
         USHORT bits;
+        USHORT validBits;
         GUID sub;
 
         if ((Caps->Formats & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
@@ -1972,8 +1997,9 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
         }
 
         bits = 0;
+        validBits = 0;
         sub = KSDATAFORMAT_SUBTYPE_PCM;
-        if (!VirtIoSndWaveRtMapVirtioFormatToKs(vf, &bits, &sub) || bits == 0) {
+        if (!VirtIoSndWaveRtMapVirtioFormatToKs(vf, &bits, &validBits, &sub) || bits == 0 || validBits == 0) {
             continue;
         }
 
@@ -2017,6 +2043,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
     for (fmtIdx = 0; fmtIdx < RTL_NUMBER_OF(kVirtioFormats); ++fmtIdx) {
         const UCHAR vf = kVirtioFormats[fmtIdx];
         USHORT bits;
+        USHORT validBits;
         GUID sub;
         USHORT bytesPerSample;
 
@@ -2025,8 +2052,9 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
         }
 
         bits = 0;
+        validBits = 0;
         sub = KSDATAFORMAT_SUBTYPE_PCM;
-        if (!VirtIoSndWaveRtMapVirtioFormatToKs(vf, &bits, &sub) || bits == 0) {
+        if (!VirtIoSndWaveRtMapVirtioFormatToKs(vf, &bits, &validBits, &sub) || bits == 0 || validBits == 0) {
             continue;
         }
 
@@ -2106,6 +2134,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
 
                         formats[out].Format.Channels = (USHORT)channelCount;
                         formats[out].Format.BitsPerSample = bits;
+                        formats[out].Format.ValidBitsPerSample = validBits;
                         formats[out].Format.SampleRate = rateHz;
                         formats[out].Format.BlockAlign = blockAlign;
                         formats[out].Format.AvgBytesPerSec = avgBytesPerSec;
@@ -2122,8 +2151,8 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
                         formats[out].DataRange.DataRange.SubFormat = sub;
                         formats[out].DataRange.DataRange.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
                         formats[out].DataRange.MaximumChannels = channelCount;
-                        formats[out].DataRange.MinimumBitsPerSample = bits;
-                        formats[out].DataRange.MaximumBitsPerSample = bits;
+                        formats[out].DataRange.MinimumBitsPerSample = validBits;
+                        formats[out].DataRange.MaximumBitsPerSample = validBits;
                         formats[out].DataRange.MinimumSampleFrequency = rateHz;
                         formats[out].DataRange.MaximumSampleFrequency = rateHz;
 
@@ -2344,6 +2373,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
         RtlZeroMemory(&fixed, sizeof(fixed));
         fixed.Channels = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_CHANNELS : VIRTIOSND_CHANNELS;
         fixed.BitsPerSample = VIRTIOSND_BITS_PER_SAMPLE;
+        fixed.ValidBitsPerSample = VIRTIOSND_BITS_PER_SAMPLE;
         fixed.SampleRate = VIRTIOSND_SAMPLE_RATE;
         fixed.BlockAlign = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
         fixed.AvgBytesPerSec =
@@ -2354,8 +2384,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
         fixed.VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
 
         if (requested->MaximumChannels < fixed.Channels ||
-            requested->MinimumBitsPerSample > fixed.BitsPerSample ||
-            requested->MaximumBitsPerSample < fixed.BitsPerSample ||
+            requested->MinimumBitsPerSample > fixed.ValidBitsPerSample ||
+            requested->MaximumBitsPerSample < fixed.ValidBitsPerSample ||
             requested->MinimumSampleFrequency > fixed.SampleRate ||
             requested->MaximumSampleFrequency < fixed.SampleRate) {
             return STATUS_NO_MATCH;
@@ -2374,8 +2404,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
      * NO_MATCH so PortCls can try another candidate.
      */
     if (requested->MaximumChannels < chosen->Channels ||
-        requested->MinimumBitsPerSample > chosen->BitsPerSample ||
-        requested->MaximumBitsPerSample < chosen->BitsPerSample ||
+        requested->MinimumBitsPerSample > chosen->ValidBitsPerSample ||
+        requested->MaximumBitsPerSample < chosen->ValidBitsPerSample ||
         requested->MinimumSampleFrequency > chosen->SampleRate ||
         requested->MaximumSampleFrequency < chosen->SampleRate) {
         return STATUS_NO_MATCH;
@@ -2397,7 +2427,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
     format.WaveFormatExt.Format.wBitsPerSample = chosen->BitsPerSample;
     format.WaveFormatExt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
 
-    format.WaveFormatExt.Samples.wValidBitsPerSample = chosen->BitsPerSample;
+    format.WaveFormatExt.Samples.wValidBitsPerSample = chosen->ValidBitsPerSample;
     format.WaveFormatExt.dwChannelMask = chosen->ChannelMask;
     format.WaveFormatExt.SubFormat = chosen->SubFormat;
 

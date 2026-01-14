@@ -343,7 +343,12 @@ _Must_inspect_result_ static __forceinline BOOLEAN VirtioSndPcmFormatToBytesPerS
         return TRUE;
     case VIRTIO_SND_PCM_FMT_S24:
     case VIRTIO_SND_PCM_FMT_U24:
-        *BytesPerSample = 3u;
+        /*
+         * virtio-snd format codes are based on ALSA `snd_pcm_format_t`. In ALSA,
+         * S24/U24 correspond to 24-bit samples stored in a 32-bit container
+         * (`SNDRV_PCM_FORMAT_S24_LE` / `SNDRV_PCM_FORMAT_U24_LE`).
+         */
+        *BytesPerSample = 4u;
         return TRUE;
     case VIRTIO_SND_PCM_FMT_S32:
     case VIRTIO_SND_PCM_FMT_U32:
