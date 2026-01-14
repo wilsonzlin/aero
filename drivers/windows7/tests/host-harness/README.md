@@ -468,13 +468,14 @@ The **PowerShell** harness does the same when `-RequireVirtioNetMsix` is set.
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-snd interrupt mode/vectors:
 
 - PASS (virtio-snd diag interface available):
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n|none>|queue0_vector=<n|none>|queue1_vector=<n|none>|queue2_vector=<n|none>|queue3_vector=<n|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
 - SKIP (virtio-snd diag interface unavailable / device missing):
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=diag_unavailable|err=<n>`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|SKIP|reason=device_missing`
 
 When `--require-virtio-snd-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
 The **PowerShell** harness does the same when `-RequireVirtioSndMsix` is set.
+
 ### virtio-input event delivery (QMP/HMP input injection)
 
 The default virtio-input selftest (`virtio-input`) validates **enumeration + report descriptors** only.
