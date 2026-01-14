@@ -2153,4 +2153,19 @@ mod tests {
         let bm_st = ctl.io_read(bm_base + 2, 1) as u8;
         assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
     }
+
+    #[test]
+    fn drive_address_works_for_atapi_devices_on_secondary_channel() {
+        let mut ctl = IdeController::new(0xFFF0);
+
+        ctl.attach_secondary_master_atapi(AtapiCdrom::new(None));
+
+        let device_port = ctl.secondary.ports.cmd_base + ATA_REG_DEVICE;
+        let drive_addr_port = ctl.secondary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+
+        // Select master. (Value written is conventional for master select; Drive Address should
+        // ignore LBA/CHS mode and just reflect head/device selection.)
+        ctl.io_write(device_port, 1, 0xA0);
+        assert_eq!(ctl.io_read(drive_addr_port, 1) as u8, 0xEF);
+    }
 }
