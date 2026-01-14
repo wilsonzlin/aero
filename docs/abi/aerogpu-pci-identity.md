@@ -93,6 +93,20 @@ Notes:
 * The device ID remains `0x0001` for both generations; the vendor ID is what
   distinguishes the ABI.
 
+## PCI interrupt wiring (legacy INTx)
+
+The canonical `aero_machine::Machine` exposes AeroGPU's interrupt delivery via **PCI INTx**:
+
+- `Interrupt Pin` (0x3D) = `1` (**INTA#**)
+- `Interrupt Line` (0x3C) = the routed platform interrupt line per Aero's canonical PCI INTx router
+  (swizzle + PIRQ→GSI mapping).
+
+For the canonical AeroGPU BDF (`00:07.0`) and the default PC-compatible routing table
+(`PIRQ[A-D] → GSI[10-13]`), this evaluates to **GSI/IRQ 13**.
+
+This contract is enforced by integration tests under `crates/aero-machine/tests/` (for example
+`aerogpu_pci_enumeration.rs`).
+
 ## Why two ABIs exist
 
 `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` is the original, minimal ABI used to bring up the Windows 7
