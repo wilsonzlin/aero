@@ -129,6 +129,11 @@ def main() -> int:
     alias_body = _functional_bytes(alias)
 
     if canonical_body == alias_body:
+        print(
+            "virtio-input INF alias drift check: OK ({} matches {})".format(
+                alias.relative_to(repo_root), canonical.relative_to(repo_root)
+            )
+        )
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
@@ -160,4 +165,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

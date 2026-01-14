@@ -50,8 +50,8 @@ DEPRECATED_WIN7_TEST_INF_BASENAMES: tuple[str, ...] = (
     "aerovnet.inf",
     # Old virtio-snd INF basename (hyphenated); canonical is now aero_virtio_snd.inf.
     "aero-virtio-snd.inf",
-    # Old virtio-input INF basename; canonical is now aero_virtio_input.inf.
-    "virtio-input.inf",
+    # Note: virtio-input retains a legacy filename alias (`virtio-input.inf.disabled` -> `virtio-input.inf`),
+    # so that basename is intentionally *not* treated as deprecated here.
 )
 
 # Guest Tools packager specs that hardcode expected HWID regexes. These should
@@ -2042,9 +2042,9 @@ def validate_virtio_input_model_lines(
       - `require_fallback=False`: forbid the strict fallback HWID.
       - `require_fallback=True`: require the strict fallback HWID.
 
-    The legacy filename alias is expected to stay in sync with the canonical INF
-    outside the models sections (CI enforces this via an alias drift check) so it
-    cannot silently drift in behavior.
+    The legacy filename alias is expected to remain byte-for-byte identical to the
+    canonical INF from the first section header (`[Version]`) onward (only the
+    leading banner/comments may differ).
     """
 
     model_entries = parse_inf_model_entries(inf_path)
