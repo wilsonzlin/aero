@@ -3,16 +3,19 @@ import { readIoInputTelemetry, type IoInputTelemetrySnapshot } from "./io_input_
 
 export type IoInputTelemetryBackend = {
   /**
-   * Returns the current IO worker input telemetry counters (or null if the
-   * runtime is not initialized).
+   * Returns the current input telemetry counters (or null if the runtime is not initialized).
+   *
+   * Note: despite the `Io*` naming, these counters are written by the active input injector:
+   * - `vmRuntime=legacy`: I/O worker
+   * - `vmRuntime=machine`: machine CPU worker
    */
   getIoInputTelemetry: () => IoInputTelemetrySnapshot | null;
 };
 
 /**
  * Installs a small helper API under `window.aero.debug` so developers (and
- * Playwright tests that run the full harness page) can read IO worker input
- * telemetry without needing a handle to the shared status SAB directly.
+ * Playwright tests that run the full harness page) can read input telemetry without needing a
+ * handle to the shared status SAB directly.
  *
  * This must only run on the browser main thread (it depends on `window`).
  */
@@ -48,4 +51,3 @@ export function installIoInputTelemetryBackendOnAeroGlobal(coordinator: WorkerCo
   // Preserve any existing debug hooks.
   Object.assign(debug, backend);
 }
-

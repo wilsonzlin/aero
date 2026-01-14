@@ -96,7 +96,11 @@ export type IoInputTelemetrySnapshot = {
 
 export interface AeroDebugApi {
   /**
-   * Reads IO worker input telemetry counters from the given shared status view.
+   * Reads input telemetry counters from the given shared status view.
+   *
+   * Ownership:
+   * - `vmRuntime=legacy`: written by the I/O worker (input is injected there)
+   * - `vmRuntime=machine`: written by the machine CPU worker (input is injected there)
    *
    * In the browser runtime, `status` is an `Int32Array` view into the shared
    * `control` SharedArrayBuffer (`StatusIndex`).
@@ -104,8 +108,8 @@ export interface AeroDebugApi {
   readIoInputTelemetry?: (status: Int32Array) => IoInputTelemetrySnapshot;
 
   /**
-   * Returns IO worker input telemetry for the active runtime (or null if no VM
-   * is running / shared status is unavailable).
+   * Returns input telemetry for the active runtime (or null if no VM is running / shared status is
+   * unavailable).
    */
   getIoInputTelemetry?: () => IoInputTelemetrySnapshot | null;
 }
