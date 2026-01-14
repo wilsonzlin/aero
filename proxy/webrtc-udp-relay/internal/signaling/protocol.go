@@ -1,7 +1,6 @@
 package signaling
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -62,26 +61,4 @@ func (r AnswerResponse) Validate() error {
 		return ErrMissingSDP
 	}
 	return nil
-}
-
-func ParseOfferRequestJSON(b []byte) (OfferRequest, error) {
-	var r OfferRequest
-	if err := json.Unmarshal(b, &r); err != nil {
-		return OfferRequest{}, err
-	}
-	if err := r.Validate(); err != nil {
-		return OfferRequest{}, err
-	}
-	return r, nil
-}
-
-func ParseAnswerResponseJSON(b []byte) (AnswerResponse, error) {
-	var r AnswerResponse
-	if err := json.Unmarshal(b, &r); err != nil {
-		return AnswerResponse{}, err
-	}
-	if err := r.Validate(); err != nil {
-		return AnswerResponse{}, err
-	}
-	return r, nil
 }
