@@ -2826,6 +2826,34 @@ fn bus_master_bar4_relocation_affects_registered_ports() {
 }
 
 #[test]
+fn bus_master_bar4_near_u16_max_is_aligned_and_mapped() {
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+
+    // Place BAR4 close to the end of the 16-bit I/O port space so the 16-byte window would extend
+    // past 0xFFFF if we used wrapping arithmetic.
+    ide.borrow_mut().config_mut().write(0x20, 4, 0x0000_fff8);
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // The BAR should be visible via the helper as well.
+    assert_eq!(
+        ide.borrow().bus_master_base(),
+        0xFFF0,
+        "BAR4 should be aligned to its 16-byte size"
+    );
+
+    // Ports at the end of the space should decode normally.
+    assert_eq!(ioports.read(0xFFF0, 1) as u8, 0, "BMIDE command reg");
+    assert_eq!(ioports.read(0xFFFF, 1) as u8, 0, "BMIDE PRD addr high byte");
+
+    // But the mapping must not wrap around and claim ports at the start of the space.
+    assert_eq!(ioports.read(0x0000, 1), 0xFF);
+    assert_eq!(ioports.read(0x0007, 1), 0xFF);
+}
+
+#[test]
 fn atapi_read_10_dma_via_bus_master() {
     let mut iso = MemIso::new(1);
     // Fill the first (and only) 2048-byte sector with a deterministic pattern so we can validate
