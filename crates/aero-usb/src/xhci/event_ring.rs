@@ -60,7 +60,7 @@ pub(crate) enum EnqueueError {
     InvalidConfig,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct EventRingProducer {
     // Cached ERST configuration.
     erstsz: u16,
@@ -78,6 +78,28 @@ pub(crate) struct EventRingProducer {
 
     // Whether we have successfully initialised the ring pointers.
     ready: bool,
+}
+
+impl Default for EventRingProducer {
+    fn default() -> Self {
+        // xHCI rings start with cycle state = 1. Keep the default state consistent with the
+        // snapshot restore "not configured" baseline (which resets both producer/consumer cycles to
+        // true).
+        Self {
+            erstsz: 0,
+            erstba: 0,
+            last_erst_gen: 0,
+
+            prod_pos: RingPos { seg: 0, off: 0 },
+            prod_cycle: true,
+
+            cons_pos: RingPos { seg: 0, off: 0 },
+            cons_cycle: true,
+            last_erdp_gen: 0,
+
+            ready: false,
+        }
+    }
 }
 
 impl EventRingProducer {
