@@ -382,6 +382,7 @@ Implementation references:
 - Aero Gateway backend contract (TCP proxy + DoH): [`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md) (OpenAPI: [`docs/backend/openapi.yaml`](./backend/openapi.yaml))
 - Gateway implementation: `backend/aero-gateway`
 - UDP relay (WebRTC + WebSocket fallback, v1/v2 datagram framing): `proxy/webrtc-udp-relay` (protocol: [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md))
+  - DoS hardening: the relay configures pion/SCTP message-size caps to bound receive-side buffering/allocation before `DataChannel.OnMessage` runs. See `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP hint), `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (hard cap), and `WEBRTC_SESSION_CONNECT_TIMEOUT` (session leak mitigation) in the relay README.
 - Local development relay: `net-proxy/` (supports `/tcp`, `/tcp-mux`, `/udp`, plus DoH `/dns-query` + `/dns-json`)
 
 ### Audio Tasks
