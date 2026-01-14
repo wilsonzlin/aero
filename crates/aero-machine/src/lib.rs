@@ -6776,6 +6776,34 @@ impl Machine {
         }
     }
 
+    /// Inject up to 4 raw PS/2 Set-2 scancode bytes into the i8042 controller, if present.
+    ///
+    /// This matches the packed format used by the browser input batch pipeline
+    /// (`web/src/input/event_queue.ts`):
+    /// - `packed`: little-endian packed bytes (b0 in bits 0..7)
+    /// - `len`: number of valid bytes in `packed` (1..=4)
+    pub fn inject_key_scancode_packed(&mut self, packed: u32, len: u8) {
+        let len = len.min(4) as usize;
+        if len == 0 {
+            return;
+        }
+
+        let mut bytes = [0u8; 4];
+        for (i, slot) in bytes.iter_mut().enumerate().take(len) {
+            *slot = ((packed >> (i * 8)) & 0xff) as u8;
+        }
+        self.inject_key_scancode_bytes(&bytes[..len]);
+    }
+
+    /// Inject an arbitrary-length raw PS/2 Set-2 scancode byte sequence into the guest i8042
+    /// keyboard device.
+    ///
+    /// This is an alias for [`Machine::inject_key_scancode_bytes`], provided for API parity with
+    /// `crates/aero-wasm::Machine`.
+    pub fn inject_keyboard_bytes(&mut self, bytes: &[u8]) {
+        self.inject_key_scancode_bytes(bytes);
+    }
+
     /// Inject a classic BIOS keyboard word into the firmware INT 16h queue.
     ///
     /// `key` uses the historical BIOS encoding: `(scan_code << 8) | ascii`.
@@ -6843,6 +6871,25 @@ impl Machine {
 
     pub fn inject_mouse_forward(&mut self, pressed: bool) {
         self.inject_mouse_button(Ps2MouseButton::Extra, pressed);
+    }
+
+    /// Inject a PS/2 mouse button transition using DOM `MouseEvent.button` mapping:
+    /// - `0`: left
+    /// - `1`: middle
+    /// - `2`: right
+    /// - `3`: back
+    /// - `4`: forward
+    ///
+    /// Other values are ignored.
+    pub fn inject_mouse_button_dom(&mut self, button: u8, pressed: bool) {
+        match button {
+            0 => self.inject_mouse_left(pressed),
+            1 => self.inject_mouse_middle(pressed),
+            2 => self.inject_mouse_right(pressed),
+            3 => self.inject_mouse_back(pressed),
+            4 => self.inject_mouse_forward(pressed),
+            _ => {}
+        }
     }
 
     /// Inject a PS/2 mouse motion event into the i8042 controller, if present.
@@ -13236,6 +13283,25 @@ mod tests {
     }
 
     #[test]
+    fn inject_key_scancode_packed_produces_i8042_output_bytes() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Raw Set-2 bytes: make 0x1C, break 0xF0 0x1C. The i8042 translation bit is enabled by
+        // default, so we observe Set-1 scancodes on port 0x60.
+        m.inject_key_scancode_packed(0x1C, 1);
+        m.inject_key_scancode_packed(0xDEAD_BEEF, 0); // len=0 is a no-op
+        m.inject_key_scancode_packed(0x1C << 8 | 0xF0, 2);
+
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x1e);
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x9e);
+    }
+
+    #[test]
     fn inject_ps2_mouse_motion_inverts_dy() {
         let mut m = Machine::new(MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
@@ -13257,6 +13323,28 @@ mod tests {
         m.inject_ps2_mouse_motion(0, 5, 0);
         let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(packet, vec![0x08, 0x00, 0x05]);
+    }
+
+    #[test]
+    fn inject_mouse_button_dom_maps_left_click() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Enable mouse reporting so injected events generate stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        m.inject_mouse_button_dom(0, true);
+        let pressed_packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(pressed_packet, vec![0x09, 0x00, 0x00]);
     }
 
     #[test]
@@ -13472,6 +13560,9 @@ mod tests {
         m.inject_mouse_back(true);
         m.inject_mouse_forward(true);
         m.inject_mouse_buttons_mask(0x1f);
+        m.inject_key_scancode_packed(0x1c, 1);
+        m.inject_keyboard_bytes(&[0x1c]);
+        m.inject_mouse_button_dom(0, true);
 
         assert!(m.i8042.is_none());
         let devices = snapshot::SnapshotSource::device_states(&m);
