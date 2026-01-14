@@ -87,6 +87,11 @@ pub enum TextureOp {
     AddSigned2x,
     Subtract,
     AddSmooth,
+    BlendDiffuseAlpha,
+    BlendTextureAlpha,
+    BlendFactorAlpha,
+    BlendTextureAlphaPm,
+    BlendCurrentAlpha,
     Lerp,
     DotProduct3,
 }

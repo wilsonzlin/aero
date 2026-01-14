@@ -424,8 +424,22 @@ fn emit_tss_stage(
     let alpha_arg1 = wgsl_arg_component(stage.alpha_arg1, stage_index, Component::Alpha);
     let alpha_arg2 = wgsl_arg_component(stage.alpha_arg2, stage_index, Component::Alpha);
 
-    let rgb_raw = wgsl_op_expr(stage.color_op, &color_arg0, &color_arg1, &color_arg2, Component::Rgb);
-    let a_raw = wgsl_op_expr(stage.alpha_op, &alpha_arg0, &alpha_arg1, &alpha_arg2, Component::Alpha);
+    let rgb_raw = wgsl_op_expr(
+        stage.color_op,
+        stage_index,
+        &color_arg0,
+        &color_arg1,
+        &color_arg2,
+        Component::Rgb,
+    );
+    let a_raw = wgsl_op_expr(
+        stage.alpha_op,
+        stage_index,
+        &alpha_arg0,
+        &alpha_arg1,
+        &alpha_arg2,
+        Component::Alpha,
+    );
 
     wgsl.push_str("  {\n");
     let _ = writeln!(wgsl, "    let rgb_raw = {};", rgb_raw);
@@ -440,6 +454,15 @@ fn emit_tss_stage(
 }
 
 fn stage_uses_texture(stage: &TextureStageState) -> bool {
+    // Some ops implicitly consume the current stage texture even if none of the args explicitly
+    // reference `D3DTA_TEXTURE` (e.g. `BLENDTEXTUREALPHA` uses texture alpha as its interpolant).
+    let implicit_texture = matches!(
+        stage.color_op,
+        TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm
+    ) || matches!(
+        stage.alpha_op,
+        TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm
+    );
     [
         stage.color_arg0,
         stage.color_arg1,
@@ -450,6 +473,7 @@ fn stage_uses_texture(stage: &TextureStageState) -> bool {
     ]
     .into_iter()
     .any(|arg| matches!(arg.source, TextureArgSource::Texture))
+        || implicit_texture
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -491,6 +515,7 @@ fn wgsl_arg_component(arg: TextureArg, stage_index: usize, component: Component)
 
 fn wgsl_op_expr(
     op: TextureOp,
+    stage_index: usize,
     arg0: &str,
     arg1: &str,
     arg2: &str,
@@ -517,6 +542,28 @@ fn wgsl_op_expr(
         },
         TextureOp::Subtract => format!("(({}) - ({}))", arg1, arg2),
         TextureOp::AddSmooth => format!("(({}) + ({}) - (({}) * ({})))", arg1, arg2, arg1, arg2),
+        TextureOp::BlendDiffuseAlpha => {
+            format!(
+                "((({}) * input.diffuse.a) + (({}) * (1.0 - input.diffuse.a)))",
+                arg1, arg2
+            )
+        }
+        TextureOp::BlendTextureAlpha => {
+            let tex_a = format!("tex{}_color.a", stage_index);
+            format!("((({}) * ({})) + (({}) * (1.0 - ({}))))", arg1, tex_a, arg2, tex_a)
+        }
+        TextureOp::BlendFactorAlpha => {
+            let f = "globals.texture_factor.a";
+            format!("((({}) * ({})) + (({}) * (1.0 - ({}))))", arg1, f, arg2, f)
+        }
+        TextureOp::BlendTextureAlphaPm => {
+            let tex_a = format!("tex{}_color.a", stage_index);
+            format!("(({}) + (({}) * (1.0 - ({}))))", arg1, arg2, tex_a)
+        }
+        TextureOp::BlendCurrentAlpha => {
+            let f = "current.a";
+            format!("((({}) * ({})) + (({}) * (1.0 - ({}))))", arg1, f, arg2, f)
+        }
         TextureOp::Lerp => format!("mix(({}), ({}), ({}))", arg2, arg1, arg0),
         TextureOp::DotProduct3 => match component {
             Component::Rgb => {
