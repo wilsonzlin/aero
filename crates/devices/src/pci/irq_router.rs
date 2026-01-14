@@ -336,6 +336,11 @@ mod tests {
     }
 
     fn parse_pkg_length(data: &[u8], offset: &mut usize) -> usize {
+        // AML PkgLength encodes the total byte size of the package *including* the PkgLength field
+        // bytes themselves (but excluding the leading opcode byte).
+        //
+        // This helper returns the decoded package size and advances `offset` past the PkgLength
+        // bytes so callers can continue parsing the payload.
         let b0 = *data
             .get(*offset)
             .unwrap_or_else(|| panic!("pkglen out of bounds at offset {offset}"));
@@ -343,7 +348,7 @@ mod tests {
 
         let follow = (b0 >> 6) as usize;
         if follow == 0 {
-            return b0 as usize;
+            return (b0 & 0x3f) as usize;
         }
 
         let mut len = (b0 & 0x0F) as usize;

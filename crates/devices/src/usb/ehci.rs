@@ -453,4 +453,27 @@ mod tests {
             assert!(st.reads > 0, "expected at least one DMA read");
         }
     }
+
+    #[test]
+    fn pci_command_intx_disable_bit_masks_irq_level() {
+        let mut dev = EhciPciDevice::default();
+
+        // Enable MMIO decoding so we can program USBINTR.
+        dev.config.set_command(0x0002);
+        MmioHandler::write(
+            &mut dev,
+            REG_USBINTR,
+            4,
+            u64::from(USBINTR_USBINT),
+        );
+        dev.controller_mut().set_usbsts_bits(USBSTS_USBINT);
+
+        assert!(dev.controller.irq_level());
+        assert!(dev.irq_level());
+
+        // Disable legacy INTx delivery via PCI command bit 10.
+        dev.config.set_command(0x0002 | (1 << 10));
+        assert!(dev.controller.irq_level());
+        assert!(!dev.irq_level());
+    }
 }
