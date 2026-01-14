@@ -281,6 +281,34 @@ fn xhci_controller_tick_dma_dword_is_gated_by_dma_enabled() {
 }
 
 #[test]
+fn xhci_controller_tick_dma_dword_masks_crcr_flags() {
+    // Snapshot tags for controller-local time and last tick DMA dword.
+    const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    // Write a byte pattern that lets us distinguish an aligned read at 0x1000 from an unaligned
+    // read at 0x1001.
+    mem.data[0x1000..0x1008].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+
+    // Set CRCR with the ring cycle-state flag (bit 0). The tick DMA read must mask off low flag
+    // bits and use the aligned pointer.
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.tick_1ms_with_dma(&mut mem);
+
+    let bytes = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
+    assert_eq!(
+        r.u32(TAG_LAST_TICK_DMA_DWORD).unwrap().unwrap_or(0),
+        0x0302_0100,
+        "expected tick DMA read to use aligned CRCR pointer"
+    );
+}
+
+#[test]
 fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
     let mut ctrl = XhciController::new();
     let mut mem = PanicMem;
