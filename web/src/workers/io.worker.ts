@@ -1072,7 +1072,7 @@ class UhciRuntimeWebUsbBridge {
     this.#applyDesired();
     if (!this.#connected) return null;
     const actions = this.#uhci.webusb_drain_actions();
-    if (!Array.isArray(actions) || actions.length === 0) return null;
+    if (actions == null || actions.length === 0) return null;
 
     const out: UsbHostAction[] = [];
     for (const action of actions) {

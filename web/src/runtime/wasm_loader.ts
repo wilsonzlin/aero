@@ -1040,6 +1040,12 @@ export interface WasmApi {
 
         webusb_attach(preferredPort?: number): number;
         webusb_detach(): void;
+        /**
+         * Drains queued WebUSB host actions.
+         *
+         * Returns `null` when there are no pending actions (to keep worker-side polling
+         * allocation-free when idle).
+         */
         webusb_drain_actions(): UsbHostAction[] | null;
         webusb_push_completion(completion: UsbHostCompletion): void;
 
