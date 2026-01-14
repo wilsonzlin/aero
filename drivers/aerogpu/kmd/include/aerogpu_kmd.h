@@ -589,22 +589,36 @@ static __forceinline ULONG AeroGpuReadRegU32(_In_ const AEROGPU_ADAPTER* Adapter
      * bounds checks avoid out-of-bounds MMIO reads/writes (which would otherwise
      * crash the kernel by touching unmapped I/O space).
      */
-    if (!Adapter || !Adapter->Bar0) {
+    if (!Adapter) {
         return 0;
     }
-    if (Adapter->Bar0Length < sizeof(ULONG) || Offset > (Adapter->Bar0Length - sizeof(ULONG))) {
+    /*
+     * Copy BAR0 pointer/length once to avoid races with teardown paths that detach BAR0
+     * (StopDevice/StartDevice failure) while another thread is attempting an MMIO read.
+     */
+    PUCHAR bar0 = Adapter->Bar0;
+    const ULONG bar0Length = Adapter->Bar0Length;
+    if (!bar0) {
         return 0;
     }
-    return READ_REGISTER_ULONG((volatile ULONG*)(Adapter->Bar0 + Offset));
+    if (bar0Length < sizeof(ULONG) || Offset > (bar0Length - sizeof(ULONG))) {
+        return 0;
+    }
+    return READ_REGISTER_ULONG((volatile ULONG*)(bar0 + Offset));
 }
 
 static __forceinline VOID AeroGpuWriteRegU32(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG Offset, _In_ ULONG Value)
 {
-    if (!Adapter || !Adapter->Bar0) {
+    if (!Adapter) {
         return;
     }
-    if (Adapter->Bar0Length < sizeof(ULONG) || Offset > (Adapter->Bar0Length - sizeof(ULONG))) {
+    PUCHAR bar0 = Adapter->Bar0;
+    const ULONG bar0Length = Adapter->Bar0Length;
+    if (!bar0) {
         return;
     }
-    WRITE_REGISTER_ULONG((volatile ULONG*)(Adapter->Bar0 + Offset), Value);
+    if (bar0Length < sizeof(ULONG) || Offset > (bar0Length - sizeof(ULONG))) {
+        return;
+    }
+    WRITE_REGISTER_ULONG((volatile ULONG*)(bar0 + Offset), Value);
 }
