@@ -27,9 +27,15 @@ use std::rc::Rc;
 pub const PM1_CNT_SCI_EN: u16 = 1 << 0;
 
 /// `PM1_STS.PWRBTN_STS` (ACPI spec).
+///
+/// Fixed-feature Power Button status (bit 8). The corresponding enable bit uses the same bit
+/// position in `PM1_EN` (PWRBTN_EN).
 pub const PM1_STS_PWRBTN: u16 = 1 << 8;
 
 /// `PM1_STS.SLPBTN_STS` (ACPI spec).
+///
+/// Fixed-feature Sleep Button status (bit 9). The corresponding enable bit uses the same bit
+/// position in `PM1_EN` (SLPBTN_EN).
 pub const PM1_STS_SLPBTN: u16 = 1 << 9;
 
 /// `PM1_STS.WAK_STS` (ACPI spec).

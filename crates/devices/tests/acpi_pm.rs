@@ -91,13 +91,14 @@ fn pm1_sleep_button_status_w1c_and_sci_level() {
     let mut bus = IoPortBus::new();
     register_acpi_pm(&mut bus, pm.clone());
 
-    // Enable SLPBTN in PM1_EN.
+    // Enable SLPBTN in PM1_EN, but ACPI is still disabled (SCI_EN=0).
     bus.write(cfg.pm1a_evt_blk + 2, 2, u32::from(PM1_STS_SLPBTN));
-    // Enable ACPI (sets SCI_EN).
-    bus.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
-    assert!(!pm.borrow().sci_level());
 
     pm.borrow_mut().trigger_sleep_button();
+    assert!(!pm.borrow().sci_level());
+
+    // Standard ACPI enable handshake: write ACPI_ENABLE to SMI_CMD.
+    bus.write(cfg.smi_cmd_port, 1, u32::from(cfg.acpi_enable_cmd));
     assert!(pm.borrow().sci_level());
     assert_eq!(sci_log.borrow().as_slice(), &[true]);
 
