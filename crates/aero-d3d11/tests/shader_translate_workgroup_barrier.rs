@@ -169,6 +169,47 @@ fn rejects_predicated_sync_uav_fence_only() {
 }
 
 #[test]
+fn rejects_sync_uav_fence_only_after_conditional_return() {
+    // Even if the `sync` itself is at top-level, earlier conditional returns can cause some
+    // invocations to skip it. Since WebGPU/Naga lower `storageBarrier()` as a workgroup-level
+    // barrier, this can deadlock, so we reject the translation.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::If {
+                cond: SrcOperand {
+                    kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::Ret,
+            Sm4Inst::EndIf,
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_UAV_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    match err {
+        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+            assert_eq!(inst_index, 3);
+            assert_eq!(opcode, "sync_fence_only_after_conditional_return");
+        }
+        other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
+    }
+}
+
+#[test]
 fn translates_sync_all_memory_fence_only_to_wgsl() {
     // "AllMemoryBarrier()" fence-only form: both UAV+TGSM bits set, but no group sync.
     //

@@ -4251,6 +4251,10 @@ fn emit_instructions(
     }
 
     let mut cf_stack: Vec<CfFrame> = Vec::new();
+    // Once we emit a conditional early-exit (`return`) some invocations may stop executing the
+    // remainder of the shader. WGSL barriers require all invocations in a workgroup to reach them,
+    // so any subsequent barrier-like operation is potentially non-uniform.
+    let mut has_conditional_return = false;
 
     let fmt_case_values = |values: &[i32]| -> String {
         values
@@ -4678,6 +4682,7 @@ fn emit_instructions(
                     }
                     w.dedent();
                     w.line("}");
+                    has_conditional_return = true;
                     continue;
                 }
 
@@ -5856,6 +5861,12 @@ fn emit_instructions(
                                 opcode: "sync_fence_only_in_control_flow".to_owned(),
                             });
                         }
+                        if has_conditional_return {
+                            return Err(ShaderTranslateError::UnsupportedInstruction {
+                                inst_index,
+                                opcode: "sync_fence_only_after_conditional_return".to_owned(),
+                            });
+                        }
                         w.line("storageBarrier();");
                     } else if (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY)
                         != 0
@@ -6028,6 +6039,7 @@ fn emit_instructions(
                 if blocks.is_empty() && cf_stack.is_empty() {
                     break;
                 }
+                has_conditional_return = true;
 
                 match ctx.stage {
                     ShaderStage::Vertex | ShaderStage::Domain => ctx.io.emit_vs_return(w)?,
