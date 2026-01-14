@@ -369,6 +369,10 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_MUL => Some("mul"),
         OPCODE_RCP => Some("rcp"),
         OPCODE_RSQ => Some("rsq"),
+        OPCODE_ITOF => Some("itof"),
+        OPCODE_UTOF => Some("utof"),
+        OPCODE_FTOI => Some("ftoi"),
+        OPCODE_FTOU => Some("ftou"),
         OPCODE_DP3 => Some("dp3"),
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
@@ -494,6 +498,14 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_ULT), Some("ult"));
         assert_eq!(opcode_name(OPCODE_UGE), Some("uge"));
         assert_eq!(opcode_name(OPCODE_SYNC), Some("sync"));
+    }
+
+    #[test]
+    fn opcode_name_includes_numeric_conversions() {
+        assert_eq!(opcode_name(OPCODE_ITOF), Some("itof"));
+        assert_eq!(opcode_name(OPCODE_UTOF), Some("utof"));
+        assert_eq!(opcode_name(OPCODE_FTOI), Some("ftoi"));
+        assert_eq!(opcode_name(OPCODE_FTOU), Some("ftou"));
     }
 
     #[test]
