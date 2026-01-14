@@ -159,7 +159,7 @@ fn base_aerosparse_empty() -> Vec<u8> {
     let table_bytes = table_entries * 8;
     let table_end = 64u64 + table_bytes;
     let block_size_u64 = block_size_bytes as u64;
-    let data_offset = ((table_end + block_size_u64 - 1) / block_size_u64) * block_size_u64;
+    let data_offset = table_end.div_ceil(block_size_u64) * block_size_u64;
 
     let mut out = vec![0u8; data_offset as usize];
     out[0..8].copy_from_slice(b"AEROSPAR");

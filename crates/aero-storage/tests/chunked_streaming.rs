@@ -68,8 +68,8 @@ async fn handle_request(
     req: Request<Body>,
     state: Arc<State>,
 ) -> Result<Response<Body>, Infallible> {
-    match *req.method() {
-        Method::GET => match req.uri().path() {
+    if req.method() == Method::GET {
+        match req.uri().path() {
             "/manifest.json" => {
                 state.counters.manifest_get.fetch_add(1, Ordering::SeqCst);
                 let mut resp = Response::new(Body::from(state.manifest_body.clone()));
@@ -113,8 +113,7 @@ async fn handle_request(
                 return Ok(resp);
             }
             _ => {}
-        },
-        _ => {}
+        }
     }
 
     let mut resp = Response::new(Body::empty());
