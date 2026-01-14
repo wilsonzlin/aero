@@ -72,6 +72,7 @@ use super::shader_cache::{
     PersistedVsInputSignatureElement, ShaderCache as PersistentShaderCache, ShaderCacheSource,
     ShaderCacheStats, ShaderTranslationFlags as PersistentShaderTranslationFlags,
 };
+use super::strip_to_list::{StreamEvent, StripTopology};
 use super::tessellation::TessellationRuntime;
 use super::vertex_pulling::{
     VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
@@ -786,11 +787,22 @@ struct BufferResource {
     buffer: wgpu::Buffer,
     size: u64,
     gpu_size: u64,
+    /// Original AeroGPU usage flags (`AEROGPU_RESOURCE_USAGE_*`).
+    ///
+    /// This is used for backend-specific CPU shadows (e.g. index-buffer contents for primitive
+    /// restart emulation on the wgpu GL backend).
+    aerogpu_usage_flags: u32,
     // Test-only: expose the computed wgpu usage flags for assertions.
     #[cfg(test)]
     usage: wgpu::BufferUsages,
     backing: Option<ResourceBacking>,
     dirty: Option<Range<u64>>,
+    /// CPU shadow copy of the buffer contents when available.
+    ///
+    /// This is currently only populated for index buffers on the wgpu GL backend so the executor
+    /// can emulate primitive-restart semantics for strip topologies (GL has correctness issues
+    /// with `PrimitiveState.strip_index_format`).
+    host_shadow: Option<Vec<u8>>,
 }
 
 impl BufferResource {
@@ -1225,7 +1237,7 @@ struct AerogpuD3d11Resources {
     input_layouts: HashMap<u32, InputLayoutResource>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AerogpuD3d11State {
     /// Render target texture handles by D3D11 slot index.
     ///
@@ -5428,6 +5440,203 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
+    fn exec_draw_indexed_strip_restart_emulated<'a>(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'a>,
+        cmd_bytes: &[u8],
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+    ) -> Result<()> {
+        // struct aerogpu_cmd_draw_indexed (28 bytes)
+        if cmd_bytes.len() < 28 {
+            bail!(
+                "DRAW_INDEXED: expected at least 28 bytes, got {}",
+                cmd_bytes.len()
+            );
+        }
+        let index_count = read_u32_le(cmd_bytes, 8)?;
+        let instance_count = read_u32_le(cmd_bytes, 12)?;
+        let first_index = read_u32_le(cmd_bytes, 16)?;
+        let base_vertex = read_i32_le(cmd_bytes, 20)?;
+        let first_instance = read_u32_le(cmd_bytes, 24)?;
+
+        if index_count == 0 || instance_count == 0 {
+            return Ok(());
+        }
+
+        let topology = match self.state.primitive_topology {
+            CmdPrimitiveTopology::LineStrip => StripTopology::LineStrip,
+            CmdPrimitiveTopology::TriangleStrip => StripTopology::TriangleStrip,
+            other => bail!("strip restart emulation called for unsupported topology {other:?}"),
+        };
+
+        let ib = self
+            .state
+            .index_buffer
+            .ok_or_else(|| anyhow!("DRAW_INDEXED without index buffer"))?;
+
+        let index_size = match ib.format {
+            wgpu::IndexFormat::Uint16 => 2u64,
+            wgpu::IndexFormat::Uint32 => 4u64,
+        };
+        let start_bytes = (first_index as u64)
+            .checked_mul(index_size)
+            .and_then(|v| v.checked_add(ib.offset_bytes))
+            .ok_or_else(|| anyhow!("DRAW_INDEXED: index range start overflows u64"))?;
+        let size_bytes = (index_count as u64)
+            .checked_mul(index_size)
+            .ok_or_else(|| anyhow!("DRAW_INDEXED: index range size overflows u64"))?;
+        let end_bytes = start_bytes
+            .checked_add(size_bytes)
+            .ok_or_else(|| anyhow!("DRAW_INDEXED: index range end overflows u64"))?;
+
+        let buf_res = self
+            .resources
+            .buffers
+            .get(&ib.buffer)
+            .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+        if end_bytes > buf_res.size {
+            bail!(
+                "DRAW_INDEXED: index range out of bounds (start={start_bytes} size={size_bytes} buffer_size={})",
+                buf_res.size
+            );
+        }
+
+        let start_usize: usize = start_bytes
+            .try_into()
+            .map_err(|_| anyhow!("DRAW_INDEXED: start offset out of range"))?;
+        let size_usize: usize = size_bytes
+            .try_into()
+            .map_err(|_| anyhow!("DRAW_INDEXED: size out of range"))?;
+
+        let mut tmp_bytes: Vec<u8> = Vec::new();
+        let bytes: &[u8] = if let Some(shadow) = buf_res.host_shadow.as_ref() {
+            let buf_size_usize: usize = buf_res
+                .size
+                .try_into()
+                .map_err(|_| anyhow!("DRAW_INDEXED: buffer size out of range"))?;
+            if shadow.len() != buf_size_usize {
+                bail!("DRAW_INDEXED: internal index-buffer shadow size mismatch");
+            }
+            &shadow[start_usize..start_usize + size_usize]
+        } else if let Some(backing) = buf_res.backing {
+            allocs.validate_range(
+                backing.alloc_id,
+                backing.offset_bytes + start_bytes,
+                size_bytes,
+            )?;
+            let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + start_bytes;
+            tmp_bytes.resize(size_usize, 0);
+            guest_mem
+                .read(gpa, &mut tmp_bytes)
+                .map_err(anyhow_guest_mem)?;
+            &tmp_bytes
+        } else {
+            bail!(
+                "DRAW_INDEXED: strip restart emulation requires a CPU-visible index buffer (UPLOAD_RESOURCE shadow or guest-backed allocation)"
+            );
+        };
+
+        let index_count_usize: usize = index_count
+            .try_into()
+            .map_err(|_| anyhow!("DRAW_INDEXED: index_count out of range"))?;
+        let mut events: Vec<StreamEvent> = Vec::with_capacity(index_count_usize);
+
+        match ib.format {
+            wgpu::IndexFormat::Uint16 => {
+                if bytes.len() != index_count_usize * 2 {
+                    bail!("DRAW_INDEXED: internal u16 index byte-length mismatch");
+                }
+                for i in 0..index_count_usize {
+                    let base = i * 2;
+                    let idx = u16::from_le_bytes([bytes[base], bytes[base + 1]]);
+                    if idx == u16::MAX {
+                        events.push(StreamEvent::Cut);
+                    } else {
+                        events.push(StreamEvent::Vertex(u32::from(idx)));
+                    }
+                }
+            }
+            wgpu::IndexFormat::Uint32 => {
+                if bytes.len() != index_count_usize * 4 {
+                    bail!("DRAW_INDEXED: internal u32 index byte-length mismatch");
+                }
+                for i in 0..index_count_usize {
+                    let base = i * 4;
+                    let idx = u32::from_le_bytes([
+                        bytes[base],
+                        bytes[base + 1],
+                        bytes[base + 2],
+                        bytes[base + 3],
+                    ]);
+                    if idx == u32::MAX {
+                        events.push(StreamEvent::Cut);
+                    } else {
+                        events.push(StreamEvent::Vertex(idx));
+                    }
+                }
+            }
+        }
+
+        let list_indices = super::strip_to_list::strip_to_list_indices(topology, &events);
+        if list_indices.is_empty() {
+            return Ok(());
+        }
+
+        let out_size: u64 = (list_indices.len() as u64)
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("DRAW_INDEXED: expanded index buffer size overflows u64"))?;
+
+        let alloc = self
+            .gpu_scratch
+            .alloc(&self.device, out_size, 4)
+            .context("strip restart emulation: allocate index buffer scratch")?;
+        // `wgpu::RenderPass::set_index_buffer` ties the `BufferSlice` lifetime to the render pass.
+        // The scratch allocator is owned by `self` and lives for the duration of command-stream
+        // execution, but Rust can't express that relationship, so use a raw pointer to extend the
+        // borrow.
+        let scratch_buf_ptr: *const wgpu::Buffer = self.gpu_scratch.buffer(alloc) as *const _;
+        let scratch_buf = unsafe { &*scratch_buf_ptr };
+        if cfg!(target_endian = "little") {
+            // SAFETY: `u32` is plain-old-data and the output scratch buffer expects raw bytes.
+            let out_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    list_indices.as_ptr() as *const u8,
+                    list_indices.len() * 4,
+                )
+            };
+            self.queue
+                .write_buffer(scratch_buf, alloc.offset, out_bytes);
+        } else {
+            let mut out_bytes: Vec<u8> = Vec::with_capacity(list_indices.len() * 4);
+            for &idx in &list_indices {
+                out_bytes.extend_from_slice(&idx.to_le_bytes());
+            }
+            self.queue
+                .write_buffer(scratch_buf, alloc.offset, &out_bytes);
+        }
+
+        let end = alloc
+            .offset
+            .checked_add(out_size)
+            .ok_or_else(|| anyhow!("strip restart emulation: scratch slice overflows u64"))?;
+        pass.set_index_buffer(
+            scratch_buf.slice(alloc.offset..end),
+            wgpu::IndexFormat::Uint32,
+        );
+
+        let list_index_count: u32 = list_indices
+            .len()
+            .try_into()
+            .map_err(|_| anyhow!("DRAW_INDEXED: expanded index count out of range"))?;
+        pass.draw_indexed(
+            0..list_index_count,
+            base_vertex,
+            first_instance..first_instance.saturating_add(instance_count),
+        );
+        Ok(())
+    }
+
     /// Execute a batch of draw/state commands inside a single render pass.
     ///
     /// This function is entered when the main stream parser sees a `DRAW`/`DRAW_INDEXED`
@@ -5650,7 +5859,24 @@ impl AerogpuD3d11Executor {
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
         // pointer so we can continue mutating unrelated executor state while the render pass is
         // alive.
-        let (pipeline_ptr, wgpu_slot_to_d3d_slot) = {
+        let needs_strip_restart_emulation = self.backend == wgpu::Backend::Gl
+            && matches!(
+                self.state.primitive_topology,
+                CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::TriangleStrip
+            );
+        let list_state = if needs_strip_restart_emulation {
+            let mut list_state = self.state.clone();
+            list_state.primitive_topology = match self.state.primitive_topology {
+                CmdPrimitiveTopology::LineStrip => CmdPrimitiveTopology::LineList,
+                CmdPrimitiveTopology::TriangleStrip => CmdPrimitiveTopology::TriangleList,
+                other => other,
+            };
+            Some(list_state)
+        } else {
+            None
+        };
+
+        let (strip_pipeline_ptr, list_pipeline_ptr, wgpu_slot_to_d3d_slot) = {
             let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) =
                 get_or_create_render_pipeline_for_state(
                     &self.device,
@@ -5658,14 +5884,27 @@ impl AerogpuD3d11Executor {
                     pipeline_layout.as_ref(),
                     &mut self.resources,
                     &self.state,
-                    layout_key,
+                    layout_key.clone(),
                 )?;
-            (
-                pipeline as *const wgpu::RenderPipeline,
-                wgpu_slot_to_d3d_slot,
-            )
+            let strip_ptr = pipeline as *const wgpu::RenderPipeline;
+            let list_ptr = if let Some(list_state) = list_state.as_ref() {
+                let (_pipeline_key, pipeline, _mapping) = get_or_create_render_pipeline_for_state(
+                    &self.device,
+                    &mut self.pipeline_cache,
+                    pipeline_layout.as_ref(),
+                    &mut self.resources,
+                    list_state,
+                    layout_key.clone(),
+                )?;
+                Some(pipeline as *const wgpu::RenderPipeline)
+            } else {
+                None
+            };
+
+            (strip_ptr, list_ptr, wgpu_slot_to_d3d_slot)
         };
-        let pipeline = unsafe { &*pipeline_ptr };
+        let strip_pipeline = unsafe { &*strip_pipeline_ptr };
+        let list_pipeline = list_pipeline_ptr.map(|p| unsafe { &*p });
 
         // Create local texture views so we can continue mutating `self` while the render pass is
         // active.
@@ -5858,7 +6097,8 @@ impl AerogpuD3d11Executor {
             a: self.state.blend_constant[3] as f64,
         });
 
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(strip_pipeline);
+        let mut current_pipeline_ptr: *const wgpu::RenderPipeline = strip_pipeline_ptr;
 
         for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
             let slot = d3d_slot as usize;
@@ -7133,6 +7373,13 @@ impl AerogpuD3d11Executor {
                         // does not allow zero-sized dynamic state, so we emulate this by treating
                         // the draw as a no-op while the effective region is empty.
                     } else if (self.state.sample_mask & 1) != 0 {
+                        // Ensure non-indexed draws use the strip pipeline (previous indexed draws
+                        // may have temporarily switched to a list pipeline for primitive-restart
+                        // emulation on wgpu's GL backend).
+                        if current_pipeline_ptr != strip_pipeline_ptr {
+                            pass.set_pipeline(strip_pipeline);
+                            current_pipeline_ptr = strip_pipeline_ptr;
+                        }
                         for group_index in 0..pipeline_bindings.group_layouts.len() {
                             let group_u32 = group_index as u32;
                             if passthrough_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
@@ -7424,6 +7671,26 @@ impl AerogpuD3d11Executor {
                     if viewport_empty || scissor_empty {
                         // See draw path above.
                     } else if (self.state.sample_mask & 1) != 0 {
+                        // wgpu's GL backend does not reliably honor `PrimitiveState.strip_index_format`
+                        // (primitive restart) for indexed strip topologies. Emulate D3D11/WebGPU
+                        // semantics by converting strips into lists and drawing with a list pipeline.
+                        if needs_strip_restart_emulation {
+                            let (Some(list_pipeline), Some(list_pipeline_ptr)) =
+                                (list_pipeline, list_pipeline_ptr)
+                            else {
+                                bail!(
+                                    "DRAW_INDEXED: strip restart emulation active but list pipeline is missing"
+                                );
+                            };
+                            if current_pipeline_ptr != list_pipeline_ptr {
+                                pass.set_pipeline(list_pipeline);
+                                current_pipeline_ptr = list_pipeline_ptr;
+                            }
+                        } else if current_pipeline_ptr != strip_pipeline_ptr {
+                            pass.set_pipeline(strip_pipeline);
+                            current_pipeline_ptr = strip_pipeline_ptr;
+                        }
+
                         for group_index in 0..pipeline_bindings.group_layouts.len() {
                             let group_u32 = group_index as u32;
                             if passthrough_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
@@ -7562,7 +7829,13 @@ impl AerogpuD3d11Executor {
                                 bound_bind_groups[group_index] = Some(ptr);
                             }
                         }
-                        exec_draw_indexed(&mut pass, cmd_bytes)?;
+                        if needs_strip_restart_emulation {
+                            self.exec_draw_indexed_strip_restart_emulated(
+                                &mut pass, cmd_bytes, allocs, guest_mem,
+                            )?;
+                        } else {
+                            exec_draw_indexed(&mut pass, cmd_bytes)?;
+                        }
 
                         if used_cb_vs.first().is_some_and(|v| *v)
                             && self
@@ -8433,8 +8706,10 @@ impl AerogpuD3d11Executor {
             buffer,
             size: size_bytes,
             gpu_size,
+            aerogpu_usage_flags: usage_flags,
             backing,
             dirty: None,
+            host_shadow: None,
             #[cfg(test)]
             usage,
         };
@@ -8924,6 +9199,46 @@ impl AerogpuD3d11Executor {
                 self.queue.write_buffer(&buf.buffer, offset, write_data);
             }
             if let Some(buf_mut) = self.resources.buffers.get_mut(&handle) {
+                // wgpu's GL backend has correctness issues with indexed strip primitive restart
+                // (`PrimitiveState.strip_index_format`). Keep a CPU shadow of index buffers so the
+                // render path can emulate primitive-restart semantics by expanding strips into
+                // lists (triangle_list/line_list) at draw time.
+                if self.backend == wgpu::Backend::Gl
+                    && (buf_mut.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0
+                {
+                    let size_usize: usize = size
+                        .try_into()
+                        .map_err(|_| anyhow!("UPLOAD_RESOURCE: size_bytes out of range"))?;
+                    let offset_usize: usize = offset
+                        .try_into()
+                        .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset_bytes out of range"))?;
+                    if data.len() != size_usize {
+                        bail!(
+                            "UPLOAD_RESOURCE: payload size mismatch (expected {size_usize} bytes, got {})",
+                            data.len()
+                        );
+                    }
+
+                    let buf_size_usize: usize = buf_mut
+                        .size
+                        .try_into()
+                        .map_err(|_| anyhow!("UPLOAD_RESOURCE: buffer size out of range"))?;
+                    if buf_mut
+                        .host_shadow
+                        .as_ref()
+                        .is_some_and(|shadow| shadow.len() != buf_size_usize)
+                    {
+                        bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
+                    }
+                    if buf_mut.host_shadow.is_none() {
+                        buf_mut.host_shadow = Some(vec![0u8; buf_size_usize]);
+                    }
+                    let shadow = buf_mut.host_shadow.as_mut().ok_or_else(|| {
+                        anyhow!("UPLOAD_RESOURCE: internal error: missing shadow")
+                    })?;
+                    shadow[offset_usize..offset_usize + size_usize].copy_from_slice(data);
+                }
+
                 // Uploaded data is now current on the GPU; clear dirty ranges.
                 if let Some(dirty) = buf_mut.dirty.take() {
                     // If the dirty range extends outside the uploaded region, keep it.
@@ -9482,6 +9797,80 @@ impl AerogpuD3d11Executor {
         // would otherwise cause us to overwrite the copy with stale guest-memory contents.
         if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
             dst.dirty = None;
+        }
+
+        // Maintain CPU shadows for index buffers on the wgpu GL backend so strip primitive-restart
+        // emulation can read indices without mapping GPU buffers.
+        if self.backend == wgpu::Backend::Gl {
+            let dst_is_index = self.resources.buffers.get(&dst_buffer).is_some_and(|dst| {
+                (dst.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0
+            });
+
+            if dst_is_index {
+                // Copy the source bytes out of the shadow first so we can mutably borrow the
+                // destination entry.
+                let src_bytes: Option<Vec<u8>> =
+                    self.resources.buffers.get(&src_buffer).and_then(|src| {
+                        let shadow = src.host_shadow.as_ref()?;
+                        let src_size_usize: usize = src
+                            .size
+                            .try_into()
+                            .map_err(|_| anyhow!("COPY_BUFFER: src size out of range"))
+                            .ok()?;
+                        if shadow.len() != src_size_usize {
+                            return None;
+                        }
+
+                        let size_usize: usize = size_bytes
+                            .try_into()
+                            .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))
+                            .ok()?;
+                        let src_offset_usize: usize = src_offset_bytes
+                            .try_into()
+                            .map_err(|_| anyhow!("COPY_BUFFER: src_offset out of range"))
+                            .ok()?;
+
+                        shadow
+                            .get(src_offset_usize..src_offset_usize + size_usize)
+                            .map(|s| s.to_vec())
+                    });
+
+                if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
+                    let dst_size_usize: usize = dst
+                        .size
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: dst size out of range"))?;
+                    if dst
+                        .host_shadow
+                        .as_ref()
+                        .is_some_and(|shadow| shadow.len() != dst_size_usize)
+                    {
+                        bail!("COPY_BUFFER: internal dst shadow size mismatch");
+                    }
+
+                    if let Some(src_bytes) = src_bytes {
+                        if dst.host_shadow.is_none() {
+                            dst.host_shadow = Some(vec![0u8; dst_size_usize]);
+                        }
+                        let dst_shadow = dst.host_shadow.as_mut().expect("allocated above");
+
+                        let size_usize: usize = size_bytes
+                            .try_into()
+                            .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))?;
+                        let dst_offset_usize: usize = dst_offset_bytes
+                            .try_into()
+                            .map_err(|_| anyhow!("COPY_BUFFER: dst_offset out of range"))?;
+
+                        dst_shadow[dst_offset_usize..dst_offset_usize + size_usize]
+                            .copy_from_slice(&src_bytes);
+                    } else if dst.host_shadow.is_some() {
+                        // Invalidate the destination shadow since we can't reflect the copy.
+                        dst.host_shadow = None;
+                    }
+                }
+            } else if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
+                dst.host_shadow = None;
+            }
         }
 
         Ok(())
@@ -13127,7 +13516,7 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
-        let (dirty, backing, buffer_size, buffer_gpu_size) = {
+        let (dirty, backing, buffer_size, buffer_gpu_size, buf_ptr, needs_shadow) = {
             let Some(buf) = self.resources.buffers.get(&buffer_handle) else {
                 return Ok(());
             };
@@ -13137,7 +13526,16 @@ impl AerogpuD3d11Executor {
             let Some(dirty) = buf.dirty.clone() else {
                 return Ok(());
             };
-            (dirty, backing, buf.size, buf.gpu_size)
+            let needs_shadow = self.backend == wgpu::Backend::Gl
+                && (buf.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0;
+            (
+                dirty,
+                backing,
+                buf.size,
+                buf.gpu_size,
+                &buf.buffer as *const wgpu::Buffer,
+                needs_shadow,
+            )
         };
 
         let dirty_len = dirty.end.saturating_sub(dirty.start);
@@ -13158,9 +13556,26 @@ impl AerogpuD3d11Executor {
         )?;
         let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + dirty.start;
 
-        let Some(buf) = self.resources.buffers.get(&buffer_handle) else {
-            return Ok(());
-        };
+        // SAFETY: the buffer table is not mutated while we hold a raw pointer into it.
+        let buf = unsafe { &*buf_ptr };
+
+        if needs_shadow {
+            let buf_size_usize: usize = buffer_size
+                .try_into()
+                .map_err(|_| anyhow!("buffer upload: buffer size out of range"))?;
+            if let Some(buf_mut) = self.resources.buffers.get_mut(&buffer_handle) {
+                if buf_mut
+                    .host_shadow
+                    .as_ref()
+                    .is_some_and(|shadow| shadow.len() != buf_size_usize)
+                {
+                    bail!("buffer upload: internal shadow size mismatch");
+                }
+                if buf_mut.host_shadow.is_none() {
+                    buf_mut.host_shadow = Some(vec![0u8; buf_size_usize]);
+                }
+            }
+        }
 
         // Upload in chunks to avoid allocating massive temporary buffers for big resources.
         const CHUNK: usize = 64 * 1024;
@@ -13172,6 +13587,17 @@ impl AerogpuD3d11Executor {
             guest_mem
                 .read(gpa + (offset - dirty.start), &mut tmp)
                 .map_err(anyhow_guest_mem)?;
+
+            if needs_shadow {
+                let offset_usize: usize = offset
+                    .try_into()
+                    .map_err(|_| anyhow!("buffer upload: offset out of range"))?;
+                if let Some(buf_mut) = self.resources.buffers.get_mut(&buffer_handle) {
+                    if let Some(shadow) = buf_mut.host_shadow.as_mut() {
+                        shadow[offset_usize..offset_usize + n].copy_from_slice(&tmp);
+                    }
+                }
+            }
 
             let align = wgpu::COPY_BUFFER_ALIGNMENT as usize;
             let write_len = if !n.is_multiple_of(align) {
@@ -13192,8 +13618,7 @@ impl AerogpuD3d11Executor {
                 bail!("buffer upload overruns wgpu buffer allocation");
             }
 
-            self.queue
-                .write_buffer(&buf.buffer, offset, &tmp[..write_len]);
+            self.queue.write_buffer(buf, offset, &tmp[..write_len]);
             offset += n as u64;
         }
 
@@ -19957,9 +20382,11 @@ fn cs_main() {
                     buffer: cb,
                     size: cb_size,
                     gpu_size: cb_size,
+                    aerogpu_usage_flags: 0,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     backing: None,
                     dirty: None,
+                    host_shadow: None,
                 },
             );
 
@@ -20570,12 +20997,14 @@ fn cs_main() {
                     buffer: src,
                     size: buf_size,
                     gpu_size: buf_size,
+                    aerogpu_usage_flags: 0,
                     #[cfg(test)]
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_SRC
                         | wgpu::BufferUsages::COPY_DST,
                     backing: None,
                     dirty: None,
+                    host_shadow: None,
                 },
             );
 
