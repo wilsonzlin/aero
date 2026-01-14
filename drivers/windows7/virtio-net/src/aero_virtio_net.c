@@ -2557,6 +2557,11 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
       return Status;
     }
 
+    // The control virtqueue is used synchronously via polling; suppress
+    // device->driver interrupts for this queue to avoid spurious DPC work when
+    // the underlying transport routes all queues onto a shared interrupt.
+    virtqueue_split_disable_interrupts(&Adapter->CtrlVq.Vq);
+
     DbgPrint("virtio-net-ctrl-vq|INFO|init|queue_index=%hu|queue_size=%hu|features=0x%I64x\n", Adapter->CtrlVq.QueueIndex,
              Adapter->CtrlVq.QueueSize, (ULONGLONG)Adapter->GuestFeatures);
     AerovNetCtrlVqRegistryUpdate(Adapter);
