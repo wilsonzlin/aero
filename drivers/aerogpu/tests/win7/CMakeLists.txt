@@ -546,6 +546,11 @@ aerogpu_add_win7_test(d3d11_depth_test_sanity
 )
 target_link_libraries(d3d11_depth_test_sanity PRIVATE d3d11 dxgi)
 
+aerogpu_add_win7_test(d3d11_compute_smoke
+  d3d11_compute_smoke/main.cpp
+)
+target_link_libraries(d3d11_compute_smoke PRIVATE d3d11 dxgi)
+
 aerogpu_add_win7_test(readback_sanity
   readback_sanity/main.cpp
 )

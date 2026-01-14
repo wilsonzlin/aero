@@ -1334,6 +1334,7 @@ int main(int argc, char** argv) {
       "d3d11_texture_mips_array_sanity",
       "d3d11_dynamic_constant_buffer_sanity",
       "d3d11_depth_test_sanity",
+      "d3d11_compute_smoke",
       "readback_sanity",
   };
 
