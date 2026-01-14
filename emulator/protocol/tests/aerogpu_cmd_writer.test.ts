@@ -22,6 +22,8 @@ import {
   AEROGPU_CMD_DESTROY_SAMPLER_SIZE,
   AEROGPU_CMD_SET_SAMPLERS_SIZE,
   AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE,
+  AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE,
+  AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
   AEROGPU_CMD_SET_TEXTURE_SIZE,
   AerogpuCmdOpcode,
@@ -444,6 +446,8 @@ test("AerogpuCmdWriter legacy binding packets keep reserved0=0", () => {
   w.setTexture(AerogpuShaderStage.Pixel, 0, 99);
   w.setSamplers(AerogpuShaderStage.Vertex, 0, new Uint32Array([1, 2]));
   w.setConstantBuffers(AerogpuShaderStage.Pixel, 0, [{ buffer: 3, offsetBytes: 0, sizeBytes: 16 }]);
+  w.setShaderResourceBuffers(AerogpuShaderStage.Pixel, 0, [{ buffer: 4, offsetBytes: 0, sizeBytes: 32 }]);
+  w.setUnorderedAccessBuffers(AerogpuShaderStage.Compute, 1, [{ buffer: 5, offsetBytes: 4, sizeBytes: 16, initialCount: 0 }]);
   w.setShaderConstantsF(AerogpuShaderStage.Vertex, 0, new Float32Array([1, 2, 3, 4]));
 
   const bytes = w.finish();
@@ -463,6 +467,14 @@ test("AerogpuCmdWriter legacy binding packets keep reserved0=0", () => {
   assert.equal(view.getUint32(cursor + 20, true), 0);
   cursor += AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16;
 
+  // SET_SHADER_RESOURCE_BUFFERS
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 16;
+
+  // SET_UNORDERED_ACCESS_BUFFERS
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + 16;
+
   // SET_SHADER_CONSTANTS_F
   assert.equal(view.getUint32(cursor + 20, true), 0);
   cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
@@ -475,6 +487,8 @@ test("AerogpuCmdWriter stage_ex binding packets encode (shaderStage=COMPUTE, res
   w.setTextureEx(AerogpuShaderStageEx.Geometry, 3, 44);
   w.setSamplersEx(AerogpuShaderStageEx.Hull, 0, new Uint32Array([1, 2, 3]));
   w.setConstantBuffersEx(AerogpuShaderStageEx.Domain, 1, [{ buffer: 7, offsetBytes: 0, sizeBytes: 16 }]);
+  w.setShaderResourceBuffersEx(AerogpuShaderStageEx.Hull, 0, [{ buffer: 8, offsetBytes: 0, sizeBytes: 32 }]);
+  w.setUnorderedAccessBuffersEx(AerogpuShaderStageEx.Domain, 1, [{ buffer: 9, offsetBytes: 4, sizeBytes: 16, initialCount: 0 }]);
   w.setShaderConstantsFEx(AerogpuShaderStageEx.Compute, 0, new Float32Array([1, 2, 3, 4]));
 
   const bytes = w.finish();
@@ -502,6 +516,21 @@ test("AerogpuCmdWriter stage_ex binding packets encode (shaderStage=COMPUTE, res
     AerogpuShaderStageEx.Domain,
   );
   cursor += AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16;
+
+  // SET_SHADER_RESOURCE_BUFFERS
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Hull);
+  assert.equal(decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)), AerogpuShaderStageEx.Hull);
+  cursor += AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 16;
+
+  // SET_UNORDERED_ACCESS_BUFFERS
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Domain);
+  assert.equal(
+    decodeStageEx(view.getUint32(cursor + 8, true), view.getUint32(cursor + 20, true)),
+    AerogpuShaderStageEx.Domain,
+  );
+  cursor += AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + 16;
 
   // SET_SHADER_CONSTANTS_F
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);

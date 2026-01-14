@@ -48,7 +48,7 @@ fn encode_shader_stage_with_ex(
     stage_ex: Option<AerogpuShaderStageEx>,
 ) -> (u32, u32) {
     match stage_ex {
-        Some(stage_ex) => (AerogpuShaderStage::Compute as u32, stage_ex as u32),
+        Some(stage_ex) => encode_stage_ex(stage_ex),
         None => (shader_stage as u32, 0),
     }
 }
@@ -1117,7 +1117,18 @@ impl AerogpuCmdWriter {
         start_slot: u32,
         bindings: &[AerogpuShaderResourceBufferBinding],
     ) {
+        self.set_shader_resource_buffers_stage_ex(shader_stage, None, start_slot, bindings);
+    }
+
+    pub fn set_shader_resource_buffers_stage_ex(
+        &mut self,
+        shader_stage: AerogpuShaderStage,
+        stage_ex: Option<AerogpuShaderStageEx>,
+        start_slot: u32,
+        bindings: &[AerogpuShaderResourceBufferBinding],
+    ) {
         assert!(bindings.len() <= u32::MAX as usize);
+        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         let bindings_size = size_of::<AerogpuShaderResourceBufferBinding>()
             .checked_mul(bindings.len())
             .expect("SET_SHADER_RESOURCE_BUFFERS packet too large (usize overflow)");
@@ -1127,7 +1138,7 @@ impl AerogpuCmdWriter {
         let base = self.append_raw(AerogpuCmdOpcode::SetShaderResourceBuffers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderResourceBuffers, shader_stage),
-            shader_stage as u32,
+            shader_stage,
         );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderResourceBuffers, start_slot),
@@ -1136,6 +1147,10 @@ impl AerogpuCmdWriter {
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderResourceBuffers, buffer_count),
             bindings.len() as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetShaderResourceBuffers, reserved0),
+            reserved0,
         );
 
         let bindings_base = base + size_of::<AerogpuCmdSetShaderResourceBuffers>();
@@ -1156,13 +1171,39 @@ impl AerogpuCmdWriter {
         }
     }
 
+    /// Stage-ex aware variant of [`Self::set_shader_resource_buffers`].
+    ///
+    /// Encodes `stage_ex` into `reserved0` and sets the legacy `shader_stage` to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
+    pub fn set_shader_resource_buffers_ex(
+        &mut self,
+        stage_ex: AerogpuShaderStageEx,
+        start_slot: u32,
+        bindings: &[AerogpuShaderResourceBufferBinding],
+    ) {
+        self.set_shader_resource_buffers_stage_ex(AerogpuShaderStage::Compute, Some(stage_ex), start_slot, bindings);
+    }
+
     pub fn set_unordered_access_buffers(
         &mut self,
         shader_stage: AerogpuShaderStage,
         start_slot: u32,
         bindings: &[AerogpuUnorderedAccessBufferBinding],
     ) {
+        self.set_unordered_access_buffers_stage_ex(shader_stage, None, start_slot, bindings);
+    }
+
+    pub fn set_unordered_access_buffers_stage_ex(
+        &mut self,
+        shader_stage: AerogpuShaderStage,
+        stage_ex: Option<AerogpuShaderStageEx>,
+        start_slot: u32,
+        bindings: &[AerogpuUnorderedAccessBufferBinding],
+    ) {
         assert!(bindings.len() <= u32::MAX as usize);
+        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         let bindings_size = size_of::<AerogpuUnorderedAccessBufferBinding>()
             .checked_mul(bindings.len())
             .expect("SET_UNORDERED_ACCESS_BUFFERS packet too large (usize overflow)");
@@ -1172,7 +1213,7 @@ impl AerogpuCmdWriter {
         let base = self.append_raw(AerogpuCmdOpcode::SetUnorderedAccessBuffers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetUnorderedAccessBuffers, shader_stage),
-            shader_stage as u32,
+            shader_stage,
         );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetUnorderedAccessBuffers, start_slot),
@@ -1181,6 +1222,10 @@ impl AerogpuCmdWriter {
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetUnorderedAccessBuffers, uav_count),
             bindings.len() as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdSetUnorderedAccessBuffers, reserved0),
+            reserved0,
         );
 
         let bindings_base = base + size_of::<AerogpuCmdSetUnorderedAccessBuffers>();
@@ -1203,6 +1248,26 @@ impl AerogpuCmdWriter {
                 binding.initial_count,
             );
         }
+    }
+
+    /// Stage-ex aware variant of [`Self::set_unordered_access_buffers`].
+    ///
+    /// Encodes `stage_ex` into `reserved0` and sets the legacy `shader_stage` to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
+    pub fn set_unordered_access_buffers_ex(
+        &mut self,
+        stage_ex: AerogpuShaderStageEx,
+        start_slot: u32,
+        bindings: &[AerogpuUnorderedAccessBufferBinding],
+    ) {
+        self.set_unordered_access_buffers_stage_ex(
+            AerogpuShaderStage::Compute,
+            Some(stage_ex),
+            start_slot,
+            bindings,
+        );
     }
     pub fn set_constant_buffer(
         &mut self,
