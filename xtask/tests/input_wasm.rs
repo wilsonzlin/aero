@@ -123,6 +123,17 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         wasm_pack.iter().any(|arg| arg == "webusb_uhci_bridge"),
         "expected wasm-pack to include webusb_uhci_bridge, argv={wasm_pack:?}"
     );
+    for expected in [
+        "uhci_controller_topology",
+        "uhci_runtime_webusb_drain_actions",
+        "uhci_runtime_topology",
+        "uhci_runtime_external_hub",
+    ] {
+        assert!(
+            wasm_pack.iter().any(|arg| arg == expected),
+            "expected wasm-pack to include {expected}, argv={wasm_pack:?}"
+        );
+    }
     assert!(
         wasm_pack
             .iter()

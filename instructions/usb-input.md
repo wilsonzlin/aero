@@ -255,6 +255,10 @@ cargo xtask input --rust-only --with-wasm
 
 # Targeted WASM USB/input regression tests (run in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
+wasm-pack test --node crates/aero-wasm --test uhci_controller_topology --locked
+wasm-pack test --node crates/aero-wasm --test uhci_runtime_webusb_drain_actions --locked
+wasm-pack test --node crates/aero-wasm --test uhci_runtime_topology --locked
+wasm-pack test --node crates/aero-wasm --test uhci_runtime_external_hub --locked
 wasm-pack test --node crates/aero-wasm --test ehci_controller_bridge_snapshot_roundtrip --locked
 wasm-pack test --node crates/aero-wasm --test ehci_controller_topology --locked
 wasm-pack test --node crates/aero-wasm --test webusb_ehci_passthrough_harness --locked
@@ -295,14 +299,62 @@ cargo xtask input --e2e
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
-bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test ehci_controller_bridge_snapshot_roundtrip --test ehci_controller_topology --test webusb_ehci_passthrough_harness --test xhci_webusb_bridge --test xhci_controller_bridge --test xhci_controller_bridge_topology --test xhci_controller_bridge_webusb --test xhci_controller_topology --test xhci_bme_event_ring --test xhci_webusb_snapshot --test usb_bridge_snapshot_roundtrip --test usb_snapshot --test machine_input_injection_wasm --test wasm_machine_ps2_mouse --test usb_hid_bridge_mouse_reports_wasm --test usb_hid_bridge_consumer_reports_wasm --test webhid_interrupt_out_policy_wasm --test webhid_report_descriptor_synthesis_wasm --locked
+bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
+  --test webusb_uhci_bridge \
+  --test uhci_controller_topology \
+  --test uhci_runtime_webusb_drain_actions \
+  --test uhci_runtime_topology \
+  --test uhci_runtime_external_hub \
+  --test ehci_controller_bridge_snapshot_roundtrip \
+  --test ehci_controller_topology \
+  --test webusb_ehci_passthrough_harness \
+  --test xhci_webusb_bridge \
+  --test xhci_controller_bridge \
+  --test xhci_controller_bridge_topology \
+  --test xhci_controller_bridge_webusb \
+  --test xhci_controller_topology \
+  --test xhci_bme_event_ring \
+  --test xhci_webusb_snapshot \
+  --test usb_bridge_snapshot_roundtrip \
+  --test usb_snapshot \
+  --test machine_input_injection_wasm \
+  --test wasm_machine_ps2_mouse \
+  --test usb_hid_bridge_mouse_reports_wasm \
+  --test usb_hid_bridge_consumer_reports_wasm \
+  --test webhid_interrupt_out_policy_wasm \
+  --test webhid_report_descriptor_synthesis_wasm \
+  --locked
 
 # Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
 # `cargo xtask input` can exceed this, and `wasm-pack test` can be substantially slower (it may
 # rebuild many targets even if you pass `--test ...`). Bump the timeout if you see a timeout kill:
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 # For wasm-pack, 20 minutes is sometimes still not enough on a very cold build.
-AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test ehci_controller_bridge_snapshot_roundtrip --test ehci_controller_topology --test webusb_ehci_passthrough_harness --test xhci_webusb_bridge --test xhci_controller_bridge --test xhci_controller_bridge_topology --test xhci_controller_bridge_webusb --test xhci_controller_topology --test xhci_bme_event_ring --test xhci_webusb_snapshot --test usb_bridge_snapshot_roundtrip --test usb_snapshot --test machine_input_injection_wasm --test wasm_machine_ps2_mouse --test usb_hid_bridge_mouse_reports_wasm --test usb_hid_bridge_consumer_reports_wasm --test webhid_interrupt_out_policy_wasm --test webhid_report_descriptor_synthesis_wasm --locked
+AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
+  --test webusb_uhci_bridge \
+  --test uhci_controller_topology \
+  --test uhci_runtime_webusb_drain_actions \
+  --test uhci_runtime_topology \
+  --test uhci_runtime_external_hub \
+  --test ehci_controller_bridge_snapshot_roundtrip \
+  --test ehci_controller_topology \
+  --test webusb_ehci_passthrough_harness \
+  --test xhci_webusb_bridge \
+  --test xhci_controller_bridge \
+  --test xhci_controller_bridge_topology \
+  --test xhci_controller_bridge_webusb \
+  --test xhci_controller_topology \
+  --test xhci_bme_event_ring \
+  --test xhci_webusb_snapshot \
+  --test usb_bridge_snapshot_roundtrip \
+  --test usb_snapshot \
+  --test machine_input_injection_wasm \
+  --test wasm_machine_ps2_mouse \
+  --test usb_hid_bridge_mouse_reports_wasm \
+  --test usb_hid_bridge_consumer_reports_wasm \
+  --test webhid_interrupt_out_policy_wasm \
+  --test webhid_report_descriptor_synthesis_wasm \
+  --locked
 
 # You can also limit web wasm-pack builds to the core runtime package (useful for Playwright E2E):
 AERO_WASM_PACKAGES=core npm -w web run wasm:build
