@@ -9,7 +9,7 @@ import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
 import type { PlatformFeatureReport } from "../platform/features";
 import type { DiskImageMetadata, MountConfig } from "../storage/metadata";
-import type { SetBootDisksMessage } from "./boot_disks_protocol";
+import { emptySetBootDisksMessage, type SetBootDisksMessage } from "./boot_disks_protocol";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -2043,7 +2043,7 @@ export class WorkerCoordinator {
     if (role === "io") {
       try {
         const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";
-        const base: SetBootDisksMessage = this.bootDisks ?? { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
+        const base: SetBootDisksMessage = this.bootDisks ?? emptySetBootDisksMessage();
         // In machine runtime mode, the CPU worker owns OPFS disks. Never send disk metadata to IO
         // so it doesn't open a competing SyncAccessHandle (InUse).
         const msg = vmRuntime === "machine" ? { ...base, hdd: null, cd: null } : base;
