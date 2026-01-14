@@ -2931,7 +2931,11 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         source: wgpu::ShaderSource::Wgsl(Cow::Owned(ps_out.wgsl.clone())),
     });
 
-    // Pipeline creation validates shader bind groups against the provided pipeline layout.
+    // Pipeline creation must validate shader bind groups against the provided pipeline layout.
+    //
+    // Note: wgpu may return a dummy pipeline object and report validation errors via the device's
+    // error callback, so use an error scope to make failures visible to the test harness.
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
     let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sm3-wgsl-test.pipeline"),
         layout: Some(&pipeline_layout),
@@ -2956,4 +2960,7 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
     });
+    device.poll(wgpu::Maintain::Poll);
+    let err = pollster::block_on(device.pop_error_scope());
+    assert!(err.is_none(), "wgpu validation error: {err:?}");
 }
