@@ -19,6 +19,9 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - Intel HDA controller emulation (MMIO + CORB/RIRB parsing) (`aero-audio`)
 - virtio-snd queue parsing + playback/capture request handling (`aero-virtio`)
 - BIOS HLE interrupt dispatch robustness (INT 10h/13h/15h/16h/1Ah) (`firmware`)
+- i8042 PS/2 controller emulation (`aero-devices-input`)
+- UHCI (USB 1.1) controller register file + schedule walker (`aero-usb`)
+- HID report descriptor parsing (`aero-usb`)
 
 ## Prereqs
 
@@ -47,6 +50,9 @@ cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_i8042
+cargo +"$nightly" fuzz run fuzz_uhci
+cargo +"$nightly" fuzz run fuzz_hid_report_descriptor
 cargo +"$nightly" fuzz run fuzz_aerogpu_bc_decompress
 cargo +"$nightly" fuzz run fuzz_bios_interrupts
 cargo +"$nightly" fuzz run fuzz_tier0_step
@@ -203,4 +209,13 @@ cd fuzz && cargo fuzz run fuzz_l2_protocol_decode -- -runs=1000
 cd fuzz && cargo fuzz run fuzz_net_stack_outbound_ethernet -- -runs=1000
 cd fuzz && cargo fuzz run fuzz_e1000_mmio_poll -- -runs=1000
 cd fuzz && cargo fuzz run fuzz_virtio_net_queue -- -runs=1000
+
+# i8042 PS/2 controller port I/O + keyboard injection + snapshot roundtrips
+cd fuzz && cargo fuzz run fuzz_i8042 -- -runs=10000 -dict=fuzz_targets/fuzz_i8042.dict
+
+# UHCI register I/O + schedule walker tick + snapshot roundtrips
+cd fuzz && cargo fuzz run fuzz_uhci -- -runs=10000 -dict=fuzz_targets/fuzz_uhci.dict
+
+# HID report descriptor parser (bounded to 4KiB per input)
+cd fuzz && cargo fuzz run fuzz_hid_report_descriptor -- -runs=10000 -dict=fuzz_targets/fuzz_hid_report_descriptor.dict
 ```

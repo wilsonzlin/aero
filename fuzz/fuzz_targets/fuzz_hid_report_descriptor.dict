@@ -1,0 +1,19 @@
+"\x05\x01" # Usage Page (Generic Desktop)
+"\x05\x07" # Usage Page (Keyboard/Keypad)
+"\x05\x09" # Usage Page (Button)
+"\x09\x02" # Usage (Mouse)
+"\x09\x06" # Usage (Keyboard)
+"\xA1\x01" # Collection (Application)
+"\xA1\x00" # Collection (Physical)
+"\xC0"     # End Collection
+
+"\x15\x00" # Logical Minimum (0)
+"\x25\x01" # Logical Maximum (1)
+"\x75\x01" # Report Size (1)
+"\x95\x08" # Report Count (8)
+"\x81\x02" # Input (Data,Var,Abs)
+"\x81\x01" # Input (Const,Array,Abs)
+
+"\x85\x01" # Report ID (1)
+"\x19\x00" # Usage Minimum
+"\x29\xFF" # Usage Maximum

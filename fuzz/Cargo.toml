@@ -29,6 +29,9 @@ path = "../crates/aero-devices-storage"
 [dependencies.aero-devices-input]
 path = "../crates/aero-devices-input"
 
+[dependencies.aero-usb]
+path = "../crates/aero-usb"
+
 [dependencies.aero-devices]
 path = "../crates/devices"
 
@@ -88,6 +91,7 @@ path = "../crates/aero-net-stack"
 
 [dependencies.aero-net-e1000]
 path = "../crates/aero-net-e1000"
+
 [[bin]]
 name = "fuzz_mmu_translate"
 path = "fuzz_targets/fuzz_mmu_translate.rs"
@@ -185,6 +189,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_i8042"
+path = "fuzz_targets/fuzz_i8042.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_ps2_keyboard_commands"
 path = "fuzz_targets/fuzz_ps2_keyboard_commands.rs"
 test = false
@@ -193,6 +203,18 @@ doc = false
 [[bin]]
 name = "fuzz_ps2_mouse_commands"
 path = "fuzz_targets/fuzz_ps2_mouse_commands.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_uhci"
+path = "fuzz_targets/fuzz_uhci.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_hid_report_descriptor"
+path = "fuzz_targets/fuzz_hid_report_descriptor.rs"
 test = false
 doc = false
 

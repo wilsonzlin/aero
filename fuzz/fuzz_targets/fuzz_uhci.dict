@@ -1,0 +1,20 @@
+"\x00" # REG_USBCMD (offset)
+"\x02" # REG_USBSTS (offset)
+"\x04" # REG_USBINTR (offset)
+"\x06" # REG_FRNUM (offset)
+"\x08" # REG_FLBASEADD (offset)
+"\x0C" # REG_SOFMOD (offset)
+"\x10" # REG_PORTSC1 (offset)
+"\x12" # REG_PORTSC2 (offset)
+
+"\x01\x00" # USBCMD.RS
+"\x02\x00" # USBCMD.HCRESET
+"\x04\x00" # USBCMD.GRESET
+"\x08\x00" # USBCMD.EGSM
+"\x10\x00" # USBCMD.FGR
+"\x80\x00" # USBCMD.MAXP
+"\x81\x00" # USBCMD.RS|MAXP (common running state)
+
+"\x00\x10\x00\x00" # FLBASEADD = 0x1000
+"\x00\x20\x00\x00" # FLBASEADD = 0x2000
+"\x00\x30\x00\x00" # FLBASEADD = 0x3000
