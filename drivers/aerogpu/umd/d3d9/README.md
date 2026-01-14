@@ -480,7 +480,9 @@ Implementation notes (bring-up):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` uses `fixedfunc::kVsWvpPosColor`.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses `fixedfunc::kVsWvpPosColorTex0`.
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
-  - For `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
+  - `D3DFVF_XYZ | D3DFVF_NORMAL{,TEX1}` (no diffuse) uses the `fixedfunc::kVsWvpPosNormalWhite{,Tex0}` (unlit) variants,
+    or `fixedfunc::kVsWvpLitPosNormal{,Tex1}` when `D3DRS_LIGHTING` is enabled.
+  - For `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
     variant. When `D3DRS_LIGHTING` is enabled, it uses the lit variant and uploads a reserved lighting constant block
     (`c244..c253`) via `ensure_fixedfunc_lighting_constants_locked()`.
   - The reserved constant ranges are intentionally high so they are unlikely to collide with app/user shader constants when
