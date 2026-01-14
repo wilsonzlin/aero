@@ -766,6 +766,10 @@ For a repeatable end-to-end validation flow under QEMU (device enumeration → d
 
 - `../tests/qemu/README.md`
 
+For host-buildable unit tests (protocol engines, descriptor/SG building, framing, and status handling), see:
+
+- `../tests/README.md`
+
 ### Contract v1 hardware IDs (reference)
 
 Contract v1 virtio-snd devices enumerate as:
