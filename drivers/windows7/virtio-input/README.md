@@ -101,16 +101,16 @@ The in-tree INFs intentionally match only **Aero contract v1** hardware IDs:
 - `inf/aero_virtio_input.inf`:
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
+  - `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback; contract v1)
 - `inf/aero_virtio_tablet.inf`:
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
 
 The subsystem-gated IDs use distinct `DeviceDesc` strings, so keyboard/mouse/tablet appear as separate named devices in
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**).
 
-If your environment does not expose the Aero subsystem IDs (or exposes different subsystem IDs, like stock QEMU), the
-legacy alias INF `inf/virtio-input.inf.disabled`
-includes a fallback `PCI\VEN_1AF4&DEV_1052&REV_01` match (rename it to `virtio-input.inf` to enable it). Keep in mind
-that shipping multiple overlapping INFs that match the same device can lead to confusing install behavior.
+If your environment does not expose the Aero subsystem IDs (or exposes different subsystem IDs, like stock QEMU),
+`inf/aero_virtio_input.inf` will still match via the fallback `PCI\VEN_1AF4&DEV_1052&REV_01` entry. Keep in mind that
+shipping multiple overlapping INFs that match the same device can lead to confusing install behavior.
 
 The INFs do **not** match:
 
