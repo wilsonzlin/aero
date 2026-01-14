@@ -106,6 +106,16 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Behavior:
     * Control-point phase: writes `SV_OutputControlPointID` + `SV_PrimitiveID` into `o0.xy`, `ret`
     * Patch-constant phase: writes `SV_TessFactor` + `SV_InsideTessFactor`, `ret`
+* `hs_tri_integer.dxbc`
+  * Shader model: `hs_5_0`
+  * Chunks: `ISGN`, `OSGN`, `SHEX`
+  * Behavior: outputs constant tess factors (`SV_TessFactor`/`SV_InsideTessFactor` = 4) and
+    passes through control point positions.
+* `ds_tri_passthrough.dxbc`
+  * Shader model: `ds_5_0`
+  * Chunks: `ISGN`, `OSGN`, `SHEX`
+  * Behavior: outputs position as barycentric interpolation of control point positions and
+    encodes barycentric coordinates into `COLOR0` for validation.
 
 These fixtures are **hand-authored** DXBC containers with the standard D3D10+
 signature chunk layout. The SM4 token streams are intentionally tiny:
