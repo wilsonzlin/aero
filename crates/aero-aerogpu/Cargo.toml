@@ -6,7 +6,8 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = []
-# Legacy bring-up ABI ("ARGP"): `VID=0x1A_ED, DID=0x0001`.
+# Legacy bring-up ABI ("ARGP"): deprecated vendor bytes 0x1A,0xED; device ID 0x0001
+# (see docs/abi/aerogpu-pci-identity.md).
 legacy-abi = ["dep:aero-protocol", "dep:memory"]
 
 [dependencies]
