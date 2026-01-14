@@ -955,6 +955,14 @@ fn dxbc_container_roundtrip_extracts_shdr() {
 }
 
 #[test]
+fn dxbc_container_roundtrip_extracts_shex() {
+    let vs = to_bytes(&assemble_vs_passthrough());
+    let container = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHEX"), &vs)]);
+    let extracted = dxbc::extract_shader_bytecode(&container).unwrap();
+    assert_eq!(extracted, vs);
+}
+
+#[test]
 fn dxbc_extraction_returns_raw_token_streams_unchanged() {
     // D3D9 often provides the legacy SM2/SM3 token stream directly (no DXBC container wrapper).
     // In this case we must treat the bytes as already-being shader bytecode.
