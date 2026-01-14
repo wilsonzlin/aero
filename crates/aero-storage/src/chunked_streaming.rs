@@ -1296,3 +1296,73 @@ mod hex {
         unsafe { String::from_utf8_unchecked(out.to_vec()) }
     }
 }
+
+/// Synchronous wrapper around [`ChunkedStreamingDisk`] for use in native device-model code.
+///
+/// `ChunkedStreamingDisk` itself is async because it performs network fetches. Many storage
+/// controllers in Aero are currently synchronous and consume a `VirtualDisk`-like interface.
+/// `ChunkedStreamingDiskSync` bridges that gap by running an internal Tokio runtime and exposing
+/// blocking read methods.
+///
+/// Note: The blocking methods should not be called from within an existing Tokio runtime on the
+/// same thread. In async contexts, prefer `tokio::task::spawn_blocking` or use the async
+/// [`ChunkedStreamingDisk`] directly.
+pub struct ChunkedStreamingDiskSync {
+    rt: tokio::runtime::Runtime,
+    disk: ChunkedStreamingDisk,
+}
+
+impl ChunkedStreamingDiskSync {
+    pub fn open(config: ChunkedStreamingDiskConfig) -> Result<Self, ChunkedStreamingDiskError> {
+        // Use a current-thread runtime to avoid spawning extra worker threads in typical
+        // synchronous emulator/device contexts. The internal async implementation performs
+        // I/O using non-blocking sockets and can still overlap requests.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| ChunkedStreamingDiskError::Io(e.to_string()))?;
+        let disk = rt.block_on(ChunkedStreamingDisk::open(config))?;
+        Ok(Self { rt, disk })
+    }
+
+    pub fn total_size(&self) -> u64 {
+        self.disk.manifest().total_size
+    }
+
+    pub fn manifest(&self) -> &ChunkedDiskManifestV1 {
+        self.disk.manifest()
+    }
+
+    pub fn telemetry_snapshot(&self) -> ChunkedStreamingTelemetrySnapshot {
+        self.disk.telemetry_snapshot()
+    }
+
+    pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), ChunkedStreamingDiskError> {
+        self.rt.block_on(self.disk.read_at(offset, buf))
+    }
+
+    pub fn read_sectors(
+        &mut self,
+        lba: u64,
+        buf: &mut [u8],
+    ) -> Result<(), ChunkedStreamingDiskError> {
+        if !(buf.len() as u64).is_multiple_of(SECTOR_SIZE_BYTES) {
+            return Err(ChunkedStreamingDiskError::Protocol(format!(
+                "read_sectors buffer length must be multiple of {SECTOR_SIZE_BYTES}"
+            )));
+        }
+        let offset = lba
+            .checked_mul(SECTOR_SIZE_BYTES)
+            .ok_or_else(|| ChunkedStreamingDiskError::Protocol("lba overflow".to_string()))?;
+        self.read_at(offset, buf)
+    }
+
+    pub fn flush(&mut self) -> Result<(), ChunkedStreamingDiskError> {
+        self.rt.block_on(self.disk.flush())
+    }
+
+    pub fn reset(&mut self) -> Result<(), ChunkedStreamingDiskError> {
+        self.rt.block_on(self.disk.reset());
+        Ok(())
+    }
+}

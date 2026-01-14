@@ -112,5 +112,6 @@ pub use streaming::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use chunked_streaming::{
     ChunkedDiskManifestV1, ChunkedStreamingDisk, ChunkedStreamingDiskConfig,
-    ChunkedStreamingDiskError, ChunkedStreamingDiskOptions, ChunkedStreamingTelemetrySnapshot,
+    ChunkedStreamingDiskError, ChunkedStreamingDiskOptions, ChunkedStreamingDiskSync,
+    ChunkedStreamingTelemetrySnapshot,
 };
