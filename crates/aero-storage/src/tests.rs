@@ -486,6 +486,30 @@ fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
 }
 
 #[test]
+fn mutable_reference_virtual_disk_can_be_used_in_generic_wrappers() {
+    let mut raw = RawDisk::create(MemBackend::new(), (SECTOR_SIZE * 8) as u64).unwrap();
+
+    // Compile-time check: `&mut dyn VirtualDisk` implements `VirtualDisk` so it can be used in
+    // generic wrappers like `BlockCachedDisk` without forcing callers to box the disk.
+    {
+        let disk: &mut dyn VirtualDisk = &mut raw;
+        let mut cached = BlockCachedDisk::new(disk, SECTOR_SIZE, 1).unwrap();
+
+        cached.write_at(0, &[1, 2, 3, 4]).unwrap();
+        cached.flush().unwrap();
+
+        let mut buf = [0u8; 4];
+        cached.read_at(0, &mut buf).unwrap();
+        assert_eq!(&buf, &[1, 2, 3, 4]);
+    }
+
+    // Ensure the underlying disk was modified even though we only borrowed it.
+    let mut buf = [0u8; 4];
+    raw.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, &[1, 2, 3, 4]);
+}
+
+#[test]
 fn boxed_storage_backend_can_open_disk_image() {
     // Compile-time + runtime check: `Box<dyn StorageBackend>` itself implements `StorageBackend`
     // so it can be used in generic wrappers like `DiskImage`.
