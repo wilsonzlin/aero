@@ -383,14 +383,21 @@ mod tests {
         // Program Bus Master direction=ToMemory.
         bm.write(0, 1, 0x09);
 
-        // Request direction=FromMemory should be rejected.
         let mut req = DmaRequest {
             direction: DmaDirection::FromMemory,
             buffer: vec![0u8; 4],
             commit: None,
         };
+
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::DirectionMismatch);
+
+        // Direction mismatch should not mark the DMA engine active until a transfer begins.
+        assert_eq!(bm.read(2, 1) & 0x01, 0);
+
+        bm.finish_error();
+        let st = bm.read(2, 1) as u8;
+        assert_eq!(st & 0x07, 0x06, "finish_error should set IRQ+ERR and clear ACTIVE");
     }
 
     #[test]
@@ -413,11 +420,16 @@ mod tests {
         let mut req = DmaRequest::ata_read(vec![0xA5; 512]);
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdTooShort);
+        assert_ne!(bm.read(2, 1) & 0x01, 0, "ACTIVE should remain set until finish_* is called");
 
         // The first segment should have been transferred before we discovered the table ended.
         let mut out = vec![0u8; 256];
         mem.read_physical(dma_buf, &mut out);
         assert_eq!(&out[..], &[0xA5; 256]);
+
+        bm.finish_error();
+        let st = bm.read(2, 1) as u8;
+        assert_eq!(st & 0x07, 0x06, "finish_error should set IRQ+ERR and clear ACTIVE");
     }
 
     #[test]
@@ -445,6 +457,7 @@ mod tests {
         let mut req = DmaRequest::ata_read(buf.clone());
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdMissingEndOfTable);
+        assert_ne!(bm.read(2, 1) & 0x01, 0, "ACTIVE should remain set until finish_* is called");
 
         // Data should still have been written into the guest buffers.
         let mut seg0 = vec![0u8; 256];
@@ -453,5 +466,9 @@ mod tests {
         mem.read_physical(dma_buf1, &mut seg1);
         assert_eq!(seg0, buf[..256]);
         assert_eq!(seg1, buf[256..]);
+
+        bm.finish_error();
+        let st = bm.read(2, 1) as u8;
+        assert_eq!(st & 0x07, 0x06, "finish_error should set IRQ+ERR and clear ACTIVE");
     }
 }
