@@ -904,7 +904,8 @@ passthrough devices can coexist without fighting over port numbers:
     port 1). The xHCI WebHID topology manager does not reserve any root port numbers; callers provide
     full paths and must avoid the reserved WebUSB root port.
 - **External hub on root port 0**:
-  - default downstream port count: **16**
+  - default downstream port count: **16** (UHCI). For xHCI-backed topologies, keep hub port counts
+    <= **15** (xHCI Route String encodes hub ports as 4-bit values).
   - reserved synthetic devices:
     - hub port **1**: USB HID keyboard
     - hub port **2**: USB HID mouse
