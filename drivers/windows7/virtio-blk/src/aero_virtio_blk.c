@@ -2029,12 +2029,16 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
 #endif
 
-#ifdef SRB_FUNCTION_SET_LINK_TIMEOUT
+#if defined(SRB_FUNCTION_SET_LINK_TIMEOUT) || defined(SRB_FUNCTION_LINK_TIMEOUT)
   /*
    * Link timeout hints are not applicable to virtio-blk. No-op success.
    */
+#ifdef SRB_FUNCTION_SET_LINK_TIMEOUT
   case SRB_FUNCTION_SET_LINK_TIMEOUT:
+#endif
+#ifdef SRB_FUNCTION_LINK_TIMEOUT
   case SRB_FUNCTION_LINK_TIMEOUT:
+#endif
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return TRUE;
 #endif
