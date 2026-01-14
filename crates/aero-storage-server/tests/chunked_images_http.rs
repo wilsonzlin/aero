@@ -154,6 +154,12 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
@@ -841,6 +847,13 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
     );
+    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
@@ -1342,6 +1355,10 @@ async fn chunk_larger_than_limit_is_rejected() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
