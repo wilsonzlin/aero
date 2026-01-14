@@ -11,6 +11,7 @@ import {
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
   AEROGPU_CMD_DESTROY_SAMPLER_SIZE,
+  AEROGPU_CMD_DISPATCH_SIZE,
   AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_FLUSH_SIZE,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
@@ -21,9 +22,13 @@ import {
   AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE,
   AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
   AEROGPU_CMD_SET_SAMPLERS_SIZE,
+  AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE,
+  AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
   AEROGPU_CMD_UPLOAD_RESOURCE_SIZE,
   AEROGPU_CONSTANT_BUFFER_BINDING_SIZE,
   AEROGPU_COPY_FLAG_WRITEBACK_DST,
+  AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE,
+  AEROGPU_UNORDERED_ACCESS_BUFFER_BINDING_SIZE,
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
@@ -419,6 +424,9 @@ const AEROGPU_CMD_CREATE_SAMPLER = AerogpuCmdOpcode.CreateSampler;
 const AEROGPU_CMD_DESTROY_SAMPLER = AerogpuCmdOpcode.DestroySampler;
 const AEROGPU_CMD_SET_SAMPLERS = AerogpuCmdOpcode.SetSamplers;
 const AEROGPU_CMD_SET_CONSTANT_BUFFERS = AerogpuCmdOpcode.SetConstantBuffers;
+const AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS = AerogpuCmdOpcode.SetShaderResourceBuffers;
+const AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS = AerogpuCmdOpcode.SetUnorderedAccessBuffers;
+const AEROGPU_CMD_DISPATCH = AerogpuCmdOpcode.Dispatch;
 
 const AEROGPU_FORMAT_B8G8R8A8_UNORM = AerogpuFormat.B8G8R8A8Unorm;
 const AEROGPU_FORMAT_B8G8R8X8_UNORM = AerogpuFormat.B8G8R8X8Unorm;
@@ -734,6 +742,36 @@ export const executeAerogpuCmdStream = (
         if (expectedBytes > cmdSizeBytes) {
           throw new Error(
             `aerogpu: SET_CONSTANT_BUFFERS payload overruns packet (expected=${expectedBytes}, size_bytes=${cmdSizeBytes})`,
+          );
+        }
+        break;
+      }
+
+      case AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS: {
+        if (cmdSizeBytes < AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE) {
+          throw new Error(`aerogpu: SET_SHADER_RESOURCE_BUFFERS packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const bufferCount = readU32LeChecked(dv, offset + 16, end, "buffer_count");
+        const expectedBytes =
+          AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + bufferCount * AEROGPU_SHADER_RESOURCE_BUFFER_BINDING_SIZE;
+        if (expectedBytes > cmdSizeBytes) {
+          throw new Error(
+            `aerogpu: SET_SHADER_RESOURCE_BUFFERS payload overruns packet (expected=${expectedBytes}, size_bytes=${cmdSizeBytes})`,
+          );
+        }
+        break;
+      }
+
+      case AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS: {
+        if (cmdSizeBytes < AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE) {
+          throw new Error(`aerogpu: SET_UNORDERED_ACCESS_BUFFERS packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        const uavCount = readU32LeChecked(dv, offset + 16, end, "uav_count");
+        const expectedBytes =
+          AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + uavCount * AEROGPU_UNORDERED_ACCESS_BUFFER_BINDING_SIZE;
+        if (expectedBytes > cmdSizeBytes) {
+          throw new Error(
+            `aerogpu: SET_UNORDERED_ACCESS_BUFFERS payload overruns packet (expected=${expectedBytes}, size_bytes=${cmdSizeBytes})`,
           );
         }
         break;
@@ -1351,6 +1389,14 @@ export const executeAerogpuCmdStream = (
         }
         // `FLUSH` exists mainly to model D3D9Ex semantics. For the lightweight browser CPU
         // executor (used for protocol tests + simple copy/present flows) it is a no-op.
+        break;
+      }
+
+      case AEROGPU_CMD_DISPATCH: {
+        if (cmdSizeBytes < AEROGPU_CMD_DISPATCH_SIZE) {
+          throw new Error(`aerogpu: DISPATCH packet too small (size_bytes=${cmdSizeBytes})`);
+        }
+        // Compute is not implemented by the CPU executor; treat as a validated no-op.
         break;
       }
 

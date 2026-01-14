@@ -254,6 +254,9 @@ test("ACMD binding table packets are ignored but validated by the browser execut
   );
   w.setSamplers(AerogpuShaderStage.Pixel, 0, [1]);
   w.setConstantBuffers(AerogpuShaderStage.Vertex, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+  w.setShaderResourceBuffers(AerogpuShaderStage.Pixel, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+  w.setUnorderedAccessBuffers(AerogpuShaderStage.Compute, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16, initialCount: 0 }]);
+  w.dispatch(1, 1, 1);
   w.destroySampler(1);
 
   const state = createAerogpuCpuExecutorState();
@@ -288,6 +291,34 @@ test("ACMD SET_CONSTANT_BUFFERS rejects truncated binding payloads", () => {
   );
 });
 
+test("ACMD SET_SHADER_RESOURCE_BUFFERS rejects truncated binding payloads", () => {
+  const w = new AerogpuCmdWriter();
+  w.setShaderResourceBuffers(AerogpuShaderStage.Pixel, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+  const bytes = w.finish();
+  // Patch buffer_count from 1 -> 2 without extending the packet.
+  new DataView(bytes.buffer).setUint32(24 + 16, 2, true);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(
+    () => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }),
+    /SET_SHADER_RESOURCE_BUFFERS/,
+  );
+});
+
+test("ACMD SET_UNORDERED_ACCESS_BUFFERS rejects truncated binding payloads", () => {
+  const w = new AerogpuCmdWriter();
+  w.setUnorderedAccessBuffers(AerogpuShaderStage.Compute, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16, initialCount: 0 }]);
+  const bytes = w.finish();
+  // Patch uav_count from 1 -> 2 without extending the packet.
+  new DataView(bytes.buffer).setUint32(24 + 16, 2, true);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(
+    () => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }),
+    /SET_UNORDERED_ACCESS_BUFFERS/,
+  );
+});
+
 test("ACMD FLUSH is accepted by the browser executor", () => {
   const w = new AerogpuCmdWriter();
   w.flush();
@@ -314,6 +345,22 @@ test("ACMD FLUSH rejects undersized packets", () => {
 
   const state = createAerogpuCpuExecutorState();
   assert.throws(() => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }), /FLUSH/);
+});
+
+test("ACMD DISPATCH rejects undersized packets", () => {
+  const w = new AerogpuCmdWriter();
+  w.dispatch(1, 1, 1);
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer);
+  // Truncate the stream to a header-only dispatch packet by shrinking both:
+  // - cmd_stream_header.size_bytes
+  // - cmd_hdr.size_bytes
+  // This preserves iterator validity while simulating a guest bug.
+  view.setUint32(8, 24 + 8, true);
+  view.setUint32(24 + 4, 8, true);
+
+  const state = createAerogpuCpuExecutorState();
+  assert.throws(() => executeAerogpuCmdStream(state, bytes.buffer, { allocTable: null, guestU8: null }), /DISPATCH/);
 });
 
 test("ACMD CREATE_TEXTURE2D rejects unsupported formats (e.g. BC) at creation time", () => {
