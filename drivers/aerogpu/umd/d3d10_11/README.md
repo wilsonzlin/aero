@@ -90,9 +90,9 @@ Feature matrix for the Win7 WDK-backed UMDs:
       - an expanded vertex buffer
       - an expanded **triangle-list** index buffer
       - `DrawIndexedIndirectArgs` so the render pass can consume the expansion via `draw_indexed_indirect`
-    - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strip output is expanded into a triangle list with CUT semantics (see `crates/aero-d3d11/src/runtime/strip_to_list.rs`).
+    - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strip output is expanded into a triangle list with CUT semantics (no bridge triangles; see `crates/aero-d3d11/src/runtime/strip_to_list.rs`).
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding.
-    - Win7 GS tests (WIP):
+    - Win7 GS tests:
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
       - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
