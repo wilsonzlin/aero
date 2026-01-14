@@ -22,12 +22,15 @@ aero_virtio_tablet.cat
 
 - `virtio-input.inf.disabled` is a legacy filename alias for workflows/tools that still reference `virtio-input.inf`
   instead of `aero_virtio_input.inf`.
-  - Rename it to `virtio-input.inf` to enable it (disabled by default).
-- Policy: the alias INF is a *filename alias only*:
-  - From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to
-    `aero_virtio_input.inf` (only the leading banner/comments may differ; see `..\scripts\check-inf-alias.py`).
-  - Because it is identical, it does **not** change HWID matching behavior (it matches the same HWIDs as `aero_virtio_input.inf`,
-    including the strict revision-gated generic fallback `PCI\VEN_1AF4&DEV_1052&REV_01`).
+   - Rename it to `virtio-input.inf` to enable it.
+- Policy:
+  - The canonical keyboard/mouse INF (`aero_virtio_input.inf`) is intentionally **SUBSYS-only** (no generic fallback model line).
+  - The alias INF is a legacy filename compatibility shim and an **opt-in** path to enable strict generic fallback binding.
+    - It is allowed to diverge from the canonical INF only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add
+      the strict fallback model line `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`).
+    - Outside the models sections, from `[Version]` onward, it is expected to remain byte-for-byte identical to
+      `aero_virtio_input.inf` (banner/comments may differ; see `..\scripts\check-inf-alias.py`).
+    - Because it adds the fallback entry, enabling it **does** change HWID matching behavior.
 - The alias INF is checked in as `*.inf.disabled` to avoid accidentally shipping/installing **two** overlapping
   INFs. If you enable the alias, do **not** ship it alongside `aero_virtio_input.inf`.
 
@@ -40,13 +43,17 @@ aero_virtio_tablet.cat
 expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
 distinct keyboard vs mouse `DeviceDesc` strings, INF binding/identity guardrails, and MSI interrupt settings).
 
-The validator targets the keyboard/mouse INF (`aero_virtio_input.inf`) by default, and can also be pointed at the legacy
-filename alias INF (`virtio-input.inf` / `virtio-input.inf.disabled`). It expects the following contract-v1 HWIDs to be
-present in both `[Aero.NTx86]` and `[Aero.NTamd64]`:
+The validator targets the canonical keyboard/mouse INF (`aero_virtio_input.inf`) by default, and can also be pointed at the legacy
+filename alias INF (`virtio-input.inf` / `virtio-input.inf.disabled`).
+
+It expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]` and `[Aero.NTamd64]` in the canonical INF:
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no SUBSYS)
+
+When validating the legacy alias INF, the validator additionally expects the opt-in strict generic fallback model line:
+
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no `SUBSYS`)
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
 devices bind via `aero_virtio_tablet.inf` when that INF is installed.
