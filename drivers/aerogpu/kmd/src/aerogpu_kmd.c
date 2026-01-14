@@ -12432,6 +12432,29 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                                                                AEROGPU_MMIO_REG_ERROR_FENCE_HI);
             const ULONG mmioCount = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
 
+            /*
+             * Keep a best-effort cached copy of the most recent non-zero device-reported error payload.
+             *
+             * Normally this is captured in the IRQ_ERROR ISR path, but caching it here ensures dbgctl can
+             * still report stable values after power down even if the error interrupt was masked/lost.
+             *
+             * Do not overwrite cached values with smaller/zero counts (e.g. after a device reset).
+             */
+            if (mmioCount != 0 && mmioCount > cachedMmioCount) {
+                AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
+                InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, (LONG)mmioCount);
+
+                ULONG cacheCode = mmioCode;
+                if (cacheCode == 0) {
+                    cacheCode = (ULONG)AEROGPU_ERROR_INTERNAL;
+                }
+                InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)cacheCode);
+
+                if (mmioFence != 0 && mmioFence <= 0xFFFFFFFFull) {
+                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
+                }
+            }
+
             if (mmioCode != 0) {
                 out->error_code = mmioCode;
             }
