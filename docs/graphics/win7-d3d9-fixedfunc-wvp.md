@@ -40,10 +40,13 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 
 - Condition: no user **vertex** shader is bound (pixel shader binding does not affect `ProcessVertices`).
 - Supported source `dev->fvf` values:
-  - `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}`
-  - `D3DFVF_XYZ | D3DFVF_TEX1`
+  - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZRHW | D3DFVF_TEX1`
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZ | D3DFVF_TEX1`
 - It computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes screen-space `XYZRHW` into the
-  destination layout described by `hVertexDecl` (copying optional diffuse/tex0 fields when present).
+  destination layout described by `hVertexDecl`.
+  - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
+  - When the destination declaration includes diffuse color and the source format does not, the UMD fills it with opaque
+    white (matching fixed-function behavior).
 
 ## Code anchors
 
