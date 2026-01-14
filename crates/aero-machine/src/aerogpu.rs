@@ -3164,6 +3164,47 @@ mod tests {
     }
 
     #[test]
+    fn capture_cmd_stream_falls_back_to_header_prefix_on_oversized_size_bytes() {
+        // If the header claims an implausibly large `size_bytes`, avoid allocating/copying the full
+        // stream and fall back to returning the fixed-size header prefix.
+        let cmd_gpa = 0x1800u64;
+        let header_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+        let huge_size_bytes = MAX_CMD_STREAM_SIZE_BYTES + 4;
+
+        let mut prefix = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
+        prefix[0..4].copy_from_slice(
+            &aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes(),
+        );
+        prefix[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        prefix[8..12].copy_from_slice(&huge_size_bytes.to_le_bytes());
+        prefix[12..16].copy_from_slice(&0u32.to_le_bytes()); // flags
+        prefix[16..20].copy_from_slice(&0u32.to_le_bytes()); // reserved0
+        prefix[20..24].copy_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        let mut mem = TestMem::default();
+        mem.write_physical(cmd_gpa, &prefix);
+
+        let desc = ring::AerogpuSubmitDesc {
+            desc_size_bytes: ring::AerogpuSubmitDesc::SIZE_BYTES as u32,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa,
+            cmd_size_bytes: huge_size_bytes,
+            cmd_reserved0: 0,
+            alloc_table_gpa: 0,
+            alloc_table_size_bytes: 0,
+            alloc_table_reserved0: 0,
+            signal_fence: 1,
+            reserved0: 0,
+        };
+
+        let out = capture_cmd_stream(&mut mem, &desc);
+        assert_eq!(out.len(), header_size_bytes as usize);
+        assert_eq!(out, prefix.to_vec());
+    }
+
+    #[test]
     fn capture_alloc_table_truncates_to_header_size_bytes() {
         let alloc_table_gpa = 0x3000u64;
         let alloc_table_size_bytes = 64u32;
@@ -3244,6 +3285,43 @@ mod tests {
             cmd_reserved0: 0,
             alloc_table_gpa,
             alloc_table_size_bytes,
+            alloc_table_reserved0: 0,
+            signal_fence: 1,
+            reserved0: 0,
+        };
+
+        assert_eq!(
+            capture_alloc_table(&mut mem, pci::AEROGPU_ABI_VERSION_U32, &desc),
+            None
+        );
+    }
+
+    #[test]
+    fn capture_alloc_table_rejects_oversized_table() {
+        let alloc_table_gpa = 0x4800u64;
+        let huge_size_bytes = MAX_AEROGPU_ALLOC_TABLE_BYTES + 4;
+
+        let mut backing = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
+        backing[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+        backing[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        backing[8..12].copy_from_slice(&huge_size_bytes.to_le_bytes());
+        backing[12..16].copy_from_slice(&0u32.to_le_bytes()); // entry_count
+        backing[16..20].copy_from_slice(&(ring::AerogpuAllocEntry::SIZE_BYTES as u32).to_le_bytes());
+        backing[20..24].copy_from_slice(&0u32.to_le_bytes());
+
+        let mut mem = TestMem::default();
+        mem.write_physical(alloc_table_gpa, &backing);
+
+        let desc = ring::AerogpuSubmitDesc {
+            desc_size_bytes: ring::AerogpuSubmitDesc::SIZE_BYTES as u32,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa: 0,
+            cmd_size_bytes: 0,
+            cmd_reserved0: 0,
+            alloc_table_gpa,
+            alloc_table_size_bytes: huge_size_bytes,
             alloc_table_reserved0: 0,
             signal_fence: 1,
             reserved0: 0,
