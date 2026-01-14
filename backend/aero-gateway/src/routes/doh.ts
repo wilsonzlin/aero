@@ -105,47 +105,47 @@ export function setupDohRoutes(
         return sendDnsError(reply, 429, { id: 0, rcode: 2 });
       }
 
-        let query: Buffer;
-        try {
-          if (request.method === 'GET') {
-            const dns = (request.query as DohQuery).dns;
-            if (!dns) {
-              return sendDnsError(reply, 400, { id: 0, rcode: 1 });
-            }
-            // Avoid decoding arbitrarily large `dns` query params into buffers. For valid base64url,
-            // the encoded length is strictly monotonic with decoded byte length, so we can enforce
-            // DNS_MAX_QUERY_BYTES before decoding the full message.
-            const maxEncodedLen = maxBase64UrlLenForBytes(config.DNS_MAX_QUERY_BYTES);
-            if (dns.length > maxEncodedLen) {
-              // Best-effort decode of the DNS header (first 12 bytes) so we can preserve query ID
-              // in the 413 response without allocating the entire message.
-              const prefix = base64UrlPrefixForHeader(dns, 16);
-              let id = 0;
-              let queryFlags = 0;
-              if (prefix) {
+      let query: Buffer;
+      try {
+        if (request.method === 'GET') {
+          const dns = (request.query as DohQuery).dns;
+          if (!dns) {
+            return sendDnsError(reply, 400, { id: 0, rcode: 1 });
+          }
+          // Avoid decoding arbitrarily large `dns` query params into buffers. For valid base64url,
+          // the encoded length is strictly monotonic with decoded byte length, so we can enforce
+          // DNS_MAX_QUERY_BYTES before decoding the full message.
+          const maxEncodedLen = maxBase64UrlLenForBytes(config.DNS_MAX_QUERY_BYTES);
+          if (dns.length > maxEncodedLen) {
+            // Best-effort decode of the DNS header (first 12 bytes) so we can preserve query ID
+            // in the 413 response without allocating the entire message.
+            const prefix = base64UrlPrefixForHeader(dns, 16);
+            let id = 0;
+            let queryFlags = 0;
+            if (prefix) {
+              try {
+                const headerBytes = decodeBase64UrlToBuffer(prefix);
                 try {
-                  const headerBytes = decodeBase64UrlToBuffer(prefix);
-                  try {
-                    const header = decodeDnsHeader(headerBytes);
-                    id = header.id;
-                    queryFlags = header.flags;
-                  } catch {
-                    if (headerBytes.length >= 2) id = headerBytes.readUInt16BE(0);
-                    if (headerBytes.length >= 4) queryFlags = headerBytes.readUInt16BE(2);
-                  }
+                  const header = decodeDnsHeader(headerBytes);
+                  id = header.id;
+                  queryFlags = header.flags;
                 } catch {
-                  // ignore
+                  if (headerBytes.length >= 2) id = headerBytes.readUInt16BE(0);
+                  if (headerBytes.length >= 4) queryFlags = headerBytes.readUInt16BE(2);
                 }
+              } catch {
+                // ignore
               }
-              return sendDnsError(reply, 413, { id, queryFlags, rcode: 1 });
             }
+            return sendDnsError(reply, 413, { id, queryFlags, rcode: 1 });
+          }
 
-            query = decodeBase64UrlToBuffer(dns);
-          } else {
-            const contentType = request.headers['content-type']?.split(';')[0]?.trim().toLowerCase();
-            if (contentType !== 'application/dns-message') {
-              return sendDnsError(reply, 415, { id: 0, rcode: 1 });
-            }
+          query = decodeBase64UrlToBuffer(dns);
+        } else {
+          const contentType = request.headers['content-type']?.split(';')[0]?.trim().toLowerCase();
+          if (contentType !== 'application/dns-message') {
+            return sendDnsError(reply, 415, { id: 0, rcode: 1 });
+          }
 
           const body = request.body;
           if (!Buffer.isBuffer(body)) {

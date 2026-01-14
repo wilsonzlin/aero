@@ -68,6 +68,14 @@ describe('DoH GET dns= decoding and size limits (property)', () => {
                // parsing without decoding the full payload).
                const header = decodeDnsHeader(res.rawPayload);
                assert.equal(header.id, query.readUInt16BE(0));
+               const queryFlags = query.readUInt16BE(2);
+               const expectedFlags =
+                 0x8000 | // QR
+                 (queryFlags & 0x7800) | // opcode
+                 (queryFlags & 0x0100) | // RD
+                 0x0080 | // RA
+                 0x0001; // FORMERR (rcode=1)
+               assert.equal(header.flags, expectedFlags);
              },
            ),
            { numRuns, interruptAfterTimeLimit: FC_TIME_LIMIT_MS },
