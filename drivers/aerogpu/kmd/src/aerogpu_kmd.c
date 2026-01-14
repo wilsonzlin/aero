@@ -3408,7 +3408,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
      * framebuffer.
      */
     if (pStopDeviceAndReleasePostDisplayOwnership) {
-        if (adapter->Bar0) {
+        if (poweredOn) {
             AEROGPU_SCANOUT_MMIO_SNAPSHOT mmio;
             if (AeroGpuGetScanoutMmioSnapshot(adapter, &mmio) && AeroGpuIsPlausibleScanoutSnapshot(&mmio)) {
                 adapter->CurrentWidth = mmio.Width;
@@ -3417,7 +3417,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
                 adapter->CurrentFormat = mmio.Format;
                 adapter->CurrentScanoutFbPa = mmio.FbPa;
             }
-        } else {
+        } else if (!adapter->Bar0) {
             PHYSICAL_ADDRESS zero;
             zero.QuadPart = 0;
             adapter->CurrentScanoutFbPa = zero;
@@ -3547,9 +3547,9 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
      * device is not mapped yet, or if the scanout registers are not plausible,
      * fall back to the cached mode and report no framebuffer address.
      */
-    if (adapter->Bar0) {
+    if (poweredOn) {
         /* Stop cursor DMA until the OS programs a new pointer shape. */
-        if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, 0);
@@ -3593,7 +3593,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
                 adapter->CurrentScanoutFbPa = zero;
             }
         }
-    } else {
+    } else if (!adapter->Bar0) {
         /* Device isn't mapped yet (early init / teardown). */
         PHYSICAL_ADDRESS zero;
         zero.QuadPart = 0;
