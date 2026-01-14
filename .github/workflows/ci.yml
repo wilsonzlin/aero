@@ -145,6 +145,9 @@ jobs:
       - name: Check AeroGPU WDK guard macros
         run: python3 scripts/ci/check-aerogpu-wdk-guards.py
 
+      - name: Check AeroGPU KMD submit size hardening
+        run: python3 scripts/ci/check-aerogpu-kmd-submit-size-guards.py
+
       - name: Check aero-d3d11 guest-memory imports
         run: python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
 
