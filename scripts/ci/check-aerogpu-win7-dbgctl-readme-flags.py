@@ -43,7 +43,11 @@ WIN7_VALIDATION_DOC = ROOT / "docs" / "graphics" / "win7-aerogpu-validation.md"
 # Extract flags from the actual argument parsing logic, not from the usage text,
 # so we catch cases where someone updates the help/README but forgets to plumb
 # the flag through the parser.
-CPP_FLAG_RE = re.compile(r'wcscmp\(\s*a\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)"\s*\)')
+#
+# Most flags are parsed via `wcscmp(a, L"--foo")`, but some options accept
+# `--flag=value` forms via prefix matching (e.g. `wcsncmp(a, L"--json=", 7)`).
+CPP_FLAG_WCSCMP_RE = re.compile(r'wcscmp\(\s*a\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)"\s*\)')
+CPP_FLAG_WCSNCMP_EQ_RE = re.compile(r'wcsncmp\(\s*a\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)="\s*,')
 MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 
 # We only scan markdown files in these dirs for dbgctl invocations.
@@ -182,7 +186,7 @@ def main() -> int:
         return 1
 
     src = read_text(DBGCTL_SRC)
-    allowed_flags = set(CPP_FLAG_RE.findall(src))
+    allowed_flags = set(CPP_FLAG_WCSCMP_RE.findall(src)) | set(CPP_FLAG_WCSNCMP_EQ_RE.findall(src))
 
     if not allowed_flags:
         print(
