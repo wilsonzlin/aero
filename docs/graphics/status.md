@@ -173,7 +173,7 @@ Test pointers:
 
 #### Legacy/sandbox (`crates/emulator`): separate device model + executor
 
-A more complete AeroGPU PCI device model (including scanout registers, vblank, and a command execution path) exists in `crates/emulator`.
+A more complete AeroGPU PCI device model (including a real command execution path via the `gpu_worker` backends) exists in `crates/emulator`.
 
 Code pointers:
 
