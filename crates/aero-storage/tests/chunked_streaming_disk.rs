@@ -2,7 +2,7 @@
 
 use aero_storage::{
     ChunkedStreamingDiskConfig, ChunkedStreamingDiskError, ChunkedStreamingDiskSync,
-    StreamingCacheBackend,
+    StreamingCacheBackend, SECTOR_SIZE,
 };
 use hyper::header::CONTENT_LENGTH;
 use hyper::service::{make_service_fn, service_fn};
@@ -184,7 +184,7 @@ fn build_manifest(image: &[u8], chunk_size: usize, version: &str) -> String {
 #[tokio::test(flavor = "current_thread")]
 async fn chunked_streaming_reads_and_reuses_cache() {
     // totalSize must be sector-aligned per the manifest spec/parser.
-    let image: Vec<u8> = (0..(4096 + 512)).map(|i| (i % 251) as u8).collect();
+    let image: Vec<u8> = (0..(4096 + SECTOR_SIZE)).map(|i| (i % 251) as u8).collect();
     let chunk_size = 1024usize;
     let manifest_body = build_manifest(&image, chunk_size, "v1");
     let (url, state, shutdown) =
