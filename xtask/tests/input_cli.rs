@@ -72,6 +72,9 @@ fn input_help_mentions_flags_and_steps() {
             "machine_input_batch_usb_consumer_control_unconfigured",
         ))
         .stdout(predicate::str::contains("machine_virtio_input"))
+        .stdout(predicate::str::contains("virtio_input_event_delivery"))
+        .stdout(predicate::str::contains("machine_keyboard_backend_switch"))
+        .stdout(predicate::str::contains("machine_mouse_backend_switch"))
         .stdout(predicate::str::contains("machine_uhci"))
         .stdout(predicate::str::contains("uhci_snapshot"))
         .stdout(predicate::str::contains("machine_uhci_snapshot_roundtrip"))
