@@ -11828,9 +11828,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
         ps_slot = &dev->fixedfunc_ps;
         break;
       case kSupportedFvfXyzrhwDiffuseTex1:
+      case kSupportedFvfXyzrhwTex1:
         ps_slot = &dev->fixedfunc_ps_tex1;
         break;
       case kSupportedFvfXyzDiffuseTex1:
+      case kSupportedFvfXyzTex1:
         ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
         break;
       default:
@@ -13920,9 +13922,11 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
         ps_slot = &dev->fixedfunc_ps;
         break;
       case kSupportedFvfXyzrhwDiffuseTex1:
+      case kSupportedFvfXyzrhwTex1:
         ps_slot = &dev->fixedfunc_ps_tex1;
         break;
       case kSupportedFvfXyzDiffuseTex1:
+      case kSupportedFvfXyzTex1:
         ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
         break;
       default:
