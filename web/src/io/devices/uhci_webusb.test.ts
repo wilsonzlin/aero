@@ -85,7 +85,7 @@ describe("UhciWebUsbPciDevice", () => {
     expect(lowerIrq).toHaveBeenCalledWith(dev.irqLine);
   });
 
-  it("gates DMA stepping on PCI Bus Master Enable (command bit 2)", () => {
+  it("gates DMA stepping on PCI Bus Master Enable (command bit 2) when set_pci_command is unavailable", () => {
     const step_frames = vi.fn();
     const dev = new UhciWebUsbPciDevice({
       bridge: {
@@ -107,6 +107,31 @@ describe("UhciWebUsbPciDevice", () => {
     dev.tick(9);
     expect(step_frames).toHaveBeenCalledTimes(1);
     expect(step_frames).toHaveBeenCalledWith(1);
+  });
+
+  it("advances time while BME is off when the bridge supports set_pci_command", () => {
+    const step_frames = vi.fn();
+    const dev = new UhciWebUsbPciDevice({
+      bridge: {
+        io_read: vi.fn(() => 0),
+        io_write: vi.fn(),
+        step_frames,
+        irq_level: vi.fn(() => false),
+        set_pci_command: vi.fn(),
+        free: vi.fn(),
+      },
+      irqSink: { raiseIrq: vi.fn(), lowerIrq: vi.fn() },
+    });
+
+    dev.tick(0);
+    dev.tick(8);
+    expect(step_frames).toHaveBeenCalledTimes(1);
+    expect(step_frames).toHaveBeenCalledWith(8);
+
+    dev.onPciCommandWrite?.(1 << 2);
+    dev.tick(9);
+    expect(step_frames).toHaveBeenCalledTimes(2);
+    expect(step_frames).toHaveBeenLastCalledWith(1);
   });
 
   it("suppresses INTx assertion when PCI command INTX_DISABLE bit is set", () => {

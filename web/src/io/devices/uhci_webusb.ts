@@ -126,10 +126,14 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     // PCI Bus Master Enable (command bit 2) gates whether the controller is allowed to DMA into
     // guest memory (frame list / QH / TD traversal and data stage transfers).
     //
-    // When bus mastering is disabled, drop elapsed time so we do not "catch up" later; DMA must not
-    // occur until the guest enables BME.
+    // UHCI internal time (frame counter, port timers) should keep progressing even when BME=0; when
+    // the underlying bridge supports `set_pci_command`, it can enforce DMA gating internally and
+    // we can keep advancing time while BME is disabled.
+    //
+    // For backwards compatibility with older WASM builds that may not implement DMA gating, we
+    // conservatively freeze time until BME is enabled *unless* `set_pci_command` is available.
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
-    if (!busMasterEnabled) {
+    if (!busMasterEnabled && typeof this.#bridge.set_pci_command !== "function") {
       this.#accumulatedMs = 0;
       this.#syncIrq();
       return;
