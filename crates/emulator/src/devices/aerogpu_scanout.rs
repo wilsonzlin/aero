@@ -1,10 +1,7 @@
 use memory::MemoryBus;
 
-use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat as ProtocolAerogpuFormat;
-use aero_shared::scanout_state::{
-    ScanoutStateUpdate, SCANOUT_FORMAT_B5G5R5A1, SCANOUT_FORMAT_B5G6R5, SCANOUT_FORMAT_B8G8R8A8,
-    SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB,
-};
+pub use aero_devices_gpu::AeroGpuFormat;
+use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8};
 
 // -----------------------------------------------------------------------------
 // Defensive caps (host readback paths)
@@ -26,115 +23,6 @@ const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixe
 // - `*_SRGB` formats are byte-layout-identical to their UNORM counterparts; only the color space
 //   interpretation differs (sampling decodes sRGB→linear; render-target writes may encode
 //   linear→sRGB). Presenters must avoid double-applying gamma.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum AeroGpuFormat {
-    Invalid = ProtocolAerogpuFormat::Invalid as u32,
-    B8G8R8A8Unorm = ProtocolAerogpuFormat::B8G8R8A8Unorm as u32,
-    B8G8R8X8Unorm = ProtocolAerogpuFormat::B8G8R8X8Unorm as u32,
-    R8G8B8A8Unorm = ProtocolAerogpuFormat::R8G8B8A8Unorm as u32,
-    R8G8B8X8Unorm = ProtocolAerogpuFormat::R8G8B8X8Unorm as u32,
-    B5G6R5Unorm = ProtocolAerogpuFormat::B5G6R5Unorm as u32,
-    B5G5R5A1Unorm = ProtocolAerogpuFormat::B5G5R5A1Unorm as u32,
-    B8G8R8A8UnormSrgb = ProtocolAerogpuFormat::B8G8R8A8UnormSrgb as u32,
-    B8G8R8X8UnormSrgb = ProtocolAerogpuFormat::B8G8R8X8UnormSrgb as u32,
-    R8G8B8A8UnormSrgb = ProtocolAerogpuFormat::R8G8B8A8UnormSrgb as u32,
-    R8G8B8X8UnormSrgb = ProtocolAerogpuFormat::R8G8B8X8UnormSrgb as u32,
-    D24UnormS8Uint = ProtocolAerogpuFormat::D24UnormS8Uint as u32,
-    D32Float = ProtocolAerogpuFormat::D32Float as u32,
-    // The scanout/cursor paths do not currently support BC formats, but we keep them representable
-    // so the software executor can compute backing sizes (and ignore them when presenting).
-    Bc1Unorm = ProtocolAerogpuFormat::BC1RgbaUnorm as u32,
-    Bc1UnormSrgb = ProtocolAerogpuFormat::BC1RgbaUnormSrgb as u32,
-    Bc2Unorm = ProtocolAerogpuFormat::BC2RgbaUnorm as u32,
-    Bc2UnormSrgb = ProtocolAerogpuFormat::BC2RgbaUnormSrgb as u32,
-    Bc3Unorm = ProtocolAerogpuFormat::BC3RgbaUnorm as u32,
-    Bc3UnormSrgb = ProtocolAerogpuFormat::BC3RgbaUnormSrgb as u32,
-    Bc7Unorm = ProtocolAerogpuFormat::BC7RgbaUnorm as u32,
-    Bc7UnormSrgb = ProtocolAerogpuFormat::BC7RgbaUnormSrgb as u32,
-}
-
-impl AeroGpuFormat {
-    pub fn from_u32(value: u32) -> Self {
-        if value == Self::B8G8R8A8Unorm as u32 {
-            Self::B8G8R8A8Unorm
-        } else if value == Self::B8G8R8X8Unorm as u32 {
-            Self::B8G8R8X8Unorm
-        } else if value == Self::R8G8B8A8Unorm as u32 {
-            Self::R8G8B8A8Unorm
-        } else if value == Self::R8G8B8X8Unorm as u32 {
-            Self::R8G8B8X8Unorm
-        } else if value == Self::B5G6R5Unorm as u32 {
-            Self::B5G6R5Unorm
-        } else if value == Self::B5G5R5A1Unorm as u32 {
-            Self::B5G5R5A1Unorm
-        } else if value == Self::B8G8R8A8UnormSrgb as u32 {
-            Self::B8G8R8A8UnormSrgb
-        } else if value == Self::B8G8R8X8UnormSrgb as u32 {
-            Self::B8G8R8X8UnormSrgb
-        } else if value == Self::R8G8B8A8UnormSrgb as u32 {
-            Self::R8G8B8A8UnormSrgb
-        } else if value == Self::R8G8B8X8UnormSrgb as u32 {
-            Self::R8G8B8X8UnormSrgb
-        } else if value == Self::D24UnormS8Uint as u32 {
-            Self::D24UnormS8Uint
-        } else if value == Self::D32Float as u32 {
-            Self::D32Float
-        } else if value == Self::Bc1Unorm as u32 {
-            Self::Bc1Unorm
-        } else if value == Self::Bc1UnormSrgb as u32 {
-            Self::Bc1UnormSrgb
-        } else if value == Self::Bc2Unorm as u32 {
-            Self::Bc2Unorm
-        } else if value == Self::Bc2UnormSrgb as u32 {
-            Self::Bc2UnormSrgb
-        } else if value == Self::Bc3Unorm as u32 {
-            Self::Bc3Unorm
-        } else if value == Self::Bc3UnormSrgb as u32 {
-            Self::Bc3UnormSrgb
-        } else if value == Self::Bc7Unorm as u32 {
-            Self::Bc7Unorm
-        } else if value == Self::Bc7UnormSrgb as u32 {
-            Self::Bc7UnormSrgb
-        } else {
-            Self::Invalid
-        }
-    }
-
-    pub fn bytes_per_pixel(self) -> Option<usize> {
-        match self {
-            Self::B8G8R8A8Unorm
-            | Self::B8G8R8X8Unorm
-            | Self::R8G8B8A8Unorm
-            | Self::R8G8B8X8Unorm
-            | Self::B8G8R8A8UnormSrgb
-            | Self::B8G8R8X8UnormSrgb
-            | Self::R8G8B8A8UnormSrgb
-            | Self::R8G8B8X8UnormSrgb => Some(4),
-            Self::B5G6R5Unorm | Self::B5G5R5A1Unorm => Some(2),
-            _ => None,
-        }
-    }
-
-    /// Map an AeroGPU pixel format (`enum aerogpu_format`) to the shared scanout descriptor format
-    /// field (`ScanoutStateUpdate::format`).
-    ///
-    /// The scanout descriptor stores AeroGPU format discriminants (`u32`) directly, but scanout
-    /// consumers (e.g. web presenters) only support a small subset of formats today.
-    pub fn to_scanout_state_format(self) -> Option<u32> {
-        match self {
-            Self::B8G8R8X8Unorm => Some(SCANOUT_FORMAT_B8G8R8X8),
-            Self::B8G8R8A8Unorm => Some(SCANOUT_FORMAT_B8G8R8A8),
-            Self::R8G8B8X8Unorm | Self::R8G8B8A8Unorm => Some(self as u32),
-            Self::B5G6R5Unorm => Some(SCANOUT_FORMAT_B5G6R5),
-            Self::B5G5R5A1Unorm => Some(SCANOUT_FORMAT_B5G5R5A1),
-            Self::B8G8R8X8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8X8_SRGB),
-            Self::B8G8R8A8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8A8_SRGB),
-            Self::R8G8B8X8UnormSrgb | Self::R8G8B8A8UnormSrgb => Some(self as u32),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuScanoutConfig {
@@ -182,10 +70,6 @@ impl AeroGpuScanoutConfig {
             return Self::disabled_scanout_state_update(source);
         }
 
-        let Some(format) = self.format.to_scanout_state_format() else {
-            return Self::disabled_scanout_state_update(source);
-        };
-
         let width = self.width;
         let height = self.height;
         if width == 0 || height == 0 {
@@ -202,6 +86,7 @@ impl AeroGpuScanoutConfig {
         let Some(bytes_per_pixel) = self.format.bytes_per_pixel() else {
             return Self::disabled_scanout_state_update(source);
         };
+        let format = self.format as u32;
 
         // Validate pitch >= width*bytes_per_pixel and that address arithmetic doesn't overflow.
         let row_bytes = u64::from(width).checked_mul(bytes_per_pixel as u64);
@@ -545,7 +430,10 @@ pub fn composite_cursor_rgba_over_scanout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_shared::scanout_state::SCANOUT_SOURCE_WDDM;
+    use aero_shared::scanout_state::{
+        SCANOUT_FORMAT_B5G5R5A1, SCANOUT_FORMAT_B5G6R5, SCANOUT_FORMAT_B8G8R8A8,
+        SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_WDDM,
+    };
 
     #[derive(Clone, Debug)]
     struct VecMemory {
