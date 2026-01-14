@@ -183,6 +183,13 @@ Shaders
   * `D3D10DDIARG_CREATEVERTEXSHADER`
 * `pfnCalcPrivatePixelShaderSize` + `pfnCreatePixelShader` + `pfnDestroyPixelShader`
   * `D3D10DDIARG_CREATEPIXELSHADER`
+* Geometry shader (required for D3D10-class compatibility; do not stub if you advertise FL10_0+ for D3D11)
+  * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
+  * `D3D10DDIARG_CREATEGEOMETRYSHADER`
+  * note: the GS stage can be left unbound, but real apps (and tests) may create/bind/execute GS at D3D10/FL10_0 class.
+  * AeroGPU note: WebGPU has no geometry shader stage; AeroGPU forwards GS DXBC and emulates it on the host by inserting a compute prepass when GS is bound.
+    Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
+  * If the host backend cannot run compute pipelines, treat GS support as a capability gate: prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 rather than claiming FL10_0+ with a non-functional GS path.
 
 Pipeline state
 * `pfnCalcPrivateElementLayoutSize` + `pfnCreateElementLayout` + `pfnDestroyElementLayout`
@@ -198,11 +205,6 @@ Pipeline state
 
 **Initially NOT_SUPPORTED (safe to stub):**
 
-* Geometry shader object creation:
-  * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
-  * note: the **GS stage exists in D3D10**, but many “first triangle” tests never create/bind a GS (it is valid to have no GS bound).
-  * AeroGPU note: WebGPU has no geometry shader stage. AeroGPU forwards GS DXBC and emulates GS via a host-side **WebGPU compute prepass** (GS-as-compute expansion into intermediate vertex/index buffers, then render with a passthrough VS + the original PS).
-    See [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
 * Stream-output state / SO buffers (`pfnSoSetTargets`, etc)
 * Queries/predication:
   * `pfnCreateQuery` / `pfnDestroyQuery`, `pfnBegin` / `pfnEnd`, `pfnSetPredication`
@@ -224,6 +226,12 @@ Shaders
 * `pfnPsSetConstantBuffers`
 * `pfnVsSetShaderResources` / `pfnPsSetShaderResources` (for texture test)
 * `pfnVsSetSamplers` / `pfnPsSetSamplers` (for texture test)
+
+Geometry shader stage (D3D10-class pipeline; required if you expect FL10_0+ GS workloads)
+* `pfnGsSetShader`
+* `pfnGsSetConstantBuffers`
+* `pfnGsSetShaderResources`
+* `pfnGsSetSamplers`
 
 Rasterizer / Output merger
 * `pfnSetViewports`
@@ -375,7 +383,7 @@ Geometry shader note:
 
 * Geometry shaders are part of the D3D10-class pipeline and are expected at `D3D_FEATURE_LEVEL_10_0` and above.
 * If you advertise **FL10_0** (or higher) from `pfnGetCaps`, implement `pfnCreateGeometryShader` / `D3D11DDIARG_CREATEGEOMETRYSHADER` (and the corresponding bind/state entrypoints) even if the first implementation is “limited but functional”.
-  * **Outdated MVP note:** earlier bring-up guidance suggested “accept GS creation but ignore it”. This is no longer viable once you run real GS workloads and the Win7 regression tests below.
+  * **Outdated MVP note:** older bring-up notes suggested “accept GS creation but ignore it”. This is no longer viable once you run real GS workloads and the Win7 regression tests below.
   * **AeroGPU approach (current): forward GS DXBC and emulate on the host (WebGPU).**
     * The guest UMD treats GS like VS/PS: it forwards the DXBC blob to the host and participates in normal shader lifetime + binding.
     * Since WebGPU has **no GS stage**, AeroGPU emulates GS by inserting a **compute prepass** when a GS is bound:
@@ -388,7 +396,7 @@ Geometry shader note:
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke` — basic GS create/bind/execute path.
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip` — validates `TriangleStream::RestartStrip` / DXBC `cut` handling.
     * This matters because AeroGPU commonly expands GS `line_strip`/`triangle_strip` outputs into lists; if you drop the cut/restart markers you can generate “bridging” segments/triangles between strips (visible corruption, and this test fails by detecting pixels filled in the gap between two emitted strips).
-* If you are not ready to support GS (e.g. host backend without compute), prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), or be explicit that some FL10_0 apps will fail when they create/bind GS.
+* If you are not ready to support GS (e.g. a host backend without compute pipelines), treat this as a capability gate: prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), rather than claiming FL10_0+ with a non-functional GS path.
 
 #### 2.2.3 Mandatory context/state binding + draw path
 
