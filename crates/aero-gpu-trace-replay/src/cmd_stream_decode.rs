@@ -475,7 +475,7 @@ fn decode_known_fields(
             Err(err) => {
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
-        }
+        },
         AerogpuCmdOpcode::DestroyShader => {
             if let (Some(shader_handle), Some(_reserved0)) =
                 (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))

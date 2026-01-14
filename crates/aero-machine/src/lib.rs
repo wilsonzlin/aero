@@ -3715,8 +3715,9 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
                 Some(b) => b,
                 None => return false,
             };
-            let byte_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                as usize;
+            let byte_len =
+                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                    as usize;
             let payload_end = off.saturating_add(8).saturating_add(byte_len);
             return bytes.len() >= payload_end;
         }
@@ -4019,8 +4020,9 @@ fn apply_aerogpu_snapshot_v2(
                 Some(b) => b,
                 None => return false,
             };
-            let byte_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                as usize;
+            let byte_len =
+                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                    as usize;
             let payload_end = off.saturating_add(8).saturating_add(byte_len);
             return bytes.len() >= payload_end;
         }

@@ -12300,9 +12300,12 @@ impl AerogpuD3d11Executor {
                         .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflow"))?,
                     size_bytes,
                 )?;
-                let src_gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + src_offset_bytes;
+                let src_gpa =
+                    allocs.gpa(backing.alloc_id)? + backing.offset_bytes + src_offset_bytes;
                 let mut tmp = vec![0u8; size_usize];
-                guest_mem.read(src_gpa, &mut tmp).map_err(anyhow_guest_mem)?;
+                guest_mem
+                    .read(src_gpa, &mut tmp)
+                    .map_err(anyhow_guest_mem)?;
                 Some(tmp)
             } else {
                 None
@@ -16375,7 +16378,8 @@ impl AerogpuD3d11Executor {
                 bail!("buffer upload overruns wgpu buffer allocation");
             }
 
-            self.queue.write_buffer(wgpu_buffer, offset, &tmp[..write_len]);
+            self.queue
+                .write_buffer(wgpu_buffer, offset, &tmp[..write_len]);
             offset += n as u64;
         }
 
