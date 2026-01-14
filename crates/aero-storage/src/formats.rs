@@ -3,7 +3,7 @@ use crate::{AeroSparseDisk, DiskError, Qcow2Disk, RawDisk, Result, StorageBacken
 const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
 const AEROSPAR_MAGIC: [u8; 8] = *b"AEROSPAR";
 const VHD_COOKIE: [u8; 8] = *b"conectix";
-const VHD_FOOTER_SIZE: usize = 512;
+const VHD_FOOTER_SIZE: usize = crate::SECTOR_SIZE;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DiskFormat {

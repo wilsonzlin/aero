@@ -452,7 +452,7 @@ fn block_cache_partial_write_reads_underlying_for_merge() {
 fn block_cache_reports_allocation_failure_as_quota_exceeded() {
     // Use an absurd block size that should fail `try_reserve_exact` deterministically (capacity
     // overflow) without actually attempting to allocate.
-    let raw = RawDisk::create(MemBackend::new(), 512).unwrap();
+    let raw = RawDisk::create(MemBackend::new(), SECTOR_SIZE as u64).unwrap();
     let mut cached = BlockCachedDisk::new(raw, usize::MAX, 1).unwrap();
 
     let mut buf = [0u8; 1];
@@ -701,7 +701,7 @@ fn sparse_open_rejects_table_entries_mismatch() {
 fn sparse_open_rejects_bad_data_offset() {
     let mut backend = MemBackend::new();
     let mut header = make_header(8192, 4096, 0);
-    header.data_offset -= 512;
+    header.data_offset -= SECTOR_SIZE as u64;
     backend.write_at(0, &header.encode()).unwrap();
     let err = open_sparse_err(backend);
     assert!(matches!(err, DiskError::InvalidSparseHeader(_)));
@@ -745,7 +745,7 @@ fn sparse_open_rejects_table_entry_before_data_offset() {
     let mut backend = MemBackend::new();
     // Use a small block size + many table entries so `data_offset` is larger than a single
     // block and we can craft a block-aligned offset that still points into metadata.
-    let header = make_header(512 * 100, 512, 1);
+    let header = make_header((SECTOR_SIZE as u64) * 100, SECTOR_SIZE as u32, 1);
     backend.write_at(0, &header.encode()).unwrap();
     let phys = header.block_size_u64(); // aligned, non-zero, but < data_offset
     write_table(
@@ -851,7 +851,11 @@ fn read_only_disk_allows_reads_but_blocks_writes() {
 fn sparse_open_rejects_huge_allocation_table() {
     let mut backend = MemBackend::new();
     // 1,000,000,000 entries => 8 GiB table.
-    let header = make_header(512 * 1_000_000_000, 512, 0);
+    let header = make_header(
+        (SECTOR_SIZE as u64) * 1_000_000_000,
+        SECTOR_SIZE as u32,
+        0,
+    );
     backend.write_at(0, &header.encode()).unwrap();
     let err = open_sparse_err(backend);
     assert!(matches!(

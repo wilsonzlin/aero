@@ -39,7 +39,7 @@ const CACHE_FILE_NAME: &str = "chunked-cache.bin";
 
 const CACHE_META_VERSION: u32 = 1;
 
-const SECTOR_SIZE_BYTES: u64 = 512;
+const SECTOR_SIZE_BYTES: u64 = crate::SECTOR_SIZE as u64;
 
 // Keep these bounds aligned with `web/src/storage/remote_chunked_disk.ts` where sensible.
 // 64 MiB.
@@ -1408,8 +1408,8 @@ mod tests {
             schema: MANIFEST_SCHEMA_V1.to_string(),
             version: "v1".to_string(),
             mime_type: "application/octet-stream".to_string(),
-            total_size: 1024,
-            chunk_size: 512,
+            total_size: 2 * SECTOR_SIZE_BYTES,
+            chunk_size: SECTOR_SIZE_BYTES,
             chunk_count: 2,
             chunk_index_width: 1,
             chunks: None,
@@ -1440,8 +1440,8 @@ mod tests {
         let manifest = parse_manifest_v1(valid_manifest_raw()).expect("expected manifest to parse");
         assert_eq!(manifest.version, "v1");
         assert_eq!(manifest.mime_type, "application/octet-stream");
-        assert_eq!(manifest.total_size, 1024);
-        assert_eq!(manifest.chunk_size, 512);
+        assert_eq!(manifest.total_size, 2 * SECTOR_SIZE_BYTES);
+        assert_eq!(manifest.chunk_size, SECTOR_SIZE_BYTES);
         assert_eq!(manifest.chunk_count, 2);
         assert_eq!(manifest.chunk_index_width, 1);
         assert_eq!(manifest.chunk_sha256.len(), 2);
@@ -1453,11 +1453,11 @@ mod tests {
         let mut raw = valid_manifest_raw();
         raw.chunks = Some(vec![
             ChunkEntryRaw {
-                size: Some(512),
+                size: Some(SECTOR_SIZE_BYTES),
                 sha256: Some("0".repeat(64)),
             },
             ChunkEntryRaw {
-                size: Some(512),
+                size: Some(SECTOR_SIZE_BYTES),
                 sha256: None,
             },
         ]);
@@ -1498,7 +1498,7 @@ mod tests {
     #[test]
     fn parse_manifest_v1_rejects_chunk_index_width_too_small() {
         let mut raw = valid_manifest_raw();
-        raw.total_size = 512 * 100;
+        raw.total_size = SECTOR_SIZE_BYTES * 100;
         raw.chunk_count = 100;
         raw.chunk_index_width = 1;
         let err = parse_manifest_v1(raw).expect_err("expected chunkIndexWidth too small");
@@ -1516,7 +1516,7 @@ mod tests {
     fn parse_manifest_v1_rejects_chunks_length_mismatch() {
         let mut raw = valid_manifest_raw();
         raw.chunks = Some(vec![ChunkEntryRaw {
-            size: Some(512),
+            size: Some(SECTOR_SIZE_BYTES),
             sha256: None,
         }]);
         let err = parse_manifest_v1(raw).expect_err("expected chunks length mismatch");
@@ -1538,7 +1538,7 @@ mod tests {
                 sha256: None,
             },
             ChunkEntryRaw {
-                size: Some(512),
+                size: Some(SECTOR_SIZE_BYTES),
                 sha256: None,
             },
         ]);
@@ -1558,11 +1558,11 @@ mod tests {
         let mut raw = valid_manifest_raw();
         raw.chunks = Some(vec![
             ChunkEntryRaw {
-                size: Some(512),
+                size: Some(SECTOR_SIZE_BYTES),
                 sha256: Some("deadbeef".to_string()),
             },
             ChunkEntryRaw {
-                size: Some(512),
+                size: Some(SECTOR_SIZE_BYTES),
                 sha256: None,
             },
         ]);
