@@ -2,7 +2,7 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::stats::GpuStats;
@@ -39,6 +39,12 @@ fn env_var_truthy(name: &str) -> bool {
 fn texture_compression_disabled_by_env() -> bool {
     env_var_truthy("AERO_DISABLE_WGPU_TEXTURE_COMPRESSION")
 }
+
+// NOTE: Some wgpu backends (especially Vulkan software adapters) are prone to crashes when
+// repeatedly creating/dropping devices in a single process. These tests create headless wgpu
+// devices, so reuse the device+executor across tests to keep the suite reliable.
+static EXECUTOR_NO_BC: OnceLock<Mutex<Option<AerogpuD3d9Executor>>> = OnceLock::new();
+static EXECUTOR_WITH_BC: OnceLock<Mutex<Option<AerogpuD3d9Executor>>> = OnceLock::new();
 
 async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
@@ -170,6 +176,24 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
     }
 
     try_create(wgpu::Backends::all()).await
+}
+
+fn with_no_bc_executor<R>(f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
+    let mutex = EXECUTOR_NO_BC
+        .get_or_init(|| Mutex::new(pollster::block_on(create_executor_no_bc_features())));
+    let mut guard = mutex.lock().unwrap();
+    let exec = guard.as_mut()?;
+    exec.reset();
+    Some(f(exec))
+}
+
+fn with_bc_executor<R>(f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
+    let mutex = EXECUTOR_WITH_BC
+        .get_or_init(|| Mutex::new(pollster::block_on(create_executor_with_bc_features())));
+    let mut guard = mutex.lock().unwrap();
+    let exec = guard.as_mut()?;
+    exec.reset();
+    Some(f(exec))
 }
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
@@ -590,51 +614,45 @@ fn d3d9_cmd_stream_bc2_texture_direct_upload_and_sample() {
 
 #[test]
 fn d3d9_cmd_stream_bc1_texture_direct_create_falls_back_for_tiny_dimensions() {
-    let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            if texture_compression_disabled_by_env() {
-                common::skip_or_panic(
-                    module_path!(),
-                    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set",
-                );
-            } else {
-                common::skip_or_panic(
-                    module_path!(),
-                    "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
-                );
-            }
-            return;
+    let Some(()) = with_bc_executor(|exec| {
+        const TEX_HANDLE: u32 = 1;
+
+        let mut stream = AerogpuCmdWriter::new();
+        // wgpu validation rejects native BC texture creation when the base mip dimensions are not
+        // 4x4 block-aligned (e.g. 1x1 BC1). Ensure the D3D9 executor falls back to an uncompressed
+        // host texture rather than triggering a validation error.
+        stream.create_texture2d(
+            TEX_HANDLE,
+            AEROGPU_RESOURCE_USAGE_TEXTURE,
+            AEROGPU_FORMAT_BC1_RGBA_UNORM,
+            1,
+            1,
+            1,
+            1,
+            0, // row_pitch_bytes (not needed for host-owned textures)
+            0,
+            0,
+        );
+
+        let mut guest_memory = VecGuestMemory::new(0x1000);
+        exec.execute_cmd_stream_with_guest_memory(&stream.finish(), &mut guest_memory, None)
+            .expect("execute should succeed");
+
+        let (w, h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_HANDLE))
+            .expect("readback should succeed for RGBA8 fallback textures");
+        assert_eq!((w, h), (1, 1));
+        assert_eq!(rgba.len(), 4);
+    }) else {
+        if texture_compression_disabled_by_env() {
+            common::skip_or_panic(module_path!(), "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set");
+        } else {
+            common::skip_or_panic(
+                module_path!(),
+                "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
+            );
         }
+        return;
     };
-
-    const TEX_HANDLE: u32 = 1;
-
-    let mut stream = AerogpuCmdWriter::new();
-    // wgpu validation rejects native BC texture creation when the base mip dimensions are not
-    // 4x4 block-aligned (e.g. 1x1 BC1). Ensure the D3D9 executor falls back to an uncompressed
-    // host texture rather than triggering a validation error.
-    stream.create_texture2d(
-        TEX_HANDLE,
-        AEROGPU_RESOURCE_USAGE_TEXTURE,
-        AEROGPU_FORMAT_BC1_RGBA_UNORM,
-        1,
-        1,
-        1,
-        1,
-        0, // row_pitch_bytes (not needed for host-owned textures)
-        0,
-        0,
-    );
-
-    let mut guest_memory = VecGuestMemory::new(0x1000);
-    exec.execute_cmd_stream_with_guest_memory(&stream.finish(), &mut guest_memory, None)
-        .expect("execute should succeed");
-
-    let (w, h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_HANDLE))
-        .expect("readback should succeed for RGBA8 fallback textures");
-    assert_eq!((w, h), (1, 1));
-    assert_eq!(rgba.len(), 4);
 }
 
 fn run_bc_texture_cpu_fallback_upload_and_sample(
@@ -643,22 +661,19 @@ fn run_bc_texture_cpu_fallback_upload_and_sample(
     sample_block_bytes: &[u8],
     expected_rgba: [u8; 4],
 ) {
-    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
+    let Some(()) = with_no_bc_executor(|exec| {
+        run_bc_texture_upload_and_sample(
+            exec,
+            sample_format,
+            sample_row_pitch_bytes,
+            sample_block_bytes,
+            expected_rgba,
+            true,
+        );
+    }) else {
+        common::skip_or_panic(module_path!(), "wgpu adapter not found");
+        return;
     };
-
-    run_bc_texture_upload_and_sample(
-        &mut exec,
-        sample_format,
-        sample_row_pitch_bytes,
-        sample_block_bytes,
-        expected_rgba,
-        true,
-    );
 }
 
 fn run_bc_texture_direct_upload_and_sample(
@@ -667,32 +682,26 @@ fn run_bc_texture_direct_upload_and_sample(
     sample_block_bytes: &[u8],
     expected_rgba: [u8; 4],
 ) {
-    let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            if texture_compression_disabled_by_env() {
-                common::skip_or_panic(
-                    module_path!(),
-                    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set",
-                );
-            } else {
-                common::skip_or_panic(
-                    module_path!(),
-                    "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
-                );
-            }
-            return;
+    let Some(()) = with_bc_executor(|exec| {
+        run_bc_texture_upload_and_sample(
+            exec,
+            sample_format,
+            sample_row_pitch_bytes,
+            sample_block_bytes,
+            expected_rgba,
+            false,
+        );
+    }) else {
+        if texture_compression_disabled_by_env() {
+            common::skip_or_panic(module_path!(), "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set");
+        } else {
+            common::skip_or_panic(
+                module_path!(),
+                "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
+            );
         }
+        return;
     };
-
-    run_bc_texture_upload_and_sample(
-        &mut exec,
-        sample_format,
-        sample_row_pitch_bytes,
-        sample_block_bytes,
-        expected_rgba,
-        false,
-    );
 }
 
 fn run_bc_texture_direct_guest_backed_upload_and_sample(
@@ -701,32 +710,26 @@ fn run_bc_texture_direct_guest_backed_upload_and_sample(
     sample_block_bytes: &[u8],
     expected_rgba: [u8; 4],
 ) {
-    let mut exec = match pollster::block_on(create_executor_with_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            if texture_compression_disabled_by_env() {
-                common::skip_or_panic(
-                    module_path!(),
-                    "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set",
-                );
-            } else {
-                common::skip_or_panic(
-                    module_path!(),
-                    "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
-                );
-            }
-            return;
+    let Some(()) = with_bc_executor(|exec| {
+        run_bc_texture_guest_backed_upload_and_sample(
+            exec,
+            sample_format,
+            sample_row_pitch_bytes,
+            sample_block_bytes,
+            expected_rgba,
+            false,
+        );
+    }) else {
+        if texture_compression_disabled_by_env() {
+            common::skip_or_panic(module_path!(), "AERO_DISABLE_WGPU_TEXTURE_COMPRESSION is set");
+        } else {
+            common::skip_or_panic(
+                module_path!(),
+                "wgpu adapter/device with TEXTURE_COMPRESSION_BC not found",
+            );
         }
+        return;
     };
-
-    run_bc_texture_guest_backed_upload_and_sample(
-        &mut exec,
-        sample_format,
-        sample_row_pitch_bytes,
-        sample_block_bytes,
-        expected_rgba,
-        false,
-    );
 }
 
 fn run_bc_texture_cpu_fallback_guest_backed_upload_and_sample(
@@ -735,22 +738,19 @@ fn run_bc_texture_cpu_fallback_guest_backed_upload_and_sample(
     sample_block_bytes: &[u8],
     expected_rgba: [u8; 4],
 ) {
-    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
+    let Some(()) = with_no_bc_executor(|exec| {
+        run_bc_texture_guest_backed_upload_and_sample(
+            exec,
+            sample_format,
+            sample_row_pitch_bytes,
+            sample_block_bytes,
+            expected_rgba,
+            true,
+        );
+    }) else {
+        common::skip_or_panic(module_path!(), "wgpu adapter not found");
+        return;
     };
-
-    run_bc_texture_guest_backed_upload_and_sample(
-        &mut exec,
-        sample_format,
-        sample_row_pitch_bytes,
-        sample_block_bytes,
-        expected_rgba,
-        true,
-    );
 }
 
 fn run_bc_texture_guest_backed_upload_and_sample(
@@ -1229,93 +1229,84 @@ fn run_bc_texture_upload_and_sample(
 
 #[test]
 fn d3d9_bc1_misaligned_copy_region_is_rejected() {
-    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
+    let Some(()) = with_no_bc_executor(|exec| {
+        const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+        const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+        const SRC_TEX: u32 = 1;
+        const DST_TEX: u32 = 2;
+
+        let stream = build_stream(|out| {
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, SRC_TEX);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+                push_u32(out, 8); // width
+                push_u32(out, 8); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 16); // row_pitch_bytes (2 BC1 blocks)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+                push_u32(out, DST_TEX);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
+                push_u32(out, 8); // width
+                push_u32(out, 8); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 16); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // src_x=2 is not 4-aligned for BC formats. The executor should reject this before wgpu
+            // validation (especially in the CPU-decompression fallback path where the actual wgpu
+            // textures are RGBA8 and wgpu would otherwise allow the copy).
+            emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+                push_u32(out, DST_TEX);
+                push_u32(out, SRC_TEX);
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 0); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 2); // src_x (misaligned)
+                push_u32(out, 0); // src_y
+                push_u32(out, 4); // width
+                push_u32(out, 4); // height
+                push_u32(out, 0); // flags
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let err = exec
+            .execute_cmd_stream(&stream)
+            .expect_err("misaligned BC copy should fail");
+        match err {
+            AerogpuD3d9Error::Validation(msg) => {
+                assert!(
+                    msg.contains("BC copy origin") || msg.contains("BC copy"),
+                    "unexpected validation message: {msg}"
+                );
+            }
+            other => panic!("expected Validation error, got {other:?}"),
         }
+    }) else {
+        common::skip_or_panic(module_path!(), "wgpu adapter not found");
+        return;
     };
-
-    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
-    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
-
-    const SRC_TEX: u32 = 1;
-    const DST_TEX: u32 = 2;
-
-    let stream = build_stream(|out| {
-        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, SRC_TEX);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
-            push_u32(out, 8); // width
-            push_u32(out, 8); // height
-            push_u32(out, 1); // mip_levels
-            push_u32(out, 1); // array_layers
-            push_u32(out, 16); // row_pitch_bytes (2 BC1 blocks)
-            push_u32(out, 0); // backing_alloc_id
-            push_u32(out, 0); // backing_offset_bytes
-            push_u64(out, 0); // reserved0
-        });
-
-        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
-            push_u32(out, DST_TEX);
-            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
-            push_u32(out, AEROGPU_FORMAT_BC1_RGBA_UNORM);
-            push_u32(out, 8); // width
-            push_u32(out, 8); // height
-            push_u32(out, 1); // mip_levels
-            push_u32(out, 1); // array_layers
-            push_u32(out, 16); // row_pitch_bytes
-            push_u32(out, 0); // backing_alloc_id
-            push_u32(out, 0); // backing_offset_bytes
-            push_u64(out, 0); // reserved0
-        });
-
-        // src_x=2 is not 4-aligned for BC formats. The executor should reject this before wgpu
-        // validation (especially in the CPU-decompression fallback path where the actual wgpu
-        // textures are RGBA8 and wgpu would otherwise allow the copy).
-        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
-            push_u32(out, DST_TEX);
-            push_u32(out, SRC_TEX);
-            push_u32(out, 0); // dst_mip_level
-            push_u32(out, 0); // dst_array_layer
-            push_u32(out, 0); // src_mip_level
-            push_u32(out, 0); // src_array_layer
-            push_u32(out, 0); // dst_x
-            push_u32(out, 0); // dst_y
-            push_u32(out, 2); // src_x (misaligned)
-            push_u32(out, 0); // src_y
-            push_u32(out, 4); // width
-            push_u32(out, 4); // height
-            push_u32(out, 0); // flags
-            push_u32(out, 0); // reserved0
-        });
-    });
-
-    let err = exec
-        .execute_cmd_stream(&stream)
-        .expect_err("misaligned BC copy should fail");
-    match err {
-        AerogpuD3d9Error::Validation(msg) => {
-            assert!(
-                msg.contains("BC copy origin") || msg.contains("BC copy"),
-                "unexpected validation message: {msg}"
-            );
-        }
-        other => panic!("expected Validation error, got {other:?}"),
-    }
 }
 
 #[test]
 fn d3d9_bc_copy_region_reaching_mip_edge_is_allowed() {
-    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-    };
+    let Some(()) = with_no_bc_executor(|exec| {
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
     const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
@@ -1433,17 +1424,15 @@ fn d3d9_bc_copy_region_reaching_mip_edge_is_allowed() {
     // Destination starts red, and should have copied the bottom-right pixel (4,4) from the source.
     assert_eq!(px(&dst_rgba, 0, 0), [255, 0, 0, 255]);
     assert_eq!(px(&dst_rgba, 4, 4), [255, 255, 255, 255]);
+    }) else {
+        common::skip_or_panic(module_path!(), "wgpu adapter not found");
+        return;
+    };
 }
 
 #[test]
 fn d3d9_bc_copy_region_not_reaching_mip_edge_is_rejected() {
-    let mut exec = match pollster::block_on(create_executor_no_bc_features()) {
-        Some(exec) => exec,
-        None => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-    };
+    let Some(()) = with_no_bc_executor(|exec| {
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
     const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
@@ -1501,4 +1490,8 @@ fn d3d9_bc_copy_region_not_reaching_mip_edge_is_rejected() {
         ),
         other => panic!("expected Validation error, got {other:?}"),
     }
+    }) else {
+        common::skip_or_panic(module_path!(), "wgpu adapter not found");
+        return;
+    };
 }
