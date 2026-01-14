@@ -36,6 +36,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t inde
 HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled);
 HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice);
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
+HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t src_index,
+    uint32_t dst_index);
 
 // Best-effort context string used by `Check()` to include the current test name
 // in failure output (helps when the binary continues after failures).
@@ -17163,10 +17167,11 @@ bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
 
   // Intentionally create a duplicate cache entry pointing at the same Shader*
   // to emulate stage0 keys that share a fallback shader.
+  Shader* shared = nullptr;
+  size_t shared_index = 0;
+  size_t dup_index = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    Shader* shared = nullptr;
-    size_t shared_index = 0;
     for (size_t i = 0; i < std::size(dev->fixedfunc_stage0_ps_variants); ++i) {
       if (dev->fixedfunc_stage0_ps_variants[i]) {
         shared = dev->fixedfunc_stage0_ps_variants[i];
@@ -17178,14 +17183,12 @@ bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
       return false;
     }
 
-    size_t dup_index = 0;
     bool dup_found = false;
     for (size_t i = 0; i < std::size(dev->fixedfunc_stage0_ps_variants); ++i) {
       if (i == shared_index) {
         continue;
       }
       if (!dev->fixedfunc_stage0_ps_variants[i]) {
-        dev->fixedfunc_stage0_ps_variants[i] = shared;
         dup_index = i;
         dup_found = true;
         break;
@@ -17194,6 +17197,18 @@ bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
     if (!Check(dup_found, "found empty stage0 cache slot for duplicate")) {
       return false;
     }
+  }
+
+  hr = device_test_alias_fixedfunc_stage0_ps_variant(
+      create_dev.hDevice,
+      static_cast<uint32_t>(shared_index),
+      static_cast<uint32_t>(dup_index));
+  if (!Check(hr == S_OK, "device_test_alias_fixedfunc_stage0_ps_variant")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
     if (!Check(dev->fixedfunc_stage0_ps_variants[dup_index] == shared, "duplicate stage0 cache slot shares Shader*")) {
       return false;
     }
@@ -25418,15 +25433,17 @@ bool TestDrawRectPatchReusesTessellationCache() {
     return false;
   }
 
-  dev->patch_tessellate_count = 0;
-  dev->patch_cache_hit_count = 0;
-  dev->patch_cache.clear();
+  const uint64_t tessellate_base = dev->patch_tessellate_count;
+  const uint64_t cache_hit_base = dev->patch_cache_hit_count;
+  if (!Check(dev->patch_cache.empty(), "patch cache starts empty")) {
+    return false;
+  }
 
   hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw);
   if (!Check(hr == S_OK, "DrawRectPatch(first)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 1, "DrawRectPatch(first) tessellates once")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 1, "DrawRectPatch(first) tessellates once")) {
     return false;
   }
   if (!Check(dev->patch_cache.size() == 1, "DrawRectPatch inserts cache entry")) {
@@ -25443,10 +25460,10 @@ bool TestDrawRectPatchReusesTessellationCache() {
   if (!Check(hr == S_OK, "DrawRectPatch(second)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 1, "DrawRectPatch(second) reuses tessellation")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 1, "DrawRectPatch(second) reuses tessellation")) {
     return false;
   }
-  if (!Check(dev->patch_cache_hit_count >= 1, "DrawRectPatch(second) increments cache hit count")) {
+  if (!Check(dev->patch_cache_hit_count >= cache_hit_base + 1, "DrawRectPatch(second) increments cache hit count")) {
     return false;
   }
 
@@ -25462,7 +25479,7 @@ bool TestDrawRectPatchReusesTessellationCache() {
   if (!Check(hr == S_OK, "DrawRectPatch(after DeletePatch)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 2, "DrawRectPatch(after DeletePatch) re-tessellates")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 2, "DrawRectPatch(after DeletePatch) re-tessellates")) {
     return false;
   }
 
@@ -25655,15 +25672,17 @@ bool TestDrawTriPatchReusesTessellationCache() {
     return false;
   }
 
-  dev->patch_tessellate_count = 0;
-  dev->patch_cache_hit_count = 0;
-  dev->patch_cache.clear();
+  const uint64_t tessellate_base = dev->patch_tessellate_count;
+  const uint64_t cache_hit_base = dev->patch_cache_hit_count;
+  if (!Check(dev->patch_cache.empty(), "patch cache starts empty")) {
+    return false;
+  }
 
   hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw);
   if (!Check(hr == S_OK, "DrawTriPatch(first)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 1, "DrawTriPatch(first) tessellates once")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 1, "DrawTriPatch(first) tessellates once")) {
     return false;
   }
   if (!Check(dev->patch_cache.size() == 1, "DrawTriPatch inserts cache entry")) {
@@ -25680,10 +25699,10 @@ bool TestDrawTriPatchReusesTessellationCache() {
   if (!Check(hr == S_OK, "DrawTriPatch(second)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 1, "DrawTriPatch(second) reuses tessellation")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 1, "DrawTriPatch(second) reuses tessellation")) {
     return false;
   }
-  if (!Check(dev->patch_cache_hit_count >= 1, "DrawTriPatch(second) increments cache hit count")) {
+  if (!Check(dev->patch_cache_hit_count >= cache_hit_base + 1, "DrawTriPatch(second) increments cache hit count")) {
     return false;
   }
 
@@ -25699,7 +25718,7 @@ bool TestDrawTriPatchReusesTessellationCache() {
   if (!Check(hr == S_OK, "DrawTriPatch(after DeletePatch)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 2, "DrawTriPatch(after DeletePatch) re-tessellates")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 2, "DrawTriPatch(after DeletePatch) re-tessellates")) {
     return false;
   }
 
@@ -30608,9 +30627,10 @@ bool TestDrawPatchInvalidInfoReturnsInvalidCall() {
   draw_tri_valid.Handle = 4;
   draw_tri_valid.pTriPatchInfo = &tri_valid;
 
-  dev->patch_tessellate_count = 0;
-  dev->patch_cache_hit_count = 0;
-  dev->patch_cache.clear();
+  const uint64_t tessellate_base = dev->patch_tessellate_count;
+  if (!Check(dev->patch_cache.empty(), "patch cache starts empty")) {
+    return false;
+  }
 
   hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect_valid);
   if (!Check(hr == kD3DErrInvalidCall, "DrawRectPatch rejects unsupported FVF")) {
@@ -30620,7 +30640,7 @@ bool TestDrawPatchInvalidInfoReturnsInvalidCall() {
   if (!Check(hr == kD3DErrInvalidCall, "DrawTriPatch rejects unsupported FVF")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 0, "unsupported FVF does not tessellate")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base, "unsupported FVF does not tessellate")) {
     return false;
   }
   if (!Check(dev->patch_cache.empty(), "unsupported FVF does not populate cache")) {

@@ -27361,6 +27361,31 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t src_index,
+    uint32_t dst_index) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint32_t capacity = static_cast<uint32_t>(
+      sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]));
+  if (src_index >= capacity || dst_index >= capacity || src_index == dst_index) {
+    return kD3DErrInvalidCall;
+  }
+  Shader* shared = dev->fixedfunc_stage0_ps_variants[src_index];
+  if (!shared) {
+    return kD3DErrInvalidCall;
+  }
+  if (dev->fixedfunc_stage0_ps_variants[dst_index]) {
+    return kD3DErrInvalidCall;
+  }
+  dev->fixedfunc_stage0_ps_variants[dst_index] = shared;
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;

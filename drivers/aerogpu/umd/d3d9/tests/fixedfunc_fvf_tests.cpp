@@ -7784,24 +7784,28 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
     return false;
   }
 
-  // Configure the cached light/material state directly (portable builds do not
-  // expose SetLight/SetMaterial DDIs in the device vtable).
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memset(&dev->lights[0], 0, sizeof(dev->lights[0]));
-    dev->lights[0].Type = D3DLIGHT_DIRECTIONAL;
-    dev->lights[0].Direction = {0.5f, -0.25f, 1.0f};
-    dev->lights[0].Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
-    dev->lights[0].Ambient = {0.0f, 0.5f, 0.0f, 1.0f};
-    dev->light_valid[0] = true;
-    dev->light_enabled[0] = TRUE;
-
-    dev->material_valid = true;
-    dev->material.Diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
-    dev->material.Ambient = {0.25f, 0.25f, 0.25f, 1.0f};
-    dev->material.Emissive = {0.125f, 0.25f, 0.5f, 0.0f};
-
-    dev->fixedfunc_lighting_dirty = true;
+  // Configure fixed-function lighting state via host-test entrypoints (portable
+  // builds do not expose SetLight/SetMaterial in the device vtable).
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.5f, -0.25f, 1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.5f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
+  mat.Ambient = {0.25f, 0.25f, 0.25f, 1.0f};
+  mat.Emissive = {0.125f, 0.25f, 0.5f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
   }
 
   const VertexXyzNormal tri[3] = {
@@ -7888,23 +7892,28 @@ bool TestFvfXyzNormalTex1EmitsLightingConstants() {
     return false;
   }
 
-  // Configure the cached light/material state directly.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memset(&dev->lights[0], 0, sizeof(dev->lights[0]));
-    dev->lights[0].Type = D3DLIGHT_DIRECTIONAL;
-    dev->lights[0].Direction = {0.25f, 0.5f, -1.0f};
-    dev->lights[0].Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
-    dev->lights[0].Ambient = {0.0f, 0.5f, 0.0f, 1.0f};
-    dev->light_valid[0] = true;
-    dev->light_enabled[0] = TRUE;
-
-    dev->material_valid = true;
-    dev->material.Diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
-    dev->material.Ambient = {0.25f, 0.25f, 0.25f, 1.0f};
-    dev->material.Emissive = {0.125f, 0.25f, 0.5f, 0.0f};
-
-    dev->fixedfunc_lighting_dirty = true;
+  // Configure fixed-function lighting state via host-test entrypoints (portable
+  // builds do not expose SetLight/SetMaterial in the device vtable).
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.25f, 0.5f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.5f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {0.5f, 0.5f, 0.5f, 1.0f};
+  mat.Ambient = {0.25f, 0.25f, 0.25f, 1.0f};
+  mat.Emissive = {0.125f, 0.25f, 0.5f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
   }
 
   const VertexXyzNormalTex1 tri[3] = {
