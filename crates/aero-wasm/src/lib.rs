@@ -4273,6 +4273,32 @@ impl Machine {
         Ok(())
     }
 
+    /// Attach an OPFS-backed ISO image as the canonical install media (`disk_id=1`).
+    ///
+    /// This attaches the ISO to the canonical Windows 7 storage topology slot:
+    /// IDE secondary channel, master device (ATAPI CD-ROM).
+    ///
+    /// ## Snapshot overlay ref policy
+    ///
+    /// Install media is treated as read-only, so the machine records:
+    /// - `base_image = path`
+    /// - `overlay_image = ""` (empty string indicates "no writable overlay")
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_opfs_iso(&mut self, path: String) -> Result<(), JsValue> {
+        let backend = aero_opfs::OpfsBackend::open_existing(&path)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner
+            .attach_install_media_iso(Box::new(backend), path)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Eject the canonical install media (IDE secondary master ATAPI) and clear its snapshot
+    /// overlay ref (`disk_id=1`).
+    pub fn eject_install_media(&mut self) {
+        self.inner.eject_install_media();
+    }
+
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
         RunExit::from_native(self.inner.run_slice(max_insts as u64))
     }

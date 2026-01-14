@@ -4706,6 +4706,63 @@ Track progress: docs/21-smp.md\n\
         Ok(())
     }
 
+    /// wasm32 variant of [`Machine::attach_ide_secondary_master_iso`].
+    ///
+    /// The browser build supports non-`Send` ISO backends (e.g. OPFS handles) that cannot safely
+    /// cross threads when wasm threads are enabled, so we avoid imposing a `Send` bound on the disk
+    /// trait object in wasm builds.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_ide_secondary_master_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        Ok(())
+    }
+
+    /// Convenience: attach the canonical install media ISO (`disk_id=1`) and record its snapshot
+    /// overlay ref.
+    ///
+    /// # Overlay ref policy
+    ///
+    /// Install media is treated as a read-only ISO, so this records:
+    /// - `base_image = base_image` (typically the OPFS path, e.g. `/state/win7.iso`)
+    /// - `overlay_image = ""` (empty string indicates "no writable overlay")
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn attach_install_media_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+        base_image: impl Into<String>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_iso(disk)?;
+        self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
+        Ok(())
+    }
+
+    /// wasm32 variant of [`Machine::attach_install_media_iso`]; does not require `Send` on the ISO
+    /// backend.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_install_media_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
+        base_image: impl Into<String>,
+    ) -> std::io::Result<()> {
+        self.attach_ide_secondary_master_iso(disk)?;
+        self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
+        Ok(())
+    }
+
+    /// Eject the canonical install media (IDE secondary master ATAPI) and clear its snapshot
+    /// overlay ref (`disk_id=1`).
+    pub fn eject_install_media(&mut self) {
+        if let Some(ide) = &self.ide {
+            ide.borrow_mut()
+                .controller
+                .eject_secondary_master_atapi_media();
+        }
+        self.clear_ide_secondary_master_atapi_overlay_ref();
+    }
+
     /// Re-attach a host ISO backend to the IDE secondary master ATAPI device without changing
     /// guest-visible media state.
     ///
@@ -10252,6 +10309,44 @@ mod tests {
 
         let out = m.take_serial_output();
         assert_eq!(out, b"OK\n");
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn install_media_overlay_ref_is_updated_by_attach_and_eject_helpers() {
+        use aero_storage::{MemBackend, RawDisk};
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 8 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_ide: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert!(
+            m.ide_secondary_master_atapi_overlay.is_none(),
+            "install media overlay ref should start unset"
+        );
+
+        let iso_bytes = vec![0u8; 2048 * 16];
+        let disk = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
+        m.attach_install_media_iso(Box::new(disk), "/state/win7.iso")
+            .unwrap();
+
+        let overlay = m
+            .ide_secondary_master_atapi_overlay
+            .as_ref()
+            .expect("overlay ref should be set after attach_install_media_iso");
+        assert_eq!(overlay.disk_id, Machine::DISK_ID_INSTALL_MEDIA);
+        assert_eq!(overlay.base_image, "/state/win7.iso");
+        assert_eq!(overlay.overlay_image, "");
+
+        m.eject_install_media();
+        assert!(
+            m.ide_secondary_master_atapi_overlay.is_none(),
+            "install media overlay ref should be cleared after eject_install_media"
+        );
     }
 
     #[test]

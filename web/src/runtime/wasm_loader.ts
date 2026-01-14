@@ -338,10 +338,16 @@ export type MachineHandle = {
      * storage topology (primary HDD + install media) and accept OPFS *path strings* (relative to
      * `navigator.storage.getDirectory()`).
      *
-     * Optional for older WASM builds.
+    * Optional for older WASM builds.
      */
     set_primary_hdd_opfs_cow?(base_image: string, overlay_image: string): Promise<void>;
     attach_install_media_opfs_iso?(path: string): Promise<void>;
+    /**
+     * Eject/detach the canonical install media (IDE secondary master ATAPI, `disk_id=1`) and clear its snapshot overlay ref.
+     *
+     * Optional for older WASM builds.
+     */
+    eject_install_media?(): void;
     take_restored_disk_overlays?():
         | {
               disk_id: number;
