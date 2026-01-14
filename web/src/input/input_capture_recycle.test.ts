@@ -115,6 +115,62 @@ describe("InputCapture buffer recycling", () => {
     );
   });
 
+  it("reuses recycled buffers even when the recycle response arrives after flush (one-flush delay)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: ArrayBuffer[] = [];
+      const workerSideCopies: ArrayBuffer[] = [];
+      let capture: InputCapture;
+
+      const ioWorker = {
+        postMessage: (msg: any, transfer?: any[]) => {
+          posted.push(msg.buffer);
+          expect(msg.recycle).toBe(true);
+          expect(transfer).toContain(msg.buffer);
+          // Detach the sender-side buffer, but do not immediately return it.
+          const workerSide = structuredClone(msg.buffer, { transfer: [msg.buffer] });
+          workerSideCopies.push(workerSide);
+        },
+      };
+
+      capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
+      (capture as any).hasFocus = true;
+
+      // Flush #1: no recycled buffers exist yet, so the queue must allocate a new buffer after
+      // transfer. The worker receives the transferred buffer (workerSideCopies[0]).
+      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      capture.flushNow();
+      expect(posted).toHaveLength(1);
+      expect(workerSideCopies).toHaveLength(1);
+
+      // Deliver the recycle response *after* the flush (mimics real worker scheduling).
+      const workerSide0 = workerSideCopies[0]!;
+      const recycled0 = structuredClone(workerSide0, { transfer: [workerSide0] });
+      (capture as any).handleWorkerMessage({
+        data: { type: "in:input-batch-recycle", buffer: recycled0 },
+      } as unknown as MessageEvent<unknown>);
+
+      // Flush #2: still uses the buffer allocated after flush #1, but should swap in `recycled0`
+      // for subsequent batches.
+      (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+      capture.flushNow();
+      expect(posted).toHaveLength(2);
+      expect(posted[1]).not.toBe(recycled0);
+
+      // Flush #3: should now send the recycled buffer from flush #1.
+      (capture as any).handleKeyDown(keyDownEvent("KeyC", 2));
+      capture.flushNow();
+      expect(posted).toHaveLength(3);
+      expect(posted[2]).toBe(recycled0);
+    });
+  });
+
   it("reuses ArrayBuffers returned by the worker when recycleBuffers=true", () => {
     withStubbedDocument(() => {
       const canvas = {
