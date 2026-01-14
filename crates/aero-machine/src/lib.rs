@@ -5062,7 +5062,7 @@ impl Machine {
     ///   enables it), WDDM owns scanout and legacy VGA/VBE is ignored by presentation even if
     ///   legacy MMIO/PIO continues to accept writes for compatibility.
     /// - Clearing `SCANOUT0_ENABLE` disables scanout but does not release WDDM ownership; the host
-    ///   presents a blank frame while legacy VGA/VBE remains suppressed until device reset.
+    ///   presents a blank frame while legacy VGA/VBE remains suppressed until VM reset.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
             let state = aerogpu_mmio.borrow().scanout0_state();
@@ -10770,8 +10770,8 @@ impl Machine {
         // can follow BIOS-driven mode sets and panning/stride updates.
         //
         // If the scanout is currently owned by the WDDM path, do not allow legacy INT 10h calls
-        // to steal it back (until the guest disables scanout via `SCANOUT0_ENABLE=0` or the VM
-        // resets; see docs/16-aerogpu-vga-vesa-compat.md).
+        // to steal it back (until the VM resets; `SCANOUT0_ENABLE=0` is treated as a visibility
+        // toggle and does not release WDDM ownership).
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         if vector == 0x10 {
             let vbe_scanout_sig_after = self.bios.video.vbe.current_mode.map(|mode| {

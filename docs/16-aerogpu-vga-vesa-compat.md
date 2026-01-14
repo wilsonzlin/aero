@@ -24,7 +24,8 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   a VRAM-backed `0xA0000..0xBFFFF` window). An MVP BAR0 device model is also present (ring/fence
   transport with a no-op executor + scanout/cursor regs + vblank pacing), and `Machine::display_present()`
   will prefer the WDDM-programmed scanout framebuffer once scanout0 has been **claimed** (valid config +
-  `SCANOUT0_ENABLE=1`) and remains enabled.
+  `SCANOUT0_ENABLE=1`). After claim, WDDM scanout ownership remains authoritative until VM reset;
+  `SCANOUT0_ENABLE=0` acts as a visibility toggle (blanking) but does not release ownership.
 
   Concretely:
 
@@ -66,10 +67,12 @@ See:
 At all times, the browser canvas renders from exactly one active scanout source:
 
 ```text
-Legacy VGA text / VBE LFB  ──(SCANOUT0_ENABLE=1)──▶  WDDM scanout
-            ▲                                     │
-            ├──────────(SCANOUT0_ENABLE=0)────────┤
-            └──────────────(VM reset)─────────────┘
+Legacy VGA text / VBE LFB  ──(WDDM claims scanout)──▶  WDDM scanout (enabled)
+            ▲                                         │
+            │                                         ├──(SCANOUT0_ENABLE=0)──▶  WDDM scanout (disabled / blank)
+            │                                         │                            │
+            │                                         └──(SCANOUT0_ENABLE=1)◀─────┘
+            └──────────────────────(VM reset)─────────┘
 ```
 
 Implementation-wise, AeroGPU owns **both**:
@@ -374,16 +377,17 @@ committed 64-bit framebuffer address), it updates `ScanoutState`:
 - `base_paddr = value programmed by driver`
 - `width/height/pitch/format = values programmed by driver`
 
-From this point onward, **while WDDM scanout remains enabled**, VGA/VBE writes do not affect the visible display.
+From this point onward, legacy VGA/VBE writes do not affect the visible display while WDDM owns scanout.
 
 ### Compatibility rule once WDDM is active
 
 After the first successful WDDM scanout enable (`SCANOUT0_ENABLE=1`):
 
 - Legacy VGA/VBE ports and memory windows may continue to accept reads/writes for compatibility.
-- The emulator presentation must ignore legacy sources while WDDM scanout is enabled.
-- If WDDM explicitly disables scanout (e.g. `SCANOUT0_ENABLE=0`), it releases the WDDM claim and presentation may revert to the BIOS legacy source (text or VBE LFB, depending on current BIOS state).
-- VM reset always releases WDDM ownership and reverts to legacy.
+- The emulator presentation must ignore legacy sources once WDDM has claimed scanout.
+- If WDDM disables scanout (`SCANOUT0_ENABLE=0`), it blanks the display but does not release ownership:
+  legacy output remains suppressed until VM reset.
+- VM reset always releases WDDM ownership and reverts to legacy scanout.
 
 This prevents legacy writes (e.g. an errant `INT 10h`) from stealing the primary display after the desktop is up.
 
