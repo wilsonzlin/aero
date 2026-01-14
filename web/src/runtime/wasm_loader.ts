@@ -424,6 +424,9 @@ export type MachineHandle = {
      * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
      *
      * Slower than using {@link display_framebuffer_ptr} + {@link display_framebuffer_len_bytes}.
+     *
+     * Note: this calls {@link display_present} internally, so it can invalidate any previously
+     * returned {@link display_framebuffer_ptr} pointer.
      */
     display_framebuffer_copy_rgba8888?(): Uint8Array;
 
@@ -458,6 +461,9 @@ export type MachineHandle = {
      * Convenience helper: copy the framebuffer bytes into JS (RGBA8888).
      *
      * Slower than using {@link vga_framebuffer_ptr} + {@link vga_framebuffer_len_bytes}.
+     *
+     * Note: this calls {@link vga_present} internally, so it can invalidate any previously
+     * returned {@link vga_framebuffer_ptr} pointer.
      */
     vga_framebuffer_copy_rgba8888?(): Uint8Array;
     /**

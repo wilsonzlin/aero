@@ -5507,6 +5507,9 @@ impl Machine {
     ///
     /// This is significantly slower than using `display_framebuffer_ptr()`/`display_framebuffer_len_bytes()`,
     /// but it is convenient for tests and for simple JS callers.
+    ///
+    /// Note: this calls [`Machine::display_present`] internally, so calling it invalidates any
+    /// previously returned framebuffer pointer.
     pub fn display_framebuffer_copy_rgba8888(&mut self) -> Vec<u8> {
         self.inner.display_present();
         let fb: &[u32] = self.inner.display_framebuffer();
@@ -5624,6 +5627,10 @@ impl Machine {
     /// # Safety contract (JS/host)
     /// The caller must re-query this pointer after each [`Machine::vga_present`] call because the
     /// front buffer pointer may change (front/back swap or resize).
+    ///
+    /// Note: [`Machine::vga_framebuffer_copy_rgba8888`] and [`Machine::vga_framebuffer_rgba8888_copy`]
+    /// call [`Machine::vga_present`] internally, so calling them also invalidates any previously
+    /// returned pointer.
     #[cfg(target_arch = "wasm32")]
     pub fn vga_framebuffer_ptr(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
