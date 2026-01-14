@@ -189,7 +189,8 @@ Test pointers (ABI conformance / drift detection):
   - Ring processing decodes `aerogpu_ring` submissions and can capture `AEROGPU_CMD` payloads into a bounded queue
     for host-driven execution (`Machine::aerogpu_drain_submissions`).
   - Fence forward-progress policy is selectable:
-    - default (no backend, submission bridge disabled): fences complete automatically (bring-up / no-op execution).
+    - default (no backend, submission bridge disabled): fences complete automatically (bring-up / no-op execution),
+      with optional vblank pacing when vblank is active and the submission contains a vsync present.
     - submission bridge enabled (`Machine::aerogpu_enable_submission_bridge`): fences are deferred until the host reports completion (`Machine::aerogpu_complete_fence`).
     - in-process backend installed: fences complete when the backend reports completions (see below).
   - Error-info latches are implemented (ABI 1.3+) behind `AEROGPU_FEATURE_ERROR_INFO` (`AEROGPU_MMIO_REG_ERROR_*` + `AEROGPU_IRQ_ERROR`).
