@@ -229,6 +229,18 @@ READONLY means:
   (validation error). This includes explicit writeback flags (e.g. `COPY_* WRITEBACK_DST`) and any
   implicit writeback path the host implements.
 
+### Win7/WDDM 1.1 mapping (AeroGPU KMD)
+
+On Windows 7 (WDDM 1.1), the KMD derives `AEROGPU_ALLOC_FLAG_READONLY` from the per-submission
+allocation list entry `DXGK_ALLOCATIONLIST::Flags.WriteOperation`:
+
+- `WriteOperation == 0` → mark the alloc table entry `READONLY`
+- `WriteOperation == 1` → leave the entry writable (`flags=0`)
+
+This provides defense-in-depth: the host executor can reject any guest command stream that requests
+guest-memory writeback to an allocation that the WDDM submission metadata did not declare as a write
+operation.
+
 ## Fence ordering
 
 If a submission requests any guest-memory writeback, the host must only signal/advance the fence
