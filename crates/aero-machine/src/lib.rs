@@ -101,7 +101,6 @@ use aero_platform::interrupts::{
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
-use aero_protocol::aerogpu::aerogpu_pci as agpu_pci;
 use aero_snapshot as snapshot;
 use aero_virtio::devices::blk::VirtioBlk;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
@@ -533,6 +532,7 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
+    AeroGpuRequiresPcPlatform,
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
