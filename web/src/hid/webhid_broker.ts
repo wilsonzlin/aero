@@ -535,7 +535,7 @@ export class WebHidBroker {
   }
 
   #warnOutputSendDrop(deviceId: number): void {
-    const now = performance.now();
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
     const lastWarn = this.#outputSendDropWarnedAtByDevice.get(deviceId);
     if (lastWarn !== undefined && now - lastWarn < OUTPUT_SEND_DROP_WARN_INTERVAL_MS) return;
     this.#outputSendDropWarnedAtByDevice.set(deviceId, now);
