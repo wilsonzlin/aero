@@ -117,7 +117,7 @@ To quickly confirm what Windows (and the driver) selected at runtime:
 
 The driver reads the virtio-snd device config and requires:
 
-- [ ] `jacks = 0`
+- [ ] `jacks = 0` (**preferred**) or `jacks = 2` (**tolerated**, matches the driver’s fixed two-jack topology and enables virtio-snd JACK eventq notifications)
 - [ ] `streams = 2`
 - [ ] `chmaps = 0`
 

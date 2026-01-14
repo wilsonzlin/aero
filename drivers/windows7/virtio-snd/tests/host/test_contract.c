@@ -7,6 +7,7 @@
 static void test_device_cfg_values(void)
 {
     TEST_ASSERT(VirtIoSndValidateDeviceCfgValues(/*Jacks=*/0, /*Streams=*/2, /*Chmaps=*/0) == TRUE);
+    TEST_ASSERT(VirtIoSndValidateDeviceCfgValues(/*Jacks=*/2, /*Streams=*/2, /*Chmaps=*/0) == TRUE);
 
     TEST_ASSERT(VirtIoSndValidateDeviceCfgValues(/*Jacks=*/1, /*Streams=*/2, /*Chmaps=*/0) == FALSE);
     TEST_ASSERT(VirtIoSndValidateDeviceCfgValues(/*Jacks=*/0, /*Streams=*/1, /*Chmaps=*/0) == FALSE);
@@ -29,4 +30,3 @@ int main(void)
     test_expected_queue_sizes();
     return 0;
 }
-

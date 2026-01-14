@@ -490,7 +490,7 @@ static NTSTATUS VirtIoSndValidateDeviceCfg(_Inout_ PVIRTIOSND_DEVICE_EXTENSION D
 
     if (!VirtIoSndValidateDeviceCfgValues(jacks, streams, chmaps)) {
         VIRTIOSND_TRACE_ERROR(
-            "virtio-snd DEVICE_CFG violates contract v1: jacks=%lu streams=%lu chmaps=%lu (expected 0/2/0)\n",
+            "virtio-snd DEVICE_CFG violates contract v1: jacks=%lu streams=%lu chmaps=%lu (expected jacks=0|2 streams=2 chmaps=0)\n",
             jacks,
             streams,
             chmaps);
