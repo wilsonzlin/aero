@@ -714,6 +714,39 @@ fn tier2_inline_tlb_store_bumps_code_version_table_on_unshared_memory() {
 }
 
 #[test]
+fn tier2_inline_tlb_store_with_zero_length_code_version_table_does_not_trap() {
+    // If the runtime hasn't configured a code-version table (`len == 0`), the inline bump fast-path
+    // should be disabled and stores should still succeed.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x10),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    // Point at some in-RAM location; it should not be dereferenced when len == 0.
+    let table_ptr: u32 = 0x1000;
+    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        table_ptr,
+        &[],
+    );
+
+    assert_eq!(got_ram[0x10], 0xAB);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_store_to_non_ram_uses_slow_helper_and_does_not_bump_code_version_table() {
     let trace = TraceIr {
         prologue: Vec::new(),
