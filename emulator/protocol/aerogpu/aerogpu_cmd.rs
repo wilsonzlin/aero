@@ -1809,7 +1809,7 @@ pub fn validate_cmd_stream_header(
     // The stream is a sequence of 4-byte aligned packets, so the declared stream size must also be
     // aligned. Rejecting this at the header level makes parsing errors deterministic (rather than
     // surfacing as a truncated final packet).
-    if hdr.size_bytes % 4 != 0 {
+    if !hdr.size_bytes.is_multiple_of(4) {
         return Err(AerogpuCmdDecodeError::SizeNotAligned {
             found: hdr.size_bytes,
         });
@@ -1829,7 +1829,7 @@ pub fn decode_cmd_hdr_le(buf: &[u8]) -> Result<AerogpuCmdHdr, AerogpuCmdDecodeEr
     if size_bytes < AerogpuCmdHdr::SIZE_BYTES as u32 {
         return Err(AerogpuCmdDecodeError::BadSizeBytes { found: size_bytes });
     }
-    if size_bytes % 4 != 0 {
+    if !size_bytes.is_multiple_of(4) {
         return Err(AerogpuCmdDecodeError::SizeNotAligned { found: size_bytes });
     }
 
