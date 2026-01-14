@@ -959,8 +959,14 @@ impl IoSnapshot for AeroGpuPciDevice {
         );
         w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
         w.field_bool(TAG_RING_RESET_PENDING_DMA, self.ring_reset_pending_dma);
-        w.field_u32(TAG_SCANOUT0_FB_GPA_PENDING_LO, self.scanout0_fb_gpa_pending_lo);
-        w.field_bool(TAG_SCANOUT0_FB_GPA_LO_PENDING, self.scanout0_fb_gpa_lo_pending);
+        w.field_u32(
+            TAG_SCANOUT0_FB_GPA_PENDING_LO,
+            self.scanout0_fb_gpa_pending_lo,
+        );
+        w.field_bool(
+            TAG_SCANOUT0_FB_GPA_LO_PENDING,
+            self.scanout0_fb_gpa_lo_pending,
+        );
         w.field_u32(TAG_CURSOR_FB_GPA_PENDING_LO, self.cursor_fb_gpa_pending_lo);
         w.field_bool(TAG_CURSOR_FB_GPA_LO_PENDING, self.cursor_fb_gpa_lo_pending);
         w.finish()

@@ -514,7 +514,11 @@ fn scanout_and_cursor_fb_gpa_updates_are_atomic_for_readback() {
     dev.write(mmio::SCANOUT0_WIDTH, 4, 1);
     dev.write(mmio::SCANOUT0_HEIGHT, 4, 1);
     dev.write(mmio::SCANOUT0_PITCH_BYTES, 4, 4);
-    dev.write(mmio::SCANOUT0_FORMAT, 4, AeroGpuFormat::R8G8B8A8Unorm as u64);
+    dev.write(
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8A8Unorm as u64,
+    );
     dev.write(mmio::SCANOUT0_ENABLE, 4, 1);
 
     dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, scanout_fb0);

@@ -3656,13 +3656,14 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     // (`DACP`, etc.). This avoids incorrectly parsing a tagged section as pending state even if
     // the tag payload happens to begin with 0/1 (e.g. `DACP` with `pel_mask=0`).
     fn looks_like_tag(bytes: &[u8], off: usize) -> bool {
-        bytes
-            .get(off..off.saturating_add(4))
-            .is_some_and(|tag| {
-                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
-                    || tag == b"VREG"
-                    || tag == b"EXEC"
-            })
+        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
+            tag == b"DACP"
+                || tag == b"ATRG"
+                || tag == b"DACI"
+                || tag == b"ATST"
+                || tag == b"VREG"
+                || tag == b"EXEC"
+        })
     }
     let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
         && bytes.len() >= off.saturating_add(8)
@@ -3889,13 +3890,14 @@ fn apply_aerogpu_snapshot_v2(
     //
     // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe.
     fn looks_like_tag(bytes: &[u8], off: usize) -> bool {
-        bytes
-            .get(off..off.saturating_add(4))
-            .is_some_and(|tag| {
-                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
-                    || tag == b"VREG"
-                    || tag == b"EXEC"
-            })
+        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
+            tag == b"DACP"
+                || tag == b"ATRG"
+                || tag == b"DACI"
+                || tag == b"ATST"
+                || tag == b"VREG"
+                || tag == b"EXEC"
+        })
     }
     let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
         && bytes.len() >= off.saturating_add(8)
