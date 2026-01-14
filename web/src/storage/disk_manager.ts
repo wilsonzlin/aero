@@ -20,6 +20,17 @@ export type ExportHandle = {
   meta: DiskImageMetadata;
 };
 
+export type PruneRemoteCachesResult = {
+  pruned: number;
+  examined: number;
+  /**
+   * Only present when `dryRun: true`.
+   */
+  prunedKeys?: string[];
+};
+
+export type PruneRemoteCachesDryRunResult = PruneRemoteCachesResult & { prunedKeys: string[] };
+
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
 type DiskWorkerProgressMessage = { type: "progress"; requestId: number } & ImportProgress;
@@ -274,6 +285,16 @@ export class DiskManager {
    */
   async deleteDisk(id: string): Promise<void> {
     await this.request("delete_disk", { id });
+  }
+
+  pruneRemoteCaches(options: { olderThanMs: number; maxCaches?: number; dryRun: true }): Promise<PruneRemoteCachesDryRunResult>;
+  pruneRemoteCaches(options: {
+    olderThanMs: number;
+    maxCaches?: number;
+    dryRun?: false | undefined;
+  }): Promise<PruneRemoteCachesResult>;
+  pruneRemoteCaches(options: { olderThanMs: number; maxCaches?: number; dryRun?: boolean }): Promise<PruneRemoteCachesResult> {
+    return this.request("prune_remote_caches", options);
   }
 
   async addRemoteDisk(options: {
