@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -695,102 +695,77 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
         .map(|v| v.len() as u64)
         .unwrap_or(chunk_count);
 
-    let verified_chunks = Arc::new(AtomicU64::new(0));
-    let verified_bytes = Arc::new(AtomicU64::new(0));
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let total_bytes_to_verify = match &indices {
+        None => manifest.total_size,
+        Some(indices) => {
+            let mut total: u64 = 0;
+            for &idx in indices {
+                total = total
+                    .checked_add(expected_chunk_size(manifest.as_ref(), idx)?)
+                    .ok_or_else(|| anyhow!("total bytes to verify overflows u64"))?;
+            }
+            total
+        }
+    };
+
+    let chunks_checked = Arc::new(AtomicU64::new(0));
+    let failures = Arc::new(AtomicU64::new(0));
+
+    #[derive(Debug)]
+    struct VerifyFailure {
+        index: u64,
+        message: String,
+    }
+
+    // Only keep details for the first few failures (avoid unbounded memory usage).
+    const FAILURE_SAMPLE_LIMIT: u64 = 10;
 
     let (work_tx, work_rx) = async_channel::bounded::<u64>(args.concurrency * 2);
-    let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();
+    let (failure_tx, mut failure_rx) = tokio::sync::mpsc::unbounded_channel::<VerifyFailure>();
 
     let mut workers = Vec::with_capacity(args.concurrency);
     let retries = args.retries;
     for _ in 0..args.concurrency {
         let work_rx = work_rx.clone();
-        let err_tx = err_tx.clone();
+        let failure_tx = failure_tx.clone();
         let source = source.clone();
         let manifest = Arc::clone(&manifest);
-        let verified_chunks = Arc::clone(&verified_chunks);
-        let verified_bytes = Arc::clone(&verified_bytes);
-        let cancelled = Arc::clone(&cancelled);
+        let chunks_checked = Arc::clone(&chunks_checked);
+        let failures = Arc::clone(&failures);
         workers.push(tokio::spawn(async move {
             while let Ok(index) = work_rx.recv().await {
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
-                match verify_http_chunk(index, &manifest, &source, retries).await {
-                    Ok(bytes) => {
-                        verified_chunks.fetch_add(1, Ordering::SeqCst);
-                        verified_bytes.fetch_add(bytes, Ordering::SeqCst);
-                    }
-                    Err(err) => {
-                        cancelled.store(true, Ordering::SeqCst);
-                        let _ = err_tx.send(err);
-                        break;
+                if let Err(err) = verify_http_chunk(index, &manifest, &source, retries).await {
+                    let failure_no = failures.fetch_add(1, Ordering::SeqCst) + 1;
+                    if failure_no <= FAILURE_SAMPLE_LIMIT {
+                        let _ = failure_tx.send(VerifyFailure {
+                            index,
+                            message: error_chain_summary(&err),
+                        });
                     }
                 }
+                chunks_checked.fetch_add(1, Ordering::SeqCst);
             }
             Ok::<(), anyhow::Error>(())
         }));
     }
-    drop(err_tx);
+    drop(failure_tx);
 
-    let send_jobs = async {
-        if let Some(indices) = indices {
-            for index in indices {
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
-                tokio::select! {
-                    res = work_tx.send(index) => {
-                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
-                    }
-                    Some(err) = err_rx.recv() => {
-                        cancelled.store(true, Ordering::SeqCst);
-                        return Err(err);
-                    }
-                }
-            }
-        } else {
-            for index in 0..chunk_count {
-                if cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
-                tokio::select! {
-                    res = work_tx.send(index) => {
-                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
-                    }
-                    Some(err) = err_rx.recv() => {
-                        cancelled.store(true, Ordering::SeqCst);
-                        return Err(err);
-                    }
-                }
-            }
+    if let Some(indices) = indices {
+        for index in indices {
+            work_tx
+                .send(index)
+                .await
+                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
         }
-        Ok::<(), anyhow::Error>(())
-    };
-
-    let send_result = send_jobs.await;
+    } else {
+        for index in 0..chunk_count {
+            work_tx
+                .send(index)
+                .await
+                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+        }
+    }
     drop(work_tx);
-
-    if let Err(err) = send_result {
-        for handle in &workers {
-            handle.abort();
-        }
-        for handle in workers {
-            let _ = handle.await;
-        }
-        return Err(err);
-    }
-
-    if let Some(err) = err_rx.recv().await {
-        for handle in &workers {
-            handle.abort();
-        }
-        for handle in workers {
-            let _ = handle.await;
-        }
-        return Err(err);
-    }
 
     for handle in workers {
         handle
@@ -798,10 +773,38 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
             .map_err(|err| anyhow!("verify worker panicked: {err}"))??;
     }
 
+    let checked = chunks_checked.load(Ordering::SeqCst);
+    let failure_count = failures.load(Ordering::SeqCst);
+
+    let mut samples: Vec<VerifyFailure> = Vec::new();
+    while let Some(failure) = failure_rx.recv().await {
+        samples.push(failure);
+    }
+
+    if checked != total_chunks_to_verify {
+        bail!(
+            "internal error: only checked {checked}/{total_chunks_to_verify} chunks"
+        );
+    }
+
     let elapsed = started_at.elapsed();
-    let done = verified_chunks.load(Ordering::SeqCst);
-    let bytes = verified_bytes.load(Ordering::SeqCst);
-    println!("Verified {done}/{total_chunks_to_verify} chunks ({bytes} bytes) in {elapsed:.2?}");
+    println!(
+        "Checked {checked}/{total_chunks_to_verify} chunks ({total_bytes_to_verify} bytes) in {elapsed:.2?} (failures: {failure_count})"
+    );
+
+    if failure_count > 0 {
+        if !samples.is_empty() {
+            eprintln!("First {} failures:", samples.len());
+            for failure in &samples {
+                eprintln!("  - chunk {}: {}", failure.index, failure.message);
+            }
+        }
+        let first = samples
+            .first()
+            .map(|f| f.message.as_str())
+            .unwrap_or("unknown error");
+        bail!("verification failed with {failure_count} failures (first: {first})");
+    }
     Ok(())
 }
 
