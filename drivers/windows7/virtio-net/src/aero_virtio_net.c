@@ -4846,6 +4846,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   AEROVNET_ADAPTER* Adapter;
   AEROVNET_DIAG_INFO Info;
   ULONG CopyLen;
+  volatile virtio_pci_common_cfg* CommonCfg;
 
   UNREFERENCED_PARAMETER(DeviceObject);
 
@@ -4855,6 +4856,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
 
   Status = STATUS_INVALID_DEVICE_REQUEST;
   CopyLen = 0;
+  CommonCfg = NULL;
 
   if (Ioctl != AEROVNET_DIAG_IOCTL_QUERY) {
     Irp->IoStatus.Status = Status;
@@ -4905,6 +4907,10 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
 
   Info.InterruptMode = Adapter->UseMsix ? AEROVNET_INTERRUPT_MODE_MSI : AEROVNET_INTERRUPT_MODE_INTX;
   Info.MessageCount = Adapter->UseMsix ? (ULONG)Adapter->MsixMessageCount : 0;
+  Info.MsixConfigVector = Adapter->MsixConfigVector;
+  Info.MsixRxVector = Adapter->MsixRxVector;
+  Info.MsixTxVector = Adapter->MsixTxVector;
+  CommonCfg = Adapter->Vdev.CommonCfg;
 
   if (Adapter->UseMsix) {
     Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
@@ -4974,13 +4980,13 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   // Only attempt this if:
   //  - we're at PASSIVE_LEVEL (IOCTL path)
   //  - BAR0 is still mapped (not surprise removed / not halted)
-  if (KeGetCurrentIrql() == PASSIVE_LEVEL && Adapter->Vdev.CommonCfg != NULL && !Adapter->SurpriseRemoved) {
+  if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && !Adapter->SurpriseRemoved) {
     KIRQL OldIrql;
     USHORT MsixConfig;
     USHORT MsixRx;
     USHORT MsixTx;
 
-    MsixConfig = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config);
+    MsixConfig = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->msix_config);
     KeMemoryBarrier();
 
     MsixRx = VIRTIO_PCI_MSI_NO_VECTOR;
@@ -4988,23 +4994,23 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
 
     KeAcquireSpinLock(&Adapter->Vdev.CommonCfgLock, &OldIrql);
 
-    WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, 0);
+    WRITE_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select, 0);
     KeMemoryBarrier();
     /*
      * Flush posted MMIO selector writes (see docs/windows7-virtio-driver-contract.md §1.5.0).
      * Without a readback, some platforms can observe the old queue_select value
      * when reading queue_msix_vector immediately after the write.
      */
-    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select);
+    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select);
     KeMemoryBarrier();
-    MsixRx = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
+    MsixRx = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_msix_vector);
     KeMemoryBarrier();
 
-    WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, 1);
+    WRITE_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select, 1);
     KeMemoryBarrier();
-    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select);
+    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select);
     KeMemoryBarrier();
-    MsixTx = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
+    MsixTx = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_msix_vector);
     KeMemoryBarrier();
 
     KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
