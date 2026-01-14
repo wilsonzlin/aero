@@ -247,12 +247,15 @@ cargo xtask input --e2e
  
  # --- Manual / debugging (run pieces individually) ---
 
-# Rust device-model tests
-bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
-bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+ # Rust device-model tests
+ bash ./scripts/safe-run.sh cargo test -p aero-devices-input --locked
+ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
+ 
+ # WASM integration sanity (routes input through the same public WASM APIs used by the web runtime).
+ bash ./scripts/safe-run.sh cargo test -p aero-wasm --test machine_input_backends --locked
 
-# Web unit tests (full suite)
-npm -w web run test:unit
+ # Web unit tests (full suite)
+ npm -w web run test:unit
 
 # Playwright E2E suite (repo root)
 npm run test:e2e
