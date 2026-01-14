@@ -183,6 +183,20 @@ If you prefer to point at an image root prefix (`images/<imageId>/`), provide `-
   --region us-east-1
 ```
 
+### Example: verify using an explicit manifest object key
+
+If you already know the object key of the versioned manifest (for example, from a `latest.json`
+pointer), you can skip prefix inference and verify directly:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --bucket disk-images \
+  --manifest-key images/<imageId>/<version>/manifest.json \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1
+```
+
 ## Verifying with `curl`
 
 If your bucket/prefix is publicly readable (or your local MinIO is configured to allow anonymous GETs), you can verify that the manifest and some chunks exist:
