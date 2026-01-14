@@ -1261,7 +1261,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.23"
+         version = "2.5.24"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1377,10 +1377,10 @@ try {
     if ($parentRoot) { $parentManifest = Join-Path $parentRoot "manifest.json" }
 
     $manifestPath = $localManifest
-    if (Test-Path $localManifest) {
+    if (Test-Path -LiteralPath $localManifest -PathType Leaf -ErrorAction SilentlyContinue) {
         $manifestPath = $localManifest
         $mediaRoot = $scriptDir
-    } elseif ($parentManifest -and (Test-Path $parentManifest)) {
+    } elseif ($parentManifest -and (Test-Path -LiteralPath $parentManifest -PathType Leaf -ErrorAction SilentlyContinue)) {
         $manifestPath = $parentManifest
         $mediaRoot = $parentRoot
     }
@@ -1415,7 +1415,7 @@ try {
         extra_files_not_in_manifest = @()
     }
 
-    if (-not (Test-Path $manifestPath)) {
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         $mStatus = "WARN"
         $mSummary = "manifest.json not found (expected next to verify.ps1 or at the media root); cannot verify Guest Tools media integrity."
         $mDetails += "Tip: If you obtained the media as a .zip/.iso, ensure the full directory contents were copied intact."
@@ -1982,10 +1982,10 @@ try {
 
     $manifestPath = $localManifest
     $mediaRoot = $scriptDir
-    if (Test-Path $localManifest) {
+    if (Test-Path -LiteralPath $localManifest -PathType Leaf -ErrorAction SilentlyContinue) {
         $manifestPath = $localManifest
         $mediaRoot = $scriptDir
-    } elseif ($parentManifest -and (Test-Path $parentManifest)) {
+    } elseif ($parentManifest -and (Test-Path -LiteralPath $parentManifest -PathType Leaf -ErrorAction SilentlyContinue)) {
         $manifestPath = $parentManifest
         $mediaRoot = $parentRoot
     }
