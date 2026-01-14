@@ -1451,6 +1451,18 @@ function Wait-AeroSelftestResult {
           return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
         }
         if ($RequireVirtioInputBindingPass) {
+          if ((-not $sawVirtioInputBindingPass) -and (-not $sawVirtioInputBindingFail) -and (-not $sawVirtioInputBindingSkip)) {
+            # Tail truncation fallback: if we didn't observe the marker in the rolling tail scan, try
+            # extracting the last marker line from the full serial log (when available). This avoids
+            # false negatives when a large read chunk truncates earlier marker output from `$tail`.
+            $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
+            $line = Try-ExtractLastAeroMarkerLine -Tail $tail -Prefix $prefix -SerialLogPath $SerialLogPath
+            if ($null -ne $line) {
+              if ($line -match "\|PASS(\||$)") { $sawVirtioInputBindingPass = $true }
+              if ($line -match "\|FAIL(\||$)") { $sawVirtioInputBindingFail = $true }
+              if ($line -match "\|SKIP(\||$)") { $sawVirtioInputBindingSkip = $true }
+            }
+          }
           if ($sawVirtioInputBindingFail) {
             return @{ Result = "VIRTIO_INPUT_BINDING_FAILED"; Tail = $tail }
           }
