@@ -384,3 +384,43 @@ fn chunking_vhd_dynamic_uses_virtual_disk_bytes() {
         assert_eq!(actual, expected, "sha256 mismatch for vhd-d chunk {i}");
     }
 }
+
+#[test]
+fn chunking_raw_uses_file_bytes() {
+    let disk_size_bytes = 4096u64;
+    let chunk_size = 1024u64;
+
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    for (i, b) in expected.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+
+    let mut backend = MemBackend::with_len(disk_size_bytes).unwrap();
+    backend.write_at(0, &expected).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Raw,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+    assert_eq!(chunks.len() as u64, manifest.chunk_count);
+
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
+    assert_eq!(actual, expected);
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let expected = sha256_hex(chunk);
+        let actual = manifest.chunks[i]
+            .sha256
+            .as_deref()
+            .expect("sha256 present");
+        assert_eq!(actual, expected, "sha256 mismatch for raw chunk {i}");
+    }
+}
