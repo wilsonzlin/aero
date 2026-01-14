@@ -160,6 +160,10 @@ To persist captures (or to support `readOnlyRootFilesystem`), mount a volume at 
 
 ```yaml
 l2Proxy:
+  # The image runs as a non-root user (uid 10001). Depending on your storage class,
+  # you may need to set fsGroup so the mounted volume is writable.
+  podSecurityContext:
+    fsGroup: 10001
   capture:
     dir: /captures
   extraVolumeMounts:

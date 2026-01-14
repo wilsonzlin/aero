@@ -59,6 +59,8 @@ l2Proxy:
 > Note: `aero-l2-proxy` runs as a non-root container user. Prefer a capture directory under `/tmp` unless you mount a writable volume at the chosen path.
 >
 > To persist captures, mount a volume at `l2Proxy.capture.dir` using `l2Proxy.extraVolumes` and `l2Proxy.extraVolumeMounts` (see chart README).
+>
+> Depending on your storage class, you may need to set `l2Proxy.podSecurityContext.fsGroup` so the mounted volume is writable by the non-root container user.
 
 If you manage your Ingress separately, the equivalent nginx Ingress path addition looks like:
 

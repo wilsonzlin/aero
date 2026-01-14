@@ -47,6 +47,9 @@ l2Proxy:
   #  - name: captures
   #    persistentVolumeClaim:
   #      claimName: my-capture-pvc
+  #podSecurityContext:
+  #  # Depending on your storage class, you may need to set fsGroup so the mounted PVC is writable.
+  #  fsGroup: 10001
 
 # Optional: override L2 tunnel payload limits (bytes).
 # These are enforced by `aero-l2-proxy` and surfaced to clients via `POST /session` `limits.l2.*`.
