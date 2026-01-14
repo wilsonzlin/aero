@@ -4,13 +4,14 @@ This document describes how to **stage** (preinstall) the `virtio-input` driver 
 Windows 7 image so that Plug‑and‑Play can bind it **on first boot** (useful for automated
 test images where you want input working immediately).
 
-> Note: The in-tree Aero Win7 virtio-input INFs are **revision-gated** and **subsystem-qualified** to the
-> `AERO-W7-VIRTIO` v1 contract. Ensure your virtio-input PCI device reports `REV_01` (for example in QEMU:
-> `-device virtio-*-pci,...,x-pci-revision=0x01`) and the expected contract subsystem IDs, or Windows will not bind
-> the staged driver.
+> Note: The in-tree Aero Win7 virtio-input INFs are **revision-gated** to the `AERO-W7-VIRTIO` v1 contract (`REV_01`).
+> Ensure your virtio-input PCI device reports `REV_01` (for example in QEMU:
+> `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
 >
-> - Keyboard/mouse: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (`aero_virtio_input.inf`)
-> - Tablet/absolute pointer: `SUBSYS_00121AF4` (`aero_virtio_tablet.inf`)
+> - Keyboard/mouse (`aero_virtio_input.inf`):
+>   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4`
+>   - plus fallback: `PCI\VEN_1AF4&DEV_1052&REV_01` (when subsystem IDs are not exposed)
+> - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 
 The commands below assume you already have a **built driver package directory** containing:
 

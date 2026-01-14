@@ -230,12 +230,14 @@ The list will also include more specific forms, e.g.:
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_...&REV_01` (Aero contract v1 subsystem IDs)
 
-The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** and **subsystem-qualified**:
+The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
-- Keyboard/mouse: matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (`aero_virtio_input.inf`)
-- Tablet: matches `SUBSYS_00121AF4` (`aero_virtio_tablet.inf`)
+- Keyboard/mouse: `aero_virtio_input.inf`
+  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names, and
+  - includes a generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that do not expose Aero subsystem IDs.
+- Tablet: `aero_virtio_tablet.inf` matches only `SUBSYS_00121AF4` so tablet binding does not overlap with keyboard/mouse.
 
-If your device does not expose these subsystem IDs, Windows will not bind automatically without adjusting the device model and/or INF.
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can still bind the keyboard/mouse INF via the fallback entry (it will appear with the generic **Aero VirtIO Input Device** name).
 
 ## Cross-checking with QEMU monitor (no guest required)
 
