@@ -239,6 +239,13 @@ impl MouseInterface {
             return;
         }
 
+        // The HID boot mouse protocol does not include wheel/hwheel fields. Avoid generating
+        // guest-visible no-op reports for scroll input when the guest has selected boot protocol.
+        if self.protocol == HidProtocol::Boot {
+            self.wheel = 0;
+            self.hwheel = 0;
+        }
+
         // Cap per-flush work so absurd/hostile deltas can't spin in an unbounded loop producing
         // reports that will be dropped by the bounded queue anyway.
         let mut emitted = 0usize;
@@ -2005,6 +2012,32 @@ mod tests {
             dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Data(vec![0x00, 0x00, 0x00, 0, 2])
         );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
+    fn boot_protocol_mouse_wheel_is_ignored() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_PROTOCOL,
+                    w_value: 0, // boot protocol
+                    w_index: MOUSE_INTERFACE as u16,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        dev.mouse_wheel2(5, 7);
         assert_eq!(
             dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Nak

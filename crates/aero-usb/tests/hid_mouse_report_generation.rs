@@ -217,6 +217,54 @@ fn mouse_wheel2_splits_large_deltas_into_multiple_reports() {
 }
 
 #[test]
+fn mouse_wheel_is_ignored_in_boot_protocol() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    // Boot protocol mice have no wheel/hwheel axes. We intentionally drop scroll events rather than
+    // enqueueing no-op packets that could evict real motion/button reports.
+    set_protocol(&mut mouse, 0);
+    mouse.wheel2(1, -2);
+
+    assert!(
+        poll_interrupt_in(&mut mouse).is_none(),
+        "expected boot protocol wheel input to produce no interrupt report"
+    );
+}
+
+#[test]
+fn boot_protocol_wheel_still_triggers_remote_wakeup() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    // Enable remote wakeup via SET_FEATURE(DEVICE_REMOTE_WAKEUP).
+    assert_eq!(
+        mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00, // HostToDevice | Standard | Device
+                b_request: 0x03,       // SET_FEATURE
+                w_value: 1,            // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+
+    // Enter suspend and inject a scroll event while in boot protocol.
+    mouse.set_suspended(true);
+    set_protocol(&mut mouse, 0);
+    mouse.wheel(1);
+
+    assert!(
+        mouse.poll_remote_wakeup(),
+        "expected scroll input to set remote wakeup pending even in boot protocol"
+    );
+    assert!(!mouse.poll_remote_wakeup(), "remote wakeup should be edge-triggered");
+}
+
+#[test]
 fn mouse_buttons_4_and_5_are_reported_in_report_protocol_but_masked_in_boot_protocol() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);

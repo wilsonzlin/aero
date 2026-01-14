@@ -422,6 +422,17 @@ impl UsbHidMouse {
             return;
         }
 
+        // HID boot protocol mice have no wheel/hwheel fields. Avoid spamming the pending report
+        // queue with no-op packets when a host injects scroll events while the guest has the mouse
+        // in boot mode. Still treat scroll as user activity for remote-wakeup purposes.
+        if self.protocol == HidProtocol::Boot {
+            if (self.wheel != 0 || self.hwheel != 0) && self.suspended && self.remote_wakeup_enabled {
+                self.remote_wakeup_pending = true;
+            }
+            self.wheel = 0;
+            self.hwheel = 0;
+        }
+
         // Host input is untrusted and can be arbitrarily large. Don't allow a single injected
         // delta to spin in an unbounded loop trying to produce millions of reports; cap per-flush
         // work to the size of the pending report queue and drop any remainder.
