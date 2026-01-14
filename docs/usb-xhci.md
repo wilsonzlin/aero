@@ -29,9 +29,10 @@ Status:
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
   and some host-side topology/WebUSB hooks). Doorbell-driven EP0 control transfers can execute,
   doorbell 0-driven command ring processing exists for a limited subset of commands, and doorbelled
-  bulk/interrupt endpoints can execute Normal TRBs when endpoint contexts are configured; however
-  full xHCI command coverage (e.g. `Reset Device`, `Force Event`) and state-machine/scheduling
-  behavior are still incomplete, so treat it as bring-up quality and incomplete.
+  bulk/interrupt endpoints can execute Normal TRBs when endpoint contexts are configured (via a
+  bounded transfer executor); however, full xHCI command coverage (e.g. `Reset Device`, `Force Event`),
+  TRB types, and state-machine/scheduling behavior remain incomplete, so treat it as bring-up quality
+  and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -182,8 +183,8 @@ Notes:
   `OTHER_SPEED_CONFIGURATION` descriptor translation. Otherwise it falls back to the UHCI-based
   passthrough path. As of today, xHCI remains bring-up quality: command ring coverage is incomplete
   and the transfer plane is still limited (endpoint 0 + a subset of bulk/interrupt Normal TRB
-  transfers) and under active development/validation, so UHCI remains the known-good attachment path
-  for HID in practice. See
+  transfers) and under active development/validation, so UHCI remains the known-good attachment
+  path for HID in practice. See
   [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) are still expected to attach
   behind UHCI when available (Windows 7 compatibility), with EHCI/xHCI used as a fallback for WASM
@@ -198,12 +199,9 @@ The current xHCI effort is intentionally staged. The long-term goal is a real xH
 for modern guests and for high-speed/superspeed passthrough, but the in-tree code today is mostly
 **MVP scaffolding**: a minimal-but-realistic MMIO register model (USB2 ports + PORTSC, interrupter 0
 runtime regs, ERST-backed event ring delivery) plus TRB/ring/command/transfer helpers used by tests
-and harnesses. Major guest-visible pieces are still missing (full command-set/state-machine coverage,
-complete transfer-plane coverage, and large parts of the xHCI spec), so treat the implementation as
-“bring-up” quality rather than a complete xHCI.
 and harnesses. Major guest-visible pieces are still missing (full command-set/state-machine
-coverage, complete transfer-plane coverage, and large parts of the xHCI spec), so treat the
-implementation as “bring-up” quality rather than a complete xHCI.
+coverage, broader TRB/transfer-plane coverage beyond the current subset, and large parts of the xHCI
+spec), so treat the implementation as “bring-up” quality rather than a complete xHCI.
 
 ### What exists today
 
@@ -265,7 +263,7 @@ implementation as “bring-up” quality rather than a complete xHCI.
 
 These are **not** full xHCI implementations. In particular, command ring coverage is still incomplete
 (bounded to a small subset of commands), and transfer execution is limited to endpoint 0 plus a
-subset of bulk/interrupt endpoints via Normal TRBs (no isochronous, no USB3/SuperSpeed, etc).
+subset of bulk/interrupt endpoints via Normal TRBs (no isochronous, streams, USB3/SuperSpeed, etc).
 
 #### TRB + ring building blocks
 
@@ -301,6 +299,8 @@ These helpers are partially wired into the guest-visible MMIO/doorbell model (CR
 the command subset, plus slot doorbells for endpoint 0 and bulk/interrupt Normal TRBs), but many
 commands/endpoints remain bring-up-only. The more complete `command_ring::CommandRingProcessor`
 remains a test/harness helper and is not used by the MMIO doorbell path today.
+Bulk/interrupt Normal TRB execution is performed via `transfer::XhciTransferExecutor`, but coverage
+is still limited to a subset of endpoint/TRB types.
 
 #### Transfers (non-control endpoints via Normal TRBs)
 
@@ -389,8 +389,10 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
 - **Full xHCI slot/endpoint context state machines** (`Configure Endpoint`, `Evaluate Context`,
   endpoint commands, etc). A subset of command processing is exposed today via doorbell 0, but full
   coverage/state machines remain incomplete.
-- **Transfer-plane coverage**: bulk/interrupt Normal TRBs are supported, but many TRB types and
-  endpoint behaviors remain unimplemented (isochronous, streams, etc).
+- **Transfer-plane coverage**: bulk/interrupt Normal TRBs are supported via
+  `transfer::XhciTransferExecutor`, but remain incomplete (bounded work per tick, limited TRB
+  coverage, and incomplete endpoint state-machine coverage). Many TRB types and endpoint behaviors
+  remain unimplemented (isochronous, streams, etc).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI/MSI-X in the web runtime**: the TS PCI wrapper currently uses INTx only (no MSI/MSI-X
