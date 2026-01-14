@@ -97,7 +97,6 @@ def inf_functional_lines(path: Path) -> list[str]:
         if no_comment == "":
             continue
         out.append(no_comment)
-
     return out
 
 

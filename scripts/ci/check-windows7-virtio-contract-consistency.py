@@ -4034,6 +4034,8 @@ def main() -> None:
             errors=errors,
         )
 
+        # The alias INF may differ in the models sections (it adds the generic fallback),
+        # but should otherwise stay in sync with the canonical INF.
         drift = check_inf_alias_drift_excluding_sections(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,

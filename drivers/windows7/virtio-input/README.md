@@ -595,17 +595,17 @@ extensions that are implemented in-tree (consumer/media keys).
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
 
 INF note: contract tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`).
-The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) binds only to subsystem-qualified IDs (`SUBSYS_0010`/`SUBSYS_0011`)
-for distinct Device Manager names.
+The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is intentionally **SUBSYS-gated**
+(`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names and to keep bindings disjoint from tablet-style virtio-input
+devices.
 
-If your environment does not expose the Aero subsystem IDs, use the legacy alias INF `inf/virtio-input.inf.disabled` (rename it to
-`virtio-input.inf` to enable it), which adds an opt-in revision-gated generic fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01`.
-When binding via the fallback entry, Device Manager will show **Aero VirtIO Input Device**. Do not ship/install the alias alongside
-`aero_virtio_input.inf`.
+If your environment does not expose the Aero subsystem IDs, enable the legacy filename alias INF
+`inf/virtio-input.inf.disabled` (rename it to `virtio-input.inf`). It adds an opt-in revision-gated generic fallback HWID
+`PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name: **Aero VirtIO Input Device**). The tablet INF is more specific
+(`SUBSYS_0012...`), so it will win over the fallback when both packages are present.
 
-If your tooling expects the legacy INF filename, `inf/virtio-input.inf.disabled` is a legacy filename alias (rename it to
-`virtio-input.inf` to enable it). Outside of the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), it is expected to stay in sync
-with `inf/aero_virtio_input.inf` (see `scripts/check-inf-alias.py`).
+Do not ship/install the alias alongside `aero_virtio_input.inf`. Outside of the models sections (`[Aero.NTx86]` /
+`[Aero.NTamd64]`), it is expected to stay in sync with `inf/aero_virtio_input.inf` (see `scripts/check-inf-alias.py`).
 
 Device kind / report descriptor selection:
 

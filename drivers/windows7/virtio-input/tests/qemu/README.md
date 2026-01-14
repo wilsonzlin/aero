@@ -238,6 +238,7 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
 
 - Keyboard/mouse: `aero_virtio_input.inf`
   - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**SUBSYS-only**)
+  - intentionally omits the strict generic fallback HWID (no SUBSYS) so it does not overlap with tablets
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
 - Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
   - legacy filename alias for workflows/tools that still reference `virtio-input.inf`
@@ -252,7 +253,7 @@ In that case, enable the legacy alias INF (`virtio-input.inf.disabled` → `virt
 entry (it will appear with the generic **Aero VirtIO Input Device** name). Tablet devices without the Aero tablet subsystem ID
 may also bind via the fallback entry if `aero_virtio_tablet.inf` does not match.
 
-Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they match the same HWIDs, which can
+Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they match overlapping HWIDs, which can
 lead to confusing PnP driver selection.
 
 ## Cross-checking with QEMU monitor (no guest required)

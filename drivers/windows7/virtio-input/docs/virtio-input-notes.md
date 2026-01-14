@@ -45,13 +45,15 @@ The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the ke
 separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**). When binding via the legacy
 alias INF's fallback entry, Device Manager will show **Aero VirtIO Input Device**.
 
-Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed.
+Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed. If the legacy alias INF is enabled and
+includes the generic fallback entry, the tablet INF is still more specific (`SUBSYS_0012...`) and will win.
 
 The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable)
 for workflows/tools that still reference `virtio-input.inf`. The alias INF is allowed to differ in the models sections
-(`Aero.NTx86` / `Aero.NTamd64`) to provide the opt-in fallback entry; outside of the models sections it is expected to stay
-in sync with `aero_virtio_input.inf` (see `../scripts/check-inf-alias.py`). It is not a separate “fallback-only” variant; it
-also includes the subsystem-qualified keyboard/mouse IDs. Do not ship/install it alongside `aero_virtio_input.inf`
+(`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide the opt-in fallback entry; outside of the models sections it is expected to
+stay in sync with `aero_virtio_input.inf` (see `../scripts/check-inf-alias.py`). It is not a separate “fallback-only”
+variant; it also includes the subsystem-qualified keyboard/mouse IDs. Do not ship/install it alongside
+`aero_virtio_input.inf`
 (overlapping INFs can lead to confusing binding/upgrade behavior).
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the

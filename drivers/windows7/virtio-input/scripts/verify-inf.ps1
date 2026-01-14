@@ -298,7 +298,7 @@ $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
   # Aero contract v1 mouse (SUBSYS_0011)
-  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
+  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01'
 )
 if ($expectGenericFallback) {
   $requiredHwids += $fallbackHwid
@@ -405,7 +405,6 @@ if (-not $expectGenericFallback) {
     }
   }
 }
-
 # Disallow tablet subsystem IDs in the keyboard/mouse INF to keep bindings disjoint.
 $forbiddenTabletSubsysRegex = '(?i)' + [regex]::Escape('SUBSYS_00121AF4')
 foreach ($sect in $modelSections) {
