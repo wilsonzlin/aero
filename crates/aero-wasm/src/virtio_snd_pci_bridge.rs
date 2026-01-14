@@ -940,7 +940,7 @@ mod tests {
         write_u16_le(&mut bridge.mem, used + 2, 0).unwrap(); // used.idx
 
         // Seed the response buffer with a sentinel so we can detect DMA writes.
-        bridge.mem.get_slice_mut(resp, 64).unwrap().fill(0xAA);
+        bridge.mem.write(resp, &[0xAAu8; 64]).unwrap();
 
         // Program queue addresses + enable via the virtio-pci common config region.
         bridge.mmio_write(0x16, 2, 0); // queue_select = 0
@@ -964,8 +964,10 @@ mod tests {
             0,
             "used.idx must not advance when BME is clear"
         );
+        let mut resp_hdr = [0u8; 4];
+        bridge.mem.read(resp, &mut resp_hdr).unwrap();
         assert_eq!(
-            bridge.mem.get_slice(resp, 4).unwrap(),
+            &resp_hdr,
             &[0xAA; 4],
             "response buffer must not be written when BME is clear"
         );
@@ -982,8 +984,9 @@ mod tests {
             0,
             "used.idx must not advance when polling with BME clear"
         );
+        bridge.mem.read(resp, &mut resp_hdr).unwrap();
         assert_eq!(
-            bridge.mem.get_slice(resp, 4).unwrap(),
+            &resp_hdr,
             &[0xAA; 4],
             "response buffer must not be written when polling with BME clear"
         );
@@ -998,8 +1001,9 @@ mod tests {
             "IRQ should assert once DMA is permitted"
         );
         assert_eq!(read_u16_le(&bridge.mem, used + 2).unwrap(), 1);
+        bridge.mem.read(resp, &mut resp_hdr).unwrap();
         assert_eq!(
-            bridge.mem.get_slice(resp, 4).unwrap(),
+            &resp_hdr,
             &[0, 0, 0, 0],
             "response header should contain VIRTIO_SND_S_OK"
         );
