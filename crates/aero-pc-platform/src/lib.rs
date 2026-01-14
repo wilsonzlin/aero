@@ -1011,6 +1011,70 @@ struct PciIntxSource {
     query_level: Box<dyn Fn(&PcPlatform) -> bool>,
 }
 
+fn sync_msi_capability_into_config(
+    cfg: &mut aero_devices::pci::PciConfigSpace,
+    enabled: bool,
+    addr: u64,
+    data: u16,
+    mask: u32,
+) {
+    let Some(off) = cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI) else {
+        return;
+    };
+    let base = u16::from(off);
+
+    // Preserve read-only capability bits (64-bit + per-vector masking) by only mutating the MSI
+    // Enable bit in Message Control.
+    let ctrl = cfg.read(base + 0x02, 2) as u16;
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+
+    cfg.write(base + 0x04, 4, addr as u32);
+    if is_64bit {
+        cfg.write(base + 0x08, 4, (addr >> 32) as u32);
+        cfg.write(base + 0x0c, 2, u32::from(data));
+        if per_vector_masking {
+            cfg.write(base + 0x10, 4, mask);
+        }
+    } else {
+        cfg.write(base + 0x08, 2, u32::from(data));
+        if per_vector_masking {
+            cfg.write(base + 0x0c, 4, mask);
+        }
+    }
+
+    let new_ctrl = if enabled {
+        ctrl | 0x0001
+    } else {
+        ctrl & !0x0001
+    };
+    cfg.write(base + 0x02, 2, u32::from(new_ctrl));
+}
+
+fn sync_msix_capability_into_config(
+    cfg: &mut aero_devices::pci::PciConfigSpace,
+    enabled: bool,
+    function_masked: bool,
+) {
+    let Some(off) = cfg.find_capability(PCI_CAP_ID_MSIX) else {
+        return;
+    };
+    let base = u16::from(off);
+    let ctrl = cfg.read(base + 0x02, 2) as u16;
+    let mut new_ctrl = ctrl;
+    if enabled {
+        new_ctrl |= 1 << 15;
+    } else {
+        new_ctrl &= !(1 << 15);
+    }
+    if function_masked {
+        new_ctrl |= 1 << 14;
+    } else {
+        new_ctrl &= !(1 << 14);
+    }
+    cfg.write(base + 0x02, 2, u32::from(new_ctrl));
+}
+
 /// Canonical PC/Q35 platform wiring: chipset + MMIO + port I/O + PCI + interrupt controllers + timers.
 ///
 /// ## Current limitation: BSP-only execution (no SMP scheduling yet)
@@ -1627,19 +1691,39 @@ impl PcPlatform {
                     bdf,
                     pin: PciInterruptPin::IntA,
                     query_level: Box::new(move |pc| {
-                        let pci_state = {
+                        let (command, msi_state, msix_state) = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
-                            pci_cfg
-                                .bus_mut()
-                                .device_config(bdf)
-                                .map(|cfg| cfg.snapshot_state())
+                            let cfg = pci_cfg.bus_mut().device_config(bdf);
+                            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                            let msi_state = cfg
+                                .and_then(|cfg| cfg.capability::<MsiCapability>())
+                                .map(|msi| {
+                                    (
+                                        msi.enabled(),
+                                        msi.message_address(),
+                                        msi.message_data(),
+                                        msi.mask_bits(),
+                                    )
+                                });
+                            let msix_state = cfg
+                                .and_then(|cfg| cfg.capability::<MsixCapability>())
+                                .map(|msix| (msix.enabled(), msix.function_masked()));
+                            (command, msi_state, msix_state)
                         };
 
                         // Keep device-side gating consistent when the same device model is also used
                         // outside the platform (e.g. in unit tests).
+                        //
+                        // Note: MSI pending bits are device-managed and must not be overwritten from
+                        // the canonical PCI config space (which cannot observe them).
                         let mut nvme = nvme_for_intx.borrow_mut();
-                        if let Some(state) = pci_state {
-                            nvme.config_mut().restore_state(&state);
+                        let cfg = nvme.config_mut();
+                        cfg.set_command(command);
+                        if let Some((enabled, addr, data, mask)) = msi_state {
+                            sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
+                        }
+                        if let Some((enabled, function_masked)) = msix_state {
+                            sync_msix_capability_into_config(cfg, enabled, function_masked);
                         }
 
                         nvme.irq_level()
@@ -1860,20 +1944,40 @@ impl PcPlatform {
                     bdf,
                     pin: PciInterruptPin::IntA,
                     query_level: Box::new(move |pc| {
-                        let pci_state = {
+                        let (command, msi_state, msix_state) = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
-                            pci_cfg
-                                .bus_mut()
-                                .device_config(bdf)
-                                .map(|cfg| cfg.snapshot_state())
+                            let cfg = pci_cfg.bus_mut().device_config(bdf);
+                            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                            let msi_state = cfg
+                                .and_then(|cfg| cfg.capability::<MsiCapability>())
+                                .map(|msi| {
+                                    (
+                                        msi.enabled(),
+                                        msi.message_address(),
+                                        msi.message_data(),
+                                        msi.mask_bits(),
+                                    )
+                                });
+                            let msix_state = cfg
+                                .and_then(|cfg| cfg.capability::<MsixCapability>())
+                                .map(|msix| (msix.enabled(), msix.function_masked()));
+                            (command, msi_state, msix_state)
                         };
 
                         // Keep device-side gating consistent when the same device model is also
                         // used outside the platform (e.g. in unit tests). This also ensures INTx
                         // is suppressed when MSI is active.
+                        //
+                        // Note: MSI pending bits are device-managed and must not be overwritten from
+                        // the canonical PCI config space (which cannot observe them).
                         let mut xhci = xhci_for_intx.borrow_mut();
-                        if let Some(state) = pci_state {
-                            xhci.config_mut().restore_state(&state);
+                        let cfg = xhci.config_mut();
+                        cfg.set_command(command);
+                        if let Some((enabled, addr, data, mask)) = msi_state {
+                            sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
+                        }
+                        if let Some((enabled, function_masked)) = msix_state {
+                            sync_msix_capability_into_config(cfg, enabled, function_masked);
                         }
 
                         xhci.irq_level()
@@ -2680,17 +2784,41 @@ impl PcPlatform {
         };
 
         let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-        let pci_state = {
+        let (command, msi_state, msix_state) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(bdf)
-                .map(|cfg| cfg.snapshot_state())
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let msi_state = cfg
+                .and_then(|cfg| cfg.capability::<MsiCapability>())
+                .map(|msi| {
+                    (
+                        msi.enabled(),
+                        msi.message_address(),
+                        msi.message_data(),
+                        msi.mask_bits(),
+                    )
+                });
+            let msix_state = cfg
+                .and_then(|cfg| cfg.capability::<MsixCapability>())
+                .map(|msix| (msix.enabled(), msix.function_masked()));
+            (command, msi_state, msix_state)
         };
 
         let mut nvme = nvme.borrow_mut();
-        if let Some(state) = pci_state {
-            nvme.config_mut().restore_state(&state);
+        {
+            // Keep the NVMe model's view of PCI config state in sync so it can apply bus mastering
+            // gating and deliver MSI/MSI-X during `process()`.
+            //
+            // Note: MSI pending bits are device-managed and must not be overwritten from the
+            // canonical PCI config space (which cannot observe them).
+            let cfg = nvme.config_mut();
+            cfg.set_command(command);
+            if let Some((enabled, addr, data, mask)) = msi_state {
+                sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
+            }
+            if let Some((enabled, function_masked)) = msix_state {
+                sync_msix_capability_into_config(cfg, enabled, function_masked);
+            }
         }
         nvme.process(&mut self.memory);
     }
@@ -3023,19 +3151,40 @@ impl PcPlatform {
         if let Some(xhci) = self.xhci.as_ref() {
             const NS_PER_MS: u64 = 1_000_000;
             let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
-            let pci_state = {
+            let (command, msi_state, msix_state) = {
                 let mut pci_cfg = self.pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .map(|cfg| cfg.snapshot_state())
+                let cfg = pci_cfg.bus_mut().device_config(bdf);
+                let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                let msi_state = cfg
+                    .and_then(|cfg| cfg.capability::<MsiCapability>())
+                    .map(|msi| {
+                        (
+                            msi.enabled(),
+                            msi.message_address(),
+                            msi.message_data(),
+                            msi.mask_bits(),
+                        )
+                    });
+                let msix_state = cfg
+                    .and_then(|cfg| cfg.capability::<MsixCapability>())
+                    .map(|msix| (msix.enabled(), msix.function_masked()));
+                (command, msi_state, msix_state)
             };
 
             // Keep the xHCI model's view of PCI config state in sync (including MSI capability
             // state) so it can deliver MSI through `tick_1ms`.
             let mut xhci = xhci.borrow_mut();
-            if let Some(state) = pci_state {
-                xhci.config_mut().restore_state(&state);
+            {
+                // Note: MSI pending bits are device-managed and must not be overwritten from the
+                // canonical PCI config space (which cannot observe them).
+                let cfg = xhci.config_mut();
+                cfg.set_command(command);
+                if let Some((enabled, addr, data, mask)) = msi_state {
+                    sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
+                }
+                if let Some((enabled, function_masked)) = msix_state {
+                    sync_msix_capability_into_config(cfg, enabled, function_masked);
+                }
             }
 
             self.xhci_ns_remainder = self.xhci_ns_remainder.saturating_add(delta_ns);
