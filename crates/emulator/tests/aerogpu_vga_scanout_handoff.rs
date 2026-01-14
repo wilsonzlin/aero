@@ -159,14 +159,14 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     {
         let mut d = dev.borrow_mut();
         // Attempt to switch to a different legacy VBE mode.
-        d.vga_port_write(0x01CE, 2, 0x0001);
-        d.vga_port_write(0x01CF, 2, 800);
-        d.vga_port_write(0x01CE, 2, 0x0002);
-        d.vga_port_write(0x01CF, 2, 600);
-        d.vga_port_write(0x01CE, 2, 0x0003);
-        d.vga_port_write(0x01CF, 2, 32);
-        d.vga_port_write(0x01CE, 2, 0x0004);
-        d.vga_port_write(0x01CF, 2, 0x0041);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 800);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 600);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 32);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
     }
     // Attempt to scribble the legacy LFB.
     mem.write(
