@@ -69,6 +69,93 @@ function Is-StopUpstreamCommandsError($err) {
     return $false
 }
 
+function Test-IsReparsePoint($item) {
+    if (-not $item) { return $false }
+    try {
+        return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+    } catch {
+        return $false
+    }
+}
+
+function Get-FilesRecursiveNoReparsePoints([string]$root, [string]$namePattern, [int]$limit) {
+    # PowerShell 2.0-compatible recursive file enumeration that refuses to traverse reparse points
+    # (junctions/symlinks). This avoids accidental traversal outside the intended Guest Tools tree.
+    #
+    # Return: @{ items = <FileSystemInfo[]>; errors = <object[]>; truncated = <bool> }
+    $result = @{
+        items = @()
+        errors = @()
+        truncated = $false
+    }
+
+    if (-not $root) { return $result }
+    $rootTrimmed = ("" + $root).Trim()
+    if ($rootTrimmed.Length -eq 0) { return $result }
+
+    $rootItem = $null
+    try {
+        $rootItem = Get-Item -LiteralPath $rootTrimmed -ErrorAction Stop
+    } catch {
+        $result.errors += $_
+        return $result
+    }
+    if (-not $rootItem) { return $result }
+
+    if (Test-IsReparsePoint $rootItem) {
+        try { $result.errors += ("Skipped reparse point directory: " + ("" + $rootItem.FullName)) } catch { $result.errors += "Skipped reparse point directory." }
+        return $result
+    }
+    if (-not $rootItem.PSIsContainer) {
+        try { $result.errors += ("Not a directory: " + ("" + $rootItem.FullName)) } catch { $result.errors += "Not a directory." }
+        return $result
+    }
+
+    $stack = New-Object System.Collections.Stack
+    $stack.Push($rootItem.FullName)
+
+    while ($stack.Count -gt 0) {
+        $dir = "" + $stack.Pop()
+        $children = $null
+        try {
+            $children = Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop
+        } catch {
+            $result.errors += $_
+            continue
+        }
+
+        foreach ($c in @($children)) {
+            if (-not $c) { continue }
+
+            if (Test-IsReparsePoint $c) {
+                try { $result.errors += ("Skipped reparse point: " + ("" + $c.FullName)) } catch { $result.errors += "Skipped reparse point." }
+                continue
+            }
+
+            if ($c.PSIsContainer) {
+                $stack.Push($c.FullName)
+                continue
+            }
+
+            if ($namePattern -and ($namePattern.Trim().Length -gt 0)) {
+                if (-not ($c.Name -like $namePattern)) {
+                    continue
+                }
+            }
+
+            $result.items += $c
+            if ($limit -gt 0 -and $result.items.Count -ge $limit) {
+                $result.truncated = $true
+                break
+            }
+        }
+
+        if ($result.truncated) { break }
+    }
+
+    return $result
+}
+
 function Invoke-Capture([string]$file, [string[]]$args) {
     $out = ""
     $exit = 0
@@ -171,7 +258,11 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
     if (Test-Path -LiteralPath $toolsDir -PathType Container -ErrorAction SilentlyContinue) {
         try {
             $searched += ($toolsDir + " (recursive search)")
-            $hit = Get-ChildItem -LiteralPath $toolsDir -Recurse -Filter aerogpu_dbgctl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
+            $scan = Get-FilesRecursiveNoReparsePoints $toolsDir "aerogpu_dbgctl.exe" 1
+            $hit = $null
+            if ($scan -and $scan.items -and $scan.items.Count -gt 0) {
+                $hit = $scan.items[0]
+            }
             if ($hit -and $hit.FullName) {
                 return @{ found = $true; path = ("" + $hit.FullName); searched = $searched }
             }
@@ -1803,11 +1894,11 @@ try {
                     $scanItems = @()
                     $scanErrors = @()
                     try {
-                        $scanItems = @(
-                            Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable scanErrors |
-                                Where-Object { -not $_.PSIsContainer } |
-                                Select-Object -First $scanLimitPlus -ErrorAction SilentlyContinue
-                        )
+                        $scan = Get-FilesRecursiveNoReparsePoints $rootFull "" $scanLimitPlus
+                        if ($scan) {
+                            if ($scan.items) { $scanItems = @($scan.items) } else { $scanItems = @() }
+                            if ($scan.errors) { $scanErrors = @($scan.errors) } else { $scanErrors = @() }
+                        }
                     } catch {
                         # Get-ChildItem can still throw (provider issues, etc). Don't fail the whole report; treat as scan error.
                         $scanErrors += $_
@@ -2003,9 +2094,12 @@ try {
     $certDir = Join-Path $scriptDir "certs"
     $certFiles = @()
     if (Test-Path -LiteralPath $certDir -PathType Container -ErrorAction SilentlyContinue) {
-        $certFiles += (Get-ChildItem -LiteralPath $certDir -Recurse -Filter *.cer -ErrorAction SilentlyContinue)
-        $certFiles += (Get-ChildItem -LiteralPath $certDir -Recurse -Filter *.crt -ErrorAction SilentlyContinue)
-        $certFiles += (Get-ChildItem -LiteralPath $certDir -Recurse -Filter *.p7b -ErrorAction SilentlyContinue)
+        $scan = Get-FilesRecursiveNoReparsePoints $certDir "*.cer" 20000
+        if ($scan -and $scan.items) { $certFiles += @($scan.items) }
+        $scan = Get-FilesRecursiveNoReparsePoints $certDir "*.crt" 20000
+        if ($scan -and $scan.items) { $certFiles += @($scan.items) }
+        $scan = Get-FilesRecursiveNoReparsePoints $certDir "*.p7b" 20000
+        if ($scan -and $scan.items) { $certFiles += @($scan.items) }
     }
 
     $policy = $gtSigningPolicy
@@ -2409,9 +2503,15 @@ try {
         $summary.total_driver_folders = $folders.Count
 
         foreach ($folder in $folders) {
-            $infFiles = Get-ChildItem -LiteralPath $folder.FullName -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
-            $sysFiles = Get-ChildItem -LiteralPath $folder.FullName -Recurse -Filter *.sys -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
-            $catFiles = Get-ChildItem -LiteralPath $folder.FullName -Recurse -Filter *.cat -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+            $infFiles = @()
+            $sysFiles = @()
+            $catFiles = @()
+            $scan = Get-FilesRecursiveNoReparsePoints $folder.FullName "*.inf" 20000
+            if ($scan -and $scan.items) { $infFiles = @($scan.items) }
+            $scan = Get-FilesRecursiveNoReparsePoints $folder.FullName "*.sys" 20000
+            if ($scan -and $scan.items) { $sysFiles = @($scan.items) }
+            $scan = Get-FilesRecursiveNoReparsePoints $folder.FullName "*.cat" 20000
+            if ($scan -and $scan.items) { $catFiles = @($scan.items) }
 
             $infMeta = @()
             foreach ($inf in $infFiles) {
@@ -3771,11 +3871,11 @@ try {
             try {
                 $scanLimit = [int]$toolsData.file_inventory_limit
                 $scanLimitPlus = $scanLimit + 1
-                $items = @(
-                    Get-ChildItem -LiteralPath $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors |
-                        Where-Object { -not $_.PSIsContainer } |
-                        Select-Object -First $scanLimitPlus -ErrorAction SilentlyContinue
-                )
+                $scan = Get-FilesRecursiveNoReparsePoints $toolsDir "" $scanLimitPlus
+                if ($scan) {
+                    if ($scan.items) { $items = @($scan.items) } else { $items = @() }
+                    if ($scan.errors) { $gciErrors = @($scan.errors) } else { $gciErrors = @() }
+                }
                 if ($items.Count -gt $scanLimit) {
                     $toolsData.file_inventory_truncated = $true
                     $items = @($items | Select-Object -First $scanLimit)

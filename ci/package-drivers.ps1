@@ -1502,8 +1502,8 @@ function Invoke-PackageDrivers {
 
     Assert-SafeOutDir -RepoRoot $repoRootResolved -OutDir $outDirResolved -AllowUnsafeOutDir:$AllowUnsafeOutDir
 
-    if (-not (Test-Path $inputRootResolved)) {
-        throw "InputRoot does not exist: '$inputRootResolved'."
+    if (-not (Test-Path -LiteralPath $inputRootResolved -PathType Container)) {
+        throw "InputRoot does not exist or is not a directory: '$inputRootResolved'."
     }
     Assert-NoReparsePointsInTree -Root $inputRootResolved -Context "InputRoot"
     if ($includeCerts) {
