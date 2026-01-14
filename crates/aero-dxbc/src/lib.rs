@@ -42,6 +42,9 @@ pub mod test_utils;
 #[cfg(feature = "robust")]
 pub mod robust;
 
+#[cfg(test)]
+mod tests;
+
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;
 pub use crate::fourcc::FourCC;

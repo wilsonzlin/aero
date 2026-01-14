@@ -1,4 +1,4 @@
-use aero_dxbc::{parse_rdef_chunk, DxbcError, DxbcFile, FourCC};
+use crate::{parse_rdef_chunk, DxbcError, DxbcFile, FourCC};
 
 const VS_2_0_SIMPLE_DXBC: &[u8] =
     include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc");

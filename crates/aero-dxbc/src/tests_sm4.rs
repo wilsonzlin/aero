@@ -1,38 +1,9 @@
-use aero_dxbc::sm4::{ShaderModel, ShaderStage, Sm4Error, Sm4Program};
-use aero_dxbc::{DxbcFile, FourCC};
+use crate::sm4::{ShaderModel, ShaderStage, Sm4Error, Sm4Program};
+use crate::test_utils as dxbc_test_utils;
+use crate::{DxbcFile, FourCC};
 
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
-    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
-    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
-
-    // Compute chunk offsets.
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_len;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor as u32);
-        cursor += 8 + data.len();
-    }
-
-    let total_size = cursor as u32;
-
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored by parser)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved/unknown
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for off in offsets {
-        bytes.extend_from_slice(&off.to_le_bytes());
-    }
-
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(&fourcc.0);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-    }
-
-    assert_eq!(bytes.len(), total_size as usize);
-    bytes
+    dxbc_test_utils::build_container(chunks)
 }
 
 fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
