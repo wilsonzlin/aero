@@ -99,6 +99,8 @@ pub const PORTSC_OCC: u32 = 1 << 5;
 pub const PORTSC_FPR: u32 = 1 << 6;
 pub const PORTSC_SUSP: u32 = 1 << 7;
 pub const PORTSC_PR: u32 = 1 << 8;
+/// High-speed port indicator: 1 = device is attached at high-speed.
+pub const PORTSC_HSP: u32 = 1 << 9;
 pub const PORTSC_LS_MASK: u32 = 0b11 << 10;
 pub const PORTSC_PP: u32 = 1 << 12;
 /// Port Owner: 1 = companion controller owns the port, 0 = EHCI owns the port.

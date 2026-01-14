@@ -10,7 +10,7 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
 use crate::device::AttachedUsbDevice;
 use crate::hub::{RootHubDevice, RootHubDeviceMut};
 use crate::usb2_port::Usb2PortMux;
-use crate::{UsbDeviceModel, UsbHubAttachError};
+use crate::{UsbDeviceModel, UsbHubAttachError, UsbSpeed};
 
 use super::regs::*;
 
@@ -122,6 +122,19 @@ impl Port {
 
         if self.connected {
             v |= PORTSC_CCS;
+            if !self.reset {
+                // EHCI line-status bits (10:11) reflect the D+/D- level when not in reset. Model J
+                // state when active and K state while resuming (mirrors the muxed port view in
+                // `Usb2PortMux`).
+                let ls = if self.resuming { 0b10 } else { 0b01 };
+                v |= (ls as u32) << 10;
+
+                if let Some(dev) = self.device.as_ref() {
+                    if dev.speed() == UsbSpeed::High {
+                        v |= PORTSC_HSP;
+                    }
+                }
+            }
         }
         if self.connect_change {
             v |= PORTSC_CSC;

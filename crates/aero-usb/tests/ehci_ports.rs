@@ -1,9 +1,15 @@
 use aero_usb::ehci::regs::{
-    reg_portsc, CONFIGFLAG_CF, PORTSC_CSC, PORTSC_PED, PORTSC_PEDC, PORTSC_PO, REG_CONFIGFLAG,
-    REG_USBSTS, USBSTS_PCD,
+    reg_portsc, CONFIGFLAG_CF, PORTSC_CSC, PORTSC_FPR, PORTSC_HSP, PORTSC_LS_MASK, PORTSC_PED,
+    PORTSC_PEDC, PORTSC_PO, PORTSC_PP, PORTSC_PR, PORTSC_SUSP, REG_CONFIGFLAG, REG_USBSTS,
+    USBSTS_PCD,
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbSpeed};
+
+mod util;
+
+use util::TestMemory;
 
 #[test]
 fn ehci_configflag_routes_ports_and_owner_writes_trigger_pcd() {
@@ -86,4 +92,64 @@ fn ehci_configflag_routes_ports_and_owner_writes_trigger_pcd() {
 
     // With PORT_OWNER=1 and no companion present, the device is unreachable.
     assert!(ehci.hub_mut().device_mut_for_address(0).is_none());
+}
+
+#[test]
+fn ehci_portsc_reports_high_speed_and_line_status() {
+    struct HighSpeedDevice;
+
+    impl UsbDeviceModel for HighSpeedDevice {
+        fn speed(&self) -> UsbSpeed {
+            UsbSpeed::High
+        }
+
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach(0, Box::new(HighSpeedDevice));
+
+    // Claim ports for EHCI (clears PORT_OWNER).
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+
+    // Reset the port to enable it.
+    ehci.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..50 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(portsc & PORTSC_HSP, 0, "expected high-speed port indicator");
+
+    // Line-status bits should show J state (0b01) when active.
+    assert_eq!(
+        (portsc & PORTSC_LS_MASK) >> 10,
+        0b01,
+        "expected EHCI line status to show J-state when idle"
+    );
+
+    // Suspend the port, then force resume and verify line status flips to K state.
+    ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(portsc & PORTSC_SUSP, 0);
+
+    ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_FPR);
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(portsc & PORTSC_FPR, 0);
+    assert_eq!((portsc & PORTSC_LS_MASK) >> 10, 0b10);
+
+    // After the resume timer expires, the port should exit suspend/resume and return to J state.
+    for _ in 0..20 {
+        ehci.tick_1ms(&mut mem);
+    }
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
+    assert_eq!((portsc & PORTSC_LS_MASK) >> 10, 0b01);
 }
