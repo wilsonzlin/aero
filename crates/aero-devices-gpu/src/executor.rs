@@ -140,6 +140,7 @@ pub struct AeroGpuExecutor {
     /// Native in-process backends should call [`AeroGpuExecutor::set_backend`] which disables this
     /// queue and preserves the existing submit-to-backend behavior.
     pending_submissions: VecDeque<AeroGpuBackendSubmission>,
+    pending_submissions_bytes: usize,
     pending_fences: VecDeque<PendingFenceCompletion>,
     in_flight: BTreeMap<u64, InFlightSubmission>,
     completed_before_submit: HashSet<u64>,
@@ -153,6 +154,7 @@ impl Clone for AeroGpuExecutor {
             cfg: self.cfg.clone(),
             last_submissions: self.last_submissions.clone(),
             pending_submissions: self.pending_submissions.clone(),
+            pending_submissions_bytes: self.pending_submissions_bytes,
             pending_fences: self.pending_fences.clone(),
             in_flight: self.in_flight.clone(),
             completed_before_submit: self.completed_before_submit.clone(),
@@ -168,6 +170,7 @@ impl AeroGpuExecutor {
             cfg,
             last_submissions: VecDeque::new(),
             pending_submissions: VecDeque::new(),
+            pending_submissions_bytes: 0,
             pending_fences: VecDeque::new(),
             in_flight: BTreeMap::new(),
             completed_before_submit: HashSet::new(),
@@ -180,6 +183,7 @@ impl AeroGpuExecutor {
         // Once a backend is configured, this executor is expected to submit work directly to it.
         // Clear any queued drain-mode submissions to avoid mixing execution models.
         self.pending_submissions.clear();
+        self.pending_submissions_bytes = 0;
         self.backend_configured = true;
         self.backend = backend;
     }
@@ -202,9 +206,71 @@ impl AeroGpuExecutor {
             return Vec::new();
         }
 
+        self.pending_submissions_bytes = 0;
         core::mem::take(&mut self.pending_submissions)
             .into_iter()
             .collect()
+    }
+
+    fn submission_payload_len_bytes(sub: &AeroGpuBackendSubmission) -> usize {
+        sub.cmd_stream
+            .len()
+            .saturating_add(sub.alloc_table.as_ref().map(|b| b.len()).unwrap_or(0))
+    }
+
+    fn push_pending_submission(
+        &mut self,
+        regs: &mut AeroGpuRegs,
+        mem: &mut dyn MemoryBus,
+        submission: AeroGpuBackendSubmission,
+    ) {
+        let sub_bytes = Self::submission_payload_len_bytes(&submission);
+        if sub_bytes > MAX_PENDING_SUBMISSIONS_TOTAL_BYTES {
+            // A single submission is too large to queue safely. Treat as backend failure to avoid
+            // unbounded allocations and guest deadlocks.
+            let fence = submission.signal_fence;
+            if fence != 0 && fence > regs.completed_fence {
+                regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
+                regs.record_error(AerogpuErrorCode::Backend, fence);
+                if let Some(entry) = self.in_flight.get_mut(&fence) {
+                    entry.vblank_ready = true;
+                }
+                self.complete_fence(regs, mem, fence);
+            }
+            return;
+        }
+
+        // Keep the pending submissions queue bounded so hostile/buggy guests can't cause
+        // unbounded host allocations in the external-backend (WASM bridge) path.
+        while self.pending_submissions.len() >= MAX_PENDING_SUBMISSIONS
+            || self
+                .pending_submissions_bytes
+                .saturating_add(sub_bytes)
+                > MAX_PENDING_SUBMISSIONS_TOTAL_BYTES
+        {
+            let Some(dropped) = self.pending_submissions.pop_front() else {
+                self.pending_submissions_bytes = 0;
+                break;
+            };
+            let dropped_bytes = Self::submission_payload_len_bytes(&dropped);
+            self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_sub(dropped_bytes);
+
+            let fence = dropped.signal_fence;
+            if fence != 0 && fence > regs.completed_fence {
+                regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
+                regs.record_error(AerogpuErrorCode::Backend, fence);
+                if let Some(entry) = self.in_flight.get_mut(&fence) {
+                    // If we dropped the submission, do not allow it to block on vblank pacing.
+                    entry.vblank_ready = true;
+                }
+                self.complete_fence(regs, mem, fence);
+            }
+        }
+
+        self.pending_submissions_bytes = self
+            .pending_submissions_bytes
+            .saturating_add(sub_bytes);
+        self.pending_submissions.push_back(submission);
     }
 
     pub(crate) fn save_pending_submissions_snapshot_state(&self) -> Option<Vec<u8>> {
@@ -240,7 +306,6 @@ impl AeroGpuExecutor {
     ) -> SnapshotResult<()> {
         // This queue may contain arbitrary guest command streams. Since snapshots can come from
         // untrusted sources, cap sizes to keep decode bounded.
-        const MAX_PENDING_SUBMISSIONS: usize = 65_536;
 
         let mut d = Decoder::new(bytes);
         let count = d.u32()? as usize;
@@ -252,6 +317,7 @@ impl AeroGpuExecutor {
         pending
             .try_reserve_exact(count)
             .map_err(|_| SnapshotError::OutOfMemory)?;
+        let mut total_bytes = 0usize;
 
         for _ in 0..count {
             let flags = d.u32()?;
@@ -266,6 +332,7 @@ impl AeroGpuExecutor {
                 ));
             }
             let cmd_stream = d.bytes_vec(cmd_len)?;
+            total_bytes = total_bytes.saturating_add(cmd_stream.len());
 
             let alloc_len = d.u32()? as usize;
             if alloc_len > MAX_ALLOC_TABLE_SIZE_BYTES as usize {
@@ -276,8 +343,15 @@ impl AeroGpuExecutor {
             let alloc_table = if alloc_len == 0 {
                 None
             } else {
-                Some(d.bytes_vec(alloc_len)?)
+                let bytes = d.bytes_vec(alloc_len)?;
+                total_bytes = total_bytes.saturating_add(bytes.len());
+                Some(bytes)
             };
+            if total_bytes > MAX_PENDING_SUBMISSIONS_TOTAL_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "pending_submissions.total_bytes",
+                ));
+            }
 
             pending.push_back(AeroGpuBackendSubmission {
                 flags,
@@ -292,11 +366,13 @@ impl AeroGpuExecutor {
         d.finish()?;
 
         self.pending_submissions = pending;
+        self.pending_submissions_bytes = total_bytes;
         Ok(())
     }
 
     pub fn reset(&mut self) {
         self.pending_submissions.clear();
+        self.pending_submissions_bytes = 0;
         self.pending_fences.clear();
         self.in_flight.clear();
         self.completed_before_submit.clear();
@@ -904,21 +980,21 @@ impl AeroGpuExecutor {
                                 }
                                 self.complete_fence(regs, mem, desc.signal_fence);
                             }
-                        } else {
-                            // No in-process backend: surface the decoded submission to the caller
-                            // (WASM bridge) so it can be executed externally and later completed via
-                            // `complete_fence`.
+                         } else {
+                             // No in-process backend: surface the decoded submission to the caller
+                             // (WASM bridge) so it can be executed externally and later completed via
+                             // `complete_fence`.
                             //
                             // Some guest drivers may emit submissions with duplicate fences (including
                             // fence values that have already completed) for best-effort internal work.
                             // Even if such submissions do not advance the completed fence, they can
                             // carry important side effects (e.g. shared-surface release), so always
                             // queue them for external execution.
-                            self.pending_submissions.push_back(submit);
-                        }
-                    }
-                }
-            }
+                            self.push_pending_submission(regs, mem, submit);
+                         }
+                     }
+                 }
+             }
 
             if self.cfg.keep_last_submissions > 0 {
                 if self.last_submissions.len() == self.cfg.keep_last_submissions {
@@ -1370,6 +1446,20 @@ const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 16 * 1024 * 1024;
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+
+// -----------------------------------------------------------------------------
+// Defensive caps (external-backend submission queue)
+// -----------------------------------------------------------------------------
+//
+// When the executor is in Deferred mode and no in-process backend has been configured, decoded
+// submissions are queued in `pending_submissions` for an external executor (e.g. the browser GPU
+// worker) to execute. Those submissions include guest-provided command streams and optional
+// allocation tables, so the queue must be bounded to avoid unbounded host allocations.
+//
+// If the queue overflows, we drop the oldest submissions and treat their fences as failed
+// (backend error) so the guest cannot deadlock waiting on work that will never execute.
+const MAX_PENDING_SUBMISSIONS: usize = 256;
+const MAX_PENDING_SUBMISSIONS_TOTAL_BYTES: usize = 256 * 1024 * 1024; // 256MiB
 
 fn decode_alloc_table(
     mem: &mut dyn MemoryBus,
@@ -1920,6 +2010,57 @@ mod tests {
 
         // Failed submissions are not forwarded for external execution.
         assert!(exec.drain_pending_submissions().is_empty());
+    }
+
+    #[test]
+    fn deferred_mode_pending_submission_queue_is_bounded() {
+        let mut mem = Bus::new(0x20000);
+        let ring_gpa = 0x1000u64;
+        let cmd_gpa = 0x18000u64;
+
+        let entry_count = 512u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+
+        let tail = (MAX_PENDING_SUBMISSIONS as u32) + 1;
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, tail);
+
+        let cmd_size_bytes = write_vsync_present_cmd_stream(&mut mem, cmd_gpa);
+        for i in 0..tail {
+            let fence = u64::from(i) + 1;
+            let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(i) * stride;
+            write_submit_desc_with_cmd(&mut mem, desc_gpa, fence, 0, cmd_gpa, cmd_size_bytes);
+        }
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride).unwrap();
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE | irq_bits::ERROR,
+            ..Default::default()
+        };
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        // The queue should be capped; overflowing entries are dropped and their fences completed.
+        assert_eq!(regs.completed_fence, 1);
+        assert_eq!(regs.error_code, AerogpuErrorCode::Backend as u32);
+        assert_eq!(regs.error_fence, 1);
+
+        let drained = exec.drain_pending_submissions();
+        assert_eq!(drained.len(), MAX_PENDING_SUBMISSIONS);
+        assert_eq!(drained.first().map(|s| s.signal_fence), Some(2));
+        assert_eq!(
+            drained.last().map(|s| s.signal_fence),
+            Some(u64::from(tail))
+        );
     }
 
     #[test]
