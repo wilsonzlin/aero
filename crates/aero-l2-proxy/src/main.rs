@@ -132,7 +132,17 @@ async fn async_main() -> std::io::Result<()> {
     tracing::info!("aero-l2-proxy listening on http://{local_addr}");
 
     // Best-effort graceful shutdown on Ctrl+C / SIGTERM.
-    let ctrl_c = tokio::signal::ctrl_c();
+    let ctrl_c = async {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {}
+            Err(err) => {
+                // Should be rare, but avoid treating handler installation failure as an immediate
+                // shutdown signal.
+                tracing::warn!("failed to install Ctrl+C handler: {err}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
 
     #[cfg(unix)]
     let sigterm = async {
