@@ -63,6 +63,7 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...|xrun=...|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=...|capture=...`
 
 It also mirrors the standalone guest IRQ diagnostic lines (when present):
 
