@@ -138,6 +138,11 @@ export class UsbBroker {
   private readonly ports = new Set<MessagePort | Worker>();
   private readonly portListeners = new Map<MessagePort | Worker, EventListener>();
   private readonly portBackendOptions = new Map<MessagePort | Worker, Required<WebUsbBackendOptions>>();
+  // Ports can request attaching additional MessagePorts via the `usb.broker.attachPort` message.
+  // These "child" ports are typically created inside workers (e.g. dedicated WebUSB runtimes that
+  // need different backend options) and would otherwise be leaked if the parent worker is detached.
+  private readonly portParents = new Map<MessagePort | Worker, MessagePort | Worker>();
+  private readonly portChildren = new Map<MessagePort | Worker, Set<MessagePort | Worker>>();
   private readonly deviceChangeListeners = new Set<() => void>();
 
   private readonly ringDrainTimers = new Map<MessagePort | Worker, ReturnType<typeof setInterval>>();
@@ -370,6 +375,7 @@ export class UsbBroker {
             attachRings: data.attachRings,
             backendOptions: data.backendOptions,
           });
+          this.linkChildPort(port, data.port);
           return;
         }
         if (isUsbActionMessage(data)) {
@@ -453,7 +459,48 @@ export class UsbBroker {
     }
   }
 
+  private linkChildPort(parent: MessagePort | Worker, child: MessagePort | Worker): void {
+    if (parent === child) return;
+
+    const prevParent = this.portParents.get(child);
+    if (prevParent && prevParent !== parent) {
+      const siblings = this.portChildren.get(prevParent);
+      if (siblings) {
+        siblings.delete(child);
+        if (siblings.size === 0) this.portChildren.delete(prevParent);
+      }
+    }
+
+    this.portParents.set(child, parent);
+    let children = this.portChildren.get(parent);
+    if (!children) {
+      children = new Set();
+      this.portChildren.set(parent, children);
+    }
+    children.add(child);
+  }
+
   detachWorkerPort(port: MessagePort | Worker): void {
+    // Detach any child ports that were created by (and therefore owned by) this port.
+    const children = this.portChildren.get(port);
+    if (children) {
+      this.portChildren.delete(port);
+      for (const child of Array.from(children)) {
+        this.detachWorkerPort(child);
+      }
+    }
+
+    // If this port itself is a child, unlink it from its parent.
+    const parent = this.portParents.get(port);
+    if (parent) {
+      this.portParents.delete(port);
+      const siblings = this.portChildren.get(parent);
+      if (siblings) {
+        siblings.delete(port);
+        if (siblings.size === 0) this.portChildren.delete(parent);
+      }
+    }
+
     const timer = this.ringDrainTimers.get(port);
     if (timer) {
       clearInterval(timer);

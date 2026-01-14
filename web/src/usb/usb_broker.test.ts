@@ -62,6 +62,12 @@ class FakePort {
     this.listeners.push(listener);
   }
 
+  removeEventListener(type: string, listener: (ev: MessageEvent<unknown>) => void): void {
+    if (type !== "message") return;
+    const idx = this.listeners.indexOf(listener);
+    if (idx >= 0) this.listeners.splice(idx, 1);
+  }
+
   start(): void {
     // No-op; browsers require MessagePort.start() when using addEventListener.
   }
@@ -226,6 +232,58 @@ describe("usb/UsbBroker", () => {
     broker.attachWorkerPort(portC as unknown as MessagePort);
     const guestMsgs = portC.posted.filter((m) => (m as { type?: unknown }).type === "usb.guest.status");
     expect(guestMsgs).toEqual([{ type: "usb.guest.status", snapshot }]);
+  });
+
+  it("detaches child ports attached via usb.broker.attachPort when the parent port is detached", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const parent = new FakePort();
+    const child = new FakePort();
+    const other = new FakePort();
+
+    broker.attachWorkerPort(parent as unknown as MessagePort);
+    broker.attachWorkerPort(other as unknown as MessagePort);
+
+    // Ask the broker to attach the child port on behalf of the parent.
+    parent.emit({ type: "usb.broker.attachPort", port: child, attachRings: false });
+
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      productName: "Demo",
+      close: vi.fn(async () => {}),
+    } as unknown as USBDevice;
+    stubNavigatorUsb({ requestDevice: vi.fn(async () => device) });
+
+    await broker.attachKnownDevice(device);
+
+    expect(child.posted).toContainEqual({
+      type: "usb.selected",
+      ok: true,
+      info: { vendorId: 0x1234, productId: 0x5678, productName: "Demo" },
+    });
+
+    // Detach the parent: the broker should also detach the child port so it does not leak.
+    broker.detachWorkerPort(parent as unknown as MessagePort);
+
+    child.posted.length = 0;
+    other.posted.length = 0;
+
+    await broker.detachSelectedDevice("bye");
+
+    expect(other.posted).toContainEqual({ type: "usb.selected", ok: false, error: "bye" });
+    expect(child.posted).toEqual([]);
   });
 
   it("serializes actions via FIFO queue", async () => {
