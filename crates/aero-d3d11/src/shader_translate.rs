@@ -2749,8 +2749,8 @@ fn emit_instructions(
                 // DXBC integer ops write raw bits into the untyped register file. Model that by
                 // bitcasting through `u32`, performing the arithmetic, then bitcasting back to
                 // `f32` before writing.
-                let a_u = emit_src_vec4_u32(a, inst_index, "udiv", ctx)?;
-                let b_u = emit_src_vec4_u32(b, inst_index, "udiv", ctx)?;
+                let a_u = emit_src_vec4_u32_int(a, inst_index, "udiv", ctx)?;
+                let b_u = emit_src_vec4_u32_int(b, inst_index, "udiv", ctx)?;
                 let a_name = format!("udiv_a{inst_index}");
                 let b_name = format!("udiv_b{inst_index}");
                 let q_name = format!("udiv_q{inst_index}");
@@ -2797,8 +2797,8 @@ fn emit_instructions(
                 b,
             } => {
                 // Same idea as `udiv`, but operate on signed integers.
-                let a_i = emit_src_vec4_i32(a, inst_index, "idiv", ctx)?;
-                let b_i = emit_src_vec4_i32(b, inst_index, "idiv", ctx)?;
+                let a_i = emit_src_vec4_i32_int(a, inst_index, "idiv", ctx)?;
+                let b_i = emit_src_vec4_i32_int(b, inst_index, "idiv", ctx)?;
                 let a_name = format!("idiv_a{inst_index}");
                 let b_name = format!("idiv_b{inst_index}");
                 let q_name = format!("idiv_q{inst_index}");
@@ -3404,6 +3404,33 @@ fn emit_src_vec4_u32(
     Ok(expr)
 }
 
+/// Emits a `vec4<u32>` source for integer operations.
+///
+/// SM4/SM5 register operands are untyped; in practice integer values can show up either as:
+/// - Raw integer bits written into the register file (common in real DXBC).
+/// - Numeric floats (e.g. system-value inputs expanded via `f32(input.vertex_id)`).
+///
+/// To cover both, this helper derives a `u32` value per lane by selecting between:
+/// - `bitcast<u32>(f32)` (raw bits)
+/// - `u32(f32)` (numeric conversion)
+/// based on whether the float value looks like a non-negative integer.
+fn emit_src_vec4_u32_int(
+    src: &crate::sm4_ir::SrcOperand,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    let mut no_mod = src.clone();
+    no_mod.modifier = OperandModifier::None;
+    let f = emit_src_vec4(&no_mod, inst_index, opcode, ctx)?;
+    let bits = emit_src_vec4_u32(&no_mod, inst_index, opcode, ctx)?;
+    let is_int = format!("(({f}) == floor(({f})))");
+    let is_nonneg = format!("(({f}) >= vec4<f32>(0.0))");
+    let cond = format!("select(vec4<bool>(false), {is_int}, {is_nonneg})");
+    let base = format!("select(({bits}), vec4<u32>({f}), {cond})");
+    Ok(apply_modifier_u32(base, src.modifier))
+}
+
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
     _inst_index: usize,
@@ -3449,6 +3476,22 @@ fn emit_src_vec4_i32(
     }
     expr = apply_modifier(expr, src.modifier);
     Ok(expr)
+}
+
+/// Emits a `vec4<i32>` source for integer operations (see [`emit_src_vec4_u32_int`]).
+fn emit_src_vec4_i32_int(
+    src: &crate::sm4_ir::SrcOperand,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    let mut no_mod = src.clone();
+    no_mod.modifier = OperandModifier::None;
+    let f = emit_src_vec4(&no_mod, inst_index, opcode, ctx)?;
+    let bits = emit_src_vec4_i32(&no_mod, inst_index, opcode, ctx)?;
+    let cond = format!("(({f}) == floor(({f})))");
+    let base = format!("select(({bits}), vec4<i32>({f}), {cond})");
+    Ok(apply_modifier(base, src.modifier))
 }
 
 fn emit_write_masked(
