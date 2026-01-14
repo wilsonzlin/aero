@@ -8,7 +8,7 @@ test images where you want input working immediately).
 > Ensure your virtio-input PCI device reports `REV_01` (for example in QEMU:
 > `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
 >
->
+> 
 > - Keyboard/mouse (`aero_virtio_input.inf`):
 >   - Binds via `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (distinct Device Manager naming), and
 >   - also via strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
