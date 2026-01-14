@@ -68,23 +68,28 @@ fn read_linear_prefix<const N: usize>(ptr: u32) -> [u8; N] {
 unsafe fn snapshot_scanout_state(ptr: u32) -> ScanoutSnapshot {
     // Implements the same seqlock-style protocol as `aero_shared::scanout_state::ScanoutState::snapshot`,
     // but without depending on the optional `aero-shared` crate when running wasm-bindgen tests.
-    let base = core::ptr::with_exposed_provenance::<u32>(ptr as usize);
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    // `ScanoutState` is a `#[repr(C)]` struct of `AtomicU32` fields. Treat the header as
+    // `AtomicU32[]` so we snapshot it using atomic loads (avoids mixing atomic and non-atomic
+    // accesses to the same memory locations).
+    let base = core::ptr::with_exposed_provenance::<AtomicU32>(ptr as usize);
     loop {
         // Safety: caller ensures `ptr` points to a valid scanout state header in wasm linear memory.
-        let gen0 = unsafe { core::ptr::read_volatile(base.add(0)) };
+        let gen0 = unsafe { (&*base.add(0)).load(Ordering::SeqCst) };
         if (gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT) != 0 {
             core::hint::spin_loop();
             continue;
         }
-        let source = unsafe { core::ptr::read_volatile(base.add(1)) };
-        let base_lo = unsafe { core::ptr::read_volatile(base.add(2)) };
-        let base_hi = unsafe { core::ptr::read_volatile(base.add(3)) };
-        let width = unsafe { core::ptr::read_volatile(base.add(4)) };
-        let height = unsafe { core::ptr::read_volatile(base.add(5)) };
-        let pitch_bytes = unsafe { core::ptr::read_volatile(base.add(6)) };
-        let format = unsafe { core::ptr::read_volatile(base.add(7)) };
+        let source = unsafe { (&*base.add(1)).load(Ordering::SeqCst) };
+        let base_lo = unsafe { (&*base.add(2)).load(Ordering::SeqCst) };
+        let base_hi = unsafe { (&*base.add(3)).load(Ordering::SeqCst) };
+        let width = unsafe { (&*base.add(4)).load(Ordering::SeqCst) };
+        let height = unsafe { (&*base.add(5)).load(Ordering::SeqCst) };
+        let pitch_bytes = unsafe { (&*base.add(6)).load(Ordering::SeqCst) };
+        let format = unsafe { (&*base.add(7)).load(Ordering::SeqCst) };
 
-        let gen1 = unsafe { core::ptr::read_volatile(base.add(0)) };
+        let gen1 = unsafe { (&*base.add(0)).load(Ordering::SeqCst) };
         if gen0 != gen1 {
             core::hint::spin_loop();
             continue;
