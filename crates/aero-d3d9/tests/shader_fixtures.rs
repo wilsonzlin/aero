@@ -39,6 +39,8 @@ fn legacy_shader_parser_accepts_fxc_fixtures() {
 fn sm3_parser_accepts_fxc_fixtures() {
     // Mirror `legacy_shader_parser_accepts_fxc_fixtures`, but exercise the new SM3 pipeline.
     for name in [
+        "ps_2_0_sample.dxbc",
+        "ps_3_0_math.dxbc",
         "vs_2_0_simple.dxbc",
         "vs_3_0_branch.dxbc",
     ] {
