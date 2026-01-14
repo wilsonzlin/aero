@@ -63,3 +63,56 @@ fn tier2_cfg_builder_16bit_fetch_wraps_across_64k_boundary() {
         other => panic!("expected Jump terminator, got {other:?}"),
     }
 }
+
+#[test]
+fn tier2_cfg_builder_32bit_wraps_rip_between_instructions() {
+    // Exercise EIP wraparound between *instructions* (not just while fetching an immediate).
+    //
+    //   0xFFFF_FFFE: xor eax, eax  (0x31 0xC0)
+    //   0x0000_0000: jmp +0        (0xEB 0x00) -> 0x0000_0002
+    //   0x0000_0002: <invalid>
+    //
+    // If the CFG builder fails to wrap EIP to 32 bits after decoding the first instruction, it
+    // will attempt to decode the jump from 0x1_0000_0000 instead.
+    let mut bus = MapBus::default();
+    bus.write_u8(0xffff_fffe, 0x31);
+    bus.write_u8(0xffff_ffff, 0xc0);
+    bus.write_u8(0x0000_0000, 0xeb);
+    bus.write_u8(0x0000_0001, 0x00);
+    bus.write_u8(0x0000_0002, tier1_common::pick_invalid_opcode(32));
+    bus.write_u8(0x1_0000_0000, tier1_common::pick_invalid_opcode(32)); // sentinel
+
+    let func = build_function_from_x86(&bus, 0xffff_fffe, 32, CfgBuildConfig::default());
+    let entry = func.find_block_by_rip(0xffff_fffe).expect("entry block");
+    let target = func.find_block_by_rip(0x2).expect("jump target block");
+
+    match &func.block(entry).term {
+        Terminator::Jump(t) => assert_eq!(*t, target),
+        other => panic!("expected Jump terminator, got {other:?}"),
+    }
+}
+
+#[test]
+fn tier2_cfg_builder_16bit_wraps_rip_between_instructions() {
+    // Same as the 32-bit wraparound test, but across the 16-bit IP boundary.
+    //
+    //   0xFFFE: xor ax, ax  (0x31 0xC0)
+    //   0x0000: jmp +0      (0xEB 0x00) -> 0x0002
+    //   0x0002: <invalid>
+    let mut bus = MapBus::default();
+    bus.write_u8(0xfffe, 0x31);
+    bus.write_u8(0xffff, 0xc0);
+    bus.write_u8(0x0000, 0xeb);
+    bus.write_u8(0x0001, 0x00);
+    bus.write_u8(0x0002, tier1_common::pick_invalid_opcode(16));
+    bus.write_u8(0x1_0000, tier1_common::pick_invalid_opcode(16)); // sentinel
+
+    let func = build_function_from_x86(&bus, 0xfffe, 16, CfgBuildConfig::default());
+    let entry = func.find_block_by_rip(0xfffe).expect("entry block");
+    let target = func.find_block_by_rip(0x2).expect("jump target block");
+
+    match &func.block(entry).term {
+        Terminator::Jump(t) => assert_eq!(*t, target),
+        other => panic!("expected Jump terminator, got {other:?}"),
+    }
+}
