@@ -279,6 +279,7 @@ describe("net/l2Tunnel", () => {
 
   it("disables keepalive when keepaliveMinMs=keepaliveMaxMs=0", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -344,6 +345,7 @@ describe("net/l2Tunnel", () => {
 
   it("sends keepalive PINGs with empty payload when maxControlSize < 4", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
@@ -387,6 +389,7 @@ describe("net/l2Tunnel", () => {
 
   it("closes the tunnel when keepalive pings go unanswered", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
     // `BaseL2TunnelClient` uses `performance.now()` for idle/RTT timing when available. Ensure
     // the clock source advances with fake timers even in environments where `performance.now`
     // is not patched by the timer shim.
@@ -751,6 +754,7 @@ describe("net/l2Tunnel", () => {
 
   it("queues outbound frames while bufferedAmount exceeds maxBufferedAmount", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;
 
