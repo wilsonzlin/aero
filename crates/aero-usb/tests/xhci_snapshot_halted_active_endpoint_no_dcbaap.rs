@@ -4,7 +4,7 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::XhciController;
+use aero_usb::xhci::{regs, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
@@ -170,6 +170,7 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
         .load_state(&patched_snapshot)
         .expect("load patched xHCI snapshot");
 
+    restored.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     restored.tick(&mut mem);
 
     let mut buf = [0u8; 8];
