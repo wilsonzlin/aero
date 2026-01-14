@@ -70,18 +70,39 @@ static void DumpBytesToFile(const char* test_name,
 
 static const UINT kNumElements = 64;
 
+struct ConstantBufferData {
+  UINT factor;
+  UINT add;
+  UINT pad0;
+  UINT pad1;
+};
+
 static const char kComputeStructuredHlsl[] = R"(
+cbuffer Cb0 : register(b0) {
+  uint factor;
+  uint add;
+  uint pad0;
+  uint pad1;
+};
+
 StructuredBuffer<uint> in_buf : register(t0);
 RWStructuredBuffer<uint> out_buf : register(u0);
 
 [numthreads(1, 1, 1)]
 void cs_structured_main(uint3 tid : SV_DispatchThreadID) {
   const uint idx = tid.x;
-  out_buf[idx] = in_buf[idx] * 3u + 7u;
+  out_buf[idx] = in_buf[idx] * factor + add;
 }
 )";
 
 static const char kComputeRawHlsl[] = R"(
+cbuffer Cb0 : register(b0) {
+  uint factor;
+  uint add;
+  uint pad0;
+  uint pad1;
+};
+
 ByteAddressBuffer in_buf : register(t0);
 RWByteAddressBuffer out_buf : register(u0);
 
@@ -89,7 +110,7 @@ RWByteAddressBuffer out_buf : register(u0);
 void cs_raw_main(uint3 tid : SV_DispatchThreadID) {
   const uint idx = tid.x;
   const uint v = in_buf.Load(idx * 4u);
-  out_buf.Store(idx * 4u, v * 3u + 7u);
+  out_buf.Store(idx * 4u, v * factor + add);
 }
 )";
 
@@ -269,6 +290,35 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
     input[i] = i * 3u + 1u;
   }
 
+  // Constant buffer used by both compute shaders (we update it between dispatches).
+  D3D11_BUFFER_DESC cb_desc;
+  ZeroMemory(&cb_desc, sizeof(cb_desc));
+  cb_desc.ByteWidth = sizeof(ConstantBufferData);
+  cb_desc.Usage = D3D11_USAGE_DEFAULT;
+  cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+  cb_desc.CPUAccessFlags = 0;
+  cb_desc.MiscFlags = 0;
+  cb_desc.StructureByteStride = 0;
+
+  ConstantBufferData cb_data_structured;
+  cb_data_structured.factor = 3;
+  cb_data_structured.add = 7;
+  cb_data_structured.pad0 = 0;
+  cb_data_structured.pad1 = 0;
+
+  D3D11_SUBRESOURCE_DATA cb_init;
+  ZeroMemory(&cb_init, sizeof(cb_init));
+  cb_init.pSysMem = &cb_data_structured;
+
+  ComPtr<ID3D11Buffer> cb;
+  hr = device->CreateBuffer(&cb_desc, &cb_init, cb.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(constant buffer)", hr);
+  }
+
+  ID3D11Buffer* cbs[] = {cb.get()};
+  context->CSSetConstantBuffers(0, 1, cbs);
+
   // -----------------------------
   // Structured buffer path (SRV + UAV)
   // -----------------------------
@@ -412,7 +462,7 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
   uint32_t mismatch_expected = 0;
   bool mismatch = false;
   for (UINT i = 0; i < kNumElements; ++i) {
-    const uint32_t expected = input[i] * 3u + 7u;
+    const uint32_t expected = input[i] * cb_data_structured.factor + cb_data_structured.add;
     const uint32_t got = out_u32[i];
     if (got != expected) {
       mismatch = true;
@@ -435,7 +485,7 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
 
   if (mismatch) {
     PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
-    return reporter.Fail("output mismatch at index %u: got 0x%08lX expected 0x%08lX",
+    return reporter.Fail("structured output mismatch at index %u: got 0x%08lX expected 0x%08lX",
                          (unsigned)mismatch_index,
                          (unsigned long)mismatch_got,
                          (unsigned long)mismatch_expected);
@@ -444,6 +494,14 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
   // -----------------------------
   // Raw buffer path (ByteAddressBuffer + RWByteAddressBuffer)
   // -----------------------------
+  ConstantBufferData cb_data_raw;
+  cb_data_raw.factor = 5;
+  cb_data_raw.add = 11;
+  cb_data_raw.pad0 = 0;
+  cb_data_raw.pad1 = 0;
+  context->UpdateSubresource(cb.get(), 0, NULL, &cb_data_raw, 0, 0);
+  context->CSSetConstantBuffers(0, 1, cbs);
+
   if (!aerogpu_test::CompileHlslToBytecode(kComputeRawHlsl,
                                            strlen(kComputeRawHlsl),
                                            "d3d11_compute_smoke_raw.hlsl",
@@ -572,7 +630,7 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
   mismatch_expected = 0;
   mismatch = false;
   for (UINT i = 0; i < kNumElements; ++i) {
-    const uint32_t expected = input[i] * 3u + 7u;
+    const uint32_t expected = input[i] * cb_data_raw.factor + cb_data_raw.add;
     const uint32_t got = out_u32[i];
     if (got != expected) {
       mismatch = true;
@@ -595,10 +653,12 @@ static int RunD3D11ComputeSmoke(int argc, char** argv) {
 
   if (mismatch) {
     PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
-    return reporter.Fail("raw output mismatch at index %u: got 0x%08lX expected 0x%08lX",
+    return reporter.Fail("raw output mismatch at index %u: got 0x%08lX expected 0x%08lX (factor=%u add=%u)",
                          (unsigned)mismatch_index,
                          (unsigned long)mismatch_got,
-                         (unsigned long)mismatch_expected);
+                         (unsigned long)mismatch_expected,
+                         (unsigned)cb_data_raw.factor,
+                         (unsigned)cb_data_raw.add);
   }
 
   return reporter.Pass();
