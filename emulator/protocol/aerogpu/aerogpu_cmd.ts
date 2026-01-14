@@ -1726,8 +1726,8 @@ export class AerogpuCmdWriter {
    * Legacy BIND_SHADERS variant that can encode an optional geometry shader via `reserved0`.
    *
    * Newer hosts support an append-only extension: if `sizeBytes >= 36`, the packet appends
-   * `{gs, hs, ds}` handles. For the extended form, `reserved0` should be 0 (or may duplicate `gs`
-   * for best-effort compatibility; appended fields are authoritative).
+   * `{gs, hs, ds}` handles. For the extended form, `reserved0` should be 0 unless mirroring `gs`
+   * for best-effort compatibility; appended fields are authoritative.
    */
   bindShadersWithGs(vs: AerogpuHandle, gs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE);

@@ -558,7 +558,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_shader) == 16);
  *     - `ds` (domain shader / tessellation eval) 0 = unbound
  *
  * Forward-compat notes for `reserved0`:
- * - `reserved0` remains reserved and emitters SHOULD set it to 0 for the extended packet.
+ * - `reserved0` remains reserved and emitters SHOULD set it to 0 for the extended packet (unless
+ *   mirroring `gs` for best-effort compatibility with legacy hosts).
  * - Legacy implementations may interpret a non-zero `reserved0` as the geometry shader (`gs`)
  *   handle; for best-effort compatibility an emitter MAY duplicate `gs` into `reserved0`, but
  *   when present, the appended `{gs,hs,ds}` fields are authoritative.

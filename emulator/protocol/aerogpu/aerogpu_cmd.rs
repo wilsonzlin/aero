@@ -580,8 +580,9 @@ pub struct AerogpuCmdBindShaders {
     pub cs: AerogpuHandle,
     /// Reserved for ABI-forward-compat.
     ///
-    /// For the extended packet form (`hdr.size_bytes >= 36`), this field should be 0 and the
-    /// appended `{gs, hs, ds}` handles are authoritative.
+    /// For the extended packet form (`hdr.size_bytes >= 36`), this field should be 0 unless the
+    /// emitter chooses to mirror `gs` here for best-effort compatibility; the appended
+    /// `{gs, hs, ds}` handles are authoritative.
     ///
     /// Legacy implementations may interpret a non-zero value as the geometry shader handle (`gs`);
     /// for best-effort compatibility an emitter may choose to duplicate `gs` into this field.
