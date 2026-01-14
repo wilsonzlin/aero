@@ -10,6 +10,9 @@ mod tlb;
 
 use tlb::{PageSize, Tlb, TlbEntry, TlbEntryAttributes, TlbLookupPageSizes};
 
+#[cfg(test)]
+mod test_util;
+
 /// Physical memory access used for page-table walking.
 ///
 /// This is intentionally minimal; the CPU can wrap a richer memory bus and
@@ -675,8 +678,12 @@ impl Mmu {
         self.efer
     }
 
+    #[track_caller]
     pub fn set_max_phys_bits(&mut self, bits: u8) {
-        assert!((1..=52).contains(&bits), "max_phys_bits must be 1..=52");
+        assert!(
+            (1..=52).contains(&bits),
+            "max_phys_bits must be 1..=52 (got {bits})"
+        );
         if self.max_phys_bits != bits {
             self.max_phys_bits = bits;
             #[cfg(feature = "stats")]

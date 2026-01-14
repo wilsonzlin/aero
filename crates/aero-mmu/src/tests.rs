@@ -1,6 +1,7 @@
 use super::*;
 
 use core::convert::TryInto;
+use crate::test_util::capture_panic_location;
 
 #[derive(Clone)]
 struct TestMemory {
@@ -865,6 +866,19 @@ fn max_phys_bits_high_address_bits_cause_rsvd_page_fault() {
             error_code: pf_error_code(true, AccessType::Read, false, true),
         }))
     );
+}
+
+#[test]
+fn set_max_phys_bits_panics_at_call_site_on_invalid_value() {
+    let mut mmu = Mmu::new();
+
+    let expected_file = file!();
+    let expected_line = line!() + 2;
+    let (file, line) = capture_panic_location(|| {
+        mmu.set_max_phys_bits(0);
+    });
+    assert_eq!(file, expected_file);
+    assert_eq!(line, expected_line);
 }
 
 #[test]
