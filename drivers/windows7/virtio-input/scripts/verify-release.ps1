@@ -37,6 +37,11 @@ $ErrorActionPreference = 'Stop'
 $script:ExpectedSchemaVersion = 1
 $script:ExpectedDriverId = 'aero-virtio-input'
 $script:ExpectedTargetOs = 'win7'
+$script:RequiredManifestFiles = @(
+    'INSTALL.txt',
+    'INSTALL_CERT.cmd',
+    'INSTALL_DRIVER.cmd'
+)
 
 function Resolve-ExistingFile([string]$Path, [string]$ArgName) {
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -175,6 +180,37 @@ function Assert-ManifestIdentity($Manifest) {
     }
 }
 
+function Assert-ManifestContainsRequiredFiles($Manifest) {
+    $files = Require-ManifestField $Manifest.files 'files'
+
+    $comparison = if ($env:OS -eq 'Windows_NT') {
+        [System.StringComparer]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparer]::Ordinal
+    }
+
+    $paths = New-Object 'System.Collections.Generic.HashSet[string]' ($comparison)
+    foreach ($f in $files) {
+        $p = $f.path
+        if ($null -ne $p) {
+            [void]$paths.Add($p.ToString())
+        }
+    }
+
+    $missing = @()
+    foreach ($req in $script:RequiredManifestFiles) {
+        if (-not $paths.Contains($req)) {
+            $missing += $req
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        $list = ($missing | Sort-Object | ForEach-Object { "  - $_" }) -join "`r`n"
+        throw ("manifest.json is missing required file entries:`r`n{0}" -f $list)
+    }
+}
+
 function Assert-FilesMatchManifest($Manifest, [string]$ExtractDir) {
     $files = Require-ManifestField $Manifest.files 'files'
 
@@ -306,6 +342,7 @@ try {
 
     $manifest = Load-Manifest -ExtractDir $tempDir
     Assert-ManifestIdentity -Manifest $manifest
+    Assert-ManifestContainsRequiredFiles -Manifest $manifest
     Assert-FilesMatchManifest -Manifest $manifest -ExtractDir $tempDir
     Assert-Sha256SumsFile -ExtractDir $tempDir
 
