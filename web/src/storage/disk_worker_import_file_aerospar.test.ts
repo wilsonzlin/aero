@@ -167,4 +167,11 @@ describe("disk_worker import_file aerospar handling", () => {
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/file size/i);
   });
+
+  it("rejects raw/iso images that are not sector-aligned", async () => {
+    const file = new File([new Uint8Array(513)], "unaligned.img");
+    const resp = await sendImportFile({ file });
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/multiple of 512/i);
+  });
 });

@@ -977,6 +977,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error(`Unknown disk kind ${String(kind)}`);
       }
 
+      // Raw/ISO disks are accessed as 512-byte-addressable sector images by the runtime.
+      // Require sector alignment so guests never observe partial trailing sectors.
+      if ((format === "raw" || format === "iso" || format === "unknown") && file.size % 512 !== 0) {
+        throw new Error("Disk image size must be a multiple of 512 bytes");
+      }
+
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
 
