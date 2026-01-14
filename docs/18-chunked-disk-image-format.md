@@ -252,9 +252,9 @@ Note on input formats:
 
 - The chunked format is defined in terms of the **logical disk byte stream** (what the guest sees),
   not the bytes of any particular container file format.
-- `aero-image-chunker` defaults to `--format raw` (treat the input file bytes as the logical disk
-  bytes), but it can also open other formats (e.g. qcow2/VHD/AeroSparse) via `--format` and publish
-  the expanded logical disk view.
+- `aero-image-chunker` defaults to `--format auto` (format detection) and treats unknown images as
+  `raw` (treat the input file bytes as the logical disk bytes). It can also open other formats
+  (e.g. qcow2/VHD/AeroSparse) via `--format` and publish the expanded logical disk view.
 
 ### 3.1 Pipeline steps
 
