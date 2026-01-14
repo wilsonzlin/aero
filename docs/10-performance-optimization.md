@@ -953,6 +953,11 @@ Example shape:
       "cache": {
         "lookup_hit": 98765,
         "lookup_miss": 1234,
+        "install": 5678,
+        "evict": 123,
+        "invalidate": 45,
+        "stale_install_reject": 3,
+        "compile_request": 789,
         "capacity_bytes": 268435456,
         "used_bytes": 104857600
       },
