@@ -34,7 +34,7 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
             self.assertIn(token, self.text)
 
     def test_qmp_flap_targets_stable_net_device_id(self) -> None:
-        # The host harness targets the virtio-net QOM id via QMP set_link.
+        # The host harness targets the virtio-net QOM id via QMP set_link (with backcompat name fallbacks).
         self.assertIn('$script:VirtioNetQmpId = "aero_virtio_net0"', self.text)
         # Allow arbitrary whitespace for aligned hashtable formatting.
         self.assertRegex(self.text, r'execute\s*=\s*"set_link"')
