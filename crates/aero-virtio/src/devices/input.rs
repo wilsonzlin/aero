@@ -465,6 +465,11 @@ impl VirtioInput {
     }
 
     pub fn inject_key(&mut self, code: u16, pressed: bool) {
+        // Linux input defines code 0 as KEY_RESERVED / BTN_RESERVED. Treat it as a no-op so host
+        // injection cannot generate spurious events for an invalid code.
+        if code == 0 {
+            return;
+        }
         self.push_event(VirtioInputEvent {
             type_: EV_KEY,
             code,
@@ -478,6 +483,9 @@ impl VirtioInput {
     }
 
     pub fn inject_rel_move(&mut self, dx: i32, dy: i32) {
+        if dx == 0 && dy == 0 {
+            return;
+        }
         if dx != 0 {
             self.push_event(VirtioInputEvent {
                 type_: EV_REL,
@@ -537,6 +545,9 @@ impl VirtioInput {
     }
 
     pub fn inject_button(&mut self, code: u16, pressed: bool) {
+        if code == 0 {
+            return;
+        }
         self.push_event(VirtioInputEvent {
             type_: EV_KEY,
             code,
@@ -935,6 +946,32 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn inject_rel_move_is_noop_when_deltas_are_zero() {
+        let mut dev = VirtioInput::new(VirtioInputDeviceKind::Mouse);
+        dev.inject_rel_move(0, 0);
+        assert!(
+            dev.pending.is_empty(),
+            "inject_rel_move(0,0) should not enqueue a standalone SYN_REPORT"
+        );
+    }
+
+    #[test]
+    fn inject_key_ignores_reserved_code_zero() {
+        let mut dev = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+        dev.inject_key(0, true);
+        dev.inject_key(0, false);
+        assert!(dev.pending.is_empty());
+    }
+
+    #[test]
+    fn inject_button_ignores_reserved_code_zero() {
+        let mut dev = VirtioInput::new(VirtioInputDeviceKind::Mouse);
+        dev.inject_button(0, true);
+        dev.inject_button(0, false);
+        assert!(dev.pending.is_empty());
     }
 
     #[test]
