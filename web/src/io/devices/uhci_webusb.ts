@@ -50,6 +50,12 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
   readonly bars: ReadonlyArray<PciBar | null> = [null, null, null, null, { kind: "io", size: UHCI_IO_BAR_SIZE }, null];
 
   readonly #bridge: WebUsbUhciBridgeLike;
+  readonly #ioReadFn: (offset: number, size: number) => number;
+  readonly #ioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #stepFramesFn: (frames: number) => void;
+  readonly #irqLevelFn: () => boolean;
+  readonly #freeFn: () => void;
+  readonly #setPciCommandFn: ((command: number) => void) | null;
   readonly #irqSink: IrqSink;
 
   #lastTickMs: number | null = null;
@@ -61,6 +67,37 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
   constructor(opts: { bridge: WebUsbUhciBridgeLike; irqSink: IrqSink }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
+
+    // Backwards compatibility: accept both snake_case and camelCase exports and always invoke
+    // extracted methods via `.call(bridge, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+    const bridgeAny = opts.bridge as unknown as Record<string, unknown>;
+    const ioRead = bridgeAny.io_read ?? bridgeAny.ioRead;
+    const ioWrite = bridgeAny.io_write ?? bridgeAny.ioWrite;
+    const stepFrames = bridgeAny.step_frames ?? bridgeAny.stepFrames;
+    const irqLevel = bridgeAny.irq_level ?? bridgeAny.irqLevel;
+    const free = bridgeAny.free;
+
+    if (typeof ioRead !== "function" || typeof ioWrite !== "function") {
+      throw new Error("WebUsbUhciBridge missing io_read/ioRead or io_write/ioWrite exports.");
+    }
+    if (typeof stepFrames !== "function") {
+      throw new Error("WebUsbUhciBridge missing step_frames/stepFrames export.");
+    }
+    if (typeof irqLevel !== "function") {
+      throw new Error("WebUsbUhciBridge missing irq_level/irqLevel export.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("WebUsbUhciBridge missing free() export.");
+    }
+
+    this.#ioReadFn = ioRead as (offset: number, size: number) => number;
+    this.#ioWriteFn = ioWrite as (offset: number, size: number, value: number) => void;
+    this.#stepFramesFn = stepFrames as (frames: number) => void;
+    this.#irqLevelFn = irqLevel as () => boolean;
+    this.#freeFn = free as () => void;
+
+    const setCmd = bridgeAny.set_pci_command ?? bridgeAny.setPciCommand;
+    this.#setPciCommandFn = typeof setCmd === "function" ? (setCmd as (command: number) => void) : null;
   }
 
   ioRead(barIndex: number, offset: number, size: number): number {
@@ -68,7 +105,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     if (barIndex !== 4) return defaultReadValue(size);
     if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
     try {
-      const value = this.#bridge.io_read(offset >>> 0, size >>> 0) >>> 0;
+      const value = this.#ioReadFn.call(this.#bridge, offset >>> 0, size >>> 0) >>> 0;
       return maskToSize(value, size);
     } catch {
       return defaultReadValue(size);
@@ -80,7 +117,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     if (barIndex !== 4) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
     try {
-      this.#bridge.io_write(offset >>> 0, size >>> 0, maskToSize(value, size));
+      this.#ioWriteFn.call(this.#bridge, offset >>> 0, size >>> 0, maskToSize(value, size));
     } catch {
       // ignore
     }
@@ -93,7 +130,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     this.#pciCommand = cmd;
 
     // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
-    const setCmd = this.#bridge.set_pci_command;
+    const setCmd = this.#setPciCommandFn;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#bridge, cmd >>> 0);
@@ -133,7 +170,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     // For backwards compatibility with older WASM builds that may not implement DMA gating, we
     // conservatively freeze time until BME is enabled *unless* `set_pci_command` is available.
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
-    if (!busMasterEnabled && typeof this.#bridge.set_pci_command !== "function") {
+    if (!busMasterEnabled && !this.#setPciCommandFn) {
       this.#accumulatedMs = 0;
       this.#syncIrq();
       return;
@@ -147,7 +184,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
     frames = Math.min(frames, UHCI_MAX_FRAMES_PER_TICK);
     if (frames > 0) {
       try {
-        this.#bridge.step_frames(frames);
+        this.#stepFramesFn.call(this.#bridge, frames);
       } catch {
         // ignore device errors during tick
       }
@@ -165,7 +202,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
       this.#irqLevel = false;
     }
     try {
-      this.#bridge.free();
+      this.#freeFn.call(this.#bridge);
     } catch {
       // ignore
     }
@@ -174,7 +211,7 @@ export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
   #syncIrq(): void {
     let asserted = false;
     try {
-      asserted = Boolean(this.#bridge.irq_level());
+      asserted = Boolean(this.#irqLevelFn.call(this.#bridge));
     } catch {
       asserted = false;
     }

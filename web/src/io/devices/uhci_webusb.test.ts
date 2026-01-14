@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { UhciWebUsbPciDevice } from "./uhci_webusb";
 import { applyUsbSelectedToWebUsbUhciBridge } from "../../usb/uhci_webusb_bridge";
+import type { WebUsbUhciBridgeLike } from "./uhci_webusb";
 
 describe("UhciWebUsbPciDevice", () => {
   it("forwards BAR4 I/O reads/writes to the WASM bridge with the same offset/size", () => {
@@ -21,6 +22,35 @@ describe("UhciWebUsbPciDevice", () => {
 
     dev.ioWrite?.(4, 0x08, 4, 0xdead_beef);
     expect(io_write).toHaveBeenCalledWith(0x08, 4, 0xdead_beef);
+  });
+
+  it("accepts camelCase WebUsbUhciBridge exports (backwards compatibility)", () => {
+    const irqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const ioRead = vi.fn(() => 0);
+    const ioWrite = vi.fn();
+    const stepFrames = vi.fn();
+    const irqLevel = vi.fn(() => false);
+    const setPciCommand = vi.fn();
+    const free = vi.fn();
+
+    const bridge = { ioRead, ioWrite, stepFrames, irqLevel, setPciCommand, free };
+    const dev = new UhciWebUsbPciDevice({ bridge: bridge as unknown as WebUsbUhciBridgeLike, irqSink });
+
+    dev.ioRead?.(4, 0x10, 2);
+    expect(ioRead).toHaveBeenCalledWith(0x10, 2);
+    dev.ioWrite?.(4, 0x08, 4, 0xdead_beef);
+    expect(ioWrite).toHaveBeenCalledWith(0x08, 4, 0xdead_beef);
+
+    // Enable bus mastering and ensure the PCI command is mirrored.
+    dev.onPciCommandWrite?.(0x1_0004);
+    expect(setPciCommand).toHaveBeenCalledWith(0x0004);
+
+    dev.tick(0);
+    dev.tick(8);
+    expect(stepFrames).toHaveBeenCalledWith(8);
+
+    dev.destroy();
+    expect(free).toHaveBeenCalled();
   });
 
   it("calls bridge.free() on destroy() exactly once and is idempotent", () => {

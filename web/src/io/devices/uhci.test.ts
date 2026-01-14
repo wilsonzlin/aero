@@ -21,6 +21,35 @@ describe("io/devices/UhciPciDevice", () => {
     expect(dev.irqLine).toBe(11);
   });
 
+  it("accepts camelCase UHCI bridge exports (backwards compatibility)", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const ioRead = vi.fn(() => 0);
+    const ioWrite = vi.fn();
+    const stepFrames = vi.fn();
+    const irqAsserted = vi.fn(() => false);
+    const setPciCommand = vi.fn();
+    const free = vi.fn();
+
+    const bridge = { ioRead, ioWrite, stepFrames, irqAsserted, setPciCommand, free };
+    const dev = new UhciPciDevice({ bridge: bridge as unknown as UhciControllerBridgeLike, irqSink });
+
+    dev.ioRead(4, 0x00, 4);
+    expect(ioRead).toHaveBeenCalledWith(0x00, 4);
+    dev.ioWrite(4, 0x00, 2, 0xfeed_beef);
+    expect(ioWrite).toHaveBeenCalledWith(0x00, 2, 0xbeef);
+
+    // Enable bus mastering and ensure the PCI command is mirrored.
+    dev.onPciCommandWrite(0x1_0004);
+    expect(setPciCommand).toHaveBeenCalledWith(0x0004);
+
+    dev.tick(0);
+    dev.tick(8);
+    expect(stepFrames).toHaveBeenCalledWith(8);
+
+    dev.destroy();
+    expect(free).toHaveBeenCalled();
+  });
+
   it("forwards ioRead/ioWrite to the underlying bridge", () => {
     const bridge: UhciControllerBridgeLike = {
       io_read: vi.fn(() => 0x1234_5678),
