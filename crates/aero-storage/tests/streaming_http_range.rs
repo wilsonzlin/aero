@@ -4,7 +4,8 @@ use aero_storage::{
     ChunkManifest, StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
 };
 use hyper::header::{
-    ACCEPT_RANGES, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE, LAST_MODIFIED, RANGE,
+    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE,
+    LAST_MODIFIED, RANGE,
 };
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -214,6 +215,8 @@ async fn handle_request(
                             (end_exclusive - start).to_string().parse().unwrap(),
                         );
                         resp.headers_mut()
+                            .insert(CACHE_CONTROL, "no-transform".parse().unwrap());
+                        resp.headers_mut()
                             .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
                         resp.headers_mut()
                             .insert(hyper::header::ETAG, current_etag.parse().unwrap());
@@ -329,6 +332,8 @@ async fn start_last_modified_server(
                                     CONTENT_LENGTH,
                                     (end_exclusive - start).to_string().parse().unwrap(),
                                 );
+                                resp.headers_mut()
+                                    .insert(CACHE_CONTROL, "no-transform".parse().unwrap());
                                 resp.headers_mut()
                                     .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
                                 resp.headers_mut()

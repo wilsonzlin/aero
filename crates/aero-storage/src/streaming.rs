@@ -12,8 +12,8 @@ use std::{
 
 use crate::range_set::{ByteRange, RangeSet};
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
-    CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL,
+    CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, LAST_MODIFIED, RANGE,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -52,6 +52,34 @@ const MAX_STREAMING_MAX_CONCURRENT_FETCHES: usize = 128;
 // `max_concurrent_fetches * min(chunk_size, total_size)`.
 // 512 MiB.
 const MAX_STREAMING_INFLIGHT_BYTES: u64 = 512 * 1024 * 1024;
+
+fn require_no_transform_cache_control(
+    headers: &HeaderMap,
+    label: &str,
+) -> Result<(), StreamingDiskError> {
+    // Defence-in-depth against intermediary transforms. Disk streaming reads bytes by offset; any
+    // transform (compression, content rewriting, etc) can break deterministic byte addressing.
+    //
+    // Keep this consistent with the browser clients and conformance tool expectations.
+    let cache_control = headers
+        .get(CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            StreamingDiskError::Protocol(format!(
+                "{label}: missing Cache-Control header (expected include no-transform)"
+            ))
+        })?;
+    let has_no_transform = cache_control
+        .split(',')
+        .map(|t| t.trim())
+        .any(|t| t.eq_ignore_ascii_case("no-transform"));
+    if !has_no_transform {
+        return Err(StreamingDiskError::Protocol(format!(
+            "{label}: Cache-Control missing no-transform: {cache_control}"
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Error, Clone)]
 pub enum StreamingDiskError {
@@ -1191,6 +1219,7 @@ impl StreamingDisk {
                     let should_retry = match &e {
                         StreamingDiskError::RangeNotSupported
                         | StreamingDiskError::Integrity { .. }
+                        | StreamingDiskError::Protocol(_)
                         | StreamingDiskError::ValidatorMismatch { .. }
                         | StreamingDiskError::Cancelled => false,
                         StreamingDiskError::HttpStatus { status } => {
@@ -1305,6 +1334,9 @@ impl StreamingDisk {
                 status: resp.status().as_u16(),
             });
         }
+
+        let label = format!("range response bytes={start}-{}", end - 1);
+        require_no_transform_cache_control(resp.headers(), &label)?;
 
         if !sent_if_range {
             if let Some(expected) = expected_validator {
@@ -1425,6 +1457,8 @@ async fn probe_remote_size_and_validator(
             status: resp.status().as_u16(),
         });
     }
+
+    require_no_transform_cache_control(resp.headers(), "range probe")?;
 
     let validator = extract_validator(resp.headers());
 
