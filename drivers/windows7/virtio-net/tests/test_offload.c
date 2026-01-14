@@ -717,6 +717,29 @@ static void test_ipv6_tcp_lso(void)
     assert(info.IpVersion == 6);
 }
 
+static void test_ipv6_tcp_lso_ecn_when_cwr_and_enabled(void)
+{
+    uint8_t pkt[14 + 40 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 40);
+    /* TCP flags (byte 13): set CWR. */
+    pkt[14 + 40 + 13] = 0x80;
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoEcn = 1;
+    intent.TsoMss = 1440;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.GsoType == (AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6 | AEROVNET_VIRTIO_NET_HDR_GSO_ECN));
+}
+
 static void test_ipv6_tcp_lso_partial_headers(void)
 {
     /* Only Ethernet+IPv6+TCP headers are present, but payload_len claims a larger packet. */
@@ -934,6 +957,7 @@ int main(void)
     test_ipv4_tcp_options_lso();
     test_ipv4_qinq_tcp_lso();
     test_ipv6_tcp_lso();
+    test_ipv6_tcp_lso_ecn_when_cwr_and_enabled();
     test_ipv6_tcp_lso_partial_headers();
     test_ipv4_fragment_rejected();
     test_ipv4_fragment_udp_rejected();

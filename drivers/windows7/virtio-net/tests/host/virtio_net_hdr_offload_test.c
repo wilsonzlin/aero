@@ -107,6 +107,19 @@ static int test_ipv4_tcp_no_vlan(void) {
   ASSERT_EQ_U16(Hdr.CsumStart, 34);
   ASSERT_EQ_U16(Hdr.CsumOffset, 16);
 
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.Tso = 1;
+  TxReq.TsoEcn = 1;
+  TxReq.TsoMss = 1460;
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, (uint8_t)(VIRTIO_NET_HDR_GSO_TCPV4 | VIRTIO_NET_HDR_GSO_ECN));
+  ASSERT_EQ_U16(Hdr.GsoSize, 1460);
+  ASSERT_EQ_U16(Hdr.HdrLen, 54);
+  ASSERT_EQ_U16(Hdr.CsumStart, 34);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 16);
+
   return 0;
 }
 
