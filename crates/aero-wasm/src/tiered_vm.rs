@@ -1642,17 +1642,45 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{WasmBus, WasmTieredVm, meta_from_js};
-
-    use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
-    use aero_cpu_core::jit::runtime::PAGE_SHIFT;
-    use aero_cpu_core::CpuBus;
-    use aero_jit_x86::jit_ctx;
-    use crate::guest_phys::guest_ram_phys_end_exclusive;
+     use super::{COMMIT_FLAG_OFFSET, JIT_EXIT_SENTINEL_I64, WasmBus, WasmTieredVm, meta_from_js};
+ 
+     use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
+     use aero_cpu_core::jit::cache::CompiledBlockHandle;
+     use aero_cpu_core::jit::runtime::PAGE_SHIFT;
+     use aero_cpu_core::CpuBus;
+     use aero_jit_x86::jit_ctx;
+     use crate::guest_phys::guest_ram_phys_end_exclusive;
     use js_sys::{Array, Object, Reflect};
+    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    struct GlobalThisValueGuard {
+        global: Object,
+        key: JsValue,
+        prev: JsValue,
+    }
+
+    impl GlobalThisValueGuard {
+        fn set(key: &str, value: &JsValue) -> Self {
+            let global = js_sys::global();
+            let key_js = JsValue::from_str(key);
+            let prev = Reflect::get(&global, &key_js).expect("get global value");
+            Reflect::set(&global, &key_js, value).expect("set global value");
+            Self {
+                global,
+                key: key_js,
+                prev,
+            }
+        }
+    }
+
+    impl Drop for GlobalThisValueGuard {
+        fn drop(&mut self) {
+            let _ = Reflect::set(&self.global, &self.key, &self.prev);
+        }
+    }
 
     #[wasm_bindgen(inline_js = r#"
 export function installAeroTieredMmioTestShims() {
@@ -2160,11 +2188,10 @@ export function installAeroTieredMmioTestShims() {
 
         // Use the same tiny real-mode loop as `wasm_tiered_vm_instruction_count_respects_cpu_bitness`
         // (INC AX; JMP -2).
-        let mut guest = vec![0u8; 0x2000];
+        let (guest_base, guest_size) = alloc_guest_region_bytes(0x2000);
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
         guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
-
-        let guest_base = guest.as_mut_ptr() as u32;
-        let guest_size = guest.len() as u32;
 
         let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
         vm.reset_real_mode(0x1000);
@@ -2185,22 +2212,16 @@ export function installAeroTieredMmioTestShims() {
         // ---------------------------------------------------------------------
         // Commit path: leave the commit flag set to 1.
         // ---------------------------------------------------------------------
-        let commit_call = Closure::wrap(
-            Box::new(move |_table_index: u32, _cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
-                0x1000
-            }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
-        );
-        Reflect::set(
-            &js_sys::global(),
-            &JsValue::from_str("__aero_jit_call"),
-            commit_call.as_ref(),
-        )
-        .expect("set __aero_jit_call (commit)");
-        // Keep the closure alive for the duration of the test.
-        commit_call.forget();
-
         let tsc_before = vm.vcpu.cpu.state.msr.tsc;
-        let outcome = vm.dispatcher.step(&mut vm.vcpu);
+        let outcome = {
+            let commit_call = Closure::wrap(
+                Box::new(move |_table_index: u32, _cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                    0x1000
+                }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
+            );
+            let _guard = GlobalThisValueGuard::set("__aero_jit_call", commit_call.as_ref());
+            vm.dispatcher.step(&mut vm.vcpu)
+        };
         let tsc_after = vm.vcpu.cpu.state.msr.tsc;
 
         match outcome {
@@ -2222,29 +2243,22 @@ export function installAeroTieredMmioTestShims() {
         // ---------------------------------------------------------------------
         // Rollback path: clear the commit flag to 0.
         // ---------------------------------------------------------------------
-        let rollback_call = Closure::wrap(
-            Box::new(move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
-                let commit_flag_ptr = cpu_ptr
-                    .checked_add(super::COMMIT_FLAG_OFFSET)
-                    .expect("commit_flag_ptr overflow");
-                // Safety: `cpu_ptr` is a wasm linear-memory pointer into the JIT ABI buffer owned by
-                // `WasmTieredVm`. The commit flag slot is a `u32` at a stable offset.
-                unsafe {
-                    core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
-                }
-                0x1000
-            }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
-        );
-        Reflect::set(
-            &js_sys::global(),
-            &JsValue::from_str("__aero_jit_call"),
-            rollback_call.as_ref(),
-        )
-        .expect("set __aero_jit_call (rollback)");
-        rollback_call.forget();
-
         let tsc_before = vm.vcpu.cpu.state.msr.tsc;
-        let outcome = vm.dispatcher.step(&mut vm.vcpu);
+        let outcome = {
+            let rollback_call = Closure::wrap(
+                Box::new(move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                    let commit_flag_ptr = cpu_ptr + COMMIT_FLAG_OFFSET;
+                    // Safety: `cpu_ptr` is a wasm linear-memory pointer into the JIT ABI buffer owned by
+                    // `WasmTieredVm`. The commit flag slot is a `u32` at a stable offset.
+                    unsafe {
+                        core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
+                    }
+                    0x1000
+                }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
+            );
+            let _guard = GlobalThisValueGuard::set("__aero_jit_call", rollback_call.as_ref());
+            vm.dispatcher.step(&mut vm.vcpu)
+        };
         let tsc_after = vm.vcpu.cpu.state.msr.tsc;
 
         match outcome {
@@ -2264,6 +2278,117 @@ export function installAeroTieredMmioTestShims() {
             tsc_after, tsc_before,
             "rollback exits must not advance TSC"
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn tiered_vm_commit_flag_cleared_means_no_retirement() {
+        installAeroTieredMmioTestShims();
+
+        let (guest_base, guest_size) = alloc_guest_region_bytes(0x2000);
+
+        let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+
+        const ENTRY_RIP: u64 = 0x1000;
+        const N: u32 = 7;
+        const TABLE_INDEX: u32 = 42;
+
+        vm.reset_real_mode(ENTRY_RIP as u32);
+        let mut meta = vm.dispatcher.jit_mut().snapshot_meta(ENTRY_RIP, 0);
+        meta.instruction_count = N;
+        vm.dispatcher.jit_mut().install_handle(CompiledBlockHandle {
+            entry_rip: ENTRY_RIP,
+            table_index: TABLE_INDEX,
+            meta,
+        });
+
+        let closure = Closure::wrap(Box::new(
+            move |table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                assert_eq!(table_index, TABLE_INDEX);
+                let commit_flag_ptr = cpu_ptr + COMMIT_FLAG_OFFSET;
+
+                // The backend should default the commit flag to "committed" before calling into
+                // the host.
+                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                assert_eq!(
+                    before, 1,
+                    "commit flag should be set to 1 before host hook runs"
+                );
+
+                // Emulate the JS host rolling back guest state.
+                unsafe { core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0) };
+
+                JIT_EXIT_SENTINEL_I64
+            },
+        )
+            as Box<dyn FnMut(u32, u32, u32) -> i64>);
+        let _guard = GlobalThisValueGuard::set("__aero_jit_call", closure.as_ref());
+
+        let outcome = vm.dispatcher.step(&mut vm.vcpu);
+        match outcome {
+            StepOutcome::InterruptDelivered => panic!("unexpected interrupt delivery"),
+            StepOutcome::Block {
+                tier,
+                instructions_retired,
+                ..
+            } => {
+                assert_eq!(tier, ExecutedTier::Jit);
+                assert_eq!(instructions_retired, 0);
+            }
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn tiered_vm_commit_flag_default_means_retirement() {
+        installAeroTieredMmioTestShims();
+
+        let (guest_base, guest_size) = alloc_guest_region_bytes(0x2000);
+
+        let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+
+        const ENTRY_RIP: u64 = 0x1000;
+        const N: u32 = 7;
+        const TABLE_INDEX: u32 = 42;
+
+        vm.reset_real_mode(ENTRY_RIP as u32);
+        let mut meta = vm.dispatcher.jit_mut().snapshot_meta(ENTRY_RIP, 0);
+        meta.instruction_count = N;
+        vm.dispatcher.jit_mut().install_handle(CompiledBlockHandle {
+            entry_rip: ENTRY_RIP,
+            table_index: TABLE_INDEX,
+            meta,
+        });
+
+        let closure = Closure::wrap(Box::new(
+            move |table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                assert_eq!(table_index, TABLE_INDEX);
+                let commit_flag_ptr = cpu_ptr + COMMIT_FLAG_OFFSET;
+
+                // The backend should set the flag to 1 (committed) before calling into the host.
+                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                assert_eq!(
+                    before, 1,
+                    "commit flag should be set to 1 before host hook runs"
+                );
+
+                // Leave the flag untouched to indicate a committed block.
+                JIT_EXIT_SENTINEL_I64
+            },
+        )
+            as Box<dyn FnMut(u32, u32, u32) -> i64>);
+        let _guard = GlobalThisValueGuard::set("__aero_jit_call", closure.as_ref());
+
+        let outcome = vm.dispatcher.step(&mut vm.vcpu);
+        match outcome {
+            StepOutcome::InterruptDelivered => panic!("unexpected interrupt delivery"),
+            StepOutcome::Block {
+                tier,
+                instructions_retired,
+                ..
+            } => {
+                assert_eq!(tier, ExecutedTier::Jit);
+                assert_eq!(instructions_retired, u64::from(N));
+            }
+        }
     }
 
     #[wasm_bindgen_test]
