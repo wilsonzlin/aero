@@ -3019,27 +3019,6 @@ function renderDisksPanel(): HTMLElement {
 
     disks = await manager.listDisks();
     mounts = await manager.getMounts();
-    // Keep the runtime config's `activeDiskImage` in sync with the user's mounted disks.
-    //
-    // Multiple parts of the worker runtime use `activeDiskImage` as the "VM mode" toggle:
-    // - CPU worker decides whether to boot the real VM vs run demo loops.
-    // - WorkerCoordinator routes audio + microphone ring buffers (SPSC) to the I/O worker in VM mode.
-    //
-    // The Disks panel stores the actual disk selection in DiskManager mounts, so bridge that into
-    // config here (unless `activeDiskImage` is locked via URL query param `?disk=...`).
-    try {
-      const cfgState = configManager.getState();
-      if (!cfgState.lockedKeys.has("activeDiskImage")) {
-        const byId = new Map(disks.map((d) => [d.id, d]));
-        const activeMeta = (mounts.hddId && byId.get(mounts.hddId)) || (mounts.cdId && byId.get(mounts.cdId)) || null;
-        const desired = activeMeta ? activeMeta.name : null;
-        if (cfgState.effective.activeDiskImage !== desired) {
-          configManager.updateStoredConfig({ activeDiskImage: desired });
-        }
-      }
-    } catch {
-      // ignore best-effort config sync
-    }
     renderMountSelects();
     renderTable();
   }

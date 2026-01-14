@@ -2569,7 +2569,6 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.enableWorkers === b.enableWorkers &&
     a.enableWebGPU === b.enableWebGPU &&
     a.proxyUrl === b.proxyUrl &&
-    a.activeDiskImage === b.activeDiskImage &&
     a.logLevel === b.logLevel &&
     a.uiScale === b.uiScale &&
     a.virtioNetMode === b.virtioNetMode &&
