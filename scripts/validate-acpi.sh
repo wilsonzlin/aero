@@ -34,7 +34,12 @@ for table in "${aml_tables[@]}"; do
   (
     cd "$tmp_dir"
     # Decompile emits `${prefix}.dsl` in the current directory.
-    iasl -d "${base}" >/dev/null
+    #
+    # `iasl` warns (3168) when compiling legacy Processor() objects back from the
+    # decompiler output. We intentionally keep ProcessorOp in our shipped AML for
+    # Windows 7 compatibility, so ignore the warning during this round-trip
+    # validation to avoid noisy output/future warning-as-error regressions.
+    iasl -vw 3168 -d "${base}" >/dev/null
 
     dsl="${prefix}.dsl"
     if [[ ! -f "${dsl}" ]]; then
@@ -44,9 +49,8 @@ for table in "${aml_tables[@]}"; do
     fi
 
     # Recompile the decompiled DSL. Use `-p` so outputs stay in the temp dir.
-    iasl -tc -p "${prefix}_recompiled" "${dsl}" >/dev/null
+    iasl -vw 3168 -tc -p "${prefix}_recompiled" "${dsl}" >/dev/null
   )
 done
 
 echo "ACPI validation via iasl succeeded."
-
