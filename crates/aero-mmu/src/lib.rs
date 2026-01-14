@@ -601,7 +601,11 @@ pub struct Mmu {
     cr3: u64,
     cr4: u64,
     efer: u64,
+    mode: PagingMode,
     max_phys_bits: u8,
+    tlb_page_sizes: TlbLookupPageSizes,
+    pcid_enabled: bool,
+    pcid: u16,
     tlb: Tlb,
     #[cfg(feature = "stats")]
     stats: MmuStats,
@@ -615,17 +619,54 @@ impl Default for Mmu {
 
 impl Mmu {
     pub fn new() -> Self {
-        Self {
+        let mut mmu = Self {
             cr0: 0,
             cr2: 0,
             cr3: 0,
             cr4: 0,
             efer: 0,
+            mode: PagingMode::Disabled,
             max_phys_bits: 52,
+            tlb_page_sizes: TlbLookupPageSizes::Only4K,
+            pcid_enabled: false,
+            pcid: 0,
             tlb: Tlb::new(),
             #[cfg(feature = "stats")]
             stats: MmuStats::default(),
-        }
+        };
+        mmu.update_cached_state();
+        mmu
+    }
+
+    #[inline]
+    fn update_cached_state(&mut self) {
+        self.mode = if self.cr0 & CR0_PG == 0 {
+            PagingMode::Disabled
+        } else if self.cr4 & CR4_PAE == 0 {
+            PagingMode::Legacy32
+        } else if self.efer & EFER_LME != 0 {
+            PagingMode::Long4
+        } else {
+            PagingMode::Pae
+        };
+
+        self.tlb_page_sizes = if self.cr4 & CR4_PSE == 0 {
+            TlbLookupPageSizes::Only4K
+        } else {
+            match self.mode {
+                PagingMode::Disabled => TlbLookupPageSizes::Only4K,
+                PagingMode::Legacy32 => TlbLookupPageSizes::Size4MAnd4K,
+                PagingMode::Pae => TlbLookupPageSizes::Size2MAnd4K,
+                PagingMode::Long4 => TlbLookupPageSizes::Size1G2MAnd4K,
+            }
+        };
+
+        self.pcid_enabled = self.cr4 & CR4_PCIDE != 0;
+        self.pcid = if self.pcid_enabled {
+            (self.cr3 & 0xfff) as u16
+        } else {
+            0
+        };
     }
 
     /// Returns current MMU/TLB statistics when the `stats` feature is enabled.
@@ -705,10 +746,12 @@ impl Mmu {
             }
             self.tlb.flush_all();
         }
+        self.update_cached_state();
     }
 
     pub fn set_cr3(&mut self, value: u64) {
         self.cr3 = value;
+        self.update_cached_state();
         let pge = self.cr4_pge();
         let pcid_enabled = self.pcid_enabled();
         let new_pcid = self.current_pcid();
@@ -742,6 +785,7 @@ impl Mmu {
             }
             self.tlb.flush_all();
         }
+        self.update_cached_state();
     }
 
     pub fn set_efer(&mut self, value: u64) {
@@ -755,6 +799,7 @@ impl Mmu {
             }
             self.tlb.flush_all();
         }
+        self.update_cached_state();
     }
 
     /// INVLPG.
@@ -829,7 +874,7 @@ impl Mmu {
 
         let is_exec = access.is_execute();
         let pcid = self.current_pcid();
-        let tlb_page_sizes = self.tlb_lookup_page_sizes(mode);
+        let tlb_page_sizes = self.tlb_lookup_page_sizes();
 
         #[cfg(feature = "stats")]
         {
@@ -959,7 +1004,7 @@ impl Mmu {
 
         let is_exec = access.is_execute();
         let pcid = self.current_pcid();
-        let tlb_page_sizes = self.tlb_lookup_page_sizes(mode);
+        let tlb_page_sizes = self.tlb_lookup_page_sizes();
 
         #[cfg(feature = "stats")]
         {
@@ -1025,29 +1070,12 @@ impl Mmu {
 
     #[inline]
     fn paging_mode(&self) -> PagingMode {
-        if self.cr0 & CR0_PG == 0 {
-            return PagingMode::Disabled;
-        }
-        if self.cr4 & CR4_PAE == 0 {
-            return PagingMode::Legacy32;
-        }
-        if self.efer & EFER_LME != 0 {
-            return PagingMode::Long4;
-        }
-        PagingMode::Pae
+        self.mode
     }
 
     #[inline]
-    fn tlb_lookup_page_sizes(&self, mode: PagingMode) -> TlbLookupPageSizes {
-        if !self.cr4_pse() {
-            return TlbLookupPageSizes::Only4K;
-        }
-        match mode {
-            PagingMode::Legacy32 => TlbLookupPageSizes::Size4MAnd4K,
-            PagingMode::Pae => TlbLookupPageSizes::Size2MAnd4K,
-            PagingMode::Long4 => TlbLookupPageSizes::Size1G2MAnd4K,
-            PagingMode::Disabled => unreachable!(),
-        }
+    fn tlb_lookup_page_sizes(&self) -> TlbLookupPageSizes {
+        self.tlb_page_sizes
     }
 
     #[inline]
@@ -1062,16 +1090,12 @@ impl Mmu {
 
     #[inline]
     fn pcid_enabled(&self) -> bool {
-        self.cr4 & CR4_PCIDE != 0
+        self.pcid_enabled
     }
 
     #[inline]
     fn current_pcid(&self) -> u16 {
-        if self.pcid_enabled() {
-            (self.cr3 & 0xfff) as u16
-        } else {
-            0
-        }
+        self.pcid
     }
 
     #[inline]
