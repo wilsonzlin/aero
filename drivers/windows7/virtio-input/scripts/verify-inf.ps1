@@ -306,6 +306,11 @@ foreach ($sect in $modelSections) {
 # separate named devices in Device Manager.
 $requiredModelMappings = @(
   @{
+    Name = 'NTx86 generic mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x86 generic model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01).'
+  },
+  @{
     Name = 'NTx86 keyboard mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioKeyboard.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01') + '$')
     Message = 'Missing x86 keyboard model line (expected %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...SUBSYS_00101AF4... ).'
@@ -314,6 +319,11 @@ $requiredModelMappings = @(
     Name = 'NTx86 mouse mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
     Message = 'Missing x86 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...SUBSYS_00111AF4... ).'
+  },
+  @{
+    Name = 'NTamd64 generic mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x64 generic model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01).'
   },
   @{
     Name = 'NTamd64 keyboard mapping'
@@ -332,15 +342,7 @@ foreach ($m in $requiredModelMappings) {
     Add-Failure -Failures $failures -Message $m.Message
   }
 }
-
-$forbiddenHwidRegex = '(?i)' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01')
-foreach ($sect in $modelSections) {
-  if (-not $sections.ContainsKey($sect)) { continue }
-  if ((Get-MatchingLines -Lines $sections[$sect] -Regex $forbiddenHwidRegex).Count -ne 0) {
-    Add-Failure -Failures $failures -Message (("Unexpected generic HWID in [{0}]: PCI\\VEN_1AF4&DEV_1052&REV_01. " +
-      "This driver package intentionally binds only to SUBSYS-specific contract IDs; use aero_virtio_tablet.inf for tablet devices.") -f $sect)
-  }
-}
+ 
 
 $requiredStrings = @(
   @{ Name = 'AeroVirtioKeyboard.DeviceDesc'; Regex = '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*".*"$' },
