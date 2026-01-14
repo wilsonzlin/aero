@@ -6573,7 +6573,6 @@ impl AerogpuD3d11Executor {
                         );
                     }
                 }
-
                 if self.state.ds.is_none() {
                     bail!(
                         "PATCHLIST draw requires HS+DS, but no domain shader (DS) is bound (topology=PatchList{actual})"
@@ -7666,11 +7665,8 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
             ];
-            let prepass_output_bgl = self
-                .bind_group_layout_cache
-                .get_or_create(&self.device, &prepass_output_bgl_entries);
-
-            // Bind group layout for geometry-stage resources + vertex/index pulling (`@group(3)`).
+            // Bind group layout entries for geometry-stage resources + vertex/index pulling
+            // (`@group(3)`).
             let mut prepass_group3_bgl_entries: Vec<wgpu::BindGroupLayoutEntry> =
                 Vec::with_capacity(1 + prepass_group3_extra_bgl_entries.len());
             prepass_group3_bgl_entries.push(wgpu::BindGroupLayoutEntry {
@@ -7686,6 +7682,40 @@ impl AerogpuD3d11Executor {
             prepass_group3_bgl_entries.extend(prepass_group3_extra_bgl_entries);
             prepass_group3_bgl_entries.sort_by_key(|e| e.binding);
 
+            // Even though the placeholder prepass output buffers (`@group(0)`) and the vertex/index
+            // pulling resources (`@group(3)`) are in separate bind groups, WebGPU's
+            // `max_storage_buffers_per_shader_stage` limit applies per shader stage *across* the
+            // entire pipeline layout. Some downlevel backends request a very small budget
+            // (e.g. `max_storage_buffers_per_shader_stage=4`), so explicitly gate the placeholder
+            // prepass to avoid opaque wgpu validation panics during pipeline layout creation.
+            let count_storage_buffers = |entries: &[wgpu::BindGroupLayoutEntry]| -> u32 {
+                entries
+                    .iter()
+                    .filter(|e| {
+                        e.visibility.contains(wgpu::ShaderStages::COMPUTE)
+                            && matches!(
+                                e.ty,
+                                wgpu::BindingType::Buffer {
+                                    ty: wgpu::BufferBindingType::Storage { .. },
+                                    ..
+                                }
+                            )
+                    })
+                    .count() as u32
+            };
+            let group0_storage = count_storage_buffers(&prepass_output_bgl_entries);
+            let group3_storage = count_storage_buffers(&prepass_group3_bgl_entries);
+            let storage_bindings_total = group0_storage + group3_storage;
+            let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
+            if storage_bindings_total > max_storage {
+                bail!(
+                    "geometry placeholder prepass requires {storage_bindings_total} storage buffers in compute pipeline layout (group0={group0_storage}, group3={group3_storage}), but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
+                );
+            }
+
+            let prepass_output_bgl = self
+                .bind_group_layout_cache
+                .get_or_create(&self.device, &prepass_output_bgl_entries);
             let prepass_group3_bgl = self
                 .bind_group_layout_cache
                 .get_or_create(&self.device, &prepass_group3_bgl_entries);
