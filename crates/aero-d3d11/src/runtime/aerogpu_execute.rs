@@ -1578,31 +1578,18 @@ impl AerogpuCmdRuntime {
                         args.clamp_instances(max);
                     }
 
-                    if !supports_indirect_execution
-                        || (args.first_instance != 0 && !indirect_first_instance_supported)
-                    {
-                        let end_index = args.first_index.saturating_add(args.index_count);
-                        let end_instance = args.first_instance.saturating_add(args.instance_count);
-                        pass.draw_indexed(
-                            args.first_index..end_index,
-                            args.base_vertex,
-                            args.first_instance..end_instance,
-                        );
-                        indirect_args_buffer = None;
-                    } else {
-                        indirect_args_buffer =
-                            Some(self.device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("aero-d3d11 aerogpu draw_indexed_indirect args"),
-                                size: DrawIndexedIndirectArgs::SIZE_BYTES,
-                                usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
-                                mapped_at_creation: false,
-                            }));
-                        let args_buffer = indirect_args_buffer
-                            .as_ref()
-                            .expect("indirect_args_buffer must be set");
-                        self.queue.write_buffer(args_buffer, 0, args.as_bytes());
-                        pass.draw_indexed_indirect(args_buffer, 0);
-                    }
+                    // `draw_indexed_indirect` is unreliable on some downlevel backends even when
+                    // `DownlevelFlags::INDIRECT_EXECUTION` is reported. Since the test runtime
+                    // already has the draw parameters on the CPU, fall back to a direct draw to
+                    // preserve correctness.
+                    let end_index = args.first_index.saturating_add(args.index_count);
+                    let end_instance = args.first_instance.saturating_add(args.instance_count);
+                    pass.draw_indexed(
+                        args.first_index..end_index,
+                        args.base_vertex,
+                        args.first_instance..end_instance,
+                    );
+                    indirect_args_buffer = None;
                 }
             }
         }
