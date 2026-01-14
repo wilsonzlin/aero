@@ -5448,10 +5448,11 @@ fn emit_instructions(
                         mask: *mask,
                     });
                 }
-                // Raw UAV stores use byte offsets. The SM4/SM5 register file is untyped, so the
-                // address operand may be provided either as raw integer bits or as a numeric float
-                // (common when the compiler materializes an integer constant in a float register).
-                // Use the same float→u32 heuristic as `ld_uav_raw`.
+                // Raw UAV stores use byte offsets.
+                //
+                // DXBC register lanes are untyped 32-bit values; integer operations (including
+                // buffer addressing) consume raw lane bits. Numeric float→int conversion must be
+                // expressed explicitly in DXBC (e.g. via `ftou`), not inferred.
                 let addr_u32 = emit_src_scalar_u32_addr(addr, inst_index, "store_raw", ctx)?;
                 let base_name = format!("store_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
