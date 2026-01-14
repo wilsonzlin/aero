@@ -1134,8 +1134,12 @@ impl IoSnapshot for AeroGpuPciDevice {
         self.executor.reset();
         self.executor.last_submissions.clear();
         self.pending_fence_completions.clear();
-        // Snapshot state records committed 64-bit GPAs; clear any torn-update tracking so stale LO
-        // writes from a previous execution do not affect MMIO reads or future HI write commits.
+        // Reset torn-update tracking so state from a previous execution cannot leak across restore
+        // calls.
+        //
+        // Legacy snapshots (<= v1.1) only record the committed 64-bit GPA values in `TAG_REGS`,
+        // so any in-flight LO/HI update must be cleared. Newer snapshots (v1.2+) include explicit
+        // `*_PENDING_LO`/`*_LO_PENDING` fields that are restored below.
         self.scanout0_fb_gpa_pending_lo = 0;
         self.scanout0_fb_gpa_lo_pending = false;
         self.scanout0_fb_gpa_lo_pending_visible = false;

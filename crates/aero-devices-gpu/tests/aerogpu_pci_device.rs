@@ -1337,6 +1337,56 @@ fn snapshot_restore_overwrites_torn_scanout_fb_gpa_update_tracking() {
 }
 
 #[test]
+fn snapshot_restore_clears_torn_scanout_fb_gpa_update_tracking_for_legacy_snapshots() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let committed_fb_gpa = 0x1111_2222_3333_4444u64;
+
+    // Start from a stable v1.2 snapshot (source device has no LO-only update in flight), then
+    // re-encode it as a v1.1 snapshot. v1.1 snapshots did not record pending LO/HI update state,
+    // so loading them must clear any in-flight update tracking in the target device.
+    const TAG_REGS: u16 = 1;
+    let mut source = new_test_device(cfg.clone());
+    source.write(mmio::SCANOUT0_FB_GPA_LO, 4, committed_fb_gpa & 0xffff_ffff);
+    source.write(mmio::SCANOUT0_FB_GPA_HI, 4, committed_fb_gpa >> 32);
+    let snap = source.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        SnapshotVersion::new(1, 1),
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    let legacy = writer.finish();
+
+    let mut dev = new_test_device(cfg);
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, committed_fb_gpa & 0xffff_ffff);
+    dev.write(mmio::SCANOUT0_FB_GPA_HI, 4, committed_fb_gpa >> 32);
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, 0xDEAD_BEEF);
+    assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32, 0xDEAD_BEEF);
+
+    dev.load_state(&legacy).unwrap();
+
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32,
+        committed_fb_gpa as u32
+    );
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FB_GPA_HI, 4) as u32,
+        (committed_fb_gpa >> 32) as u32
+    );
+    assert_eq!(dev.regs.scanout0.fb_gpa, committed_fb_gpa);
+}
+
+#[test]
 fn snapshot_restore_rejects_executor_state_with_too_many_pending_fences() {
     // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
     const TAG_REGS: u16 = 1;
