@@ -5,6 +5,7 @@
 
 mod disasm;
 mod error;
+mod len_normalize;
 mod opcode;
 mod parse;
 mod reg;

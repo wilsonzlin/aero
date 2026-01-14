@@ -274,6 +274,28 @@ const VS_2_0_PASSTHROUGH: [u32; 14] = [
     0x0000_FFFF,
 ];
 
+const VS_2_0_PASSTHROUGH_OPERAND_COUNT_LEN: [u32; 14] = [
+    0xFFFE_0200, // vs_2_0
+    // dcl_position v0 (length nibble encodes operand count)
+    0x0200_001F,
+    0x8000_0000,
+    0x900F_0000,
+    // dcl_texcoord0 v1
+    0x0200_001F,
+    0x8000_0005,
+    0x900F_0001,
+    // mov oPos, v0
+    0x0200_0001,
+    0xC00F_0000,
+    0x90E4_0000,
+    // mov oT0, v1
+    0x0200_0001,
+    0xE00F_0000,
+    0x90E4_0001,
+    // end
+    0x0000_FFFF,
+];
+
 const PS_2_0_TEX_SAMPLE: [u32; 15] = [
     0xFFFF_0200, // ps_2_0
     // dcl_texcoord0 v0
@@ -441,6 +463,24 @@ fn parse_vs_2_0_passthrough() {
     assert!(dis.contains("vs_2_0"));
     assert!(dis.contains("dcl_position v0"));
     assert!(dis.contains("mov oPos, v0"));
+}
+
+#[test]
+fn parse_vs_2_0_passthrough_operand_count_length_encoding() {
+    let shader =
+        D3d9Shader::parse(&words_to_bytes(&VS_2_0_PASSTHROUGH_OPERAND_COUNT_LEN)).unwrap();
+    assert_eq!(shader.stage, ShaderStage::Vertex);
+    assert_eq!(shader.model.major, 2);
+    assert_eq!(shader.model.minor, 0);
+    assert_eq!(shader.declarations.len(), 2);
+    assert_eq!(shader.instructions.len(), 2);
+    assert!(matches!(
+        shader.instructions[0],
+        Instruction::Op {
+            opcode: Opcode::Mov,
+            ..
+        }
+    ));
 }
 
 #[test]

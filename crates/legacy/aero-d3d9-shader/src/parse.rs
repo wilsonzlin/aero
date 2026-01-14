@@ -52,7 +52,25 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
         tokens.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
 
-    let mut r = TokenReader::new(&tokens);
+    match parse_tokens(&tokens) {
+        Ok(ok) => Ok(ok),
+        Err(err) => {
+            // Retry after normalizing operand-count-encoded streams, but preserve the original
+            // parse error when normalization does not help (important for tests that assert on
+            // specific error shapes).
+            if let Some(normalized) = crate::len_normalize::normalize_sm2_sm3_instruction_lengths(&tokens)
+            {
+                if let Ok(ok) = parse_tokens(&normalized) {
+                    return Ok(ok);
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
+fn parse_tokens(tokens: &[u32]) -> Result<D3d9Shader, ShaderParseError> {
+    let mut r = TokenReader::new(tokens);
 
     let version_token = r.read().ok_or(ShaderParseError::Empty)?;
     let shader_type = (version_token >> 16) as u16;
