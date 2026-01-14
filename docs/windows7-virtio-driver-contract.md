@@ -1012,8 +1012,8 @@ Harness validation (non-normative, QEMU):
     - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
     - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
   - virtio-snd:
-    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
-    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|...`
+    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|queue2_vector=<n\|none>|queue3_vector=<n\|none>|...`
   - virtio-input:
     - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
     - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
