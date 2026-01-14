@@ -180,6 +180,7 @@ fn rejects_sync_in_non_compute_stage() {
         mask: 0xF,
         read_write_mask: 0xF,
         stream: 0,
+        min_precision: 0,
     }]);
 
     let dxbc_bytes = build_dxbc(&[

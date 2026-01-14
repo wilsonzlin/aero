@@ -1498,7 +1498,11 @@ fn wgsl_texld_cube_emits_texture_cube_sample() {
     let wgsl = generate_wgsl(&ir).unwrap();
     assert!(wgsl.wgsl.contains("texture_cube"), "{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("textureSample("), "{}", wgsl.wgsl);
-    assert!(wgsl.wgsl.contains("(c0).xyz"), "{}", wgsl.wgsl);
+    assert!(
+        wgsl.wgsl.contains("(constants.c[CONST_BASE + 0u]).xyz"),
+        "{}",
+        wgsl.wgsl
+    );
     assert_eq!(
         wgsl.bind_group_layout.sampler_texture_types.get(&0),
         Some(&TextureType::TextureCube)
