@@ -15,6 +15,11 @@ aero-perf = { path = "../aero-perf" }
 aero-mmu = { path = "../aero-mmu" }
 qemu_diff = { package = "qemu-diff", path = "../../tools/qemu_diff", optional = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `std::time::Instant::now()` panics on `wasm32-unknown-unknown`. Use `web-time` to support
+# wallclock mode in browser/Node runtimes.
+web-time = "1.1"
+
 [dev-dependencies]
 memoffset = "0.9"
 

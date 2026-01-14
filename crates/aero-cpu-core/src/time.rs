@@ -5,7 +5,14 @@
 //! host) we need a deterministic/virtualized timestamp counter instead of
 //! relying on host cycle counters.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant::now()` panics on `wasm32-unknown-unknown`; use `web_time::Instant` when
+// compiling for the browser/Node runtimes.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// Default virtual timestamp counter frequency (3 GHz).
 pub const DEFAULT_TSC_HZ: u64 = 3_000_000_000;

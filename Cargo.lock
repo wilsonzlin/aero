@@ -110,6 +110,7 @@ dependencies = [
  "criterion",
  "memoffset",
  "qemu-diff",
+ "web-time",
 ]
 
 [[package]]
