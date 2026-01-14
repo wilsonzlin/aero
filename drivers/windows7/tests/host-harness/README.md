@@ -427,11 +427,6 @@ For log scraping, the host harness mirrors the last observed guest marker into a
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n\|not_supported>`
 
-Backward compatibility: older guest selftest binaries may not emit the dedicated `virtio-blk-counters` marker. In that
-case, the host harness falls back to the legacy `_srb` fields appended to the main `virtio-blk` marker
-(`abort_srb`/`reset_device_srb`/`reset_bus_srb`/`pnp_srb`/`ioctl_reset`) and emits `VIRTIO_BLK_COUNTERS|INFO|...` without
-`capacity_change_events`.
-
 Newer miniport builds may also report timeout/error recovery activity counters (`ResetDetected` → `HwResetBus`) via the
 same IOCTL contract. When present, the guest selftest emits:
 
@@ -444,10 +439,6 @@ If the IOCTL payload is too short (older miniport contract / truncated), it emit
 The host harness mirrors this into:
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|reset_detected=...|hw_reset_bus=...`
-
-Backward compatibility: if the dedicated `virtio-blk-reset-recovery` marker is missing, the host harness derives
-`VIRTIO_BLK_RESET_RECOVERY` from the legacy miniport diagnostic line `virtio-blk-miniport-reset-recovery|...`
-(`INFO` → `INFO`, `WARN` → `SKIP`).
 
 The guest selftest also logs best-effort miniport diagnostics lines (not AERO markers) when the IOCTL payload includes
 additional optional fields:
@@ -484,10 +475,6 @@ To enforce that virtio-blk did not trigger timeout/error recovery resets (best-e
   - `--require-no-blk-reset-recovery`
   - `--fail-on-blk-reset-recovery`
 
-Note: this gate accepts either the dedicated guest marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|...`)
-or the legacy miniport diagnostic (`virtio-blk-miniport-reset-recovery|INFO|...`). Missing/SKIP/WARN are treated as
-unavailable and do not fail the run.
-
 On failure it emits deterministic tokens:
 
 - `FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO: ...`
@@ -501,10 +488,6 @@ To enforce a minimal “no unexpected aborts/resets” policy (checks `abort`/`r
 On failure it emits:
 
 `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
-
-Note: this gate prefers the dedicated `virtio-blk-counters` marker. If it is missing entirely, the harness falls back to
-legacy fields on the guest `virtio-blk` marker (`abort_srb`/`reset_device_srb`/`reset_bus_srb`). If the dedicated marker
-is present but reports `SKIP`, the harness treats counters as unavailable and does not fall back.
 
 Backward compatibility: legacy guest selftests may append these counters to the main virtio-blk marker (best-effort):
 - `abort_srb`
@@ -532,8 +515,8 @@ If any counter is non-zero, the harness fails with a deterministic token:
 
 Note: this is best-effort. `VIRTIO_BLK_RECOVERY` is derived from either:
 
-- legacy fields on the guest `virtio-blk` marker (older guest binaries), or
-- the dedicated guest `virtio-blk-counters` marker (newer guest binaries).
+- the dedicated guest `virtio-blk-counters` marker (preferred), or
+- legacy fields on the guest `virtio-blk` marker (older guest binaries).
 
 ### virtio-net MSI/MSI-X interrupt mode (guest-observed, optional)
 
@@ -1381,6 +1364,7 @@ in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver
   (`PCI\VEN_1AF4&DEV_1052&REV_01`, no SUBSYS). If you need tablet-INF binding specifically, emulate the subsystem IDs to the
   contract values so it binds to `aero_virtio_tablet.inf`.
 
+
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
 after the guest emits the readiness marker (`...|virtio-blk-resize|READY|...`), and requires the guest marker
@@ -1394,15 +1378,14 @@ To ensure you are using a guest image provisioned with the virtio-blk MSI/MSI-X 
 `require_expect_blk_msi=true` (passes `--require-expect-blk-msi`). This fails if the guest CONFIG marker does not include
 `expect_blk_msi=1` (i.e. the image was not provisioned with `aero-virtio-selftest.exe --expect-blk-msi`).
 
-To fail when the guest virtio-blk driver reports StorPort recovery/reset/abort activity (best-effort; works with either
-the dedicated `virtio-blk-counters` marker or the legacy `_srb` fields appended to the `virtio-blk` marker), set either:
+To fail when the guest virtio-blk driver reports StorPort recovery/reset/abort activity (best-effort; requires the guest
+to emit recovery counters markers), set either:
 
 - `require_no_blk_recovery=true` (passes `--require-no-blk-recovery`), or
 - `fail_on_blk_recovery=true` (passes `--fail-on-blk-recovery`, a narrower subset).
 
-To fail when the guest virtio-blk reset recovery counters report reset activity (best-effort; works with either the
-dedicated `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|...` marker or the legacy
-`virtio-blk-miniport-reset-recovery|INFO|...` diagnostic line), set either:
+To fail when the guest virtio-blk reset recovery diagnostic marker reports reset activity (best-effort; requires the guest
+to emit `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|...`), set either:
 
 - `require_no_blk_reset_recovery=true` (passes `--require-no-blk-reset-recovery`), or
 - `fail_on_blk_reset_recovery=true` (passes `--fail-on-blk-reset-recovery`, a narrower subset).
