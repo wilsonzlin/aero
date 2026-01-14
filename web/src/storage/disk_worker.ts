@@ -1315,7 +1315,25 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         }
 
         const last = meta?.lastAccessedAtMs;
-        const lastAccessedAtMs = typeof last === "number" && Number.isFinite(last) ? last : Number.NEGATIVE_INFINITY;
+        let lastAccessedAtMs = typeof last === "number" && Number.isFinite(last) ? last : Number.NEGATIVE_INFINITY;
+
+        // Some cache implementations (e.g. OPFS LRU chunk cache used by RemoteStreamingDisk) do not
+        // update `meta.json` on each access, but *do* persist an `index.json` file on use. Use the
+        // index file's `lastModified` timestamp as a best-effort last-access signal so we do not
+        // accidentally prune actively-used caches.
+        if (meta) {
+          try {
+            const indexHandle = await (handle as FileSystemDirectoryHandle).getFileHandle("index.json", { create: false });
+            const file = await indexHandle.getFile();
+            const lm = (file as unknown as { lastModified?: unknown }).lastModified;
+            if (typeof lm === "number" && Number.isFinite(lm) && lm > lastAccessedAtMs) {
+              lastAccessedAtMs = lm;
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const stale = !meta || lastAccessedAtMs < cutoffMs;
         candidates.push({ cacheKey: name, lastAccessedAtMs, stale });
       }

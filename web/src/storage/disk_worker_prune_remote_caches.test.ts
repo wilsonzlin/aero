@@ -114,6 +114,75 @@ describe("disk_worker prune_remote_caches", () => {
     }
   });
 
+  it("uses index.json lastModified as a best-effort last-access signal (LRU chunk caches)", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    const nowMs = 1_700_000_000_000;
+    vi.setSystemTime(nowMs);
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    const { opfsGetRemoteCacheDir } = await import("./metadata");
+    const remoteCacheDir = await opfsGetRemoteCacheDir();
+
+    const staleKey = "rc1_stale";
+    const lruKey = "rc1_lru";
+
+    // Both caches have old meta timestamps (stale), but the "lru" cache has an index.json written "now".
+    await writeValidMeta(await remoteCacheDir.getDirectoryHandle(staleKey, { create: true }), nowMs - 10_000);
+    const lruDir = await remoteCacheDir.getDirectoryHandle(lruKey, { create: true });
+    await writeValidMeta(lruDir, nowMs - 10_000);
+
+    // index.json lastModified should be treated as a last-access indicator for LRU caches.
+    {
+      const handle = await lruDir.getFileHandle("index.json", { create: true });
+      const writable = await handle.createWritable({ keepExistingData: false });
+      await writable.write("{}");
+      await writable.close();
+    }
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "prune_remote_caches",
+        payload: { olderThanMs: 4000 },
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(true);
+    expect(resp.result).toMatchObject({ ok: true, examined: 2, pruned: 1 });
+
+    // staleKey should be pruned due to old meta and no index.json activity.
+    await expect(remoteCacheDir.getDirectoryHandle(staleKey, { create: false })).rejects.toMatchObject({ name: "NotFoundError" });
+
+    // lruKey should remain because index.json was recently written.
+    await expect(remoteCacheDir.getDirectoryHandle(lruKey, { create: false })).resolves.toBeTruthy();
+  });
+
   it("supports dryRun (reports keys without deleting)", async () => {
     vi.resetModules();
     vi.useFakeTimers();
@@ -232,4 +301,3 @@ describe("disk_worker prune_remote_caches", () => {
     await expect(remoteCacheDir.getDirectoryHandle(keys[3]!, { create: false })).rejects.toMatchObject({ name: "NotFoundError" });
   });
 });
-
