@@ -339,6 +339,58 @@ fn block_cache_eviction_writes_back_dirty_blocks() {
 }
 
 #[test]
+fn block_cache_eviction_writeback_failure_keeps_dirty_block_resident() {
+    struct FailingWriteDisk {
+        data: Vec<u8>,
+    }
+
+    impl VirtualDisk for FailingWriteDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> crate::Result<()> {
+            crate::util::checked_range(offset, buf.len(), self.capacity_bytes())?;
+            let off: usize = offset.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+            buf.copy_from_slice(&self.data[off..off + buf.len()]);
+            Ok(())
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> crate::Result<()> {
+            // Fail writes to block 0 to simulate a write-back failure during eviction.
+            if offset == 0 {
+                return Err(DiskError::Io("deliberate write failure".into()));
+            }
+            crate::util::checked_range(offset, buf.len(), self.capacity_bytes())?;
+            let off: usize = offset.try_into().map_err(|_| DiskError::OffsetOverflow)?;
+            self.data[off..off + buf.len()].copy_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
+    let disk = FailingWriteDisk { data: vec![0; 48] };
+    let mut cached = BlockCachedDisk::new(disk, 16, 2).unwrap();
+
+    // Fill the cache with two blocks.
+    cached.write_at(0, &[1, 2, 3, 4]).unwrap(); // block 0 (dirty)
+    let mut tmp = [0u8; 4];
+    cached.read_at(16, &mut tmp).unwrap(); // block 1 (clean)
+
+    // Force an eviction of block 0 (dirty). Write-back fails, so the operation errors out.
+    let err = cached.read_at(32, &mut tmp).unwrap_err(); // block 2 would evict block 0
+    assert!(matches!(err, DiskError::Io(_)));
+
+    // The dirty block must still be cached and readable even after the failed eviction attempt.
+    let mut buf = [0u8; 4];
+    cached.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, &[1, 2, 3, 4]);
+}
+
+#[test]
 fn block_cache_reports_allocation_failure_as_quota_exceeded() {
     // Use an absurd block size that should fail `try_reserve_exact` deterministically (capacity
     // overflow) without actually attempting to allocate.

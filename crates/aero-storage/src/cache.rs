@@ -23,6 +23,7 @@ struct CacheEntry {
 pub struct BlockCachedDisk<D> {
     inner: D,
     block_size: usize,
+    max_cached_blocks: NonZeroUsize,
     cache: LruCache<u64, CacheEntry>,
     stats: BlockCacheStats,
 }
@@ -37,6 +38,7 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
         Ok(Self {
             inner,
             block_size,
+            max_cached_blocks,
             cache: LruCache::new(max_cached_blocks),
             stats: BlockCacheStats::default(),
         })
@@ -56,6 +58,25 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
 
     pub fn into_inner(self) -> D {
         self.inner
+    }
+
+    fn ensure_space_for_block(&mut self) -> Result<()> {
+        while self.cache.len() >= self.max_cached_blocks.get() {
+            let Some((evicted_idx, evicted)) = self.cache.pop_lru() else {
+                break;
+            };
+
+            if let Err(e) = self.write_back_block(evicted_idx, &evicted) {
+                // Put the block back so we don't lose dirty data on failed write-back.
+                let _ = self.cache.put(evicted_idx, evicted);
+                return Err(e);
+            }
+
+            // Count an eviction only once the entry is actually removed. If write-back fails
+            // we roll the eviction back above.
+            self.stats.evictions += 1;
+        }
+        Ok(())
     }
 
     fn ensure_block_cached(&mut self, block_idx: u64) -> Result<()> {
@@ -84,29 +105,9 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
     }
 
     fn insert_cache_entry(&mut self, block_idx: u64, entry: CacheEntry) -> Result<()> {
-        if let Some((evicted_idx, evicted)) = self.cache.push(block_idx, entry) {
-            // `LruCache::push` evicts immediately. If the evicted entry is dirty and its write-back
-            // fails, we must restore it back into the cache; otherwise the dirty data is lost.
-            if let Err(err) = self.write_back_block(evicted_idx, &evicted) {
-                // Best-effort rollback: remove the newly inserted entry and restore the evicted
-                // entry. This keeps the cache in a consistent state and preserves dirty data.
-                //
-                // Note: this may perturb LRU ordering on error, but the cache contents are
-                // restored and the error is propagated.
-                let removed = self.cache.pop(&block_idx);
-                debug_assert!(
-                    removed.is_some(),
-                    "cache missing inserted block while rolling back failed eviction"
-                );
-                let double_evict = self.cache.push(evicted_idx, evicted);
-                debug_assert!(
-                    double_evict.is_none(),
-                    "restoring a rolled-back eviction should not evict another entry"
-                );
-                return Err(err);
-            }
-            self.stats.evictions += 1;
-        }
+        self.ensure_space_for_block()?;
+        let old = self.cache.put(block_idx, entry);
+        debug_assert!(old.is_none(), "block was already cached after miss path");
         Ok(())
     }
 
