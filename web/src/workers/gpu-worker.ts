@@ -2550,6 +2550,7 @@ async function attemptRecovery(reason: string): Promise<void> {
       scanoutAtStart?.source === SCANOUT_SOURCE_WDDM ||
       (!scanoutAtStart &&
         (() => {
+          if (snapshotPaused) return wddmOwnsScanoutFallback;
           const words = scanoutState;
           if (!words) return wddmOwnsScanoutFallback;
           try {

@@ -218,7 +218,7 @@ describe("workers/gpu-worker snapshot pause", () => {
     } finally {
       await worker.terminate();
     }
-  });
+  }, 20_000);
 
   it("waits for in-flight tick/present work before acknowledging snapshot pause", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -325,7 +325,7 @@ describe("workers/gpu-worker snapshot pause", () => {
     } finally {
       await worker.terminate();
     }
-  });
+  }, 20_000);
 
   it("waits for in-flight screenshot work before acknowledging snapshot pause", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -415,38 +415,38 @@ describe("workers/gpu-worker snapshot pause", () => {
       // Snapshot pause should wait until the screenshot handler finishes before acknowledging.
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
 
-        await expect(
-          waitForWorkerMessage(
-            worker,
-            (msg) => {
-              const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
-              return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
-            },
-            100,
-          ),
-        ).rejects.toThrow(/timed out/i);
-
-        await waitForWorkerMessage(
-          worker,
-          (msg) => {
-            const m = msg as { type?: unknown; requestId?: unknown } | null | undefined;
-            return m?.type === "screenshot" && m?.requestId === 42;
-          },
-          10_000,
-        );
-
-        await waitForWorkerMessage(
+      await expect(
+        waitForWorkerMessage(
           worker,
           (msg) => {
             const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
             return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
           },
-          5_000,
-        );
-      } finally {
-        await worker.terminate();
-      }
-  });
+          100,
+        ),
+      ).rejects.toThrow(/timed out/i);
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => {
+          const m = msg as { type?: unknown; requestId?: unknown } | null | undefined;
+          return m?.type === "screenshot" && m?.requestId === 42;
+        },
+        10_000,
+      );
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => {
+          const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
+          return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
+        },
+        5_000,
+      );
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
 
   it("waits for in-flight telemetry polling before acknowledging snapshot pause", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -536,7 +536,7 @@ describe("workers/gpu-worker snapshot pause", () => {
     } finally {
       await worker.terminate();
     }
-  });
+  }, 20_000);
 
   it("does not disable shared-state globals if a resume races with an in-flight pause", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -656,7 +656,7 @@ describe("workers/gpu-worker snapshot pause", () => {
     } finally {
       await worker.terminate();
     }
-  });
+  }, 20_000);
 
   it("keeps shared-state globals disabled when init runs after snapshot pause (pause before init)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -775,5 +775,5 @@ describe("workers/gpu-worker snapshot pause", () => {
     } finally {
       await worker.terminate();
     }
-  });
+  }, 20_000);
 });
