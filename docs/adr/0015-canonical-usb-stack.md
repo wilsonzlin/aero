@@ -37,6 +37,7 @@ For the in-browser runtime, the canonical stack is:
     incrementally (`aero_usb::ehci::EhciController`, `aero_usb::xhci::XhciController`).
     - See controller docs: [`docs/usb-ehci.md`](../usb-ehci.md), [`docs/usb-xhci.md`](../usb-xhci.md).
   - Guest-visible USB device models (HID, hubs, passthrough wrappers): `aero_usb::*`
+- **Canonical PCI integration for host controllers:** `crates/devices/src/usb/*` (UHCI/EHCI/xHCI PCI device wrappers)
 - **WASM-facing exports (thin wrappers around `aero-usb`):** `crates/aero-wasm`
 - **Host integration (TypeScript):** `web/src/usb/*`
   - WebUSB executor/broker (main thread): `web/src/usb/webusb_backend.ts`, `web/src/usb/usb_broker.ts`
