@@ -1367,7 +1367,7 @@ struct aerogpu_cmd_dispatch {
   uint32_t group_count_x;
   uint32_t group_count_y;
   uint32_t group_count_z;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (ABI minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR; 0 = legacy/default Compute) */
 };
 #pragma pack(pop)
 

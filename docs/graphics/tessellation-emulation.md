@@ -397,6 +397,7 @@ Packets that currently support the `stage_ex` encoding:
 - `SET_SHADER_RESOURCE_BUFFERS` (SRV buffers, `t#` where the SRV is a buffer view)
 - `SET_UNORDERED_ACCESS_BUFFERS` (UAV buffers, `u#` where the UAV is a buffer view)
 - `SET_SHADER_CONSTANTS_F`
+- `DISPATCH` (uses `reserved0` as the `stage_ex` selector for compute-based HS/DS work)
 
 Encoding invariant:
 

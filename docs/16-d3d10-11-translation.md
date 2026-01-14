@@ -627,9 +627,12 @@ For all of the following packets:
 
 - the struct is `#pragma pack(push, 1)` packed,
 - `hdr.size_bytes` must include the header + any trailing payload arrays, and
-- `reserved0` is interpreted as `stage_ex` **only** when the legacy `shader_stage`/`stage` field
-  equals `COMPUTE` **and** the command stream ABI minor is >= 3 (ABI 1.3+) (`reserved0 == 0` means
-  "no stage_ex override"/legacy compute).
+- `reserved0` is interpreted as `stage_ex` **only** when the command stream ABI minor is >= 3
+  (ABI 1.3+) and the packet targets the legacy Compute stage:
+  - For packets with an explicit legacy `shader_stage`/`stage` field: only when that field equals
+    `COMPUTE`.
+  - For `DISPATCH` (which is always compute): the trailing `reserved0` u32 is treated as `stage_ex`.
+  (`reserved0 == 0` means "no stage_ex override"/legacy compute).
 
 | Packet | Packed struct header | Trailing payload |
 |---|---|---|
@@ -640,6 +643,7 @@ For all of the following packets:
 | `SET_SHADER_RESOURCE_BUFFERS` | `aerogpu_cmd_set_shader_resource_buffers { shader_stage, start_slot, buffer_count, reserved0(stage_ex) }` | `aerogpu_shader_resource_buffer_binding bindings[buffer_count]` |
 | `SET_UNORDERED_ACCESS_BUFFERS` | `aerogpu_cmd_set_unordered_access_buffers { shader_stage, start_slot, uav_count, reserved0(stage_ex) }` | `aerogpu_unordered_access_buffer_binding bindings[uav_count]` |
 | `SET_SHADER_CONSTANTS_F` | `aerogpu_cmd_set_shader_constants_f { stage, start_register, vec4_count, reserved0(stage_ex) }` | `float data[vec4_count * 4]` |
+| `DISPATCH` | `aerogpu_cmd_dispatch { group_count_x, group_count_y, group_count_z, reserved0(stage_ex) }` | none |
 
 Implementers should copy the exact struct definitions (and sizes) from
 `drivers/aerogpu/protocol/aerogpu_cmd.h` (source of truth). The table above exists so readers can

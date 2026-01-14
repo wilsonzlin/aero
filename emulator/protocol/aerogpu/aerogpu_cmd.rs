@@ -1602,6 +1602,12 @@ pub struct AerogpuCmdDispatch {
     pub group_count_x: u32,
     pub group_count_y: u32,
     pub group_count_z: u32,
+    /// Reserved for ABI extension.
+    ///
+    /// When decoding command streams with ABI minor >= [`AEROGPU_STAGE_EX_MIN_ABI_MINOR`], this is
+    /// interpreted as a `stage_ex` selector (`enum aerogpu_shader_stage_ex` / [`AerogpuShaderStageEx`])
+    /// for compute-based execution of extended D3D stages (GS/HS/DS). For older streams, hosts must
+    /// treat this field as reserved/ignored to avoid misinterpreting legacy garbage as a stage tag.
     pub reserved0: u32,
 }
 

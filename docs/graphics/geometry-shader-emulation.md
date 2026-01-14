@@ -612,9 +612,10 @@ avoid misinterpreting legacy reserved data.
   - Pixel shaders use `shader_stage = PIXEL`; `stage_ex` cannot represent Pixel because `0` is
     reserved for legacy compute.
 
-Packets that carry a `stage_ex` selector in `reserved0` include: `SET_TEXTURE`, `SET_SAMPLERS`,
-`SET_CONSTANT_BUFFERS`, `SET_SHADER_RESOURCE_BUFFERS`, `SET_UNORDERED_ACCESS_BUFFERS`, and
-`SET_SHADER_CONSTANTS_F`.
+Packets that carry a `stage_ex` selector in `reserved0` include: `CREATE_SHADER_DXBC`, `SET_TEXTURE`,
+`SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`, `SET_SHADER_RESOURCE_BUFFERS`,
+`SET_UNORDERED_ACCESS_BUFFERS`, `SET_SHADER_CONSTANTS_F`, and `DISPATCH` (which uses `reserved0` as
+an extended stage selector for compute-based GS/HS/DS passes).
 
 ---
 

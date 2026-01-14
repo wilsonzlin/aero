@@ -228,7 +228,7 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const pkt2Base = pkt1Base + expected[1][1];
   assert.equal(view.getUint32(pkt2Base + 16, true), 2);
   const bPayloadBase = pkt2Base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
-  // Payload is scalar u32 values (0/1), one per bool register.
+  // Payload is `uint32_t data[bool_count]` where each element is 0 or 1.
   assert.equal(view.getUint32(bPayloadBase + 0, true), 0);
   assert.equal(view.getUint32(bPayloadBase + 4, true), 1);
 
