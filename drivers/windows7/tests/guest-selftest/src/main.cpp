@@ -9323,10 +9323,12 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (blk_miniport_info.has_value()) {
+    // Only include interrupt diagnostics if the miniport returned the extended fields.
     constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
     constexpr size_t kMsixCfgEnd = offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) + sizeof(USHORT);
     constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
     constexpr size_t kMsgCountEnd = offsetof(AEROVBLK_QUERY_INFO, MessageCount) + sizeof(ULONG);
+    constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
 
     if (blk_miniport_info->returned_len >= kIrqModeEnd) {
       irq_mode = AerovblkIrqModeForMarker(blk_miniport_info->info);
@@ -9357,6 +9359,22 @@ int wmain(int argc, wchar_t** argv) {
       snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixQueue0Vector));
       marker += "|msix_queue_vector=";
       marker += vec;
+    }
+
+    // Best-effort: append StorPort recovery counters when the miniport reports the v2 payload.
+    // If the miniport does not expose these fields (older contract), keep the marker stable by
+    // omitting them entirely.
+    if (blk_miniport_info->returned_len >= kCountersEnd) {
+      marker += "|abort_srb=";
+      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.AbortSrbCount));
+      marker += "|reset_device_srb=";
+      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.ResetDeviceSrbCount));
+      marker += "|reset_bus_srb=";
+      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.ResetBusSrbCount));
+      marker += "|pnp_srb=";
+      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.PnpSrbCount));
+      marker += "|ioctl_reset=";
+      marker += std::to_string(static_cast<unsigned long>(blk_miniport_info->info.IoctlResetCount));
     }
 
     /*

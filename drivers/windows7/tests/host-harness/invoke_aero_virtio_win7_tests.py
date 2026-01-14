@@ -68,6 +68,7 @@ includes large-transfer fields:
 It may also mirror guest-side IRQ diagnostics (when present) into per-device host markers:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_queue_vector=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
@@ -2325,6 +2326,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Useful for MSI/MSI-X-specific CI to catch mis-provisioned images."
         ),
     )
+    parser.add_argument(
+        "--require-no-blk-recovery",
+        action="store_true",
+        help=(
+            "Fail the harness if the virtio-blk miniport reports any abort/reset/PnP/IOCTL-reset activity "
+            "(via abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset counters) when those fields are "
+            "present on the guest virtio-blk test marker. On failure, emits: "
+            "FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"
+        ),
+    )
 
     return parser
 
@@ -4140,11 +4151,11 @@ def main() -> int:
                                 require_virtio_snd_msix=bool(args.require_virtio_snd_msix),
                             )
                             msix_checked = True
-                            if msg is not None:
-                                print(msg, file=sys.stderr)
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+                        if msg is not None:
+                            print(msg, file=sys.stderr)
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
                         if args.require_virtio_blk_msix:
                             ok, reason = _require_virtio_blk_msix_marker(tail)
                             if not ok:
@@ -4198,6 +4209,13 @@ def main() -> int:
                             _print_tail(serial_log)
                             result_code = 1
                             break
+                        if args.require_no_blk_recovery:
+                            msg = _check_no_blk_recovery_requirement(tail)
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -5219,6 +5237,13 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            if args.require_no_blk_recovery:
+                                msg = _check_no_blk_recovery_requirement(tail)
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break
@@ -5304,6 +5329,7 @@ def main() -> int:
 
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
+        _emit_virtio_blk_recovery_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
@@ -6380,6 +6406,96 @@ def _emit_virtio_net_diag_host_marker(tail: bytes) -> None:
     for k in extra:
         parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
 
+    print("|".join(parts))
+
+
+_VIRTIO_BLK_RECOVERY_KEYS = (
+    "abort_srb",
+    "reset_device_srb",
+    "reset_bus_srb",
+    "pnp_srb",
+    "ioctl_reset",
+)
+
+
+def _try_parse_int_base0(s: str) -> Optional[int]:
+    try:
+        return int(s, 0)
+    except Exception:
+        return None
+
+
+def _try_parse_virtio_blk_recovery_counters(
+    tail: bytes,
+    *,
+    blk_test_line: Optional[str] = None,
+) -> Optional[dict[str, int]]:
+    """
+    Best-effort: extract virtio-blk StorPort recovery counters from the guest virtio-blk test marker.
+
+    The guest selftest may append the following fields when the virtio-blk miniport IOCTL contract
+    includes the recovery counters region:
+      abort_srb, reset_device_srb, reset_bus_srb, pnp_srb, ioctl_reset
+    """
+    if blk_test_line is None:
+        blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    if blk_test_line is None:
+        return None
+
+    fields = _parse_marker_kv_fields(blk_test_line)
+    if not any(k in fields for k in _VIRTIO_BLK_RECOVERY_KEYS):
+        return None
+
+    counters: dict[str, int] = {}
+    for k in _VIRTIO_BLK_RECOVERY_KEYS:
+        if k not in fields:
+            return None
+        v = _try_parse_int_base0(fields[k])
+        if v is None:
+            return None
+        counters[k] = v
+    return counters
+
+
+def _virtio_blk_recovery_is_nonzero(counters: dict[str, int], *, threshold: int = 0) -> bool:
+    return any(v > threshold for v in counters.values())
+
+
+def _virtio_blk_recovery_failure_message(counters: dict[str, int]) -> str:
+    parts = ["FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"]
+    for k in _VIRTIO_BLK_RECOVERY_KEYS:
+        if k in counters:
+            parts.append(f"{k}={counters[k]}")
+    return " ".join(parts)
+
+
+def _check_no_blk_recovery_requirement(tail: bytes, *, threshold: int = 0) -> Optional[str]:
+    counters = _try_parse_virtio_blk_recovery_counters(tail)
+    if counters is None:
+        return None
+    if _virtio_blk_recovery_is_nonzero(counters, threshold=threshold):
+        return _virtio_blk_recovery_failure_message(counters)
+    return None
+
+
+def _emit_virtio_blk_recovery_host_marker(
+    tail: bytes,
+    *,
+    blk_test_line: Optional[str] = None,
+) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest virtio-blk StorPort recovery counters.
+
+    This does not affect harness PASS/FAIL by itself; gating is controlled by --require-no-blk-recovery.
+    """
+    counters = _try_parse_virtio_blk_recovery_counters(tail, blk_test_line=blk_test_line)
+    if counters is None:
+        return
+
+    parts = ["AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO"]
+    for k in _VIRTIO_BLK_RECOVERY_KEYS:
+        if k in counters:
+            parts.append(f"{k}={_sanitize_marker_value(str(counters[k]))}")
     print("|".join(parts))
 
 

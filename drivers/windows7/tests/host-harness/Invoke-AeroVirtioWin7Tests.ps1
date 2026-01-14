@@ -97,6 +97,11 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireExpectBlkMsi,
 
+  # If set, fail if the guest virtio-blk selftest reports non-zero StorPort recovery counters
+  # (abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset) on its machine marker.
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireNoBlkRecovery,
+
   # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
   #
@@ -1825,6 +1830,70 @@ function Test-AeroVirtioSndMsixMarker {
   }
 
   return @{ Ok = $true; Reason = "ok" }
+}
+
+function Get-AeroVirtioBlkRecoveryCounters {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
+  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  if ($matches.Count -eq 0) { return $null }
+
+  $line = $matches[$matches.Count - 1].Value
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx)
+    $v = $tok.Substring($idx + 1)
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $keys = @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")
+  foreach ($k in $keys) {
+    if (-not $fields.ContainsKey($k)) { return $null }
+  }
+
+  $out = @{}
+  foreach ($k in $keys) {
+    $raw = [string]$fields[$k]
+    $v = 0L
+    $ok = [int64]::TryParse($raw, [ref]$v)
+    if (-not $ok) {
+      if ($raw -match "^0x[0-9a-fA-F]+$") {
+        try {
+          $v = [Convert]::ToInt64($raw.Substring(2), 16)
+          $ok = $true
+        } catch {
+          $ok = $false
+        }
+      }
+    }
+    if (-not $ok) { return $null }
+    $out[$k] = $v
+  }
+  return $out
+}
+
+function Try-EmitAeroVirtioBlkRecoveryMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $Tail
+  if ($null -eq $counters) { return }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO"
+  foreach ($k in @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")) {
+    if ($counters.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue ([string]$counters[$k]))"
+    }
+  }
+  Write-Host $out
 }
 
 function Try-EmitAeroVirtioNetLargeMarker {
@@ -4183,11 +4252,12 @@ try {
           try { $proc.WaitForExit(5000) } catch { }
         }
       }
-    }
+  }
   }
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkIoMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
@@ -4198,6 +4268,20 @@ try {
   Try-EmitAeroVirtioSndDuplexMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndBufferLimitsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
+
+  if ($RequireNoBlkRecovery -and $result.Result -eq "PASS") {
+    $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $result.Tail
+    if ($null -ne $counters) {
+      $nonzero = $false
+      foreach ($k in @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")) {
+        if ($counters.ContainsKey($k) -and [int64]$counters[$k] -gt 0) { $nonzero = $true; break }
+      }
+      if ($nonzero) {
+        $result["Result"] = "VIRTIO_BLK_RECOVERY_NONZERO"
+        $result["BlkRecoveryCounters"] = $counters
+      }
+    }
+  }
 
   switch ($result.Result) {
     "PASS" {
@@ -4266,6 +4350,25 @@ try {
     }
     "VIRTIO_BLK_FAILED" {
       Write-Host "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_RECOVERY_NONZERO" {
+      $counters = $null
+      if ($result.ContainsKey("BlkRecoveryCounters")) {
+        $counters = $result["BlkRecoveryCounters"]
+      } else {
+        $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $result.Tail
+      }
+
+      $msg = "FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"
+      if ($null -ne $counters) {
+        $msg += " abort_srb=$($counters['abort_srb']) reset_device_srb=$($counters['reset_device_srb']) reset_bus_srb=$($counters['reset_bus_srb']) pnp_srb=$($counters['pnp_srb']) ioctl_reset=$($counters['ioctl_reset'])"
+      }
+      Write-Host $msg
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
