@@ -164,8 +164,10 @@ const postRuntimeError = (message: string) => {
 let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
 let guestU8: Uint8Array | null = null;
+let guestU32: Uint32Array | null = null;
 let guestLayout: GuestRamLayout | null = null;
 let vramU8: Uint8Array | null = null;
+let vramU32: Uint32Array | null = null;
 let vramBasePaddr = 0;
 let vramSizeBytes = 0;
 let vramMissingScanoutErrorSent = false;
@@ -563,13 +565,22 @@ const redrawCursor = (): void => {
       const last = aerogpuLastPresentedFrame;
       if (!last) return;
       presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+      presenterNeedsFullUpload = false;
       return;
     }
 
     if (aerogpuLastOutputSource === "wddm_scanout") {
       const lastScanout = wddmScanoutRgba;
       if (lastScanout && wddmScanoutWidth > 0 && wddmScanoutHeight > 0) {
+        if (wddmScanoutWidth !== presenterSrcWidth || wddmScanoutHeight !== presenterSrcHeight) {
+          presenterSrcWidth = wddmScanoutWidth;
+          presenterSrcHeight = wddmScanoutHeight;
+          if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+          presenter.resize(wddmScanoutWidth, wddmScanoutHeight, outputDpr);
+          presenterNeedsFullUpload = true;
+        }
         presenter.present(lastScanout, wddmScanoutWidth * BYTES_PER_PIXEL_RGBA8);
+        presenterNeedsFullUpload = false;
         return;
       }
       // If the scanout cache is unavailable, fall through and attempt to read the current frame.
@@ -980,6 +991,274 @@ const refreshFramebufferViews = (): void => {
 const BYTES_PER_PIXEL_RGBA8 = 4;
 const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
 
+// -----------------------------------------------------------------------------
+// WDDM scanout readback (guest RAM/VRAM -> RGBA8 presenter frame)
+// -----------------------------------------------------------------------------
+
+type WddmScanoutReadback = { width: number; height: number; strideBytes: number; rgba8: Uint8Array };
+
+// Per-tick safety limit to avoid pathological allocations/copies on corrupt scanout descriptors.
+// 32 MiB supports up to ~4K RGBA (3840*2160*4 ≈ 31.6 MiB).
+const MAX_WDDM_SCANOUT_BYTES = 32 * 1024 * 1024;
+
+let wddmScanoutRgbaCapacity = 0;
+let wddmScanoutRgbaU32: Uint32Array | null = null;
+
+let lastWddmScanoutErrorGeneration: number | null = null;
+let lastWddmScanoutErrorReason: string | null = null;
+
+const emitWddmScanoutInvalid = (snap: ScanoutStateSnapshot, reason: string, details?: Record<string, unknown>): void => {
+  // Avoid spamming: only emit once per (generation, reason) pair.
+  if (lastWddmScanoutErrorGeneration === snap.generation && lastWddmScanoutErrorReason === reason) return;
+  lastWddmScanoutErrorGeneration = snap.generation;
+  lastWddmScanoutErrorReason = reason;
+
+  emitGpuEvent({
+    time_ms: performance.now(),
+    backend_kind: backendKindForEvent(),
+    severity: "warn",
+    category: "ScanoutReadback",
+    message: reason,
+    details: {
+      scanout: {
+        generation: snap.generation >>> 0,
+        source: snap.source >>> 0,
+        format: snap.format >>> 0,
+        width: snap.width >>> 0,
+        height: snap.height >>> 0,
+        pitchBytes: snap.pitchBytes >>> 0,
+        base_paddr: formatU64Hex(snap.basePaddrHi, snap.basePaddrLo),
+      },
+      ...(details ?? {}),
+    },
+  });
+};
+
+const ensureWddmScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null => {
+  if (requiredBytes <= 0) return null;
+  if (wddmScanoutRgba && wddmScanoutRgbaCapacity >= requiredBytes) {
+    if (!wddmScanoutRgbaU32 || wddmScanoutRgbaU32.buffer !== wddmScanoutRgba.buffer) {
+      wddmScanoutRgbaU32 = new Uint32Array(
+        wddmScanoutRgba.buffer,
+        wddmScanoutRgba.byteOffset,
+        wddmScanoutRgba.byteLength >>> 2,
+      );
+    }
+    return wddmScanoutRgba;
+  }
+
+  wddmScanoutRgba = new Uint8Array(requiredBytes);
+  wddmScanoutRgbaCapacity = requiredBytes;
+  wddmScanoutRgbaU32 = new Uint32Array(
+    wddmScanoutRgba.buffer,
+    wddmScanoutRgba.byteOffset,
+    wddmScanoutRgba.byteLength >>> 2,
+  );
+  return wddmScanoutRgba;
+};
+
+const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadback | null => {
+  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
+
+  const fmt = snap.format >>> 0;
+  // The scanout consumer treats BGRA and BGRX as compatible (alpha is ignored).
+  // Force alpha=255 so presenters (which may render with blending enabled) do not show
+  // random transparency from uninitialized X/A bytes.
+  if (
+    fmt !== SCANOUT_FORMAT_B8G8R8X8 &&
+    fmt !== SCANOUT_FORMAT_B8G8R8A8 &&
+    fmt !== SCANOUT_FORMAT_B8G8R8X8_SRGB &&
+    fmt !== SCANOUT_FORMAT_B8G8R8A8_SRGB
+  ) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: unsupported format", {
+      expected: [
+        SCANOUT_FORMAT_B8G8R8X8,
+        SCANOUT_FORMAT_B8G8R8A8,
+        SCANOUT_FORMAT_B8G8R8X8_SRGB,
+        SCANOUT_FORMAT_B8G8R8A8_SRGB,
+      ],
+      got: fmt,
+    });
+    return null;
+  }
+
+  const width = snap.width >>> 0;
+  const height = snap.height >>> 0;
+  const pitchBytes = snap.pitchBytes >>> 0;
+  if (width === 0 || height === 0) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: width/height must be non-zero");
+    return null;
+  }
+
+  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
+  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: invalid rowBytes", { rowBytes, width });
+    return null;
+  }
+  if (pitchBytes < rowBytes) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: pitchBytes < rowBytes", { rowBytes, pitchBytes });
+    return null;
+  }
+  if ((pitchBytes & 3) !== 0) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: pitchBytes must be 4-byte aligned", { pitchBytes });
+    return null;
+  }
+
+  const outputBytesU64 = BigInt(width) * BigInt(height) * BigInt(BYTES_PER_PIXEL_RGBA8);
+  if (outputBytesU64 > BigInt(MAX_WDDM_SCANOUT_BYTES)) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: framebuffer exceeds size budget", {
+      budgetBytes: MAX_WDDM_SCANOUT_BYTES,
+      outputBytes: outputBytesU64.toString(),
+    });
+    return null;
+  }
+  const outputBytes = Number(outputBytesU64);
+
+  const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
+  if (basePaddr === 0n) return null;
+  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr exceeds JS safe integer range");
+    return null;
+  }
+  const basePaddrNum = Number(basePaddr);
+
+  const requiredReadBytesU64 = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(rowBytes);
+  if (requiredReadBytesU64 > BigInt(Number.MAX_SAFE_INTEGER)) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: framebuffer byte range exceeds JS safe integer range", {
+      requiredReadBytes: requiredReadBytesU64.toString(),
+    });
+    return null;
+  }
+  const requiredReadBytes = Number(requiredReadBytesU64);
+
+  // Resolve the backing store for base_paddr (guest RAM or VRAM aperture).
+  let src: Uint8Array;
+  let srcU32: Uint32Array | null = null;
+  let srcOffset = 0;
+
+  const vramBase = vramBasePaddr >>> 0;
+  const vramSize = vramSizeBytes >>> 0;
+  const vramEnd = vramBase + vramSize;
+  const baseEnd = basePaddrNum + requiredReadBytes;
+  if (vramSize > 0 && basePaddrNum >= vramBase && basePaddrNum < vramEnd) {
+    const vram = vramU8;
+    if (!vram) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr points into VRAM but VRAM is unavailable", {
+        backing: "vram",
+        vramBasePaddr: `0x${vramBase.toString(16)}`,
+        vramSizeBytes: vramSize,
+      });
+      return null;
+    }
+    const offset = basePaddrNum - vramBase;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: invalid VRAM offset", { backing: "vram", offset });
+      return null;
+    }
+    if (!Number.isSafeInteger(baseEnd) || baseEnd > vramEnd) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: scanout range exceeds VRAM aperture", {
+        backing: "vram",
+        requiredReadBytes,
+        vramSizeBytes: vramSize,
+      });
+      return null;
+    }
+    if (offset + requiredReadBytes > vram.byteLength) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: scanout range exceeds VRAM buffer length", {
+        backing: "vram",
+        offset,
+        requiredReadBytes,
+        vramLen: vram.byteLength,
+      });
+      return null;
+    }
+    src = vram;
+    srcU32 = vramU32;
+    srcOffset = offset;
+  } else {
+    const guest = guestU8;
+    if (!guest) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: guest memory is not available");
+      return null;
+    }
+
+    const ramBytes = guest.byteLength;
+    try {
+      if (!guestRangeInBoundsRaw(ramBytes, basePaddrNum, requiredReadBytes)) {
+        emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr range is outside guest RAM (or crosses an MMIO hole)", {
+          requiredReadBytes,
+          guestLen: ramBytes,
+        });
+        return null;
+      }
+    } catch (err) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: failed to validate guest range", { error: err });
+      return null;
+    }
+
+    const ramOffset = guestPaddrToRamOffsetRaw(ramBytes, basePaddrNum);
+    if (ramOffset === null) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: base_paddr is not backed by RAM");
+      return null;
+    }
+    if (ramOffset + requiredReadBytes > ramBytes) {
+      emitWddmScanoutInvalid(snap, "WDDM scanout: translated RAM range is out of bounds", {
+        ramOffset,
+        requiredReadBytes,
+        guestLen: ramBytes,
+      });
+      return null;
+    }
+    src = guest;
+    srcU32 = guestU32;
+    srcOffset = ramOffset;
+  }
+
+  const out = ensureWddmScanoutRgbaCapacity(outputBytes);
+  const outU32 = wddmScanoutRgbaU32;
+  if (!out) return null;
+
+  const canUseU32 =
+    (srcOffset & 3) === 0 &&
+    !!srcU32 &&
+    !!outU32 &&
+    (out.byteOffset & 3) === 0;
+
+  if (canUseU32) {
+    const src32 = srcU32!;
+    const dst32 = outU32!;
+    const baseIndex = srcOffset >>> 2;
+    const pitchWords = pitchBytes >>> 2;
+    let dstRowBase = 0;
+    for (let y = 0; y < height; y += 1) {
+      const srcRowBase = baseIndex + y * pitchWords;
+      for (let x = 0; x < width; x += 1) {
+        const v = src32[srcRowBase + x]!;
+        // v = 0xXXRRGGBB (BGRX little-endian). Convert to 0xAABBGGRR (RGBA little-endian bytes).
+        dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+      }
+      dstRowBase += width;
+    }
+  } else {
+    for (let y = 0; y < height; y += 1) {
+      const srcRowStart = srcOffset + y * pitchBytes;
+      const dstRowStart = y * rowBytes;
+      for (let x = 0; x < rowBytes; x += BYTES_PER_PIXEL_RGBA8) {
+        const b = src[srcRowStart + x]!;
+        const g = src[srcRowStart + x + 1]!;
+        const r = src[srcRowStart + x + 2]!;
+        out[dstRowStart + x + 0] = r;
+        out[dstRowStart + x + 1] = g;
+        out[dstRowStart + x + 2] = b;
+        out[dstRowStart + x + 3] = 255;
+      }
+    }
+  }
+
+  wddmScanoutWidth = width;
+  wddmScanoutHeight = height;
+  return { width, height, strideBytes: rowBytes, rgba8: out };
+};
 const noteWddmScanoutFallback = (): void => {
   if (scanoutState) return;
   wddmOwnsScanoutFallback = true;
@@ -1882,163 +2161,48 @@ type WddmScanoutFrameInfo = {
 };
 
 const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameInfo | null => {
-  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
-  if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return null;
-  let kind: ScanoutSwizzleKind;
-  const fmt = snap.format >>> 0;
-  if (fmt === SCANOUT_FORMAT_B8G8R8X8 || fmt === SCANOUT_FORMAT_B8G8R8X8_SRGB) {
-    kind = "bgrx";
-  } else if (fmt === SCANOUT_FORMAT_B8G8R8A8 || fmt === SCANOUT_FORMAT_B8G8R8A8_SRGB) {
-    kind = "bgra";
-  } else {
-    return null;
-  }
-
-  const width = snap.width >>> 0;
-  const height = snap.height >>> 0;
-  if (width === 0 || height === 0) return null;
-
-  const pitchBytes = snap.pitchBytes >>> 0;
-  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) return null;
-  if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) return null;
-
-  // base_paddr is a guest physical address (u64). Clamp to the safe-integer subset
-  // so we can index into JS typed arrays.
-  const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
-  if (basePaddr === 0n) return null;
-  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  const basePaddrNum = Number(basePaddr);
-
-  const requiredBytes = rowBytes * height;
-  if (!Number.isSafeInteger(requiredBytes) || requiredBytes <= 0) return null;
-  // Avoid attempting absurd allocations if the descriptor is corrupt.
-  const MAX_WDDM_SCANOUT_BYTES = 256 * 1024 * 1024;
-  if (requiredBytes > MAX_WDDM_SCANOUT_BYTES) return null;
-  if (
-    !wddmScanoutRgba ||
-    wddmScanoutWidth !== width ||
-    wddmScanoutHeight !== height ||
-    wddmScanoutRgba.byteLength < requiredBytes
-  ) {
-    wddmScanoutRgba = new Uint8Array(requiredBytes);
-    wddmScanoutWidth = width;
-    wddmScanoutHeight = height;
-  }
-  const out = wddmScanoutRgba;
-
-  const requiredSrcBytes = pitchBytes * height;
-  if (!Number.isSafeInteger(requiredSrcBytes) || requiredSrcBytes <= 0) return null;
-
-  // Fast path: scanout surface points into the shared VRAM aperture (BAR1 backing).
-  //
-  // When WDDM claims scanout it typically programs base_paddr to a VRAM allocation; in the web
-  // runtime VRAM is represented by a standalone SharedArrayBuffer (`vramU8`).
-  const vram = vramU8;
-  if (vram && vramSizeBytes > 0) {
-    const requiredSrcBytesBig = BigInt(requiredSrcBytes);
-    const vramBase = BigInt(vramBasePaddr >>> 0);
-    const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
-    const endPaddr = basePaddr + requiredSrcBytesBig;
-    if (basePaddr >= vramBase && endPaddr <= vramEnd) {
-      const startBig = basePaddr - vramBase;
-      if (startBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
-        const start = Number(startBig);
-        const end = start + requiredSrcBytes;
-        if (end >= start && end <= vram.byteLength) {
-          const src = vram.subarray(start, end);
-          convertScanoutToRgba8({
-            src,
-            srcStrideBytes: pitchBytes,
-            dst: out,
-            dstStrideBytes: rowBytes,
-            width,
-            height,
-            kind,
-          });
-          return { width, height, strideBytes: rowBytes, pixels: out };
-        }
-      }
-      return null;
-    }
-  }
-
-  const layout = guestLayout;
-  const ram = guestU8;
-  if (!layout || !ram) return null;
-  const ramBytes = ram.byteLength;
-
-  // Fast path: scanout surface is backed by contiguous guest RAM (i.e. does not cross PCI holes).
-  try {
-    if (guestRangeInBoundsRaw(ramBytes, basePaddrNum, requiredSrcBytes)) {
-      const ramOffset = guestPaddrToRamOffsetRaw(ramBytes, basePaddrNum);
-      if (ramOffset === null) return null;
-      const end = ramOffset + requiredSrcBytes;
-      if (!Number.isSafeInteger(end) || end > ram.byteLength) return null;
-      const src = ram.subarray(ramOffset, end);
-      convertScanoutToRgba8({
-        src,
-        srcStrideBytes: pitchBytes,
-        dst: out,
-        dstStrideBytes: rowBytes,
-        width,
-        height,
-        kind,
-      });
-      return { width, height, strideBytes: rowBytes, pixels: out };
-    }
-  } catch {
-    // Ignore and fall back to per-row translation.
-  }
-
-  // Fallback: translate each row's guest physical address into a contiguous RAM offset (handles the
-  // PC/Q35 low-RAM + high-RAM remap when guest RAM exceeds the PCI hole).
-  for (let y = 0; y < height; y += 1) {
-    const rowPaddr = basePaddrNum + y * pitchBytes;
-    if (!Number.isSafeInteger(rowPaddr)) return null;
-    try {
-      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) return null;
-    } catch {
-      return null;
-    }
-
-    const rowOffset = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-    if (rowOffset === null) return null;
-    const rowEnd = rowOffset + rowBytes;
-    if (rowEnd < rowOffset || rowEnd > ram.byteLength) return null;
-
-    const srcRow = ram.subarray(rowOffset, rowEnd);
-    const dstRow = out.subarray(y * rowBytes, y * rowBytes + rowBytes);
-    convertScanoutToRgba8({
-      src: srcRow,
-      srcStrideBytes: rowBytes,
-      dst: dstRow,
-      dstStrideBytes: rowBytes,
-      width,
-      height: 1,
-      kind,
-    });
-  }
-
-  return { width, height, strideBytes: rowBytes, pixels: out };
+  const shot = tryReadWddmScanoutRgba8(snap);
+  if (!shot) return null;
+  return { width: shot.width, height: shot.height, strideBytes: shot.strideBytes, pixels: shot.rgba8 };
 };
-
 const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
   refreshFramebufferViews();
 
   if (scanoutState) {
+    const words = scanoutState;
     try {
-      const snap = snapshotScanoutState(scanoutState);
-      const wddm = tryReadWddmScanoutFrame(snap);
-      if (wddm) {
-        // Scanout descriptors use guest physical addresses (base_paddr) and can point at padded
-        // guest surfaces (pitchBytes). We normalize to a tightly-packed RGBA8 buffer so existing
-        // presenter backends can consume it directly.
-        const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
-        return { ...wddm, frameSeq: seq, outputSource: "wddm_scanout" };
+      const snap = snapshotScanoutState(words);
+      const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+      if (snap.source === SCANOUT_SOURCE_WDDM && hasBasePaddr) {
+        const wddm = tryReadWddmScanoutFrame(snap);
+        if (wddm) {
+          // Scanout descriptors use guest physical addresses (base_paddr) and can point at padded
+          // guest surfaces (pitchBytes). We normalize to a tightly-packed RGBA8 buffer so existing
+          // presenter backends can consume it directly.
+          const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
+          return { ...wddm, frameSeq: seq, outputSource: "wddm_scanout" };
+        }
+
+        // WDDM owns scanout with a real base_paddr, but we failed to read/convert it. Do not fall
+        // back to the legacy shared framebuffer, which would cause output to "flash back" over the
+        // WDDM-owned scanout.
+        return null;
       }
     } catch {
-      // Ignore and fall back to the legacy framebuffer sources.
+      // If the scanout descriptor is unreadable but appears to be WDDM-owned and points at a real
+      // guest surface (base_paddr != 0), avoid falling back to the legacy framebuffer.
+      try {
+        const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+        if (source === SCANOUT_SOURCE_WDDM) {
+          const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
+          const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
+          if (((lo | hi) >>> 0) !== 0) {
+            return null;
+          }
+        }
+      } catch {
+        // Ignore and fall back to the legacy framebuffer sources.
+      }
     }
   }
 
@@ -2239,7 +2403,12 @@ const presentOnce = async (): Promise<boolean> => {
         }
       }
 
-      if (!frame) return false;
+      if (!frame) {
+        if (wddmOwnsScanout) {
+          clearSharedFramebufferDirty();
+        }
+        return false;
+      }
 
       if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
         presenterSrcWidth = frame.width;
@@ -3018,6 +3187,7 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   };
   const views = createSharedMemoryViews(segments);
   status = views.status;
+  guestLayout = views.guestLayout;
   scanoutState = views.scanoutStateI32 ?? null;
   wddmOwnsScanoutFallback = false;
   (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = scanoutState ?? undefined;
@@ -3028,7 +3198,9 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   // (which may be >=4GiB); executors must translate them back into this view before slicing.
   guestLayout = views.guestLayout;
   guestU8 = views.guestU8;
+  guestU32 = new Uint32Array(guestU8.buffer, guestU8.byteOffset, guestU8.byteLength >>> 2);
   vramU8 = views.vramSizeBytes > 0 ? views.vramU8 : null;
+  vramU32 = vramU8 ? new Uint32Array(vramU8.buffer, vramU8.byteOffset, vramU8.byteLength >>> 2) : null;
   vramBasePaddr = (init.vramBasePaddr ?? VRAM_BASE_PADDR) >>> 0;
   vramSizeBytes = (init.vramSizeBytes ?? views.vramSizeBytes) >>> 0;
   vramMissingScanoutErrorSent = false;
@@ -3203,6 +3375,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
         resetAerogpuContexts();
         aerogpuLastOutputSource = "framebuffer";
+        wddmScanoutRgba = null;
+        wddmScanoutWidth = 0;
+        wddmScanoutHeight = 0;
+        wddmScanoutRgbaCapacity = 0;
+        wddmScanoutRgbaU32 = null;
+        lastWddmScanoutErrorGeneration = null;
+        lastWddmScanoutErrorReason = null;
         // Reset wasm-backed executor state (if it was used previously).
         aerogpuWasmD3d9InitPromise = null;
         aerogpuWasmD3d9InitBackend = null;
@@ -3795,8 +3974,33 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                   presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
                   presenterNeedsFullUpload = false;
                 }
-              } else {
-                if (aerogpuLastOutputSource === "wddm_scanout") {
+              } else if (aerogpuLastOutputSource === "wddm_scanout") {
+                let snap: ScanoutStateSnapshot | null = null;
+                if (scanoutState) {
+                  try {
+                    snap = snapshotScanoutState(scanoutState);
+                  } catch {
+                    snap = null;
+                  }
+                }
+
+                if (snap?.source === SCANOUT_SOURCE_WDDM && (snap.basePaddrLo | snap.basePaddrHi) !== 0) {
+                  const shot = tryReadWddmScanoutRgba8(snap);
+                  if (shot) {
+                    if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
+                      presenterSrcWidth = shot.width;
+                      presenterSrcHeight = shot.height;
+                      if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                      presenter.resize(shot.width, shot.height, outputDpr);
+                      presenterNeedsFullUpload = true;
+                    }
+                    presenter.present(shot.rgba8, shot.strideBytes);
+                    presenterNeedsFullUpload = false;
+                    aerogpuLastOutputSource = "wddm_scanout";
+                  }
+                } else {
+                  // If scanoutState is unavailable/unreadable, fall back to the most recent
+                  // successful WDDM readback (best-effort).
                   const lastScanout = wddmScanoutRgba;
                   if (lastScanout && wddmScanoutWidth > 0 && wddmScanoutHeight > 0) {
                     if (wddmScanoutWidth !== presenterSrcWidth || wddmScanoutHeight !== presenterSrcHeight) {
@@ -3807,23 +4011,23 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       presenterNeedsFullUpload = true;
                     }
                     presenter.present(lastScanout, wddmScanoutWidth * BYTES_PER_PIXEL_RGBA8);
+                    presenterNeedsFullUpload = false;
                     aerogpuLastOutputSource = "wddm_scanout";
-                    presenterNeedsFullUpload = false;
                   }
-                } else {
-                  const frame = getCurrentFrameInfo();
-                  if (frame) {
-                    if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
-                      presenterSrcWidth = frame.width;
-                      presenterSrcHeight = frame.height;
-                      if (presenter.backend === "webgpu") surfaceReconfigures += 1;
-                      presenter.resize(frame.width, frame.height, outputDpr);
-                      presenterNeedsFullUpload = true;
-                    }
-                    presenter.present(frame.pixels, frame.strideBytes);
-                    aerogpuLastOutputSource = frame.outputSource;
-                    presenterNeedsFullUpload = false;
+                }
+              } else {
+                const frame = getCurrentFrameInfo();
+                if (frame) {
+                  if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
+                    presenterSrcWidth = frame.width;
+                    presenterSrcHeight = frame.height;
+                    if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                    presenter.resize(frame.width, frame.height, outputDpr);
+                    presenterNeedsFullUpload = true;
                   }
+                  presenter.present(frame.pixels, frame.strideBytes);
+                  aerogpuLastOutputSource = frame.outputSource;
+                  presenterNeedsFullUpload = false;
                 }
               }
             }
@@ -3951,6 +4155,54 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           // Headless mode: copy the source buffer directly.
           if (!runtimeCanvas) {
+            if (scanoutState) {
+              let snap: ScanoutStateSnapshot | null = null;
+              try {
+                snap = snapshotScanoutState(scanoutState);
+              } catch {
+                snap = null;
+              }
+              if (snap?.source === SCANOUT_SOURCE_WDDM && (snap.basePaddrLo | snap.basePaddrHi) !== 0) {
+                const shot = tryReadWddmScanoutRgba8(snap);
+                if (shot) {
+                  const expectedBytes = shot.strideBytes * shot.height;
+                  const outView = shot.rgba8.slice(0, expectedBytes);
+                  if (includeCursor) {
+                    try {
+                      compositeCursorOverRgba8(
+                        outView,
+                        shot.width,
+                        shot.height,
+                        cursorEnabled,
+                        cursorImage,
+                        cursorWidth,
+                        cursorHeight,
+                        cursorX,
+                        cursorY,
+                        cursorHotX,
+                        cursorHotY,
+                      );
+                    } catch {
+                      // Ignore; screenshot cursor compositing is best-effort.
+                    }
+                  }
+                  postToMain(
+                    {
+                      type: "screenshot",
+                      requestId: req.requestId,
+                      width: shot.width,
+                      height: shot.height,
+                      rgba8: outView.buffer,
+                      origin: "top-left",
+                      ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+                    },
+                    [outView.buffer],
+                  );
+                  return;
+                }
+              }
+            }
+
             const frame = getCurrentFrameInfo();
             if (!frame) {
               postStub(typeof seq === "number" ? seq : undefined);
@@ -4220,6 +4472,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeReadySent = false;
       resetAerogpuContexts();
       aerogpuLastOutputSource = "framebuffer";
+      wddmScanoutRgba = null;
+      wddmScanoutWidth = 0;
+      wddmScanoutHeight = 0;
+      wddmScanoutRgbaCapacity = 0;
+      wddmScanoutRgbaU32 = null;
+      lastWddmScanoutErrorGeneration = null;
+      lastWddmScanoutErrorReason = null;
       aerogpuWasmD3d9InitPromise = null;
       aerogpuWasmD3d9InitBackend = null;
       aerogpuWasmD3d9Backend = null;
