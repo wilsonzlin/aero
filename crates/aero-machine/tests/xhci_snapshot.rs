@@ -804,3 +804,189 @@ fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() 
         "expected MSI-X pending bit 0 to be cleared after restore + unmask + delivery"
     );
 }
+
+#[test]
+fn snapshot_restore_preserves_xhci_msix_vector_mask_pending_bit_and_delivers_after_unmask() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on xHCI + snapshot + per-vector MSI-X mask semantics.
+        enable_ahci: false,
+        enable_ide: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_debugcon: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        // Keep the A20 gate so we can explicitly enable A20 before touching high MMIO addresses.
+        enable_a20_gate: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    vm.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = vm.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = profile::USB_XHCI_QEMU.bdf;
+    let bar0_base = vm.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Enable MSI-X in canonical PCI config space and discover table/PBA offsets.
+    let (table_offset, pba_offset) = {
+        let pci_cfg = vm
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("xHCI should exist on PCI bus");
+
+        // Ensure MMIO decode + bus mastering are enabled.
+        let command = cfg.command();
+        cfg.write(0x04, 2, u32::from(command | (1 << 1) | (1 << 2)));
+
+        let msix_off = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("xHCI should expose MSI-X capability in PCI config space");
+        let msix_base = u16::from(msix_off);
+
+        let table = cfg.read(msix_base + 0x04, 4);
+        let pba = cfg.read(msix_base + 0x08, 4);
+        assert_eq!(
+            table & 0x7,
+            0,
+            "xHCI MSI-X table should live in BAR0 (BIR=0)"
+        );
+        assert_eq!(pba & 0x7, 0, "xHCI MSI-X PBA should live in BAR0 (BIR=0)");
+
+        // Enable MSI-X (bit 15) and ensure Function Mask (bit 14) is cleared.
+        let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
+        cfg.write(
+            msix_base + 0x02,
+            2,
+            u32::from((ctrl & !(1 << 14)) | (1 << 15)),
+        );
+
+        (u64::from(table & !0x7), u64::from(pba & !0x7))
+    };
+
+    // Program MSI-X table entry 0 and keep it masked (vector control bit 0).
+    let vector: u8 = 0x6c;
+    let entry0 = bar0_base + table_offset;
+    vm.write_physical_u32(entry0, 0xfee0_0000);
+    vm.write_physical_u32(entry0 + 0x04, 0);
+    vm.write_physical_u32(entry0 + 0x08, u32::from(vector));
+    vm.write_physical_u32(entry0 + 0x0c, 1); // masked
+
+    // Tick once so the runtime xHCI device mirrors MSI-X state.
+    vm.tick_platform(1);
+
+    let xhci = vm.xhci().expect("xhci enabled");
+
+    // Raise an xHCI interrupt condition while the entry is masked. This should set the PBA pending
+    // bit without delivering an MSI.
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    xhci.borrow_mut().raise_event_interrupt();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    assert!(
+        !xhci.borrow().irq_level(),
+        "xHCI INTx should be suppressed while MSI-X is active (even if the entry is masked)"
+    );
+    let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be set while entry is masked"
+    );
+
+    // Clear the interrupt condition before snapshot so delivery on unmask proves the pending bit is
+    // re-driven even without a new rising edge.
+    xhci.borrow_mut().clear_event_interrupt();
+    assert_ne!(
+        vm.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected pending bit to remain set after clearing the interrupt condition"
+    );
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+
+    // Mutate state after snapshot: unmask the entry, deliver the pending MSI-X vector, and clear
+    // the pending bit.
+    vm.write_physical_u32(entry0 + 0x0c, 0);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    interrupts.borrow_mut().acknowledge(vector);
+    interrupts.borrow_mut().eoi(vector);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    assert_eq!(
+        vm.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to clear after unmask + delivery"
+    );
+
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // Ensure high MMIO addresses decode correctly post-restore as well.
+    vm.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = vm.platform_interrupts().expect("pc platform enabled");
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    // Restore should not replace the xHCI instance.
+    let xhci_after = vm.xhci().expect("xhci still enabled");
+    assert!(Rc::ptr_eq(&xhci, &xhci_after));
+
+    // Ensure the MSI-X table entry mask and PBA pending bit were restored.
+    assert_eq!(
+        vm.read_physical_u32(entry0 + 0x0c) & 1,
+        1,
+        "expected MSI-X vector control mask bit to be restored"
+    );
+    assert_ne!(
+        vm.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to be restored as set"
+    );
+
+    // Unmask the entry again and expect the pending MSI-X vector to be delivered and cleared.
+    vm.write_physical_u32(entry0 + 0x0c, 0);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    interrupts.borrow_mut().acknowledge(vector);
+    interrupts.borrow_mut().eoi(vector);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    assert_eq!(
+        vm.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to clear after restore + unmask + delivery"
+    );
+}
