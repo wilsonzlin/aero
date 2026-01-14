@@ -210,8 +210,10 @@ fn xhci_controller_tick_dma_dword_is_snapshotted() {
     let mut mem = CountingMem::new(0x4000);
 
     // Seed the DMA source for the tick-driven "DMA touch-point" at CRCR.
+    // Set the RCS flag bit in CRCR_LO to ensure the controller masks off CRCR flags before using
+    // the pointer as a guest physical address.
     mem.data[0x1000..0x1004].copy_from_slice(&0xfeed_beefu32.to_le_bytes());
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
     ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
 
     // Enable RUN so `tick_1ms_with_dma` will read from CRCR.
