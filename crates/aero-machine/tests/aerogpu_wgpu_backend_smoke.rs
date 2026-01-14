@@ -251,20 +251,18 @@ fn aerogpu_wgpu_backend_smoke_executes_acmd_and_updates_scanout() {
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
 
     let start = Instant::now();
-    let mut completed;
-    let mut page_fence;
-    loop {
+    let (completed, _page_fence) = loop {
         m.process_aerogpu();
 
-        completed = mmio_read_u64_pair(
+        let completed = mmio_read_u64_pair(
             &mut m,
             bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO),
             bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI),
         );
-        page_fence = m.read_physical_u64(fence_gpa + 8);
+        let page_fence = m.read_physical_u64(fence_gpa + 8);
 
         if completed >= signal_fence && page_fence == signal_fence {
-            break;
+            break (completed, page_fence);
         }
 
         if start.elapsed() > Duration::from_secs(5) {
@@ -272,7 +270,7 @@ fn aerogpu_wgpu_backend_smoke_executes_acmd_and_updates_scanout() {
                 "timed out waiting for fence completion (completed={completed} fence_page={page_fence})"
             );
         }
-    }
+    };
 
     assert_eq!(completed, signal_fence);
     assert_eq!(
