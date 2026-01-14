@@ -179,6 +179,18 @@ const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
 // `vec4<f32>` color + `vec4<u32>` counts.
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
 
+fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
+    // Keep ordering consistent with `VertexPullingLayout::bind_group_layout_entries()`:
+    // - vertex buffers in pulling-slot order
+    // - uniform last
+    let mut out = Vec::with_capacity(slot_count as usize + 1);
+    for slot in 0..slot_count {
+        out.push(VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot);
+    }
+    out.push(VERTEX_PULLING_UNIFORM_BINDING);
+    out
+}
+
 const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
 struct ExpandedVertex {
     pos: vec4<f32>,
@@ -3387,23 +3399,24 @@ impl AerogpuD3d11Executor {
             );
 
             let mut vp_bgl_entries = pulling.bind_group_layout_entries();
+            let vp_bindings =
+                compute_prepass_vertex_pulling_binding_numbers(buffers.len() as u32);
             let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
                 Vec::with_capacity(buffers.len() + 3);
             for (slot, buf) in buffers.iter().enumerate() {
                 vp_bg_entries.push(wgpu::BindGroupEntry {
-                    binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot as u32,
+                    binding: vp_bindings[slot],
                     resource: buf.as_entire_binding(),
                 });
             }
             vp_bg_entries.push(wgpu::BindGroupEntry {
-                binding: VERTEX_PULLING_UNIFORM_BINDING,
+                binding: *vp_bindings.last().unwrap(),
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: uniform_alloc.buffer.as_ref(),
                     offset: uniform_alloc.offset,
                     size: wgpu::BufferSize::new(uniform_alloc.size),
                 }),
             });
-
             let mut vp_cs_prelude = pulling.wgsl_prelude();
             let index_pulling_setup = if opcode == OPCODE_DRAW_INDEXED {
                 let ib = self.state.index_buffer.expect("checked above");
@@ -3467,6 +3480,7 @@ impl AerogpuD3d11Executor {
                     count: None,
                 });
 
+                // Bind index pulling resources in the same group as vertex pulling.
                 vp_bg_entries.push(wgpu::BindGroupEntry {
                     binding: INDEX_PULLING_PARAMS_BINDING,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -13925,6 +13939,7 @@ mod tests {
         AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage,
     };
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     fn require_webgpu() -> bool {
@@ -13981,6 +13996,34 @@ mod tests {
         assert!(
             clamp_idx > assign_idx,
             "depth clamp must appear after the out.pos assignment"
+        );
+    }
+
+    #[test]
+    fn compute_prepass_vertex_pulling_binding_numbers_match_vertex_pulling_layout() {
+        // Construct a minimal `VertexPullingLayout` with 3 pulling slots.
+        let mut d3d_slot_to_pulling_slot = BTreeMap::new();
+        d3d_slot_to_pulling_slot.insert(0, 0);
+        d3d_slot_to_pulling_slot.insert(1, 1);
+        d3d_slot_to_pulling_slot.insert(2, 2);
+
+        let pulling = VertexPullingLayout {
+            d3d_slot_to_pulling_slot,
+            pulling_slot_to_d3d_slot: vec![0, 1, 2],
+            attributes: Vec::new(),
+        };
+
+        let layout_bindings: Vec<u32> = pulling
+            .bind_group_layout_entries()
+            .into_iter()
+            .map(|e| e.binding)
+            .collect();
+        let wiring_bindings =
+            compute_prepass_vertex_pulling_binding_numbers(pulling.slot_count());
+
+        assert_eq!(
+            wiring_bindings, layout_bindings,
+            "compute-prepass vertex pulling bind group entries must use the same binding numbers as VertexPullingLayout"
         );
     }
 
