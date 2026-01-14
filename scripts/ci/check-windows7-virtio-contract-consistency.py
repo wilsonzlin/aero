@@ -2119,30 +2119,17 @@ def validate_virtio_input_model_lines(
     inf_path: Path,
     strict_hwid: str,
     contract_rev: int,
-    require_fallback: bool,
     errors: list[str],
 ) -> None:
     """
     Validate the virtio-input model line policy for the given INF.
 
     - The INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs
-      (distinct naming).
-    - If `require_fallback=True`, it must include the strict REV-qualified generic
-      fallback HWID (no SUBSYS) so binding remains revision-gated even when subsystem
-      IDs are absent/ignored. If `require_fallback=False`, it must not include that
-      fallback HWID.
+      (distinct naming) plus the strict REV-qualified generic fallback HWID (no SUBSYS)
+      so binding remains revision-gated even when subsystem IDs are absent/ignored.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
-
-    The `require_fallback` flag controls which policy is enforced:
-      - `require_fallback=False`: forbid the strict fallback HWID.
-      - `require_fallback=True`: require the strict fallback HWID.
-
-    The virtio-input legacy filename alias INF is allowed to diverge from the
-    canonical INF in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to
-    provide an opt-in strict generic fallback model line (no SUBSYS). Outside
-    those models sections it is expected to stay in sync with the canonical INF.
     """
 
     model_entries = parse_inf_model_entries(inf_path)
@@ -2153,19 +2140,6 @@ def validate_virtio_input_model_lines(
         by_section.setdefault(e.section.lower(), []).append(e)
 
     contract_rev_tag = f"&REV_{contract_rev:02X}"
-
-    # Additional guardrail: when fallback is forbidden, ensure the strict fallback
-    # HWID literal is not present anywhere in the INF (including comments). This
-    # prevents accidentally reintroducing the fallback into the canonical INF.
-    if not require_fallback:
-        strict_bytes = strict_hwid.encode("ascii", errors="ignore").upper()
-        if strict_bytes and strict_bytes in inf_path.read_bytes().upper():
-            errors.append(
-                format_error(
-                    f"{inf_path.as_posix()}: INF must not contain the strict generic fallback HWID ({strict_hwid}) when fallback is forbidden:",
-                    [f"found: {strict_hwid}"],
-                )
-            )
 
     for section in ("Aero.NTx86", "Aero.NTamd64"):
         sect_entries = by_section.get(section.lower(), [])
@@ -2213,38 +2187,26 @@ def validate_virtio_input_model_lines(
             )
             continue
 
-        if require_fallback:
-            if len(fb) != 1:
-                errors.append(
-                    format_error(
-                        f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
-                        [e.raw_line for e in fb] if fb else ["(missing)"],
-                    )
+        if len(fb) != 1:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
+                    [e.raw_line for e in fb] if fb else ["(missing)"],
                 )
-                continue
-        else:
-            if fb:
-                errors.append(
-                    format_error(
-                        f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}) (fallback not allowed for this INF):",
-                        [e.raw_line for e in fb],
-                    )
-                )
+            )
+            continue
 
         kb_entry, ms_entry = kb[0], ms[0]
-        fb_entry = fb[0] if fb else None
+        fb_entry = fb[0]
 
         # Model lines should share the same install section so behavior doesn't drift.
         expected_install = kb_entry.install_section
-        if ms_entry.install_section != expected_install or (
-            fb_entry is not None and fb_entry.install_section != expected_install
-        ):
+        if ms_entry.install_section != expected_install or fb_entry.install_section != expected_install:
             lines = [
                 f"keyboard install: {kb_entry.install_section} ({kb_entry.raw_line})",
                 f"mouse install: {ms_entry.install_section} ({ms_entry.raw_line})",
             ]
-            if fb_entry is not None:
-                lines.append(f"fallback install: {fb_entry.install_section} ({fb_entry.raw_line})")
+            lines.append(f"fallback install: {fb_entry.install_section} ({fb_entry.raw_line})")
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: virtio-input model lines in [{section}] must share the same install section:",
@@ -2262,7 +2224,7 @@ def validate_virtio_input_model_lines(
             )
 
         # The fallback (no SUBSYS) should remain generic and not reuse the keyboard/mouse DeviceDesc.
-        if fb_entry is not None and fb_entry.device_desc in (kb_entry.device_desc, ms_entry.device_desc):
+        if fb_entry.device_desc in (kb_entry.device_desc, ms_entry.device_desc):
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: virtio-input fallback model line in [{section}] must use a generic DeviceDesc (not the keyboard/mouse DeviceDesc):",
@@ -2270,8 +2232,7 @@ def validate_virtio_input_model_lines(
                 )
             )
 
-        entries_to_check = (kb_entry, ms_entry) if fb_entry is None else (kb_entry, ms_entry, fb_entry)
-        for entry in entries_to_check:
+        for entry in (kb_entry, ms_entry, fb_entry):
             desc = entry.device_desc.strip()
             if desc.startswith("%") and desc.endswith("%") and len(desc) > 2:
                 token = desc[1:-1].strip()
@@ -2292,7 +2253,7 @@ def validate_virtio_input_model_lines(
 
         kb_name = _resolve(kb_entry.device_desc).strip()
         ms_name = _resolve(ms_entry.device_desc).strip()
-        fb_name = _resolve(fb_entry.device_desc).strip() if fb_entry is not None else ""
+        fb_name = _resolve(fb_entry.device_desc).strip()
 
         if kb_name.lower() == ms_name.lower():
             errors.append(
@@ -2301,7 +2262,7 @@ def validate_virtio_input_model_lines(
                     [kb_entry.raw_line, ms_entry.raw_line],
                 )
             )
-        if fb_entry is not None and fb_name.lower() in {kb_name.lower(), ms_name.lower()}:
+        if fb_name.lower() in {kb_name.lower(), ms_name.lower()}:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: virtio-input fallback DeviceDesc string in [{section}] must be generic (must not equal keyboard/mouse):",
@@ -4504,7 +4465,6 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=True,
                 errors=errors,
             )
 
@@ -4530,14 +4490,13 @@ def main() -> None:
         # The legacy alias INF is kept for compatibility with workflows/tools that reference the
         # legacy `virtio-input.inf` basename.
         #
-        # Policy: it is a filename alias only and must be byte-for-byte identical to the
-        # canonical INF from the first section header (`[Version]`) onward (only the leading
-        # banner/comments may differ).
+        # Policy: it is a filename-only alias. From the first section header (`[Version]`) onward,
+        # it must remain byte-for-byte identical to the canonical INF (only the leading
+        # banner/comments may differ). It does not change HWID matching behavior.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
             contract_rev=contract_rev,
-            require_fallback=True,
             errors=errors,
         )
         drift = check_inf_alias_drift(

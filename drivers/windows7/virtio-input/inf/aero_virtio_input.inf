@@ -15,7 +15,8 @@
 ; - No WDF coinstaller is shipped/installed for Win7 SP1.
 ;
 ; Note: this INF is intentionally strict: it matches only Aero contract v1
-; hardware IDs (revision-gated `REV_01`). It includes the SUBSYS-qualified
+; hardware IDs (revision-gated `REV_01`) so Windows will not bind the driver to
+; non-contract virtio-input devices. It includes the SUBSYS-qualified
 ; keyboard/mouse HWIDs for distinct Device Manager naming, plus a strict generic
 ; fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`, no SUBSYS) for environments that
 ; do not expose the Aero subsystem IDs.

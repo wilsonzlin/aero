@@ -476,10 +476,9 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
     // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows that still
     // reference `virtio-input.inf`.
     //
-    // Contract: if the alias INF exists, it must match the canonical INF from the first section
-    // header (`[Version]`) onward outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`).
-    // The alias is allowed to add an opt-in strict REV-qualified generic fallback match (no
-    // SUBSYS) in those models sections only.
+    // Contract: the alias INF is a *filename alias only*. From the first section header
+    // (`[Version]`) onward, it must match the canonical INF byte-for-byte (only the leading
+    // banner/comments may differ).
 
     let inf_dir = repo_root().join("drivers/windows7/virtio-input/inf");
     let alias_enabled = inf_dir.join("virtio-input.inf");
@@ -519,36 +518,10 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
         panic!("INF missing [Version] section header");
     }
 
-    fn strip_inf_sections(contents: &str, sections: &[&str]) -> String {
-        let mut out = String::new();
-        let mut skipping = false;
-        for line in contents.split_inclusive('\n') {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with('[') {
-                if let Some(end) = trimmed.find(']') {
-                    let name = trimmed[1..end].trim();
-                    skipping = sections.iter().any(|s| name.eq_ignore_ascii_case(s));
-                } else {
-                    skipping = false;
-                }
-            }
-            if !skipping {
-                out.push_str(line);
-            }
-        }
-        out
-    }
-
     assert_eq!(
-        strip_inf_sections(
-            inf_from_version_onward(&inf_contents),
-            &["Aero.NTx86", "Aero.NTamd64"],
-        ),
-        strip_inf_sections(
-            inf_from_version_onward(&canonical_contents),
-            &["Aero.NTx86", "Aero.NTamd64"],
-        ),
-        "alias INF {} must match canonical INF {} outside models sections",
+        inf_from_version_onward(&inf_contents),
+        inf_from_version_onward(&canonical_contents),
+        "alias INF {} must match canonical INF {} from [Version] onward",
         alias_path.display(),
         canonical_path.display()
     );
