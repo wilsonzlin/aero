@@ -542,6 +542,97 @@ fn virtio_input_statusq_led_events_split_across_descriptors() {
 }
 
 #[test]
+fn virtio_input_statusq_led_events_without_syn_report_still_apply() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
+    let caps = parse_caps(&mut dev);
+
+    let mut mem = GuestRam::new(0x10000);
+
+    // Feature negotiation (mirrors the other statusq tests).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure status queue 1.
+    let desc = 0x5000;
+    let avail = 0x6000;
+    let used = 0x7000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Payload contains LED events but no terminating SYN_REPORT. The device model should still
+    // apply the staged LED mask at the end of the chain.
+    let buf = 0x8000;
+    let payload = [
+        input_event_bytes(EV_LED, LED_NUML, 1),
+        input_event_bytes(EV_LED, LED_CAPSL, 1),
+        input_event_bytes(EV_LED, LED_SCROLLL, 0),
+        input_event_bytes(EV_LED, LED_COMPOSE, 1),
+        input_event_bytes(EV_LED, LED_KANA, 1),
+    ]
+    .concat();
+    mem.write(buf, &payload).unwrap();
+
+    write_desc(&mut mem, desc, 0, buf, payload.len() as u32, 0, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    let len = read_u32_le(&mem, used + 4 + 4).unwrap();
+    assert_eq!(len, 0);
+
+    let leds = dev.device_mut::<VirtioInput>().unwrap().leds_mask();
+    assert_eq!(leds, 0b11011);
+}
+
+#[test]
 fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     let keyboard = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
     let mut dev = VirtioPciDevice::new(Box::new(keyboard), Box::new(InterruptLog::default()));
