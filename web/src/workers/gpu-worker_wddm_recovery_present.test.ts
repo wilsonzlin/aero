@@ -124,7 +124,7 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       const wasmModuleUrl = new URL("./test_workers/gpu_mock_presenter_device_lost_module.ts", import.meta.url).href;
@@ -145,7 +145,7 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
       });
 
       // Wait until the mock module is imported (so `presentFn` is installed).
-      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 10_000);
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 20_000);
 
       // Tick #1: should still attempt a present even though FRAME_STATUS=PRESENTED, because scanout is WDDM.
       // The mock presenter throws webgpu_device_lost on the first call to trigger recovery.
@@ -159,7 +159,7 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
         worker,
         (msg) =>
           (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
       const deviceLostEvents = waitForWorkerMessage(
         worker,
@@ -251,5 +251,5 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 });

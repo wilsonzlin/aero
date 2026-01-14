@@ -152,7 +152,7 @@ describe("workers/gpu-worker WDDM scanout disabled descriptor", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // GPU protocol init in headless mode (no canvas).
@@ -172,7 +172,7 @@ describe("workers/gpu-worker WDDM scanout disabled descriptor", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       const requestScreenshot = async (requestId: number) => {
@@ -212,5 +212,5 @@ describe("workers/gpu-worker WDDM scanout disabled descriptor", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 });

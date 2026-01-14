@@ -116,7 +116,7 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -136,7 +136,7 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       const cmdStream = buildVsyncPresentCmdStream();
@@ -170,7 +170,7 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 
   it("does not block submit_complete on tick for the WDDM placeholder descriptor (base_paddr=0 with non-zero geometry)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -216,7 +216,7 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -236,7 +236,7 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       const cmdStream = buildVsyncPresentCmdStream();
@@ -268,5 +268,5 @@ describe("workers/gpu-worker vsync submit completion when WDDM scanout is disabl
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 });

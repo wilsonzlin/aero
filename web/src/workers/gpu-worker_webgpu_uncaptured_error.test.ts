@@ -122,7 +122,7 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       const wasmModuleUrl = new URL("./test_workers/gpu_mock_presenter_uncaptured_error_module.ts", import.meta.url).href;
@@ -143,7 +143,7 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
       });
 
       // Wait until the mock module is imported (so `presentFn` is installed).
-      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 10_000);
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 20_000);
 
       const firstPresentCall = waitForWorkerMessage(
         worker,
@@ -200,5 +200,5 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 });

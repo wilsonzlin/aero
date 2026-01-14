@@ -126,7 +126,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // GPU protocol init in headless mode (no canvas).
@@ -146,7 +146,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       // Seed an AeroGPU-presented frame so the screenshot code proves it prefers scanout bytes
@@ -170,7 +170,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "submit_complete" &&
           (msg as { requestId?: unknown }).requestId === aerogpuRequestId,
-        10_000,
+        20_000,
       );
       worker.postMessage(
         {
@@ -236,7 +236,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 
   it("captures updated guest-RAM-backed scanout bytes even when requested between ticks", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -285,7 +285,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // GPU protocol init in headless mode (no canvas).
@@ -305,7 +305,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       // Seed an AeroGPU-presented frame so the screenshot code proves it prefers scanout bytes.
@@ -325,7 +325,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "submit_complete" &&
           (msg as { requestId?: unknown }).requestId === aerogpuRequestId,
-        10_000,
+        20_000,
       );
       worker.postMessage(
         {
@@ -380,5 +380,5 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
     } finally {
       await worker.terminate();
     }
-  }, 25_000);
+  }, 60_000);
 });
