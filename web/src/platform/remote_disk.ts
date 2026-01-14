@@ -1,7 +1,7 @@
 import type { AsyncSectorDisk } from "../storage/disk.ts";
 import { RANGE_STREAM_CHUNK_SIZE } from "../storage/chunk_sizes.ts";
 import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "../storage/idb_remote_chunk_cache.ts";
-import { pickDefaultBackend, type DiskBackend } from "../storage/metadata.ts";
+import { DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES, pickDefaultBackend, type DiskBackend } from "../storage/metadata.ts";
 import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache.ts";
 import { RemoteCacheManager, remoteRangeDeliveryType, type RemoteCacheKeyParts } from "../storage/remote_cache_manager.ts";
 import {
@@ -508,7 +508,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (!params.sourceId) throw new Error("sourceId must not be empty");
 
     const resolvedCacheLimitBytes =
-      options.cacheLimitBytes === undefined ? 512 * 1024 * 1024 : options.cacheLimitBytes;
+      options.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : options.cacheLimitBytes;
 
     const resolved: ResolvedRemoteDiskOptions = {
       blockSize: options.blockSize ?? RANGE_STREAM_CHUNK_SIZE,

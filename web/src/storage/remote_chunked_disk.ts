@@ -3,7 +3,14 @@ import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../p
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "./idb_remote_chunk_cache";
 import { RemoteCacheManager, remoteChunkedDeliveryType, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
-import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
+import {
+  DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES,
+  OPFS_AERO_DIR,
+  OPFS_DISKS_DIR,
+  OPFS_REMOTE_CACHE_DIR,
+  pickDefaultBackend,
+  type DiskBackend,
+} from "./metadata";
 import { readJsonResponseWithLimit, readResponseBytesWithLimit, ResponseTooLargeError } from "./response_json";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
@@ -1118,7 +1125,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     // Preserve `null` to mean "no eviction" (unbounded cache), while `undefined`
     // selects the default bounded cache size.
     const resolvedCacheLimitBytes =
-      options.cacheLimitBytes === undefined ? 512 * 1024 * 1024 : options.cacheLimitBytes;
+      options.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : options.cacheLimitBytes;
 
     const resolved: ResolvedRemoteChunkedDiskOptions = {
       cacheLimitBytes: resolvedCacheLimitBytes,
