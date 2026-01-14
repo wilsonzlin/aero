@@ -6550,6 +6550,9 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
   const size_t count = decl->blob.size() / sizeof(D3DVERTEXELEMENT9_COMPAT);
   uint32_t stride = 0;
 
+  // First pass: compute the inferred destination stride. ProcessVertices writes a
+  // single destination buffer (stream 0); ignore declaration elements in other
+  // streams.
   for (size_t i = 0; i < count; ++i) {
     const auto& e = elems[i];
     if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
@@ -6560,14 +6563,24 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
     if (elem_size == 0) {
       continue;
     }
-    // ProcessVertices writes a single destination buffer (stream 0); ignore
-    // declaration elements in other streams when inferring the destination stride.
     if (e.Stream == 0) {
       const uint32_t end = static_cast<uint32_t>(e.Offset) + elem_size;
       stride = std::max(stride, end);
     }
+  }
 
+  // Second pass: locate output elements we care about.
+  for (size_t i = 0; i < count; ++i) {
+    const auto& e = elems[i];
+    if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
+      break;
+    }
     if (e.Stream != 0) {
+      continue;
+    }
+
+    const uint32_t elem_size = d3d9_decl_type_size_bytes(e.Type);
+    if (elem_size == 0) {
       continue;
     }
 
@@ -6575,17 +6588,54 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
     if ((e.Usage == kD3dDeclUsagePositionT || e.Usage == 0) && e.Type == kD3dDeclTypeFloat4 && e.UsageIndex == 0) {
       out->has_pos = true;
       out->pos_offset = e.Offset;
+      continue;
     }
     if (e.Usage == kD3dDeclUsageColor && e.Type == kD3dDeclTypeD3dColor && e.UsageIndex == 0) {
       out->has_diffuse = true;
       out->diffuse_offset = e.Offset;
+      continue;
     }
-    if (e.Usage == kD3dDeclUsageTexcoord && e.UsageIndex == 0 &&
-        (e.Type == kD3dDeclTypeFloat1 || e.Type == kD3dDeclTypeFloat2 || e.Type == kD3dDeclTypeFloat3 ||
-         e.Type == kD3dDeclTypeFloat4)) {
+  }
+
+  // Third pass: locate TEXCOORD0.
+  //
+  // Some runtimes appear to leave Usage as 0 (POSITION) when synthesizing fixed-
+  // function decls. Be permissive and accept Usage=POSITION for TEXCOORD0 as long
+  // as it is not the position element itself.
+  if (out->has_pos) {
+    for (size_t i = 0; i < count; ++i) {
+      const auto& e = elems[i];
+      if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
+        break;
+      }
+      if (e.Stream != 0) {
+        continue;
+      }
+
+      const uint32_t elem_size = d3d9_decl_type_size_bytes(e.Type);
+      if (elem_size == 0) {
+        continue;
+      }
+
+      if (e.UsageIndex != 0) {
+        continue;
+      }
+      if (e.Usage != kD3dDeclUsageTexcoord && e.Usage != kD3dDeclUsagePosition) {
+        continue;
+      }
+      if (e.Offset == out->pos_offset) {
+        // Position element.
+        continue;
+      }
+      if (e.Type != kD3dDeclTypeFloat1 && e.Type != kD3dDeclTypeFloat2 && e.Type != kD3dDeclTypeFloat3 &&
+          e.Type != kD3dDeclTypeFloat4) {
+        continue;
+      }
+
       out->has_tex0 = true;
       out->tex0_offset = e.Offset;
       out->tex0_size_bytes = elem_size;
+      break;
     }
   }
 
