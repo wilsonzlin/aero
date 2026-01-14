@@ -2965,19 +2965,16 @@ impl AerogpuD3d11Executor {
         };
         let primitive_count: u32 = match self.state.primitive_topology {
             CmdPrimitiveTopology::PointList => element_count,
-            CmdPrimitiveTopology::LineList => element_count / 2,
-            CmdPrimitiveTopology::LineStrip => element_count.saturating_sub(1),
-            CmdPrimitiveTopology::TriangleList => element_count / 3,
-            CmdPrimitiveTopology::TriangleStrip | CmdPrimitiveTopology::TriangleFan => {
-                element_count.saturating_sub(2)
+            CmdPrimitiveTopology::LineList | CmdPrimitiveTopology::LineListAdj => element_count / 2,
+            CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::LineStripAdj => {
+                element_count.saturating_sub(1)
             }
-            CmdPrimitiveTopology::LineListAdj => element_count / 4,
-            CmdPrimitiveTopology::LineStripAdj => element_count.saturating_sub(3),
-            CmdPrimitiveTopology::TriangleListAdj => element_count / 6,
-            CmdPrimitiveTopology::TriangleStripAdj => element_count.saturating_sub(4) / 2,
-            CmdPrimitiveTopology::PatchList { control_points } => {
-                element_count / u32::from(control_points.max(1))
-            }
+            CmdPrimitiveTopology::TriangleList
+            | CmdPrimitiveTopology::TriangleListAdj
+            | CmdPrimitiveTopology::PatchList { .. } => element_count / 3,
+            CmdPrimitiveTopology::TriangleStrip
+            | CmdPrimitiveTopology::TriangleStripAdj
+            | CmdPrimitiveTopology::TriangleFan => element_count.saturating_sub(2),
         };
 
         // Consume the draw packet now so errors include consistent cursor information.
