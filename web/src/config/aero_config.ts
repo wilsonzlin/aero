@@ -47,7 +47,7 @@ export interface AeroConfig {
    * See `L2TunnelTokenTransport` / `WebSocketL2TunnelClient` for details.
    *
    * Default: `"query"`.
-   */
+  */
   l2TunnelTokenTransport?: L2TunnelTokenTransport;
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;

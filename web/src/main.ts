@@ -5715,6 +5715,14 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
+    if (response.type !== "jit:compiled") {
+      // This should never happen for `compile()`, but keep the demo resilient to
+      // protocol changes.
+      jitDemoLine.textContent = `jit: unexpected response (${response.type})`;
+      jitDemoError.textContent = JSON.stringify(response);
+      return;
+    }
+
     // Verify that the module is usable in this realm (compilation happens in the JIT worker).
     try {
       if (!(response.module instanceof WebAssembly.Module)) {
@@ -5726,14 +5734,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       const message = err instanceof Error ? err.message : String(err);
       jitDemoLine.textContent = "jit: compiled, but validation failed";
       jitDemoError.textContent = message;
-      return;
-    }
-
-    // `jitClient.compile()` should only ever return `jit:compiled` or `jit:error`, but the
-    // protocol types are a shared union that also includes Tier-1 responses.
-    if (response.type !== "jit:compiled") {
-      jitDemoLine.textContent = `jit: unexpected response (${response.type})`;
-      jitDemoError.textContent = "JIT demo expected a jit:compiled response.";
       return;
     }
 
