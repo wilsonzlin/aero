@@ -3506,6 +3506,15 @@ function renderDisksPanel(): HTMLElement {
   void refresh().catch((err) => {
     status.textContent = err instanceof Error ? err.message : String(err);
   });
+  // `AeroConfigManager.init()` asynchronously loads an optional deployment config file. That config
+  // may still include legacy `activeDiskImage` values (deprecated) which we treat as a one-time
+  // mount hint. Re-run refresh after init so those hints can be applied even if the first refresh
+  // happened before the fetch completed.
+  void configInitPromise
+    .then(() => refresh())
+    .catch(() => {
+      // ignore (best-effort)
+    });
   // Populate the remote cache table on first render (best-effort).
   void refreshRemoteCaches().catch(() => {});
   return el(
