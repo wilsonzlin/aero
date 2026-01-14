@@ -15,7 +15,12 @@ describe("runtime/wasm_loader (Machine constructor typings)", () => {
     // concrete values to avoid `undefined is not a function` crashes. The compile-time checks are
     // encoded via `@ts-expect-error` comments and validated in CI by `tsc`.
     const machineCtor = {
-      new_with_config: (_ramSizeBytes: number, _enableAerogpu: boolean, _enableVga?: boolean) => machine,
+      new_with_config: (
+        _ramSizeBytes: number,
+        _enableAerogpu: boolean,
+        _enableVga?: boolean,
+        _cpuCount?: number,
+      ) => machine,
     } as unknown as MachineCtor;
 
     function assertStrictNullChecksEnforced() {
@@ -25,15 +30,16 @@ describe("runtime/wasm_loader (Machine constructor typings)", () => {
       machineCtor.new_with_config?.(2 * 1024 * 1024, 1);
       // @ts-expect-error enableVga must be boolean
       machineCtor.new_with_config?.(2 * 1024 * 1024, true, 1);
+      // @ts-expect-error cpuCount must be number
+      machineCtor.new_with_config?.(2 * 1024 * 1024, true, undefined, "2");
     }
     void assertStrictNullChecksEnforced;
 
     if (machineCtor.new_with_config) {
-      const m = machineCtor.new_with_config(2 * 1024 * 1024, true);
+      const m = machineCtor.new_with_config(2 * 1024 * 1024, true, undefined, 2);
       m.free();
     }
 
     expect(true).toBe(true);
   });
 });
-
