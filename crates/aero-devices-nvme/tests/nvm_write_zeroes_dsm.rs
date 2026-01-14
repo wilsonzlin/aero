@@ -10,6 +10,7 @@ const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
 const NVME_STATUS_SUCCESS: u16 = 0x0000;
 const NVME_STATUS_INVALID_FIELD: u16 = 0x4004;
 const NVME_STATUS_LBA_OUT_OF_RANGE: u16 = 0x4300;
+const NVME_STATUS_INVALID_NS: u16 = 0x4216;
 
 struct TestMem {
     buf: Vec<u8>,
@@ -350,6 +351,90 @@ fn dsm_without_deallocate_is_noop_success() {
 
     // Ensure the disk was not modified.
     assert_eq!(disk_state.read_bytes(0, SECTOR_SIZE), vec![0x77u8; SECTOR_SIZE]);
+}
+
+#[test]
+fn dsm_rejects_unknown_attributes() {
+    let disk = MemDisk::new(1024);
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+
+    setup_admin_and_io_queue_pair(&mut ctrl, &mut mem, asq, acq, io_cq, io_sq);
+
+    let mut cmd = build_command(0x09);
+    set_cid(&mut cmd, 0x43);
+    set_nsid(&mut cmd, 1);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 1 << 31); // unknown attribute bit
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, io_cq, 0);
+    assert_eq!(cid, 0x43);
+    assert_eq!(status & !0x1, NVME_STATUS_INVALID_FIELD);
+}
+
+#[test]
+fn dsm_rejects_reserved_cdw10_bits_even_without_deallocate() {
+    let disk = MemDisk::new(1024);
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+
+    setup_admin_and_io_queue_pair(&mut ctrl, &mut mem, asq, acq, io_cq, io_sq);
+
+    // CDW10 higher bits are reserved; set one and ensure the command is rejected even though we
+    // don't request deallocate.
+    let mut cmd = build_command(0x09);
+    set_cid(&mut cmd, 0x44);
+    set_nsid(&mut cmd, 1);
+    set_cdw10(&mut cmd, (1 << 31) | 0); // reserved bit + NR=0
+    set_cdw11(&mut cmd, 1 << 0); // IDR hint only
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, io_cq, 0);
+    assert_eq!(cid, 0x44);
+    assert_eq!(status & !0x1, NVME_STATUS_INVALID_FIELD);
+}
+
+#[test]
+fn write_zeroes_invalid_nsid_is_rejected() {
+    let disk = MemDisk::new(1024);
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+
+    setup_admin_and_io_queue_pair(&mut ctrl, &mut mem, asq, acq, io_cq, io_sq);
+
+    let mut cmd = build_command(0x08);
+    set_cid(&mut cmd, 0x45);
+    set_nsid(&mut cmd, 2); // only NSID=1 exists
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, io_cq, 0);
+    assert_eq!(cid, 0x45);
+    assert_eq!(status & !0x1, NVME_STATUS_INVALID_NS);
 }
 
 #[test]

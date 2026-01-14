@@ -828,7 +828,6 @@ impl PlatformInterrupts {
             .find(|lapic| lapic.apic_id() == apic_id)
             .map(|lapic| lapic.as_ref())
     }
- 
     pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
         self.lapics.iter().map(|lapic| lapic.as_ref())
     }
