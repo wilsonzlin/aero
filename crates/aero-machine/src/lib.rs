@@ -3664,6 +3664,7 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
                 || tag == b"ATST"
                 || tag == b"VREG"
                 || tag == b"EXEC"
+                || tag == b"BVBE"
         })
     }
     fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
@@ -3934,6 +3935,7 @@ fn apply_aerogpu_snapshot_v2(
                 || tag == b"ATST"
                 || tag == b"VREG"
                 || tag == b"EXEC"
+                || tag == b"BVBE"
         })
     }
     fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
