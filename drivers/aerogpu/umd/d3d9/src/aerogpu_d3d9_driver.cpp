@@ -27488,6 +27488,51 @@ HRESULT AEROGPU_D3D9_CALL device_test_reset_alloc_list_tracker(D3DDDI_HDEVICE hD
   return S_OK;
 }
 
+AllocRef AEROGPU_D3D9_CALL device_test_track_buffer_read(
+    D3DDDI_HDEVICE hDevice,
+    WddmAllocationHandle hAllocation,
+    uint32_t alloc_id,
+    uint64_t share_token) {
+  if (!hDevice.pDrvPrivate) {
+    AllocRef out{};
+    out.status = AllocRefStatus::kInvalidArgument;
+    return out;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  return dev->alloc_list_tracker.track_buffer_read(hAllocation, static_cast<UINT>(alloc_id), share_token);
+}
+
+AllocRef AEROGPU_D3D9_CALL device_test_track_texture_read(
+    D3DDDI_HDEVICE hDevice,
+    WddmAllocationHandle hAllocation,
+    uint32_t alloc_id,
+    uint64_t share_token) {
+  if (!hDevice.pDrvPrivate) {
+    AllocRef out{};
+    out.status = AllocRefStatus::kInvalidArgument;
+    return out;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  return dev->alloc_list_tracker.track_texture_read(hAllocation, static_cast<UINT>(alloc_id), share_token);
+}
+
+AllocRef AEROGPU_D3D9_CALL device_test_track_render_target_write(
+    D3DDDI_HDEVICE hDevice,
+    WddmAllocationHandle hAllocation,
+    uint32_t alloc_id,
+    uint64_t share_token) {
+  if (!hDevice.pDrvPrivate) {
+    AllocRef out{};
+    out.status = AllocRefStatus::kInvalidArgument;
+    return out;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  return dev->alloc_list_tracker.track_render_target_write(hAllocation, static_cast<UINT>(alloc_id), share_token);
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;

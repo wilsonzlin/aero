@@ -43,6 +43,21 @@ HRESULT AEROGPU_D3D9_CALL device_test_rebind_alloc_list_tracker(
     uint32_t allocation_list_capacity,
     uint32_t max_allocation_list_slot_id);
 HRESULT AEROGPU_D3D9_CALL device_test_reset_alloc_list_tracker(D3DDDI_HDEVICE hDevice);
+AllocRef AEROGPU_D3D9_CALL device_test_track_buffer_read(
+    D3DDDI_HDEVICE hDevice,
+    WddmAllocationHandle hAllocation,
+    uint32_t alloc_id,
+    uint64_t share_token);
+AllocRef AEROGPU_D3D9_CALL device_test_track_texture_read(
+    D3DDDI_HDEVICE hDevice,
+    WddmAllocationHandle hAllocation,
+    uint32_t alloc_id,
+    uint64_t share_token);
+AllocRef AEROGPU_D3D9_CALL device_test_track_render_target_write(
+    D3DDDI_HDEVICE hDevice,
+    WddmAllocationHandle hAllocation,
+    uint32_t alloc_id,
+    uint64_t share_token);
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
 HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
     D3DDDI_HDEVICE hDevice,
@@ -12491,7 +12506,7 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
     return false;
   }
 
-  auto r0 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/1, /*alloc_id=*/1, /*share_token=*/0);
+  const auto r0 = device_test_track_buffer_read(hDevice, /*hAllocation=*/1, /*alloc_id=*/1, /*share_token=*/0);
   if (!Check(r0.status == AllocRefStatus::kOk, "track_buffer_read first")) {
     return false;
   }
@@ -12513,7 +12528,7 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   if (!Check(dev.alloc_list_tracker.list_len() == 0, "allocation list reset after empty submit")) {
     return false;
   }
-  auto r1 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/2, /*alloc_id=*/2, /*share_token=*/0);
+  const auto r1 = device_test_track_buffer_read(hDevice, /*hAllocation=*/2, /*alloc_id=*/2, /*share_token=*/0);
   if (!Check(r1.status == AllocRefStatus::kOk, "track_buffer_read after empty submit")) {
     return false;
   }
@@ -12775,7 +12790,7 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   }
 
   // Seed with a dummy allocation so the blit must split to fit dst+src.
-  const auto dummy = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/0x1111u, /*alloc_id=*/99, /*share_token=*/0);
+  const auto dummy = device_test_track_buffer_read(hDevice, /*hAllocation=*/0x1111u, /*alloc_id=*/99, /*share_token=*/0);
   if (!Check(dummy.status == AllocRefStatus::kOk, "track_buffer_read dummy")) {
     return false;
   }
@@ -13247,9 +13262,8 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   // Pre-fill the allocation list to simulate other work already tracked in the
   // submission. This should force RotateResourceIdentities to split before it
   // begins tracking its own dependencies.
-  const AllocRef dummy_ref = dev->alloc_list_tracker.track_buffer_read(/*hAllocation=*/0x9999u,
-                                                                       /*alloc_id=*/0x999u,
-                                                                       /*share_token=*/0);
+  const AllocRef dummy_ref =
+      device_test_track_buffer_read(create_dev.hDevice, /*hAllocation=*/0x9999u, /*alloc_id=*/0x999u, /*share_token=*/0);
   if (!Check(dummy_ref.status == AllocRefStatus::kOk, "dummy allocation tracked")) {
     return false;
   }
@@ -40910,17 +40924,14 @@ bool TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush() {
   if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    // Pre-fill one entry so tracking the two copy resources requires a flush.
-    const auto pre =
-        dev->alloc_list_tracker.track_texture_read(/*hAllocation=*/0xAAAAu, /*alloc_id=*/0xAAAAu, /*share_token=*/0);
-    if (!Check(pre.status == AllocRefStatus::kOk, "pre-fill allocation list")) {
-      return false;
-    }
-    if (!Check(dev->alloc_list_tracker.list_len() == 1, "pre-fill list_len==1")) {
-      return false;
-    }
+  // Pre-fill one entry so tracking the two copy resources requires a flush.
+  const auto pre =
+      device_test_track_texture_read(create_dev.hDevice, /*hAllocation=*/0xAAAAu, /*alloc_id=*/0xAAAAu, /*share_token=*/0);
+  if (!Check(pre.status == AllocRefStatus::kOk, "pre-fill allocation list")) {
+    return false;
+  }
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "pre-fill list_len==1")) {
+    return false;
   }
 
   // Use a span-backed buffer so submit()'s rewind preserves the bytes.
