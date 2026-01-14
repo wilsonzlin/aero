@@ -32,27 +32,31 @@ Subsystem-qualified IDs provide distinct Device Manager names:
 
 - Keyboard: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` → `inf/aero_virtio_input.inf`
 - Mouse: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` → `inf/aero_virtio_input.inf`
-- Strict generic fallback (when subsystem IDs are not exposed/recognized): `PCI\VEN_1AF4&DEV_1052&REV_01` → `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+- Strict generic fallback (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01` → `inf/aero_virtio_input.inf` (**Aero VirtIO Input Device**)
 - Tablet (absolute pointer / EV_ABS): `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` → `inf/aero_virtio_tablet.inf`
 
-The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is intentionally **SUBSYS-only** (no strict generic fallback HWID)
-to keep keyboard/mouse vs tablet binding deterministic.
-If you need the strict revision-gated generic fallback binding (`PCI\VEN_1AF4&DEV_1052&REV_01`), enable the legacy filename alias
-INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable).
+The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes both:
 
-The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as
-separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**). When binding via the generic
-fallback entry, Device Manager will show **Aero VirtIO Input Device**.
+- the subsystem-qualified keyboard/mouse HWIDs (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, and
+- the strict (no SUBSYS) generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where subsystem IDs are not
+  exposed/recognized.
 
-Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more specific than the generic fallback, so it wins). If the tablet INF is not installed, the generic fallback entry can also bind to tablet devices (but will use the generic device name).
+When binding via the fallback model line, Device Manager will show the generic **Aero VirtIO Input Device** name.
 
-The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable)
-for workflows/tools that still reference `virtio-input.inf`.
-It is allowed to diverge from `inf/aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add
-the opt-in fallback entry, but must otherwise remain byte-for-byte identical from the first section header (`[Version]`) onward
-(only the leading banner/comments may differ; see `../scripts/check-inf-alias.py`).
-Do not ship/install it alongside `aero_virtio_input.inf` (it is intended as a compatibility filename alias, not a second distinct
-driver package).
+Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more specific than
+the generic fallback, so it wins). If the tablet INF is not installed (or the device does not expose the tablet subsystem ID),
+the generic fallback entry can also bind to tablet devices (but will use the generic device name).
+
+The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable) for
+workflows/tools that still reference `virtio-input.inf`.
+
+Policy:
+
+- Filename alias only: from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to
+  `inf/aero_virtio_input.inf` (banner/comments may differ; see `../scripts/check-inf-alias.py`).
+- Does **not** change HWID matching behavior.
+- The alias INF is checked in as `*.inf.disabled` to avoid accidentally shipping/installing two overlapping INFs. If you enable
+  the alias, do **not** ship/install it alongside `aero_virtio_input.inf` (install only one of the two basenames at a time).
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the
 contract major version at runtime, so binding to a non-contract `REV_00` device
