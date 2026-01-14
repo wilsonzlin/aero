@@ -15181,23 +15181,28 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   // If fixed-function shaders are active, stage0 texture stage state changes may
   // require a different internal PS variant. Update the cached selection and
   // rebind so the change takes effect without waiting for a draw call.
-  if (stage0_tss_dirty && fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (stage0_tss_dirty && !dev->user_ps) {
     Shader** ps_slot = nullptr;
-    switch (dev->fvf) {
-      case kSupportedFvfXyzrhwDiffuse:
-      case kSupportedFvfXyzDiffuse:
-        ps_slot = &dev->fixedfunc_ps;
-        break;
-      case kSupportedFvfXyzrhwDiffuseTex1:
-      case kSupportedFvfXyzrhwTex1:
-        ps_slot = &dev->fixedfunc_ps_tex1;
-        break;
-      case kSupportedFvfXyzDiffuseTex1:
-      case kSupportedFvfXyzTex1:
-        ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
-        break;
-      default:
-        break;
+    if (dev->user_vs) {
+      // VS-only interop: use stage0-selected fixed-function PS as the fallback.
+      ps_slot = &dev->fixedfunc_ps_interop;
+    } else if (fixedfunc_supported_fvf(dev->fvf)) {
+      switch (dev->fvf) {
+        case kSupportedFvfXyzrhwDiffuse:
+        case kSupportedFvfXyzDiffuse:
+          ps_slot = &dev->fixedfunc_ps;
+          break;
+        case kSupportedFvfXyzrhwDiffuseTex1:
+        case kSupportedFvfXyzrhwTex1:
+          ps_slot = &dev->fixedfunc_ps_tex1;
+          break;
+        case kSupportedFvfXyzDiffuseTex1:
+        case kSupportedFvfXyzTex1:
+          ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+          break;
+        default:
+          break;
+      }
     }
     if (ps_slot) {
       const HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);

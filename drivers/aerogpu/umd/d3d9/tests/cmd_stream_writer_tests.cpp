@@ -13757,6 +13757,314 @@ bool TestFixedfuncStage0TextureStageStateRebindsPixelShader() {
   return Check(creates3 == creates2, "SetTextureStageState(TEXTURE) reuses cached shader");
 }
 
+bool TestFixedfuncStage0ApplyStateBlockRebindsInteropPixelShader() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hTex{};
+    D3D9DDI_HSHADER hVs{};
+    D3D9DDI_HSTATEBLOCK hStateBlock{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_tex = false;
+    bool has_vs = false;
+    bool has_stateblock = false;
+
+    ~Cleanup() {
+      if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+        device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+      }
+      if (has_vs && device_funcs.pfnDestroyShader) {
+        device_funcs.pfnDestroyShader(hDevice, hVs);
+      }
+      if (has_tex && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hTex);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  constexpr uint32_t kD3dTssColorOp = 1u;     // D3DTSS_COLOROP
+  constexpr uint32_t kD3dTssColorArg1 = 2u;   // D3DTSS_COLORARG1
+  constexpr uint32_t kD3dTssAlphaOp = 4u;     // D3DTSS_ALPHAOP
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;   // D3DTSS_ALPHAARG1
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;  // D3DTOP_SELECTARG1
+  constexpr uint32_t kD3dTaDiffuse = 0u;      // D3DTA_DIFFUSE
+  constexpr uint32_t kD3dTaTexture = 2u;      // D3DTA_TEXTURE
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyResource != nullptr, "DestroyResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateShader != nullptr, "CreateShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyShader != nullptr, "DestroyShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShader != nullptr, "SetShader must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "BeginStateBlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "EndStateBlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "ApplyStateBlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "DeleteStateBlock must be available")) {
+    return false;
+  }
+
+  // Bind a dummy texture so stage0 selection can safely choose texture-sampling variants.
+  D3D9DDIARG_CREATERESOURCE create_tex{};
+  create_tex.type = kD3dRTypeTexture;
+  create_tex.format = 22u; // D3DFMT_X8R8G8B8
+  create_tex.width = 2;
+  create_tex.height = 2;
+  create_tex.depth = 1;
+  create_tex.mip_levels = 1;
+  create_tex.usage = 0;
+  create_tex.pool = 0;
+  create_tex.size = 0;
+  create_tex.hResource.pDrvPrivate = nullptr;
+  create_tex.pSharedHandle = nullptr;
+  create_tex.pKmdAllocPrivateData = nullptr;
+  create_tex.KmdAllocPrivateDataSize = 0;
+  create_tex.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
+  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+    return false;
+  }
+  if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource returned texture handle")) {
+    return false;
+  }
+  cleanup.hTex = create_tex.hResource;
+  cleanup.has_tex = true;
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, create_tex.hResource);
+  if (!Check(hr == S_OK, "SetTexture(0)")) {
+    return false;
+  }
+
+  // Bind VS-only shader pipeline so stage0 PS selection uses the interop fallback.
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x00, 0x01, 0x02, 0x03};
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(create_dev.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            dxbc,
+                                            static_cast<uint32_t>(sizeof(dxbc)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader returned VS handle")) {
+    return false;
+  }
+  cleanup.hVs = hVs;
+  cleanup.has_vs = true;
+
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS)")) {
+    return false;
+  }
+
+  // Explicitly clear PS (NULL stage).
+  D3D9DDI_HSHADER null_shader{};
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStagePs, null_shader);
+  if (!Check(hr == S_OK, "SetShader(PS=NULL)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Baseline stage0: SELECTARG1(TEXTURE) for both color + alpha.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_interop != nullptr, "VS-only interop created fixedfunc_ps_interop")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_ps_interop->bytecode.size() == sizeof(fixedfunc::kPsStage0TextureTexture),
+               "VS-only interop baseline PS is texture-only")) {
+      return false;
+    }
+    if (!Check(std::memcmp(dev->fixedfunc_ps_interop->bytecode.data(),
+                           fixedfunc::kPsStage0TextureTexture,
+                           sizeof(fixedfunc::kPsStage0TextureTexture)) == 0,
+               "VS-only interop baseline PS bytecode matches texture-only variant")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf0 = dev->cmd.data();
+  const size_t len0 = dev->cmd.bytes_used();
+  const size_t binds0 = CountOpcode(buf0, len0, AEROGPU_CMD_BIND_SHADERS);
+
+  // Record a state block that changes stage0 to SELECTARG1(DIFFUSE) for both color + alpha.
+  hr = cleanup.device_funcs.pfnBeginStateBlock(create_dev.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1) (record)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=DIFFUSE) (record)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=SELECTARG1) (record)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG1=DIFFUSE) (record)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnEndStateBlock(create_dev.hDevice, &cleanup.hStateBlock);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(cleanup.hStateBlock.pDrvPrivate != nullptr, "EndStateBlock returns stateblock handle")) {
+    return false;
+  }
+  cleanup.has_stateblock = true;
+
+  // Restore baseline stage0 state (TEXTURE/TEXTURE). Applying the block should switch it back to DIFFUSE/DIFFUSE.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=TEXTURE) (restore)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG1=TEXTURE) (restore)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_interop != nullptr, "fixedfunc_ps_interop valid after restore")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_ps_interop->bytecode.size() == sizeof(fixedfunc::kPsStage0TextureTexture),
+               "restore PS bytecode size matches")) {
+      return false;
+    }
+    if (!Check(std::memcmp(dev->fixedfunc_ps_interop->bytecode.data(),
+                           fixedfunc::kPsStage0TextureTexture,
+                           sizeof(fixedfunc::kPsStage0TextureTexture)) == 0,
+               "restore PS bytecode matches texture-only variant")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf1 = dev->cmd.data();
+  const size_t len1 = dev->cmd.bytes_used();
+  const size_t binds1 = CountOpcode(buf1, len1, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(binds1 >= binds0, "bind_shaders count is monotonic")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+  if (!Check(hr == S_OK, "ApplyStateBlock")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf2 = dev->cmd.data();
+  const size_t len2 = dev->cmd.bytes_used();
+  const size_t binds2 = CountOpcode(buf2, len2, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(binds2 == binds1 + 1, "ApplyStateBlock(stage0 TSS) causes a shader rebind in VS-only interop")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_interop != nullptr, "fixedfunc_ps_interop valid after ApplyStateBlock")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_ps_interop->bytecode.size() == sizeof(fixedfunc::kPsPassthroughColor),
+               "ApplyStateBlock selected diffuse-only PS")) {
+      return false;
+    }
+    if (!Check(std::memcmp(dev->fixedfunc_ps_interop->bytecode.data(),
+                           fixedfunc::kPsPassthroughColor,
+                           sizeof(fixedfunc::kPsPassthroughColor)) == 0,
+               "ApplyStateBlock selected diffuse-only PS bytecode matches")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Stage0 PS variants can legally alias the same Shader* (e.g. if two different
 // stage0 keys map to the same fallback bytecode). Ensure device destruction does
 // not double-free in that case.
@@ -31205,6 +31513,7 @@ int main() {
   RUN_TEST(TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFixedfuncStage0TextureStageStateRebindsPixelShader);
+  RUN_TEST(TestFixedfuncStage0ApplyStateBlockRebindsInteropPixelShader);
   RUN_TEST(TestFixedfuncStage0DestroyDedupsSharedPixelShaders);
   RUN_TEST(TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants);
