@@ -137,6 +137,39 @@ fn assemble_vs_passthrough_with_texcoord8_dcl_sm3_decoder() -> Vec<u32> {
     out.push(0x0000FFFF);
     out
 }
+
+fn assemble_vs_passthrough_with_texcoord8_and_unused_normal_dcl_sm3_decoder() -> Vec<u32> {
+    // vs_2_0 with an unused NORMAL0 declaration. This exercises the host-side semantic location
+    // reflection, which should still report the canonical location for declared-but-unused inputs.
+    //
+    // Layout:
+    //   v0: POSITION0 (used)
+    //   v1: TEXCOORD8 (used)
+    //   v2: NORMAL0 (unused)
+    let mut out = vec![0xFFFE0200];
+    // dcl_position v0
+    out.extend(enc_inst_with_extra(0x001F, 0, &[enc_dst(1, 0, 0xF)]));
+    // dcl_texcoord8 v1
+    out.extend(enc_inst_with_extra(
+        0x001F,
+        (5u32 << 16) | (8u32 << 20),
+        &[enc_dst(1, 1, 0xF)],
+    ));
+    // dcl_normal v2
+    out.extend(enc_inst_with_extra(
+        0x001F,
+        3u32 << 16,
+        &[enc_dst(1, 2, 0xF)],
+    ));
+
+    // mov oPos, v0
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    // mov oT0, v1 (ensure TEXCOORD8 input is actually used)
+    out.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)]));
+
+    out.push(0x0000FFFF);
+    out
+}
 fn assemble_ps2_mov_oc0_t0_sm3_decoder() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
@@ -1691,6 +1724,46 @@ fn translate_entrypoint_sm3_supports_texcoord8_vertex_inputs() {
     )
     .validate(&module)
     .expect("wgsl validate");
+}
+
+#[test]
+fn translate_entrypoint_sm3_remaps_unused_declared_semantics() {
+    // Regression: when the SM3 pipeline performs semantic remapping, `semantic_locations` should
+    // report canonical locations for *all* declared input semantics, even if some are unused by
+    // the instruction stream. Otherwise host-side vertex input binding can see collisions between
+    // remapped and non-remapped declarations.
+    let vs_bytes =
+        to_bytes(&assemble_vs_passthrough_with_texcoord8_and_unused_normal_dcl_sm3_decoder());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&vs_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+    assert!(translated.uses_semantic_locations);
+
+    let normal0 = translated
+        .semantic_locations
+        .iter()
+        .find(|s| s.usage == crate::vertex::DeclUsage::Normal && s.usage_index == 0)
+        .unwrap();
+    assert_eq!(normal0.location, 1);
+
+    let tex8 = translated
+        .semantic_locations
+        .iter()
+        .find(|s| s.usage == crate::vertex::DeclUsage::TexCoord && s.usage_index == 8)
+        .unwrap();
+    assert_eq!(tex8.location, 2);
+
+    let mut seen = std::collections::HashSet::<u32>::new();
+    for s in &translated.semantic_locations {
+        assert!(
+            seen.insert(s.location),
+            "duplicate semantic location mapping: {s:?}"
+        );
+    }
 }
 
 #[test]

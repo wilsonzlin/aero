@@ -10,7 +10,7 @@ use crate::software::{RenderTarget, Texture2D, Vec4};
 use crate::state::{
     BlendFactor, BlendOp, BlendState, SamplerState, VertexDecl, VertexElementType, VertexUsage,
 };
-use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
+use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
 
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
 use crate::sm3::ir::{
@@ -23,6 +23,30 @@ use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 const MAX_LOOP_ITERS: usize = 1_024;
 const CONST_INT_REGS: usize = 16;
 const CONST_BOOL_REGS: usize = 16;
+
+fn semantic_to_decl_usage(semantic: &Semantic) -> Option<(DeclUsage, u8)> {
+    let (usage, index) = match semantic {
+        Semantic::Position(i) => (DeclUsage::Position, *i),
+        Semantic::BlendWeight(i) => (DeclUsage::BlendWeight, *i),
+        Semantic::BlendIndices(i) => (DeclUsage::BlendIndices, *i),
+        Semantic::Normal(i) => (DeclUsage::Normal, *i),
+        Semantic::Tangent(i) => (DeclUsage::Tangent, *i),
+        Semantic::Binormal(i) => (DeclUsage::Binormal, *i),
+        Semantic::Color(i) => (DeclUsage::Color, *i),
+        Semantic::TexCoord(i) => (DeclUsage::TexCoord, *i),
+        Semantic::PositionT(i) => (DeclUsage::PositionT, *i),
+        Semantic::PointSize(i) => (DeclUsage::PSize, *i),
+        Semantic::Fog(i) => (DeclUsage::Fog, *i),
+        Semantic::Depth(i) => (DeclUsage::Depth, *i),
+        Semantic::Sample(i) => (DeclUsage::Sample, *i),
+        Semantic::TessFactor(i) => (DeclUsage::TessFactor, *i),
+        Semantic::Other { usage, index } => {
+            let usage = DeclUsage::from_u8(*usage).ok()?;
+            return Some((usage, *index));
+        }
+    };
+    Some((usage, index))
+}
 
 #[derive(Debug, Clone)]
 struct ConstBank {
@@ -1375,23 +1399,40 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
     // Vertex shader IR may canonicalize `v#` indices to WGSL `@location(n)` values based on DCL
     // semantics. Mirror that mapping here so the software interpreter sees the same inputs as the
     // GPU path.
-    let input_keys: Vec<u16> = vertex_decl
+    let semantic_location_map = if vs.uses_semantic_locations {
+        let semantics = vs
+            .inputs
+            .iter()
+            .filter(|d| d.reg.file == RegFile::Input)
+            .filter_map(|d| semantic_to_decl_usage(&d.semantic))
+            .collect::<Vec<_>>();
+        AdaptiveLocationMap::new(semantics).ok()
+    } else {
+        None
+    };
+
+    let input_keys: Vec<Option<u16>> = vertex_decl
         .elements
         .iter()
         .enumerate()
         .map(|(slot, element)| {
             if !vs.uses_semantic_locations {
-                return slot as u16;
+                return Some(slot as u16);
             }
+            let Some(map) = &semantic_location_map else {
+                // Fall back to element-order locations if the semantic map cannot be constructed.
+                return Some(slot as u16);
+            };
             let usage = match element.usage {
                 VertexUsage::Position => DeclUsage::Position,
                 VertexUsage::TexCoord => DeclUsage::TexCoord,
                 VertexUsage::Color => DeclUsage::Color,
             };
-            let loc = StandardLocationMap
-                .location_for(usage, element.usage_index)
-                .unwrap_or(slot as u32);
-            u16::try_from(loc).unwrap_or(slot as u16)
+            let Ok(loc) = map.location_for(usage, element.usage_index) else {
+                // Skip declaration elements that the shader doesn't declare.
+                return None;
+            };
+            u16::try_from(loc).ok()
         })
         .collect();
 
@@ -1399,6 +1440,9 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
         let base = vertex_index as usize * vertex_decl.stride as usize;
         let mut inputs = HashMap::<u16, Vec4>::new();
         for (key, element) in input_keys.iter().copied().zip(&vertex_decl.elements) {
+            let Some(key) = key else {
+                continue;
+            };
             let off = base + element.offset as usize;
             let bytes = &vertex_buffer[off..off + element.ty.byte_size()];
             inputs.insert(key, read_vertex_element(bytes, element.ty));
