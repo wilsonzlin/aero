@@ -441,7 +441,7 @@ For each entrypoint:
   - Use WDDM allocation private driver data (`aerogpu_wddm_alloc_priv` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`) to carry stable per-allocation IDs across the UMD↔KMD boundary and across processes.
     - The UMD supplies a blob with `magic/version/alloc_id/flags` (and optional metadata).
     - The KMD validates it and writes back `size_bytes` and (for shared allocations) a stable 64-bit `share_token` (`aerogpu_wddm_alloc_priv.share_token`) during `DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`.
-    - For shared allocations, dxgkrnl preserves and replays the blob on `OpenResource`/`OpenAllocation` so all processes observe identical IDs. Do **not** use the numeric value of the shared `HANDLE` (it is process-local and not stable cross-process).
+    - For shared allocations, dxgkrnl preserves and replays the blob on `OpenResource`/`OpenAllocation` so all processes observe identical IDs. Do **not** use the numeric value of the shared `HANDLE` as a stable protocol key: for real NT handles it is process-local (commonly different in a consumer after `DuplicateHandle`), and some stacks use token-style shared handles that still must not be treated as stable IDs.
   - The KMD stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table.
 - **Can be deferred:** General cross-process resource sharing.
 

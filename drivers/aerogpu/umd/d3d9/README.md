@@ -183,8 +183,10 @@ Cross-process shared resources are expressed explicitly in the command stream:
 - `AEROGPU_CMD_RELEASE_SHARED_SURFACE` invalidates a `share_token` mapping on the host (emitted by the Win7 KMD when the final cross-process allocation wrapper is released; the D3D9 UMD does not emit this directly).
 
 `share_token` must be stable across guest processes. On Win7/WDDM 1.1, AeroGPU does
-**not** use the numeric value of the D3D shared `HANDLE` as `share_token`: handle
-values are process-local and not stable cross-process.
+**not** use the numeric value of the D3D shared `HANDLE` as `share_token`: for real
+NT handles the numeric value is process-local (commonly different after
+`DuplicateHandle`), and some D3D9Ex stacks use token-style shared handles that
+still must not be treated as a stable protocol key.
 
 Canonical contract: on Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero 64-bit
 `share_token` and persists it in the preserved WDDM allocation private driver data blob
@@ -519,6 +521,7 @@ This subset is validated via:
   - On Win7 x64, `d3d9ex_shared_surface_wow64` validates cross-bitness shared-surface interop (WOW64 producer → native consumer; DWM scenario).
   - For DWM-like multi-producer batching / alloc_id collision coverage, also run `d3d9ex_shared_surface_many_producers` and `d3d9ex_alloc_id_persistence`.
   - For MVP shared-surface allocation policy coverage (shared resources must be single-allocation), also run `d3d9ex_shared_allocations`.
+  - For open/close churn coverage (repeated create → open → destroy; catches hangs/crashes), also run `d3d9ex_shared_surface_stress`.
 
 #### Running host-side unit tests (portable)
 

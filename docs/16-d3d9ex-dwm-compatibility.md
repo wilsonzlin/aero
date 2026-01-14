@@ -215,7 +215,7 @@ See `docs/graphics/win7-shared-surfaces-share-token.md` for implementation detai
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
-**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc` (or `d3d9ex_shared_surface`) to exercise this cross-process “create shared → open shared” path.
+**Guest-side validation:** run `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc` (or `d3d9ex_shared_surface`) to exercise this cross-process “create shared → open shared” path. For open/close churn coverage (repeated create → open → destroy; catches hangs/crashes), also run `d3d9ex_shared_surface_stress`.
 On Win7 x64 (DWM scenario), also run `d3d9ex_shared_surface_wow64` (cross-bitness) and `d3d9ex_shared_surface_many_producers` / `d3d9ex_alloc_id_persistence` (alloc_id uniqueness under DWM-like batching).
 
 ##### MVP limitation: shared surfaces must be single-allocation
