@@ -1306,6 +1306,17 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
     emitScanoutReadbackInvalid(snap, "Scanout: width/height must be non-zero");
     return null;
   }
+  // Guard against corrupt descriptors that could otherwise trigger huge loops even if the
+  // total byte count is within `MAX_SCANOUT_RGBA8_BYTES` (e.g. width=1, height=64M).
+  const MAX_WDDM_SCANOUT_DIM = 16384;
+  if (width > MAX_WDDM_SCANOUT_DIM || height > MAX_WDDM_SCANOUT_DIM) {
+    emitWddmScanoutInvalid(snap, "WDDM scanout: width/height exceeds size limit", {
+      width,
+      height,
+      maxDim: MAX_WDDM_SCANOUT_DIM,
+    });
+    return null;
+  }
 
   const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
   if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
