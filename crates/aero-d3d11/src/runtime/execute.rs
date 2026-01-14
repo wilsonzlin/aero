@@ -993,7 +993,7 @@ impl D3D11Runtime {
             .collect();
 
         // Defer creation of the trimmed shader module until after we've decoded the rest of the
-        // pipeline descriptor so we don't hold a borrow of `self.pipelines` across other `&self`
+        // pipeline descriptor so we don't hold a borrow of `self.pipelines` across other `&mut self`
         // method calls.
         let trimmed_fs_wgsl: Option<String> =
             if linked_fs_wgsl.as_ref() == fs.wgsl.as_str() && missing_outputs.is_empty() {
