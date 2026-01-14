@@ -248,8 +248,9 @@ export class DebugOverlay {
       const last = gpuEvents[gpuEvents.length - 1] as any;
       const sev = typeof last?.severity === "string" ? (last.severity as string) : "error";
       const cat = typeof last?.category === "string" ? (last.category as string) : "Unknown";
+      const backend = typeof last?.backend_kind === "string" ? (last.backend_kind as string) : null;
       const msg = typeof last?.message === "string" ? (last.message as string) : String(last?.message ?? "");
-      lines.push(`Last event: ${sev}/${cat}: ${msg}`);
+      lines.push(`Last event: ${sev}/${cat}${backend ? ` (${backend})` : ""}: ${msg}`);
     }
 
     lines.push(

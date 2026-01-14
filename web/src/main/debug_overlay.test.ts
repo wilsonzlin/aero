@@ -148,7 +148,7 @@ describe("DebugOverlay hotkey handling", () => {
         pitchBytes: 3200,
         format: 2, // AerogpuFormat.B8G8R8X8Unorm
       },
-      gpuEvents: [{ severity: "warn", category: "CursorReadback", message: "vram missing" }],
+      gpuEvents: [{ severity: "warn", category: "CursorReadback", backend_kind: "webgpu", message: "vram missing" }],
     };
 
     const overlay = new DebugOverlay(() => snapshot, { parent, toggleKey: "F3", updateIntervalMs: 10 });
@@ -157,7 +157,7 @@ describe("DebugOverlay hotkey handling", () => {
     const root = (overlay as any)._root as FakeDiv;
     expect(root.textContent).toContain("Scanout:");
     expect(root.textContent).toContain("fmt=B8G8R8X8Unorm (2)");
-    expect(root.textContent).toContain("Last event: warn/CursorReadback: vram missing");
+    expect(root.textContent).toContain("Last event: warn/CursorReadback (webgpu): vram missing");
 
     overlay.detach();
   });
