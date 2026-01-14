@@ -186,6 +186,25 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.with_input_led)
 
+    def test_virtio_input_leds_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-input-leds",
+            "--with-virtio-input-leds",
+            "--enable-virtio-input-leds",
+            "--require-virtio-input-leds",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_input_leds)
+
     def test_with_input_events_extended_aliases_set_flag(self) -> None:
         for flag in ("--with-input-events-extended", "--with-input-events-extra"):
             with self.subTest(flag=flag):

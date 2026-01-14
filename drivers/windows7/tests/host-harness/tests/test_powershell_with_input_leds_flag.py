@@ -16,6 +16,13 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
         # Ensure the public harness switch exists (so users can require the marker).
         self.assertIn("[switch]$WithInputLeds", self.text)
 
+        # Keep alias pattern consistent with other virtio-input flags.
+        # The alias list may evolve, so avoid brittle exact-string matching.
+        self.assertRegex(
+            self.text,
+            r'Alias\("WithVirtioInputLeds",\s*"EnableVirtioInputLeds"(?:,\s*"RequireVirtioInputLeds")?\)',
+        )
+
     def test_wait_result_enforces_leds_marker_when_required(self) -> None:
         # Ensure the Wait-AeroSelftestResult plumbing exists and returns stable tokens.
         self.assertIn("$RequireVirtioInputLedsPass", self.text)
@@ -36,4 +43,3 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

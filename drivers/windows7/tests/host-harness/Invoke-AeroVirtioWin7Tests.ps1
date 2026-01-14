@@ -138,6 +138,7 @@ param(
   # Note: The guest image must be provisioned with `--test-input-leds` (or env var equivalent) so the guest selftest
   # runs the LED write test and emits the marker.
   [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioInputLeds", "EnableVirtioInputLeds", "RequireVirtioInputLeds")]
   [switch]$WithInputLeds,
 
   # If set, inject deterministic Consumer Control (media key) events via QMP (`input-send-event`) and require the guest
