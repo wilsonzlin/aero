@@ -68,6 +68,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `gs_4_0`
   * Chunks: `SHDR`
   * Behavior: `dcl_inputprimitive`, `dcl_outputtopology`, `dcl_maxvertexcount`, `mov r0, v0[0]`, `emit`, `cut`, `ret`
+* `gs_emit_stream_cut_stream.dxbc`
+  * Shader model: `gs_5_0`
+  * Chunks: `SHEX`
+  * Behavior: `dcl_inputprimitive`, `dcl_outputtopology`, `dcl_maxvertexcount`, `emit_stream(2)`, `cut_stream(3)`, `ret`
 * `gs_point_to_triangle.dxbc`
   * Shader model: `gs_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
