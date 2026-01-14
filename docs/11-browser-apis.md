@@ -872,7 +872,13 @@ import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } fr
 
 class WorkerCoordinator {
     constructor() {
-        this.cpuWorker = new Worker(new URL('../workers/cpu.worker.ts', import.meta.url), { type: 'module' });
+        // The CPU worker entrypoint depends on the VM runtime implementation:
+        // - legacy:  `cpu.worker.ts` (CPU-only wasm harness + JS IO/MMIO shims)
+        // - machine: `machine_cpu.worker.ts` (canonical `api.Machine` runtime)
+        const vmRuntime = 'legacy'; // or 'machine'
+        const cpuWorkerEntrypoint =
+            vmRuntime === 'machine' ? '../workers/machine_cpu.worker.ts' : '../workers/cpu.worker.ts';
+        this.cpuWorker = new Worker(new URL(cpuWorkerEntrypoint, import.meta.url), { type: 'module' });
         this.gpuWorker = new Worker(new URL('../workers/gpu.worker.ts', import.meta.url), { type: 'module' });
         this.ioWorker = new Worker(new URL('../workers/io.worker.ts', import.meta.url), { type: 'module' });
         this.jitWorker = new Worker(new URL('../workers/jit.worker.ts', import.meta.url), { type: 'module' });

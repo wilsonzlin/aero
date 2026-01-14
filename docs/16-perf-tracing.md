@@ -40,7 +40,9 @@ To give each worker its own lane in the exported trace:
 ```ts
 import { perf } from "./perf/perf";
 
-const worker = new Worker(new URL("./workers/cpu.worker.ts", import.meta.url), { type: "module" });
+const vmRuntime: "legacy" | "machine" = "legacy";
+const cpuWorkerEntrypoint = vmRuntime === "machine" ? "./workers/machine_cpu.worker.ts" : "./workers/cpu.worker.ts";
+const worker = new Worker(new URL(cpuWorkerEntrypoint, import.meta.url), { type: "module" });
 perf.registerWorker(worker, { threadName: "cpu" });
 ```
 
