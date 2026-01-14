@@ -74,6 +74,17 @@ struct VertexXyzTex1f3 {
   float w;
 };
 
+struct VertexXyzDiffuseTex1f4 {
+  float x;
+  float y;
+  float z;
+  DWORD color;
+  float u;
+  float v;
+  float w;
+  float q;
+};
+
 struct VertexXyzrhwTex1 {
   float x;
   float y;
@@ -81,6 +92,18 @@ struct VertexXyzrhwTex1 {
   float rhw;
   float u;
   float v;
+};
+
+struct VertexXyzrhwDiffuseTex1f4 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  DWORD color;
+  float u;
+  float v;
+  float w;
+  float q;
 };
 
 struct VertexXyzrhwDiffuseTex1f3 {
@@ -1137,6 +1160,110 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       }
       if (!bytes_match) {
         return reporter.Fail("ProcessVertices XYZ|TEX1 tex-usage=POSITION output bytes did not match expected output");
+      }
+    }
+
+    // Regression: when TEXCOORD0 is encoded as Usage=POSITION and Type=float4, the
+    // driver must not confuse it with the actual position element (which is also
+    // a float4 at offset 0).
+    {
+      const VertexXyzDiffuseTex1f4 src_f4 = {0.0f,
+                                            0.0f,
+                                            0.0f,
+                                            D3DCOLOR_XRGB(10, 20, 30),
+                                            0.25f,
+                                            0.75f,
+                                            0.5f,
+                                            0.125f};
+
+      ComPtr<IDirect3DVertexBuffer9> src_vb_f4;
+      hr = dev->CreateVertexBuffer(sizeof(src_f4),
+                                   0,
+                                   D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE4(0),
+                                   D3DPOOL_DEFAULT,
+                                   src_vb_f4.put(),
+                                   NULL);
+      if (FAILED(hr) || !src_vb_f4) {
+        return reporter.FailHresult("CreateVertexBuffer(src_f4)", hr);
+      }
+
+      void* src_f4_ptr = NULL;
+      hr = src_vb_f4->Lock(0, sizeof(src_f4), &src_f4_ptr, 0);
+      if (FAILED(hr) || !src_f4_ptr) {
+        return reporter.FailHresult("src_vb_f4->Lock", hr);
+      }
+      memcpy(src_f4_ptr, &src_f4, sizeof(src_f4));
+      hr = src_vb_f4->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("src_vb_f4->Unlock", hr);
+      }
+
+      ComPtr<IDirect3DVertexBuffer9> dst_vb_f4;
+      hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1f4),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE4(0),
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_vb_f4.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_vb_f4) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_f4)", hr);
+      }
+
+      const D3DVERTEXELEMENT9 decl_tex_f4_usage0_elems[] = {
+          {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITIONT, 0},
+          {0, 16, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+          {0, 20, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+          D3DDECL_END(),
+      };
+      ComPtr<IDirect3DVertexDeclaration9> decl_tex_f4_usage0;
+      hr = dev->CreateVertexDeclaration(decl_tex_f4_usage0_elems, decl_tex_f4_usage0.put());
+      if (FAILED(hr) || !decl_tex_f4_usage0) {
+        return reporter.FailHresult("CreateVertexDeclaration(tex_f4 usage=POSITION)", hr);
+      }
+
+      hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE4(0));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetFVF(XYZ|DIFFUSE|TEX1|F4)", hr);
+      }
+      hr = dev->SetStreamSource(0, src_vb_f4.get(), 0, sizeof(VertexXyzDiffuseTex1f4));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(src_f4)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                                /*DestIndex=*/0,
+                                /*VertexCount=*/1,
+                                dst_vb_f4.get(),
+                                decl_tex_f4_usage0.get(),
+                                /*Flags=*/0);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyz|tex1 f4 usage=POSITION)", hr);
+      }
+
+      void* dst_f4_ptr = NULL;
+      hr = dst_vb_f4->Lock(0, sizeof(VertexXyzrhwDiffuseTex1f4), &dst_f4_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_f4_ptr) {
+        return reporter.FailHresult("dst_vb_f4->Lock", hr);
+      }
+
+      const VertexXyzrhwDiffuseTex1f4 expected_f4 = {0.5f,
+                                                     0.5f,
+                                                     0.0f,
+                                                     1.0f,
+                                                     src_f4.color,
+                                                     src_f4.u,
+                                                     src_f4.v,
+                                                     src_f4.w,
+                                                     src_f4.q};
+      const bool bytes_match_f4 = (memcmp(dst_f4_ptr, &expected_f4, sizeof(expected_f4)) == 0);
+
+      hr = dst_vb_f4->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_vb_f4->Unlock", hr);
+      }
+
+      if (!bytes_match_f4) {
+        return reporter.Fail("ProcessVertices XYZ|TEX1(F4) tex-usage=POSITION output bytes did not match expected output");
       }
     }
 
