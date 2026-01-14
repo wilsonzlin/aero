@@ -593,6 +593,68 @@ class CmdStreamWriter {
     return TryAppendWithPayload<HeaderT>(opcode, payload, payload_size);
   }
 
+  // -------------------------------- Command helpers --------------------------------
+  //
+  // These helpers encode common packets while handling forward-compatible sizing rules
+  // (e.g. append-only ABI extensions).
+
+  aerogpu_cmd_bind_shaders* bind_shaders(aerogpu_handle_t vs, aerogpu_handle_t ps, aerogpu_handle_t cs) {
+    auto* cmd = append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+    if (!cmd) {
+      return nullptr;
+    }
+    cmd->vs = vs;
+    cmd->ps = ps;
+    cmd->cs = cs;
+    cmd->reserved0 = 0;
+    return cmd;
+  }
+
+  // Legacy GS binding encoding: stores `gs` in `reserved0` and emits the 24-byte packet.
+  aerogpu_cmd_bind_shaders* bind_shaders_with_gs(
+      aerogpu_handle_t vs,
+      aerogpu_handle_t ps,
+      aerogpu_handle_t cs,
+      aerogpu_handle_t gs) {
+    auto* cmd = append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+    if (!cmd) {
+      return nullptr;
+    }
+    cmd->vs = vs;
+    cmd->ps = ps;
+    cmd->cs = cs;
+    cmd->reserved0 = gs;
+    return cmd;
+  }
+
+  // Extended `BIND_SHADERS` ABI (append-only): appends `{gs, hs, ds}` after the 24-byte prefix.
+  //
+  // When `mirror_gs_to_reserved0` is true, `gs` is duplicated into the legacy `reserved0` field for
+  // best-effort compatibility with hosts that only understand the 24-byte packet.
+  aerogpu_cmd_bind_shaders* bind_shaders_ex(
+      aerogpu_handle_t vs,
+      aerogpu_handle_t ps,
+      aerogpu_handle_t cs,
+      aerogpu_handle_t gs,
+      aerogpu_handle_t hs,
+      aerogpu_handle_t ds,
+      bool mirror_gs_to_reserved0 = false) {
+    const aerogpu_handle_t tail[3] = {gs, hs, ds};
+    auto* cmd = append_with_payload<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS, tail, sizeof(tail));
+    if (!cmd) {
+      return nullptr;
+    }
+    cmd->vs = vs;
+    cmd->ps = ps;
+    cmd->cs = cs;
+    cmd->reserved0 = mirror_gs_to_reserved0 ? gs : 0;
+    return cmd;
+  }
+
+  aerogpu_cmd_bind_shaders* bind_shaders_hs_ds(aerogpu_handle_t hs, aerogpu_handle_t ds) {
+    return bind_shaders_ex(/*vs=*/0, /*ps=*/0, /*cs=*/0, /*gs=*/0, hs, ds);
+  }
+
  private:
   enum class Mode : uint8_t { Vector, Span };
 

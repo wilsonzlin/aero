@@ -74,16 +74,17 @@ bool TestGeometryShaderCreateAndBindPackets() {
   // after the stable 24-byte prefix. When present, the appended handles are authoritative. Mirror
   // `gs` into the legacy `reserved0` field for best-effort compatibility with older decoders (if
   // mirrored, it should match the appended `gs` handle).
-  const aerogpu_handle_t bind_ex[] = {kGsHandle, kHsHandle, kDsHandle};
-  auto* bind = w.append_with_payload<aerogpu_cmd_bind_shaders>(
-      AEROGPU_CMD_BIND_SHADERS, bind_ex, sizeof(bind_ex));
+  auto* bind = w.bind_shaders_ex(
+      /*vs=*/0,
+      /*ps=*/0,
+      /*cs=*/0,
+      /*gs=*/kGsHandle,
+      /*hs=*/kHsHandle,
+      /*ds=*/kDsHandle,
+      /*mirror_gs_to_reserved0=*/true);
   if (!Check(bind != nullptr, "append BIND_SHADERS")) {
     return false;
   }
-  bind->vs = 0;
-  bind->ps = 0;
-  bind->cs = 0;
-  bind->reserved0 = kGsHandle;
 
   auto* destroy = w.append_fixed<aerogpu_cmd_destroy_shader>(AEROGPU_CMD_DESTROY_SHADER);
   if (!Check(destroy != nullptr, "append DESTROY_SHADER")) {
@@ -229,7 +230,8 @@ bool TestGeometryShaderCreateAndBindPackets() {
   if (!Check(bind_hdr->opcode == AEROGPU_CMD_BIND_SHADERS, "BIND_SHADERS opcode")) {
     return false;
   }
-  if (!Check(bind_hdr->size_bytes == sizeof(aerogpu_cmd_bind_shaders) + sizeof(bind_ex),
+  constexpr size_t kBindShadersExPayloadSize = 3 * sizeof(aerogpu_handle_t);
+  if (!Check(bind_hdr->size_bytes == sizeof(aerogpu_cmd_bind_shaders) + kBindShadersExPayloadSize,
              "BIND_SHADERS size_bytes")) {
     return false;
   }
