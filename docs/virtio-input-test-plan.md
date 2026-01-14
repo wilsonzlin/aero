@@ -446,7 +446,7 @@ When enabled, the harness:
 
 1. Enables the base input-events injection (as if `-WithInputEvents` / `--with-input-events` were set)
 2. Injects a deterministic scroll sequence via QMP `input-send-event`:
-   - vertical wheel: `axis=wheel`, `value=+1`
+   - vertical wheel: `axis=wheel`, `value=+1` (with fallback `axis=vscroll` for alternate QEMU builds)
    - horizontal wheel: `axis=hscroll`, `value=-2` (with fallback `axis=hwheel` for older/alternate QEMU builds)
 3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
 
@@ -454,8 +454,8 @@ Note: The harness may retry injection a few times after `virtio-input-events|REA
 case the guest may observe multiple injected scroll events; the wheel selftest is designed to handle this, and totals
 may be multiples of the injected values.
 
-If the running QEMU build rejects both `hscroll` and the fallback `hwheel` axis name, the harness fails with a clear
-error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
+If the running QEMU build rejects all tested axis name combinations (`wheel`/`vscroll` × `hscroll`/`hwheel`), the harness
+fails with a clear error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
 
 ### 4.4 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
 

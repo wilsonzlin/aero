@@ -178,6 +178,54 @@ class QmpInputInjectionTests(unittest.TestCase):
             h._qmp_send_command = old_send
             h.time.sleep = old_sleep
 
+    def test_falls_back_to_vscroll_axis_when_wheel_rejected(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            # Simulate a QEMU build that rejects `axis=wheel` but accepts `axis=vscroll`.
+            evs = cmd.get("arguments", {}).get("events", [])
+            for ev in evs:
+                if ev.get("type") == "rel" and ev.get("data", {}).get("axis") == "wheel":
+                    raise RuntimeError("axis wheel unsupported")
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            info = h._try_qmp_input_inject_virtio_input_events(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444), with_wheel=True
+            )
+
+            self.assertEqual(info.keyboard_device, h._VIRTIO_INPUT_QMP_KEYBOARD_ID)
+            self.assertEqual(info.mouse_device, h._VIRTIO_INPUT_QMP_MOUSE_ID)
+
+            rel_cmds = [
+                cmd
+                for cmd in sent
+                if any(e.get("type") == "rel" for e in cmd.get("arguments", {}).get("events", []))
+            ]
+            rel_axes_sets = [
+                {e["data"]["axis"] for e in cmd["arguments"]["events"] if e["type"] == "rel"}
+                for cmd in rel_cmds
+            ]
+            self.assertTrue(any("wheel" in axes for axes in rel_axes_sets))
+            self.assertTrue(any("vscroll" in axes for axes in rel_axes_sets))
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
     def test_falls_back_to_broadcast_when_device_routing_rejected(self) -> None:
         h = self.harness
 

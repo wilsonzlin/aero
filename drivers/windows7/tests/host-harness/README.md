@@ -279,7 +279,7 @@ HID Consumer `AC Pan`), run the harness with:
 This:
 
 - **implies** `-WithInputEvents` / `--with-input-events`
-- injects wheel events via QMP `input-send-event` (rel axes `wheel` + `hscroll`)
+- injects wheel events via QMP `input-send-event` (rel axes `wheel`/`vscroll` + `hscroll`/`hwheel`, with best-effort fallbacks)
 - requires the guest marker:
   `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
 
@@ -288,9 +288,9 @@ Note: Like the base input-events injection, the harness may retry injection a fe
 events; the wheel selftest is designed to handle this (it validates expected per-event deltas, and totals may be
 multiples of the injected values).
 
-Note: Some QEMU builds use a different name for horizontal scroll (for example `hwheel` instead of `hscroll`).
-The harness retries with a fallback name; if neither is accepted, `-WithInputWheel` / `--with-input-wheel` (or aliases)
-fails with a clear error (upgrade QEMU or omit the wheel flag).
+Note: Some QEMU builds use different axis names for scroll wheels (for example `vscroll` instead of `wheel`, and/or
+`hwheel` instead of `hscroll`). The harness retries with best-effort fallback names; if none are accepted,
+`-WithInputWheel` / `--with-input-wheel` (or aliases) fails with a clear error (upgrade QEMU or omit the wheel flag).
 
 PowerShell:
 

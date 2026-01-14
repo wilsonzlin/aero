@@ -877,6 +877,8 @@ def _qmp_deterministic_keyboard_events(*, qcode: str) -> list[dict[str, object]]
 
 _QMP_TEST_MOUSE_WHEEL_DELTA = 1
 _QMP_TEST_MOUSE_HWHEEL_DELTA = -2
+_QMP_TEST_MOUSE_VSCROLL_AXIS = "wheel"  # QMP InputAxis enum (vertical scroll)
+_QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK = "vscroll"  # Alternate name (best-effort)
 _QMP_TEST_MOUSE_HSCROLL_AXIS = "hscroll"  # QMP InputAxis enum (horizontal scroll)
 _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK = "hwheel"  # Older/alternate name (best-effort)
 
@@ -915,13 +917,13 @@ def _qmp_deterministic_mouse_events(*, with_wheel: bool = False) -> list[dict[st
         _qmp_rel_event("y", 5),
     ]
     if with_wheel:
-        # QMP InputAxis enum is expected to include `wheel` (vertical) and `hscroll` (horizontal).
-        # Some QEMU builds may use a legacy/alternate axis name for horizontal scroll; the injection
-        # helper will retry with a fallback name when needed.
+        # QMP InputAxis enum is expected to include `wheel`/`vscroll` (vertical scroll) and
+        # `hscroll`/`hwheel` (horizontal scroll). Some QEMU builds may use alternate names;
+        # the injection helper will retry with fallbacks when needed.
         #
         # The guest selftest validates these via raw HID reports (wheel + AC Pan).
         events += [
-            _qmp_rel_event("wheel", _QMP_TEST_MOUSE_WHEEL_DELTA),
+            _qmp_rel_event(_QMP_TEST_MOUSE_VSCROLL_AXIS, _QMP_TEST_MOUSE_WHEEL_DELTA),
             _qmp_rel_event(_QMP_TEST_MOUSE_HSCROLL_AXIS, _QMP_TEST_MOUSE_HWHEEL_DELTA),
         ]
     events += [
@@ -1040,32 +1042,48 @@ def _try_qmp_input_inject_virtio_input_events(
             if not want_wheel:
                 raise
 
-            # Some QEMU versions support horizontal scroll under a different axis name.
-            # Try a best-effort fallback before failing.
-            alt_events = []
-            for ev in mouse_rel_events:
-                if (
-                    ev.get("type") == "rel"
-                    and isinstance(ev.get("data"), dict)
-                    and ev["data"].get("axis") == _QMP_TEST_MOUSE_HSCROLL_AXIS
-                ):
-                    ev2 = {"type": "rel", "data": dict(ev["data"])}
-                    ev2["data"]["axis"] = _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK
-                    alt_events.append(ev2)
-                else:
-                    alt_events.append(ev)
+            def rewrite(events: list[dict[str, object]], axis_map: dict[str, str]) -> list[dict[str, object]]:
+                out: list[dict[str, object]] = []
+                for ev in events:
+                    if ev.get("type") == "rel" and isinstance(ev.get("data"), dict):
+                        axis = ev["data"].get("axis")
+                        if axis in axis_map:
+                            ev2 = {"type": "rel", "data": dict(ev["data"])}
+                            ev2["data"]["axis"] = axis_map[axis]
+                            out.append(ev2)
+                            continue
+                    out.append(ev)
+                return out
 
-            try:
-                mouse_device = send(s, alt_events, device=mouse_device)
-            except Exception as e2:
+            # Some QEMU versions use alternate axis names for scroll wheels. Try a best-effort matrix
+            # of axis pairs before failing.
+            errors: dict[str, str] = {"wheel+hscroll": str(e)}
+            attempts: list[tuple[str, dict[str, str]]] = [
+                ("wheel+hwheel", {_QMP_TEST_MOUSE_HSCROLL_AXIS: _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}),
+                ("vscroll+hscroll", {_QMP_TEST_MOUSE_VSCROLL_AXIS: _QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK}),
+                (
+                    "vscroll+hwheel",
+                    {
+                        _QMP_TEST_MOUSE_VSCROLL_AXIS: _QMP_TEST_MOUSE_VSCROLL_AXIS_FALLBACK,
+                        _QMP_TEST_MOUSE_HSCROLL_AXIS: _QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK,
+                    },
+                ),
+            ]
+
+            for label, axis_map in attempts:
+                evs = rewrite(mouse_rel_events, axis_map)
+                try:
+                    mouse_device = send(s, evs, device=mouse_device)
+                    break
+                except Exception as e2:
+                    errors[label] = str(e2)
+            else:
                 raise RuntimeError(
-                    "QMP input-send-event failed while injecting horizontal scroll for "
-                    "--with-input-wheel/--with-virtio-input-wheel or --with-input-events-extended/--with-input-events-extra "
-                    f"(tried axis='{_QMP_TEST_MOUSE_HSCROLL_AXIS}' then axis='{_QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}'). "
-                    "This likely means the running QEMU build does not support horizontal scroll injection; "
-                    "upgrade QEMU or omit those flags. "
-                    f"hscroll_error={e!s}; hwheel_error={e2!s}"
-                ) from e2
+                    "QMP input-send-event failed while injecting scroll for "
+                    "--with-input-wheel/--with-virtio-input-wheel or --with-input-events-extended/--with-input-events-extra. "
+                    "Upgrade QEMU or omit those flags. "
+                    f"errors={errors}"
+                ) from e
         time.sleep(0.05)
         mouse_device = send(s, [mouse_btn_events[0]], device=mouse_device)
         time.sleep(0.05)

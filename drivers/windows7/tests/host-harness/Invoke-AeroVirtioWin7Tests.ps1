@@ -2019,25 +2019,50 @@ function Try-AeroQmpInjectVirtioInputEvents {
         $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEvents
       } catch {
         if (-not $wantWheel) { throw }
-        $errHscroll = ""
-        try { $errHscroll = [string]$_.Exception.Message } catch { }
+        $errWheelHscroll = ""
+        try { $errWheelHscroll = [string]$_.Exception.Message } catch { }
 
-        # Some QEMU builds expose horizontal scroll as `hwheel` instead of `hscroll`.
-        $mouseRelEventsAlt = @()
-        foreach ($ev in $mouseRelEvents) {
-          if ($ev.type -eq "rel" -and $ev.data.axis -eq "hscroll") {
-            $mouseRelEventsAlt += @{ type = "rel"; data = @{ axis = "hwheel"; value = $ev.data.value } }
-          } else {
-            $mouseRelEventsAlt += $ev
+        # Some QEMU builds use alternate axis names for scroll wheels. Try a best-effort matrix of
+        # axis pairs before failing.
+        $errors = @{}
+        $errors["wheel+hscroll"] = $errWheelHscroll
+        $attempts = @(
+          @{ name = "wheel+hwheel"; axisMap = @{ "hscroll" = "hwheel" } },
+          @{ name = "vscroll+hscroll"; axisMap = @{ "wheel" = "vscroll" } },
+          @{ name = "vscroll+hwheel"; axisMap = @{ "wheel" = "vscroll"; "hscroll" = "hwheel" } }
+        )
+
+        $ok = $false
+        foreach ($att in $attempts) {
+          $evs = @()
+          foreach ($ev in $mouseRelEvents) {
+            if ($ev.type -eq "rel" -and $att.axisMap.ContainsKey($ev.data.axis)) {
+              $evs += @{ type = "rel"; data = @{ axis = $att.axisMap[$ev.data.axis]; value = $ev.data.value } }
+            } else {
+              $evs += $ev
+            }
+          }
+
+          try {
+            $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $evs
+            $ok = $true
+            break
+          } catch {
+            $msg = ""
+            try { $msg = [string]$_.Exception.Message } catch { }
+            $errors[$att.name] = $msg
+            continue
           }
         }
 
-        try {
-          $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEventsAlt
-        } catch {
-          $errHwheel = ""
-          try { $errHwheel = [string]$_.Exception.Message } catch { }
-          throw "QMP input-send-event failed while injecting horizontal scroll for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra (tried axis='hscroll' then axis='hwheel'). This likely means the running QEMU build does not support horizontal scroll injection; upgrade QEMU or omit those flags. hscroll_error=$errHscroll; hwheel_error=$errHwheel"
+        if (-not $ok) {
+          $errorsText = ""
+          try {
+            $errorsText = ($errors.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "; "
+          } catch {
+            try { $errorsText = [string]$errors } catch { $errorsText = "<unavailable>" }
+          }
+          throw "QMP input-send-event failed while injecting scroll for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra. Upgrade QEMU or omit those flags. errors=[$errorsText]"
         }
       }
 
