@@ -55,7 +55,7 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--dump] [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]",
         kTestName);
     aerogpu_test::PrintfStdout(
         "Creates a D3D9Ex device, uses IDirect3DDevice9::ProcessVertices to copy/transform vertices into a "
@@ -71,6 +71,16 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
+
+  if (GetSystemMetrics(SM_REMOTESESSION)) {
+    if (allow_remote) {
+      aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
+    }
+    return reporter.Fail("running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
+  }
 
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
