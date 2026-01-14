@@ -3156,6 +3156,440 @@ fn tier1_inline_tlb_cross_page_store_mmio_exits_to_runtime() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_mmio_load_exit_on_prefilled_non_ram_tlb_entry_first_page() {
+    // Ensure a cached non-RAM TLB entry on the first page triggers an MMIO exit without calling
+    // `mmu_translate` for either page.
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let _ = b.load(Width::W64, a0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let tlb_data = (addr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0,
+        &[(addr, tlb_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state
+        .last_mmio
+        .expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 8);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_store_exit_on_prefilled_non_ram_tlb_entry_first_page() {
+    // Ensure a cached non-RAM TLB entry on the first page triggers an MMIO exit without calling
+    // `mmu_translate` for either page.
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, value);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let tlb_data = (addr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let ram = vec![0xccu8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram.clone(),
+        0,
+        &[(addr, tlb_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, ram);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state
+        .last_mmio
+        .expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 8);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value, 0x1122_3344_5566_7788);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_load_on_prefilled_non_ram_tlb_entry_first_page_uses_slow_helper_when_configured(
+) {
+    // Ensure a cached non-RAM TLB entry on the first page falls back to the slow helper (and keeps
+    // executing) when `inline_tlb_mmio_exit=false`, without calling `mmu_translate`.
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let tlb_data = (addr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0,
+        &[(addr, tlb_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_store_on_prefilled_non_ram_tlb_entry_first_page_uses_slow_helper_when_configured(
+) {
+    // Ensure a cached non-RAM TLB entry on the first page falls back to the slow helper (and keeps
+    // executing) when `inline_tlb_mmio_exit=false`, without calling `mmu_translate`.
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, value);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let tlb_data = (addr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC);
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0,
+        &[(addr, tlb_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes()
+    );
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_load_exit_on_prefilled_non_ram_tlb_entry_second_page() {
+    // Ensure a cached non-RAM TLB entry on the second page triggers an MMIO exit without calling
+    // `mmu_translate` for either page.
+    let addr = 0xFF9u64;
+    let page0_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page1_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let _ = b.load(Width::W64, a0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+    let page0_data = (addr & PAGE_BASE_MASK) | page0_flags;
+    let page1_vaddr = addr + 7;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | page1_flags;
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state
+        .last_mmio
+        .expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 8);
+    assert!(!mmio.is_write);
+    assert_eq!(mmio.value, 0);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_store_exit_on_prefilled_non_ram_tlb_entry_second_page() {
+    // Ensure a cached non-RAM TLB entry on the second page triggers an MMIO exit without calling
+    // `mmu_translate` for either page.
+    let addr = 0xFF9u64;
+    let page0_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page1_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, value);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0xabu8; 0x2000];
+    let page0_data = (addr & PAGE_BASE_MASK) | page0_flags;
+    let page1_vaddr = addr + 7;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | page1_flags;
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram.clone(),
+        0x1000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, ram);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    let mmio = host_state
+        .last_mmio
+        .expect("MMIO exit payload should be recorded");
+    assert_eq!(mmio.vaddr, addr);
+    assert_eq!(mmio.size, 8);
+    assert!(mmio.is_write);
+    assert_eq!(mmio.value, 0x1122_3344_5566_7788);
+    assert_eq!(mmio.rip, 0x1000);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_load_on_prefilled_non_ram_tlb_entry_second_page_uses_slow_helper_when_configured(
+) {
+    // Ensure a cached non-RAM TLB entry on the second page falls back to the slow helper (and keeps
+    // executing) when `inline_tlb_mmio_exit=false`, without calling `mmu_translate`.
+    let addr = 0xFF9u64;
+    let page0_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page1_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let page0_data = (addr & PAGE_BASE_MASK) | page0_flags;
+    let page1_vaddr = addr + 7;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | page1_flags;
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_store_on_prefilled_non_ram_tlb_entry_second_page_uses_slow_helper_when_configured(
+) {
+    // Ensure a cached non-RAM TLB entry on the second page falls back to the slow helper (and keeps
+    // executing) when `inline_tlb_mmio_exit=false`, without calling `mmu_translate`.
+    let addr = 0xFF9u64;
+    let page0_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page1_flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, value);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let page0_data = (addr & PAGE_BASE_MASK) | page0_flags;
+    let page1_vaddr = addr + 7;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | page1_flags;
+
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes()
+    );
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_store_mmio_exit_does_not_clobber_unreached_written_gpr() {
     let addr = 0xFF9u64;
 
