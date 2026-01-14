@@ -49,8 +49,8 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
 
-    // Program an initial framebuffer and enable scanout0 (WDDM).
-    let fb0 = 0x1000u64;
+    // Program an initial framebuffer address and enable scanout0 (WDDM).
+    let fb0 = 0x0010_0000u64;
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb0 as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb0 >> 32) as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
@@ -132,24 +132,28 @@ fn reset_clears_torn_fb_gpa_tracking() {
     // stale LO write.
     dev.reset();
 
-    // Enabling scanout should now publish a WDDM scanout-state update once a valid configuration
-    // is programmed.
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 640);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 480);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 640 * 4);
+    // After reset, a valid scanout configuration should be able to claim WDDM scanout. If a reset
+    // occurs mid-`FB_GPA` update (LO written without HI), it must not leave scanout state
+    // publication permanently blocked.
+    const WIDTH: u32 = 64;
+    const HEIGHT: u32 = 64;
+    const PITCH_BYTES: u32 = WIDTH * 4;
+    const FB: u64 = 0x1234_0000;
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
     dev.mmio_write(
         &mut mem,
         mmio::SCANOUT0_FORMAT,
         4,
         AeroGpuFormat::B8G8R8X8Unorm as u32,
     );
-    let fb = 0x2000u64;
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb as u32);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB >> 32) as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
-    assert_eq!(snap.base_paddr(), fb);
+    assert_eq!(snap.base_paddr(), FB);
 }
 
 #[test]
