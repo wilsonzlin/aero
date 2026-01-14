@@ -4,11 +4,17 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use aero_cpu_core::state::gpr;
 use aero_machine::{Machine, MachineConfig};
-use aero_storage::{DiskError, Result as DiskResult, VirtualDisk};
+use aero_storage::{DiskError, MemBackend, RawDisk, Result as DiskResult, VirtualDisk, SECTOR_SIZE};
 
 const DEFAULT_WIN7_ISO_PATH: &str = "/state/win7.iso";
 const ISO_SECTOR_SIZE: u64 = 2048;
+
+// El Torito conventions (match `crates/firmware/src/bios/eltorito.rs`).
+const EL_TORITO_DEFAULT_LOAD_SEGMENT: u16 = 0x07C0;
+const EL_TORITO_DEFAULT_SECTOR_COUNT_512: u16 = 4;
+const EL_TORITO_CD_BOOT_DRIVE: u8 = 0xE0;
 
 #[derive(Debug)]
 struct ReadOnlyFileDisk {
@@ -66,9 +72,9 @@ impl VirtualDisk for ReadOnlyFileDisk {
 struct ElToritoBootInfo {
     /// Boot image LBA in 2048-byte ISO sectors.
     boot_image_lba: u32,
-    /// Number of 512-byte sectors to load (per El Torito initial entry).
+    /// Number of 512-byte sectors to load (after applying El Torito defaulting rules).
     boot_image_sector_count_512: u16,
-    /// Load segment. If 0, the El Torito default is 0x07C0.
+    /// Load segment (after applying El Torito defaulting rules).
     load_segment: u16,
 }
 
@@ -152,7 +158,21 @@ fn parse_el_torito_boot_info(iso_path: &Path) -> std::io::Result<ElToritoBootInf
     }
 
     let load_segment = u16::from_le_bytes([entry[2], entry[3]]);
+    let load_segment = if load_segment == 0 {
+        EL_TORITO_DEFAULT_LOAD_SEGMENT
+    } else {
+        load_segment
+    };
+
     let boot_image_sector_count_512 = u16::from_le_bytes([entry[6], entry[7]]);
+    let boot_image_sector_count_512 = if boot_image_sector_count_512 == 0 {
+        // Per El Torito, the default load size when the catalog field is zero is 4 512-byte
+        // virtual sectors (2048 bytes). Windows install media commonly relies on this default for
+        // `etfsboot.com`.
+        EL_TORITO_DEFAULT_SECTOR_COUNT_512
+    } else {
+        boot_image_sector_count_512
+    };
     let boot_image_lba = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]);
 
     Ok(ElToritoBootInfo {
@@ -182,35 +202,57 @@ fn win7_iso_el_torito_boot_smoke() {
     let boot_info = parse_el_torito_boot_info(&iso_path)
         .unwrap_or_else(|e| panic!("failed to parse El Torito boot catalog: {e}"));
 
-    // Read the first 512 bytes of the El Torito boot image so we can confirm the BIOS loaded the
-    // correct bytes into guest memory.
-    let expected_sector0 = {
+    // Read the boot image bytes so we can confirm the BIOS loaded the correct bytes into guest
+    // memory.
+    let expected_boot_bytes = {
         let mut file = File::open(&iso_path).expect("failed to open ISO for boot image read");
-        let mut buf = [0u8; 512];
+        let want_len = usize::from(boot_info.boot_image_sector_count_512)
+            .saturating_mul(512)
+            // Clamp to a small-ish window so a corrupt catalog cannot cause OOM. Windows install
+            // media uses a small no-emulation boot image (typically 4 sectors / 2048 bytes).
+            .min(64 * 512);
+        let mut buf = vec![0u8; want_len];
         read_exact_at(
             &mut file,
             u64::from(boot_info.boot_image_lba) * ISO_SECTOR_SIZE,
             &mut buf,
         )
-        .expect("failed to read El Torito boot image sector 0");
+        .expect("failed to read El Torito boot image bytes");
         buf
     };
 
     // Canonical Windows 7 storage topology machine (AHCI HDD + IDE CD-ROM).
     let mut m = Machine::new(MachineConfig::win7_storage(64 * 1024 * 1024)).unwrap();
 
-    // Attach a recognizable placeholder HDD (disk_id=0) so BIOS has an HDD fallback and so we can
-    // detect if we accidentally booted from the HDD instead of the CD.
-    let mut hdd_boot = [0u8; 512];
-    hdd_boot[..8].copy_from_slice(b"FAKEHDD!");
-    hdd_boot[510] = 0x55;
-    hdd_boot[511] = 0xAA;
-    m.set_disk_image(hdd_boot.to_vec()).unwrap();
+    // Attach a placeholder HDD backend to the canonical AHCI slot (disk_id=0) so the machine still
+    // has an HDD present even when we boot from CD.
+    //
+    // Note: the BIOS El Torito implementation currently models only the boot drive via its
+    // `BlockDevice` interface, but the presence of an HDD here exercises the machine's canonical
+    // Win7 storage topology wiring.
+    {
+        let capacity = 64 * SECTOR_SIZE as u64;
+        let mut hdd = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut sector0 = [0u8; SECTOR_SIZE];
+        sector0[0..8].copy_from_slice(b"FAKEHDD!");
+        sector0[510] = 0x55;
+        sector0[511] = 0xAA;
+        hdd.write_sectors(0, &sector0).unwrap();
+        m.attach_ahci_disk_port0(Box::new(hdd)).unwrap();
+    }
 
     // Attach the Windows 7 ISO to the canonical IDE secondary master CD-ROM slot.
     let iso_disk = ReadOnlyFileDisk::open(&iso_path).expect("failed to open ISO as a virtual disk");
     m.attach_ide_secondary_master_iso(Box::new(iso_disk))
         .expect("failed to attach ISO to IDE secondary master");
+
+    // Configure the BIOS to boot from CD (El Torito) and expose the ISO bytes to firmware INT 13h
+    // via the machine's canonical shared-disk `BlockDevice` path.
+    m.set_boot_drive(EL_TORITO_CD_BOOT_DRIVE);
+    let iso_boot_disk =
+        ReadOnlyFileDisk::open(&iso_path).expect("failed to open ISO as BIOS boot disk");
+    m.set_disk_backend(Box::new(iso_boot_disk))
+        .expect("failed to attach ISO as BIOS boot disk backend");
 
     // Re-run firmware POST now that the install media is attached.
     //
@@ -222,14 +264,23 @@ fn win7_iso_el_torito_boot_smoke() {
         !m.cpu().halted,
         "CPU is halted immediately after POST (likely BIOS boot failure)"
     );
+    assert!(
+        !m.bios_tty_output()
+            .windows(b"Disk read error".len())
+            .any(|w| w == b"Disk read error"),
+        "BIOS reported a disk read error:\n{}",
+        String::from_utf8_lossy(m.bios_tty_output())
+    );
+    assert!(
+        !m.bios_tty_output()
+            .windows(b"Invalid boot signature".len())
+            .any(|w| w == b"Invalid boot signature"),
+        "BIOS reported an invalid boot signature:\n{}",
+        String::from_utf8_lossy(m.bios_tty_output())
+    );
 
     let entry_paddr = m.cpu().segments.cs.base.wrapping_add(m.cpu().rip());
-    let expected_load_seg = if boot_info.load_segment == 0 {
-        0x07C0u16
-    } else {
-        boot_info.load_segment
-    };
-    let expected_entry_paddr = u64::from(expected_load_seg) * 16;
+    let expected_entry_paddr = u64::from(boot_info.load_segment) * 16;
 
     assert_eq!(
         entry_paddr, expected_entry_paddr,
@@ -237,12 +288,17 @@ fn win7_iso_el_torito_boot_smoke() {
         m.cpu().segments.cs.selector,
         m.cpu().rip()
     );
+    assert_eq!(
+        m.cpu().gpr[gpr::RDX] as u8,
+        EL_TORITO_CD_BOOT_DRIVE,
+        "expected BIOS to pass boot drive in DL"
+    );
 
-    let loaded = m.read_physical_bytes(entry_paddr, 512);
+    let loaded = m.read_physical_bytes(entry_paddr, expected_boot_bytes.len());
     assert_eq!(
         loaded.as_slice(),
-        expected_sector0.as_slice(),
-        "guest memory at boot entrypoint does not match El Torito boot image sector 0; did we boot from the wrong device?"
+        expected_boot_bytes.as_slice(),
+        "guest memory at boot entrypoint does not match El Torito boot image bytes; did we boot from the wrong device?"
     );
 
     // El Torito no-emulation boot images still carry the standard boot signature at offset 0x1FE.
@@ -263,8 +319,4 @@ fn win7_iso_el_torito_boot_smoke() {
         firmware::bios::RESET_VECTOR_PHYS,
         "CPU appears to still be at the BIOS reset vector after executing boot slice"
     );
-
-    // Sanity: sector count from the boot catalog should be non-zero for Win7 media.
-    assert_ne!(boot_info.boot_image_sector_count_512, 0);
 }
-
