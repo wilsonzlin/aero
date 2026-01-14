@@ -242,7 +242,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         //
         // Most emulation smoke/depth tests expect a fullscreen-ish triangle so every pixel is
         // affected. Patchlist-only emulation uses a centered triangle so tests can assert that
-        // corner pixels remain untouched.
+        // corner pixels remain untouched. Some GS-prepass smoke tests also use the centered mode.
         if (params.counts.z != 0u) {
             // Clockwise centered triangle (matches default `FrontFace::Cw` + back-face culling).
             out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
@@ -361,10 +361,20 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     if (primitive_count == 1u) {
-        // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-        out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
-        out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
-        out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+        // Emit a single triangle (mirrors `GEOMETRY_PREPASS_CS_WGSL`).
+        //
+        // In centered mode, keep the triangle away from corners so tests can assert that some
+        // pixels remain untouched.
+        if (params.counts.z != 0u) {
+            out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
+            out_vertices[1].pos = vec4<f32>(0.0, 0.5, z, 1.0);
+            out_vertices[2].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+        } else {
+            // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
+            out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
+            out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
+            out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+        }
 
         out_vertices[0].o1 = c;
         out_vertices[1].o1 = c;
@@ -3345,6 +3355,8 @@ impl AerogpuD3d11Executor {
         ) && self.state.gs.is_none()
             && self.state.hs.is_none()
             && self.state.ds.is_none();
+        let centered_placeholder_triangle = patchlist_only_emulation
+            || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
         let expanded_vertex_count = u64::from(primitive_count)
             .checked_mul(3)
             .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
@@ -3382,10 +3394,11 @@ impl AerogpuD3d11Executor {
         // Counts (`vec4<u32>`) for compute-based GS emulation:
         // - x: primitive_count (dispatch.x)
         // - y: instance_count (for indirect draw args)
-        // - z: placeholder mode (0 = fullscreen-ish triangle, 1 = centered triangle for patchlists)
+        // - z: placeholder mode (0 = fullscreen-ish triangle, 1 = centered triangle)
         params_bytes[16..20].copy_from_slice(&primitive_count.to_le_bytes());
         params_bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
-        params_bytes[24..28].copy_from_slice(&u32::from(patchlist_only_emulation).to_le_bytes());
+        params_bytes[24..28]
+            .copy_from_slice(&u32::from(centered_placeholder_triangle).to_le_bytes());
         let params_alloc = self
             .expansion_scratch
             .alloc_metadata(
