@@ -462,7 +462,7 @@ fn aerogpu_only_spec_packages_without_virtio_drivers() -> anyhow::Result<()> {
     for arch in ["x86", "amd64"] {
         write_stub_pci_driver(
             &drivers_dir.join(arch).join("aerogpu"),
-            "aerogpu",
+            "aerogpu_dx11",
             "aerogpu",
             // Must match the canonical device contract (`AERO_GPU_HWIDS`).
             r"PCI\VEN_A3A0&DEV_0001",
@@ -488,12 +488,12 @@ fn aerogpu_only_spec_packages_without_virtio_drivers() -> anyhow::Result<()> {
     let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
 
     for required in [
-        "drivers/x86/aerogpu/aerogpu.inf",
-        "drivers/x86/aerogpu/aerogpu.sys",
-        "drivers/x86/aerogpu/aerogpu.cat",
-        "drivers/amd64/aerogpu/aerogpu.inf",
-        "drivers/amd64/aerogpu/aerogpu.sys",
-        "drivers/amd64/aerogpu/aerogpu.cat",
+        "drivers/x86/aerogpu/aerogpu_dx11.inf",
+        "drivers/x86/aerogpu/aerogpu_dx11.sys",
+        "drivers/x86/aerogpu/aerogpu_dx11.cat",
+        "drivers/amd64/aerogpu/aerogpu_dx11.inf",
+        "drivers/amd64/aerogpu/aerogpu_dx11.sys",
+        "drivers/amd64/aerogpu/aerogpu_dx11.cat",
     ] {
         assert!(
             tree.contains(required),

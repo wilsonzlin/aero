@@ -5,6 +5,10 @@
     {
       "name": "aerogpu",
       "required": true,
+      "expected_inf_files": [
+        "aerogpu_dx11.inf"
+      ],
+      "expected_add_services_from_devices_cmd_var": "AERO_GPU_SERVICE",
       "expected_hardware_ids_from_devices_cmd_var": "AERO_GPU_HWIDS"
     }
   ]
