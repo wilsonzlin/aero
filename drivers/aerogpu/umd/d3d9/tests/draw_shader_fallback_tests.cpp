@@ -822,9 +822,9 @@ bool TestFixedfuncFogRhwColorSelectsFogPs() {
   // c1 (fog color) as encoded by D3D9 shader bytecode.
   constexpr uint32_t kPsSrcConst1 = 0x20E40001u;
 
-  // Pick an FVF without TEX1: RHW_COLOR. This variant does not have a dedicated fog VS
-  // variant, but the base passthrough VS still writes TEXCOORD0 from position, so the
-  // fog PS can safely read TEXCOORD0.z.
+  // Pick an FVF without TEX1: RHW_COLOR. Fixed-function fog uses TEXCOORD0.z, so the
+  // driver must select the dedicated RHW fog VS variant to pack post-projection
+  // depth (clip_z / clip_w) into that channel.
   HRESULT hr = ctx.device_funcs.pfnSetFVF(ctx.hDevice, kFvfXyzrhwDiffuse);
   if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
     return false;
