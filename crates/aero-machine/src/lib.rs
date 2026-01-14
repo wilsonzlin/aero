@@ -4350,7 +4350,7 @@ impl Machine {
     // browser/WASM integrations can share a single guest-visible USB topology contract regardless
     // of whether the UHCI topology is managed by JS or auto-attached by `aero_machine::Machine`.
 
-    /// UHCI root port index reserved for the external hub (synthetic HID + WebUSB passthrough).
+    /// UHCI root port index reserved for the external hub (synthetic HID + WebHID passthrough).
     pub const UHCI_EXTERNAL_HUB_ROOT_PORT: u8 = 0;
     /// UHCI root port index reserved for the guest-visible WebUSB passthrough device.
     pub const UHCI_WEBUSB_ROOT_PORT: u8 = 1;

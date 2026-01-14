@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { UsbHostAction as ProxyUsbHostAction, UsbHostCompletion as ProxyUsbHostCompletion } from "./usb_proxy_protocol";
+import { WEBUSB_GUEST_ROOT_PORT } from "./uhci_external_hub";
 import type { UsbHostCompletion as BackendUsbHostCompletion } from "./webusb_backend";
 
 const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -225,7 +226,7 @@ describe("usb/UsbBroker", () => {
     portA.posted.length = 0;
     portB.posted.length = 0;
 
-    const snapshot = { available: true, attached: true, blocked: false, rootPort: 0, lastError: null };
+    const snapshot = { available: true, attached: true, blocked: false, rootPort: WEBUSB_GUEST_ROOT_PORT, lastError: null };
     portA.emit({ type: "usb.guest.status", snapshot });
 
     expect(portA.posted).toContainEqual({ type: "usb.guest.status", snapshot });
