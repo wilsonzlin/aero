@@ -2966,16 +2966,38 @@ impl XhciController {
                 .endpoint_state(ep_addr)
                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
-            exec.poll_endpoint(mem, ep_addr);
+             exec.poll_endpoint(mem, ep_addr);
 
-            let after = exec
-                .endpoint_state(ep_addr)
-                .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
+             let after = exec
+                 .endpoint_state(ep_addr)
+                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
-            // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
-            // Pointer field so guests that inspect the Device Context observe progress.
-            let trbs_consumed = if before != after { 1 } else { 0 };
-            if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) =
+            // If the endpoint stalled or faulted, the transfer executor marks it as halted, but the
+            // architectural Endpoint Context state field is controller-owned. Mirror the halted
+            // state into the guest-visible endpoint context so:
+            // - guests can observe the Halted state (and know they must Reset Endpoint), and
+            // - snapshot/restore does not lose the halted flag (transfer executors are rebuilt on
+            //   demand).
+            let exec_halted = exec.endpoint_state(ep_addr).is_some_and(|st| st.halted);
+            if exec_halted {
+                // Avoid clobbering Stopped/other states; only transition Running->Halted.
+                if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id)
+                {
+                    if matches!(state, context::EndpointState::Running) {
+                        self.write_endpoint_state_to_context(
+                            mem,
+                            slot_id,
+                            endpoint_id,
+                            context::EndpointState::Halted,
+                        );
+                    }
+                }
+            }
+
+             // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
+             // Pointer field so guests that inspect the Device Context observe progress.
+             let trbs_consumed = if before != after { 1 } else { 0 };
+             if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) =
                 (before, after)
             {
                 if before_ptr != after_ptr || before_cycle != after_cycle {
@@ -3649,6 +3671,51 @@ impl XhciController {
         };
         mem.write_u32(lo_addr, tr_dequeue_raw as u32);
         mem.write_u32(hi_addr, (tr_dequeue_raw >> 32) as u32);
+    }
+
+    fn write_endpoint_state_to_context(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+        state: context::EndpointState,
+    ) {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return;
+        }
+        if self.dcbaap == 0 {
+            return;
+        }
+
+        let dcbaa = context::Dcbaa::new(self.dcbaap);
+        let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
+            return;
+        };
+        let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
+        if dev_ctx_ptr == 0 {
+            return;
+        }
+
+        let ctx_base = match dev_ctx_ptr
+            .checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64))
+        {
+            Some(v) => v,
+            None => return,
+        };
+
+        let mut ep_ctx = EndpointContext::read_from(mem, ctx_base);
+        ep_ctx.set_endpoint_state(state.raw());
+        ep_ctx.write_to(mem, ctx_base);
+
+        // Keep controller-local shadow context in sync so snapshot/restore preserves the halted
+        // state even if the guest doesn't re-run Configure Endpoint.
+        let slot_idx = usize::from(slot_id);
+        if slot_id != 0 {
+            if let Some(slot) = self.slots.get_mut(slot_idx) {
+                slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+                slot.device_context_ptr = dev_ctx_ptr;
+            }
+        }
     }
 
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
