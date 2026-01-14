@@ -2384,6 +2384,37 @@ fn vhd_differencing_open_auto_is_rejected_with_hint() {
 }
 
 #[test]
+fn vhd_open_with_parent_rejects_non_differencing_disk() {
+    let virtual_size = 64 * 1024u64;
+    let block_size = 16 * 1024u32;
+    let backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let parent = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
+    let err = VhdDisk::open_with_parent(backend, Box::new(parent))
+        .err()
+        .expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::InvalidConfig("vhd open_with_parent/open_differencing requires disk_type=4")
+    ));
+}
+
+#[test]
+fn vhd_open_with_parent_rejects_parent_capacity_mismatch() {
+    let virtual_size = 64 * 1024u64;
+    let backend = make_vhd_differencing_empty(virtual_size, 16 * 1024);
+
+    let parent = RawDisk::create(MemBackend::new(), virtual_size - SECTOR_SIZE as u64).unwrap();
+    let err = VhdDisk::open_with_parent(backend, Box::new(parent))
+        .err()
+        .expect("expected error");
+    assert!(matches!(
+        err,
+        DiskError::InvalidConfig("vhd parent capacity does not match differencing disk size")
+    ));
+}
+
+#[test]
 fn vhd_differencing_rejects_bat_entry_pointing_into_metadata() {
     let virtual_size = 64 * 1024u64;
     let block_size = 16 * 1024u32;
