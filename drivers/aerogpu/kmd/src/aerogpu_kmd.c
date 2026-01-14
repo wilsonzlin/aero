@@ -4376,7 +4376,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
      * AEROGPU_WDDM_ALLOC_ID_KMD_MIN.
      */
     adapter->NextKmdAllocId = (LONG)AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
-    adapter->NextShareToken = 0;
+    InterlockedExchange64(&adapter->NextShareToken, 0);
 
     *MiniportDeviceContext = adapter;
     AEROGPU_LOG0("AddDevice");

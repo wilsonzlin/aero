@@ -41,7 +41,7 @@ SRC_DIR = ROOT / "drivers" / "aerogpu" / "kmd" / "src"
 HDR = ROOT / "drivers" / "aerogpu" / "kmd" / "include" / "aerogpu_kmd.h"
 
 
-ATOMIC_U64_FIELDS = {
+ATOMIC_64BIT_FIELDS = {
     # Fence tracking.
     "LastSubmittedFence",
     "LastCompletedFence",
@@ -54,6 +54,8 @@ ATOMIC_U64_FIELDS = {
     "LastVblankSeq",
     "LastVblankTimeNs",
     "LastVblankInterruptTime100ns",
+    # Atomic share-token generator (used with Interlocked*64).
+    "NextShareToken",
 }
 
 TYPE_KEYWORDS = {
@@ -466,11 +468,15 @@ def _check_header_invariants() -> list[str]:
 
     text = HDR.read_text(encoding="utf-8", errors="replace")
 
-    for field in sorted(ATOMIC_U64_FIELDS):
-        decl_re = re.compile(rf"DECLSPEC_ALIGN\s*\(\s*8\s*\)[^;]*\bULONGLONG\b[^;]*\b{re.escape(field)}\b\s*;",
-                             re.MULTILINE)
+    for field in sorted(ATOMIC_64BIT_FIELDS):
+        decl_re = re.compile(
+            rf"DECLSPEC_ALIGN\s*\(\s*8\s*\)[^;]*\b(?:U?LONGLONG)\b[^;]*\b{re.escape(field)}\b\s*;",
+            re.MULTILINE,
+        )
         if not decl_re.search(text):
-            errors.append(f"{field}: missing `DECLSPEC_ALIGN(8) (volatile) ULONGLONG {field};` declaration in aerogpu_kmd.h")
+            errors.append(
+                f"{field}: missing `DECLSPEC_ALIGN(8) volatile (U)LONGLONG {field};` declaration in aerogpu_kmd.h"
+            )
 
         field_offset_re = rf"FIELD_OFFSET\s*\(\s*AEROGPU_ADAPTER\s*,\s*{re.escape(field)}\s*\)"
         c_assert_re = re.compile(rf"C_ASSERT\s*\(\s*[^;]*{field_offset_re}[^;]*\)\s*;", re.MULTILINE)
@@ -530,7 +536,7 @@ def main() -> int:
                 if paren_stack:
                     paren_stack.pop()
 
-            if tok.kind == "ident" and tok.value in ATOMIC_U64_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
+            if tok.kind == "ident" and tok.value in ATOMIC_64BIT_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
                 # Find the start of the object expression in `<obj>-><field>`.
                 obj_end_idx = i - 2
                 obj_start_idx = _member_expr_start(tokens, obj_end_idx)
