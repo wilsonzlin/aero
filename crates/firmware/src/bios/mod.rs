@@ -585,6 +585,16 @@ impl Bios {
         &self.config
     }
 
+    /// Return the BIOS-cached "current video mode" value used by INT 10h AH=0F ("Get Current Video
+    /// Mode") and BIOS snapshots.
+    ///
+    /// The authoritative guest-visible source of truth is the BIOS Data Area (BDA) at `0x0449`, but
+    /// this cached value exists so snapshot/restore and host-side introspection can reason about
+    /// the active legacy VGA mode without requiring a memory bus.
+    pub fn cached_video_mode(&self) -> u8 {
+        self.video_mode
+    }
+
     /// Returns `true` if the most recent boot path was an El Torito CD-ROM boot.
     ///
     /// This is intended for host-level integrations that want to report which device firmware

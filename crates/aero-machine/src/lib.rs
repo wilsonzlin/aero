@@ -4050,6 +4050,8 @@ pub struct Machine {
 pub enum ScanoutSource {
     /// Legacy VGA text mode.
     LegacyText,
+    /// Legacy VGA graphics mode (currently mode 13h).
+    LegacyVga,
     /// Legacy VBE linear framebuffer (VGA/VBE path).
     LegacyVbe,
     /// AeroGPU WDDM scanout (BAR0-programmed scanout registers).
@@ -5081,6 +5083,8 @@ impl Machine {
             // in the BIOS HLE layer.
             if self.bios.video.vbe.current_mode.is_some() {
                 ScanoutSource::LegacyVbe
+            } else if self.bios.cached_video_mode() == 0x13 {
+                ScanoutSource::LegacyVga
             } else {
                 ScanoutSource::LegacyText
             }
@@ -5127,6 +5131,9 @@ impl Machine {
                 return;
             }
             if self.display_present_aerogpu_vbe_lfb() {
+                return;
+            }
+            if self.display_present_aerogpu_mode13h() {
                 return;
             }
             self.display_present_aerogpu_text_mode();
@@ -5326,6 +5333,67 @@ impl Machine {
             }
             _ => false,
         }
+    }
+
+    fn display_present_aerogpu_mode13h(&mut self) -> bool {
+        // VGA mode 13h (320x200x256) is exposed via the HLE BIOS (INT 10h AH=00h, AL=0x13).
+        //
+        // When AeroGPU is enabled and the standalone VGA device is disabled, we still want to
+        // present this legacy graphics mode for bootloaders / DOS-style guests that use it.
+        if self.bios.video.vbe.current_mode.is_some() {
+            return false;
+        }
+
+        // Many BIOSes treat bit 7 as a "no clear" flag, so mask it off when checking the mode.
+        if (self.bios.cached_video_mode() & 0x7F) != 0x13 {
+            return false;
+        }
+
+        let Some(aerogpu) = self.aerogpu.clone() else {
+            return false;
+        };
+
+        const WIDTH: usize = 320;
+        const HEIGHT: usize = 200;
+        const FB_BYTES: usize = WIDTH * HEIGHT;
+
+        let (pal, pel_mask) = {
+            let dev = aerogpu.borrow();
+            (dev.dac_palette, dev.pel_mask)
+        };
+
+        let scale_6bit_to_8bit = |c: u8| -> u8 { (c << 2) | (c >> 4) };
+
+        // Precompute a lookup table for each possible 8-bit pixel value (after applying PEL mask).
+        let mut lut = [0u32; 256];
+        for (idx, out) in lut.iter_mut().enumerate() {
+            let pal_idx = (idx as u8 & pel_mask) as usize;
+            let [r6, g6, b6] = pal[pal_idx];
+            let b = scale_6bit_to_8bit(b6);
+            let g = scale_6bit_to_8bit(g6);
+            let r = scale_6bit_to_8bit(r6);
+            *out = 0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+        }
+
+        self.display_width = WIDTH as u32;
+        self.display_height = HEIGHT as u32;
+        self.display_fb.resize(WIDTH * HEIGHT, 0);
+
+        // VGA mode 13h uses a simple linear 64KiB window at A0000. Under AeroGPU this is aliased
+        // into the start of BAR1-backed VRAM (see `AeroGpuDevice::legacy_vga_read_u8`).
+        let dev = aerogpu.borrow();
+        if dev.vram.len() < FB_BYTES {
+            return false;
+        }
+        for (dst, src) in self
+            .display_fb
+            .iter_mut()
+            .zip(dev.vram[..FB_BYTES].iter())
+        {
+            *dst = lut[*src as usize];
+        }
+
+        true
     }
 
     fn display_present_aerogpu_scanout(&mut self) -> bool {
