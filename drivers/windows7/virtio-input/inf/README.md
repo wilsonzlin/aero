@@ -28,7 +28,8 @@ Optional legacy filename alias / generic fallback:
 - The alias INF is allowed to differ in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide an opt-in
   revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not expose the Aero
   contract subsystem IDs (e.g. stock QEMU). Outside of the models sections it is expected to stay in sync with
-  `aero_virtio_input.inf` (CI enforces this via `..\scripts\check-inf-alias.py`).
+  `aero_virtio_input.inf` (CI enforces this via `scripts/ci/check-windows7-virtio-contract-consistency.py`; local helper:
+  `..\scripts\check-inf-alias.py`).
 
 ## Notes
 
