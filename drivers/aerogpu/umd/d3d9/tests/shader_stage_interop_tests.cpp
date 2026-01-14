@@ -667,8 +667,8 @@ bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
     return false;
   }
 
-  // ensure_draw_pipeline_locked is invoked before any UP uploads, so the draw must
-  // fail without emitting any draw packets.
+  // The draw-time shader binding helper (bind_draw_shaders_locked) runs before any
+  // UP uploads, so the draw must fail without emitting any draw packets.
   if (!Check(dev->cmd.size() == baseline_size, "no additional commands emitted")) {
     return false;
   }
