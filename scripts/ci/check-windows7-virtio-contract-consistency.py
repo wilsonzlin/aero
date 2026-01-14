@@ -315,15 +315,9 @@ def parse_inf_addservice_entries(path: Path) -> list[LocatedString]:
     text = read_text(path)
     out: list[LocatedString] = []
     for line_no, raw in enumerate(text.splitlines(), start=1):
-        stripped = raw.strip()
-        if not stripped:
+        active = _strip_inf_inline_comment(raw).strip()
+        if not active:
             continue
-        if stripped.startswith(";"):
-            continue
-
-        active = raw
-        if ";" in active:
-            active = active.split(";", 1)[0]
 
         m = re.match(r'^\s*AddService\s*=\s*"?([^",\s]+)"?\s*(?:,|$)', active, flags=re.I)
         if not m:
@@ -519,16 +513,9 @@ def parse_inf_hardware_ids(path: Path) -> set[str]:
     text = read_text(path)
     out: set[str] = set()
     for raw in text.splitlines():
-        line = raw.strip()
+        line = _strip_inf_inline_comment(raw).strip()
         if not line:
             continue
-        if line.startswith(";"):
-            continue
-        # Strip inline comments.
-        if ";" in line:
-            line = line.split(";", 1)[0].rstrip()
-            if not line:
-                continue
         parts = [p.strip() for p in line.split(",")]
         if not parts:
             continue
@@ -565,15 +552,9 @@ def parse_inf_model_entries(path: Path) -> list[InfModelEntry]:
     entries: list[InfModelEntry] = []
     current_section: str | None = None
     for raw in text.splitlines():
-        line = raw.strip()
+        line = _strip_inf_inline_comment(raw).strip()
         if not line:
             continue
-        if line.startswith(";"):
-            continue
-        if ";" in line:
-            line = line.split(";", 1)[0].rstrip()
-            if not line:
-                continue
         m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
         if m:
             current_section = m.group("section").strip()
@@ -618,15 +599,9 @@ def parse_inf_string_keys(path: Path) -> set[str]:
     keys: set[str] = set()
     current_section: str | None = None
     for raw in text.splitlines():
-        line = raw.strip()
+        line = _strip_inf_inline_comment(raw).strip()
         if not line:
             continue
-        if line.startswith(";"):
-            continue
-        if ";" in line:
-            line = line.split(";", 1)[0].rstrip()
-            if not line:
-                continue
         m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
         if m:
             current_section = m.group("section").strip()
@@ -655,15 +630,9 @@ def parse_inf_strings_map(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     current_section: str | None = None
     for raw in text.splitlines():
-        line = raw.strip()
+        line = _strip_inf_inline_comment(raw).strip()
         if not line:
             continue
-        if line.startswith(";"):
-            continue
-        if ";" in line:
-            line = line.split(";", 1)[0].rstrip()
-            if not line:
-                continue
         m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
         if m:
             current_section = m.group("section").strip()
