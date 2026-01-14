@@ -21,9 +21,12 @@ This document describes the chosen HS/DS emulation approach so future contributo
 > - The D3D11 executor already routes draws through a compute prepass when GS/HS/DS emulation is
 >   required (see `gs_hs_ds_emulation_required()` in
 >   `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-> - Patchlist topology and/or HS/DS bindings currently run the built-in **synthetic expansion**
+> - Patchlist topology **without HS/DS bound** currently runs the built-in **synthetic expansion**
 >   compute prepass that expands a deterministic triangle (to validate render-pass splitting +
 >   indirect draw plumbing), not real tessellation semantics.
+> - Patchlist topology **with HS+DS bound** routes through an initial tessellation prepass pipeline
+>   (VS-as-compute vertex pulling + HS passthrough + tessellator layout + DS passthrough). Guest
+>   HS/DS DXBC is not executed yet (tess factors are currently fixed in the passthrough HS).
 > - The in-progress tessellation runtime lives under
 >   `crates/aero-d3d11/src/runtime/tessellation/` and contains real building blocks (layout pass,
 >   tri-domain integer index generation, DS evaluation templates, sizing/guardrails), but is not yet
@@ -55,8 +58,10 @@ compute-expansion path for **all** “missing WebGPU stages / topologies” case
 - adjacency topologies, **or**
 - patchlists.
 
-Patchlists and HS/DS bindings additionally set `tessellation_placeholder = true` inside
-`exec_draw_with_compute_prepass`, which selects the synthetic-triangle expansion compute shader.
+Patchlist topology triggers the compute-prepass path even before full tessellation is implemented:
+
+- Patchlist draws without HS/DS use the synthetic expansion prepass (bring-up coverage).
+- Patchlist draws with HS+DS bound use the tessellation prepass pipeline (VS/HS/layout/DS passes).
 
 ---
 
@@ -458,9 +463,10 @@ Tessellation emulation has two orthogonal correctness surfaces:
 ### Executor tests (command-stream integration)
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_smoke.rs`: patchlist+HS/DS routes through the
-  compute prepass (currently synthetic expansion).
+  tessellation compute prepass.
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`: despite the
-  name, this currently documents that HS/DS-bound draws run the synthetic expansion prepass.
+  name, this currently documents early tessellation prepass error policy (e.g. missing input
+  layouts) without panicking.
 - `crates/aero-d3d11/tests/aerogpu_cmd_stage_ex_bindings_hs_ds.rs`: validates `stage_ex` routing for
   HS/DS resource binding packets.
 

@@ -392,7 +392,7 @@ Representative test pointers:
 - Compute translation/execution: [`crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs`](../../crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs), [`crates/aero-d3d11/tests/shader_translate_compute.rs`](../../crates/aero-d3d11/tests/shader_translate_compute.rs)
 - GS compute-prepass plumbing (synthetic expansion bring-up): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_primitive_id.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_primitive_id.rs)
 - GS translator unit tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
-- GS prepass execution tests (point-list, translated SM4 subset): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
+- GS prepass execution tests (point-list, translated SM4 subset): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
 - Guest-side Win7 tests live under [`drivers/aerogpu/tests/win7/`](../../drivers/aerogpu/tests/win7/) (see e.g. `d3d10_*`, `d3d11_*`)
 
 Known gaps / limitations (enforced by code/tests):
@@ -429,9 +429,12 @@ Known gaps / limitations (enforced by code/tests):
   - GS instancing (`dcl_gsinstancecount` / `[instance(n)]`, `SV_GSInstanceID`) is supported:
     - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
   - No stream-out (SO / transform feedback)
-- Tessellation (Hull/Domain) execution is not implemented. Patchlist topologies (and HS/DS-bound draws)
-  are routed through the compute-prepass path using the built-in synthetic expansion shader, but do
-  not execute guest HS/DS bytecode (no real tessellation).
+- Tessellation (Hull/Domain) emulation is bring-up only:
+  - Patchlist draws with both HS+DS bound are routed through a multi-pass compute prepass
+    (VS-as-compute vertex pulling + HS passthrough + layout pass + DS passthrough) that expands into
+    an indexed triangle list for rendering.
+  - Guest HS/DS DXBC is not executed yet; HS/DS handles are accepted for state/binding only.
+  - Patchlist topology without HS/DS still routes through the synthetic expansion prepass.
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs)
 - SM5 compute/UAV bring-up is partially supported, but still has important limitations:
