@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import pathlib
+import re
 import sys
 
 
@@ -32,6 +33,7 @@ def repo_root() -> pathlib.Path:
 
 ROOT = repo_root()
 SRC_DIR = ROOT / "drivers" / "aerogpu" / "kmd" / "src"
+HDR = ROOT / "drivers" / "aerogpu" / "kmd" / "include" / "aerogpu_kmd.h"
 
 
 FENCE_FIELDS = {
@@ -443,10 +445,43 @@ def _is_allowed_call(name: str | None) -> bool:
     return False
 
 
+def _check_header_invariants() -> list[str]:
+    errors: list[str] = []
+    if not HDR.exists():
+        errors.append(f"expected KMD header to exist: {HDR}")
+        return errors
+
+    text = HDR.read_text(encoding="utf-8", errors="replace")
+
+    for field in sorted(FENCE_FIELDS):
+        decl_re = re.compile(
+            rf"DECLSPEC_ALIGN\s*\(\s*8\s*\)\s*(?:volatile\s+)?ULONGLONG\s+{re.escape(field)}\s*;",
+            re.MULTILINE,
+        )
+        if not decl_re.search(text):
+            errors.append(f"{field}: missing `DECLSPEC_ALIGN(8) (volatile) ULONGLONG {field};` declaration in aerogpu_kmd.h")
+
+        c_assert_re = re.compile(
+            rf"C_ASSERT\s*\(\s*\(\s*FIELD_OFFSET\s*\(\s*AEROGPU_ADAPTER\s*,\s*{re.escape(field)}\s*\)\s*&\s*7u\s*\)\s*==\s*0\s*\)\s*;",
+            re.MULTILINE,
+        )
+        if not c_assert_re.search(text):
+            errors.append(f"{field}: missing FIELD_OFFSET 8-byte alignment C_ASSERT in aerogpu_kmd.h")
+
+    return errors
+
+
 def main() -> int:
     if not SRC_DIR.exists():
         print(f"OK: {SRC_DIR} not present; skipping.")
         return 0
+
+    header_errors = _check_header_invariants()
+    if header_errors:
+        print("ERROR: AeroGPU KMD header fence atomicity invariants failed:\n")
+        for err in header_errors:
+            print(f"- {err}")
+        return 1
 
     sources = sorted(SRC_DIR.rglob("*.c")) + sorted(SRC_DIR.rglob("*.cpp"))
     if not sources:
