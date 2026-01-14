@@ -43,6 +43,8 @@ class PowerShellCoreFailMarkerDetailsTests(unittest.TestCase):
             "devices=([^|\\r\\n]+)",
             "keyboard_devices=([^|\\r\\n]+)",
             "mouse_devices=([^|\\r\\n]+)",
+            "ambiguous_devices=([^|\\r\\n]+)",
+            "keyboard_collections=([^|\\r\\n]+)",
             "irq_mode=([^|\\r\\n]+)",
             "irq_message_count=([^|\\r\\n]+)",
         ):
@@ -65,4 +67,3 @@ class PowerShellCoreFailMarkerDetailsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

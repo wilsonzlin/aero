@@ -8028,8 +8028,13 @@ try {
       $keyboardDevices = ""
       $consumerDevices = ""
       $mouseDevices = ""
+      $ambiguousDevices = ""
       $unknownDevices = ""
+      $keyboardCollections = ""
+      $consumerCollections = ""
+      $mouseCollections = ""
       $tabletDevices = ""
+      $tabletCollections = ""
       $irqMode = ""
       $irqMessageCount = ""
       $irqReason = ""
@@ -8043,8 +8048,13 @@ try {
         if ($line -match "(?:^|\|)keyboard_devices=([^|\r\n]+)") { $keyboardDevices = $Matches[1] }
         if ($line -match "(?:^|\|)consumer_devices=([^|\r\n]+)") { $consumerDevices = $Matches[1] }
         if ($line -match "(?:^|\|)mouse_devices=([^|\r\n]+)") { $mouseDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)ambiguous_devices=([^|\r\n]+)") { $ambiguousDevices = $Matches[1] }
         if ($line -match "(?:^|\|)unknown_devices=([^|\r\n]+)") { $unknownDevices = $Matches[1] }
         if ($line -match "(?:^|\|)tablet_devices=([^|\r\n]+)") { $tabletDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)keyboard_collections=([^|\r\n]+)") { $keyboardCollections = $Matches[1] }
+        if ($line -match "(?:^|\|)consumer_collections=([^|\r\n]+)") { $consumerCollections = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_collections=([^|\r\n]+)") { $mouseCollections = $Matches[1] }
+        if ($line -match "(?:^|\|)tablet_collections=([^|\r\n]+)") { $tabletCollections = $Matches[1] }
         if ($line -match "(?:^|\|)irq_mode=([^|\r\n]+)") { $irqMode = $Matches[1] }
         if ($line -match "(?:^|\|)irq_message_count=([^|\r\n]+)") { $irqMessageCount = $Matches[1] }
         if ($line -match "(?:^|\|)irq_reason=([^|\r\n]+)") { $irqReason = $Matches[1] }
@@ -8055,8 +8065,13 @@ try {
       if (-not [string]::IsNullOrEmpty($keyboardDevices)) { $detailsParts += "keyboard_devices=$keyboardDevices" }
       if (-not [string]::IsNullOrEmpty($consumerDevices)) { $detailsParts += "consumer_devices=$consumerDevices" }
       if (-not [string]::IsNullOrEmpty($mouseDevices)) { $detailsParts += "mouse_devices=$mouseDevices" }
+      if (-not [string]::IsNullOrEmpty($ambiguousDevices)) { $detailsParts += "ambiguous_devices=$ambiguousDevices" }
       if (-not [string]::IsNullOrEmpty($unknownDevices)) { $detailsParts += "unknown_devices=$unknownDevices" }
       if (-not [string]::IsNullOrEmpty($tabletDevices)) { $detailsParts += "tablet_devices=$tabletDevices" }
+      if (-not [string]::IsNullOrEmpty($keyboardCollections)) { $detailsParts += "keyboard_collections=$keyboardCollections" }
+      if (-not [string]::IsNullOrEmpty($consumerCollections)) { $detailsParts += "consumer_collections=$consumerCollections" }
+      if (-not [string]::IsNullOrEmpty($mouseCollections)) { $detailsParts += "mouse_collections=$mouseCollections" }
+      if (-not [string]::IsNullOrEmpty($tabletCollections)) { $detailsParts += "tablet_collections=$tabletCollections" }
       if (-not [string]::IsNullOrEmpty($irqMode)) { $detailsParts += "irq_mode=$irqMode" }
       if (-not [string]::IsNullOrEmpty($irqMessageCount)) { $detailsParts += "irq_message_count=$irqMessageCount" }
       if (-not [string]::IsNullOrEmpty($irqReason)) { $detailsParts += "irq_reason=$irqReason" }
