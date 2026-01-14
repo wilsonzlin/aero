@@ -1,8 +1,11 @@
 use std::io;
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 #[cfg(target_arch = "wasm32")]
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+};
 
 use aero_devices_storage::atapi::AtapiCdrom;
 use aero_devices_storage::atapi::IsoBackend;
@@ -27,6 +30,21 @@ pub struct SharedIsoDisk {
     inner: Rc<RefCell<SharedIsoDiskBackend>>,
     #[cfg(not(target_arch = "wasm32"))]
     inner: Arc<Mutex<SharedIsoDiskBackend>>,
+    capacity_bytes: u64,
+    sector_count: u32,
+}
+
+/// Weak reference to a [`SharedIsoDisk`] backend.
+///
+/// This is used by the canonical [`crate::Machine`] to avoid keeping the underlying ISO handle
+/// alive after a guest-initiated eject: the ATAPI CD-ROM device holds the strong reference while
+/// media is inserted, and the machine keeps only a weak reference for BIOS INT13 access.
+#[derive(Clone)]
+pub(crate) struct SharedIsoDiskWeak {
+    #[cfg(target_arch = "wasm32")]
+    inner: Weak<RefCell<SharedIsoDiskBackend>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    inner: Weak<Mutex<SharedIsoDiskBackend>>,
     capacity_bytes: u64,
     sector_count: u32,
 }
@@ -61,6 +79,19 @@ impl SharedIsoDisk {
         })
     }
 
+    pub(crate) fn downgrade(&self) -> SharedIsoDiskWeak {
+        #[cfg(target_arch = "wasm32")]
+        let inner = Rc::downgrade(&self.inner);
+        #[cfg(not(target_arch = "wasm32"))]
+        let inner = Arc::downgrade(&self.inner);
+
+        SharedIsoDiskWeak {
+            inner,
+            capacity_bytes: self.capacity_bytes,
+            sector_count: self.sector_count,
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn inner_mut(&self) -> std::cell::RefMut<'_, SharedIsoDiskBackend> {
         self.inner
@@ -73,6 +104,17 @@ impl SharedIsoDisk {
         self.inner
             .lock()
             .expect("shared ISO disk mutex should not be poisoned")
+    }
+}
+
+impl SharedIsoDiskWeak {
+    pub(crate) fn upgrade(&self) -> Option<SharedIsoDisk> {
+        let inner = self.inner.upgrade()?;
+        Some(SharedIsoDisk {
+            inner,
+            capacity_bytes: self.capacity_bytes,
+            sector_count: self.sector_count,
+        })
     }
 }
 
@@ -145,5 +187,83 @@ impl CdromDevice for SharedIsoDisk {
 
     fn size_in_sectors(&self) -> u64 {
         u64::from(self.sector_count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Debug)]
+    struct DropCounterDisk {
+        len: u64,
+        dropped: Arc<AtomicUsize>,
+    }
+
+    impl Drop for DropCounterDisk {
+        fn drop(&mut self) {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl VirtualDisk for DropCounterDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.len
+        }
+
+        fn read_at(&mut self, _offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            buf.fill(0);
+            Ok(())
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+            Err(DiskError::NotSupported(
+                "writes to drop-counter disk are not supported".to_string(),
+            ))
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn weak_iso_ref_does_not_keep_backend_alive_after_atapi_eject() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let disk = DropCounterDisk {
+            len: AtapiCdrom::SECTOR_SIZE as u64,
+            dropped: dropped.clone(),
+        };
+
+        let iso = SharedIsoDisk::new(Box::new(disk)).expect("valid ISO backend");
+        let weak = iso.downgrade();
+
+        let mut dev = AtapiCdrom::new(Some(Box::new(iso)));
+        assert!(
+            weak.upgrade().is_some(),
+            "weak ref should upgrade while ATAPI device still holds the backend"
+        );
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            0,
+            "backend should not be dropped while referenced"
+        );
+
+        // Guest-initiated eject (START STOP UNIT with LOEJ and START=0) drops the backend.
+        dev.eject_media();
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            1,
+            "backend should be dropped when ATAPI device releases last strong reference"
+        );
+        assert!(
+            weak.upgrade().is_none(),
+            "weak ref should not upgrade once backend is dropped"
+        );
     }
 }

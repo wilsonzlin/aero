@@ -1477,6 +1477,9 @@ impl AeroGpuMmioDevice {
                     // the guest toggles `SCANOUT0_ENABLE` (Win7 uses this as a visibility toggle).
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+                    // Disabling scanout releases WDDM scanout ownership so hosts can fall back to
+                    // legacy VGA/VBE presentation immediately.
+                    self.wddm_scanout_active = false;
                     // Do not leave any vsync-paced fences blocked forever once scanout is disabled.
                     self.flush_pending_fences();
                     // Reset torn-update tracking so a stale LO write can't block future publishes.

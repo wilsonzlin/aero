@@ -33,6 +33,7 @@ pub mod virtual_time;
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
 pub use shared_iso_disk::SharedIsoDisk;
+use shared_iso_disk::SharedIsoDiskWeak;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -3553,6 +3554,26 @@ impl aero_platform::io::PortIoDevice for PciIoBarWindow {
     }
 }
 
+#[derive(Clone)]
+enum InstallMedia {
+    /// The machine is the sole owner of the ISO backend (e.g. IDE is disabled, so BIOS is the only
+    /// consumer).
+    Strong(SharedIsoDisk),
+    /// Only keep a weak reference to the ISO backend so guest-initiated ejects (ATAPI START STOP
+    /// UNIT) can drop the final strong reference and release exclusive file handles (e.g. OPFS
+    /// `SyncAccessHandle`).
+    Weak(SharedIsoDiskWeak),
+}
+
+impl InstallMedia {
+    fn upgrade(&self) -> Option<SharedIsoDisk> {
+        match self {
+            InstallMedia::Strong(disk) => Some(disk.clone()),
+            InstallMedia::Weak(weak) => weak.upgrade(),
+        }
+    }
+}
+
 /// Canonical Aero machine: CPU + physical memory + port I/O devices + firmware.
 pub struct Machine {
     cfg: MachineConfig,
@@ -3635,7 +3656,7 @@ pub struct Machine {
     xhci_ns_remainder: u64,
     bios: Bios,
     disk: SharedDisk,
-    install_media: Option<SharedIsoDisk>,
+    install_media: Option<InstallMedia>,
     /// Host-selected BIOS boot drive number exposed in `DL` when transferring control to the boot
     /// sector.
     boot_drive: u8,
@@ -4141,7 +4162,12 @@ impl Machine {
     /// Returns the effective boot device used for the current boot session.
     pub fn active_boot_device(&self) -> BootDevice {
         let boot_drive = self.bios.config().boot_drive;
-        if (0xE0..=0xEF).contains(&boot_drive) && self.install_media.is_some() {
+        let install_media_present = self
+            .install_media
+            .as_ref()
+            .and_then(InstallMedia::upgrade)
+            .is_some();
+        if (0xE0..=0xEF).contains(&boot_drive) && install_media_present {
             BootDevice::Cdrom
         } else {
             BootDevice::Hdd
@@ -5724,8 +5750,14 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> std::io::Result<()> {
         let shared = SharedIsoDisk::new(disk)?;
-        self.install_media = Some(shared.clone());
-        self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
+        if self.ide.is_some() {
+            self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
+            self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
+        } else {
+            // Without IDE enabled, BIOS is the only consumer of install media. Keep a strong
+            // reference so firmware boot + INT13 CD reads can access the ISO.
+            self.install_media = Some(InstallMedia::Strong(shared));
+        }
         Ok(())
     }
 
@@ -5760,7 +5792,7 @@ impl Machine {
             return Ok(());
         }
         let shared = SharedIsoDisk::new(disk)?;
-        self.install_media = Some(shared.clone());
+        self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
         let backend: Box<dyn IsoBackend> = Box::new(shared);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
         Ok(())
@@ -5776,7 +5808,7 @@ impl Machine {
             return Ok(());
         }
         let shared = SharedIsoDisk::new(disk)?;
-        self.install_media = Some(shared.clone());
+        self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
         let backend: Box<dyn IsoBackend> = Box::new(shared);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
         Ok(())
@@ -5792,8 +5824,12 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> std::io::Result<()> {
         let shared = SharedIsoDisk::new(disk)?;
-        self.install_media = Some(shared.clone());
-        self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
+        if self.ide.is_some() {
+            self.install_media = Some(InstallMedia::Weak(shared.downgrade()));
+            self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
+        } else {
+            self.install_media = Some(InstallMedia::Strong(shared));
+        }
         Ok(())
     }
 
@@ -8646,7 +8682,7 @@ impl Machine {
         let bus: &mut dyn BiosBus = &mut self.mem;
         // Optional ISO install media: expose it to the BIOS as a CD-ROM backend (2048-byte
         // sectors), alongside the primary HDD BlockDevice.
-        let mut cdrom = self.install_media.clone();
+        let mut cdrom = self.install_media.as_ref().and_then(InstallMedia::upgrade);
         let cdrom_ref = cdrom
             .as_mut()
             .map(|cdrom| cdrom as &mut dyn firmware::bios::CdromDevice);
@@ -9593,7 +9629,7 @@ impl Machine {
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         {
-            let mut cdrom = self.install_media.clone();
+            let mut cdrom = self.install_media.as_ref().and_then(InstallMedia::upgrade);
             let cdrom = cdrom
                 .as_mut()
                 .map(|iso| iso as &mut dyn firmware::bios::CdromDevice);
@@ -12577,7 +12613,10 @@ mod tests {
         assert_eq!(overlay.base_image, "/state/win7.iso");
         assert_eq!(overlay.overlay_image, "");
         assert!(
-            m.install_media.is_some(),
+            m.install_media
+                .as_ref()
+                .and_then(InstallMedia::upgrade)
+                .is_some(),
             "install media backend should be attached after attach_install_media_iso_and_set_overlay_ref"
         );
 
@@ -12610,7 +12649,10 @@ mod tests {
         m.attach_install_media_iso_and_set_overlay_ref(Box::new(disk), "/state/win7.iso")
             .unwrap();
         assert!(
-            m.install_media.is_some(),
+            m.install_media
+                .as_ref()
+                .and_then(InstallMedia::upgrade)
+                .is_some(),
             "expected install media backend to be attached before snapshot"
         );
 
