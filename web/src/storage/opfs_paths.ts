@@ -7,6 +7,14 @@ import { OPFS_DISKS_PATH, type DiskImageMetadata } from "./metadata";
  * and are suitable for passing to Rust/WASM backends (e.g. `aero_opfs`) that expect OPFS paths.
  */
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function normalizeOpfsRelPath(path: string, field: string): string {
   const trimmed = path.trim();
   if (!trimmed) {
@@ -60,14 +68,27 @@ function joinOpfsPath(
  * multiple runtimes (e.g. JS and Rust `aero_opfs`).
  */
 export function opfsPathForDisk(meta: DiskImageMetadata): string {
-  if (meta.source !== "local") {
-    throw new Error(`opfsPathForDisk requires local disk metadata (got source=${meta.source})`);
+  // Treat metadata as untrusted: do not observe inherited fields (prototype pollution) when
+  // selecting the directory or file name.
+  if (!isRecord(meta)) {
+    throw new Error("opfsPathForDisk requires disk metadata (expected an object)");
   }
-  if (meta.backend !== "opfs") {
-    throw new Error(`opfsPathForDisk requires an OPFS-backed disk (got backend=${meta.backend})`);
+  const rec = meta as Record<string, unknown>;
+  const source = hasOwn(rec, "source") ? rec.source : undefined;
+  if (source !== "local") {
+    throw new Error(`opfsPathForDisk requires local disk metadata (got source=${String(source)})`);
   }
-  const dir = meta.opfsDirectory ?? OPFS_DISKS_PATH;
-  return joinOpfsPath(dir, { dirField: "opfsDirectory", fileName: meta.fileName, fileField: "fileName" });
+  const backend = hasOwn(rec, "backend") ? rec.backend : undefined;
+  if (backend !== "opfs") {
+    throw new Error(`opfsPathForDisk requires an OPFS-backed disk (got backend=${String(backend)})`);
+  }
+  const fileNameRaw = hasOwn(rec, "fileName") ? rec.fileName : undefined;
+  if (typeof fileNameRaw !== "string") {
+    throw new Error("fileName must be a string");
+  }
+  const dirRaw = hasOwn(rec, "opfsDirectory") ? (rec as { opfsDirectory?: unknown }).opfsDirectory : undefined;
+  const dir = typeof dirRaw === "string" ? dirRaw : OPFS_DISKS_PATH;
+  return joinOpfsPath(dir, { dirField: "opfsDirectory", fileName: fileNameRaw, fileField: "fileName" });
 }
 
 /**
@@ -75,29 +96,56 @@ export function opfsPathForDisk(meta: DiskImageMetadata): string {
  * when opening the disk in "cow" mode.
  */
 export function opfsOverlayPathForCow(meta: DiskImageMetadata): string {
-  if (meta.source === "remote") {
-    if (meta.cache.backend !== "opfs") {
+  // Treat metadata as untrusted: do not observe inherited fields (prototype pollution) when
+  // selecting overlay/cache file names.
+  if (!isRecord(meta)) {
+    throw new Error("opfsOverlayPathForCow requires disk metadata (expected an object)");
+  }
+  const rec = meta as Record<string, unknown>;
+  const source = hasOwn(rec, "source") ? rec.source : undefined;
+  if (source === "remote") {
+    const cacheRaw = hasOwn(rec, "cache") ? rec.cache : undefined;
+    if (!isRecord(cacheRaw)) {
+      throw new Error("opfsOverlayPathForCow requires remote disk cache metadata");
+    }
+    const cacheRec = cacheRaw as Record<string, unknown>;
+    const cacheBackend = hasOwn(cacheRec, "backend") ? cacheRec.backend : undefined;
+    if (cacheBackend !== "opfs") {
       throw new Error(
-        `opfsOverlayPathForCow requires an OPFS-backed remote overlay (got cache.backend=${meta.cache.backend})`,
+        `opfsOverlayPathForCow requires an OPFS-backed remote overlay (got cache.backend=${String(cacheBackend)})`,
       );
+    }
+    const overlayFileNameRaw = hasOwn(cacheRec, "overlayFileName") ? cacheRec.overlayFileName : undefined;
+    if (typeof overlayFileNameRaw !== "string") {
+      throw new Error("overlayFileName must be a string");
     }
     return joinOpfsPath(OPFS_DISKS_PATH, {
       dirField: "OPFS_DISKS_PATH",
-      fileName: meta.cache.overlayFileName,
+      fileName: overlayFileNameRaw,
       fileField: "overlayFileName",
     });
   }
 
-  if (meta.backend !== "opfs") {
-    throw new Error(`opfsOverlayPathForCow requires an OPFS-backed disk (got backend=${meta.backend})`);
+  if (source !== "local") {
+    throw new Error(`opfsOverlayPathForCow requires disk metadata with source=\"local\" (got source=${String(source)})`);
   }
-  if (meta.kind !== "hdd") {
-    throw new Error(`opfsOverlayPathForCow is only valid for local HDD disks (got kind=${meta.kind})`);
+  const backend = hasOwn(rec, "backend") ? rec.backend : undefined;
+  if (backend !== "opfs") {
+    throw new Error(`opfsOverlayPathForCow requires an OPFS-backed disk (got backend=${String(backend)})`);
+  }
+  const kind = hasOwn(rec, "kind") ? rec.kind : undefined;
+  if (kind !== "hdd") {
+    throw new Error(`opfsOverlayPathForCow is only valid for local HDD disks (got kind=${String(kind)})`);
   }
 
-  const id = normalizeOpfsFileName(meta.id, "id");
+  const idRaw = hasOwn(rec, "id") ? rec.id : undefined;
+  if (typeof idRaw !== "string") {
+    throw new Error("id must be a string");
+  }
+  const id = normalizeOpfsFileName(idRaw, "id");
   const overlayFileName = `${id}.overlay.aerospar`;
-  const dir = meta.opfsDirectory ?? OPFS_DISKS_PATH;
+  const dirRaw = hasOwn(rec, "opfsDirectory") ? (rec as { opfsDirectory?: unknown }).opfsDirectory : undefined;
+  const dir = typeof dirRaw === "string" ? dirRaw : OPFS_DISKS_PATH;
   return joinOpfsPath(dir, { dirField: "opfsDirectory", fileName: overlayFileName, fileField: "overlayFileName" });
 }
 
@@ -122,15 +170,34 @@ export type OpfsCowPaths = {
  * Returns `null` when the disk is not backed by OPFS (e.g. IndexedDB cache backend).
  */
 export function diskMetaToOpfsBasePath(meta: DiskImageMetadata): string | null {
-  if (meta.source === "local") {
-    if (meta.backend !== "opfs") return null;
+  if (!isRecord(meta)) {
+    throw new Error("diskMetaToOpfsBasePath requires disk metadata (expected an object)");
+  }
+  const rec = meta as Record<string, unknown>;
+  const source = hasOwn(rec, "source") ? rec.source : undefined;
+  if (source === "local") {
+    const backend = hasOwn(rec, "backend") ? rec.backend : undefined;
+    if (backend !== "opfs") return null;
     return opfsPathForDisk(meta);
   }
+  if (source !== "remote") {
+    throw new Error(`diskMetaToOpfsBasePath: unexpected disk source=${String(source)}`);
+  }
 
-  if (meta.cache.backend !== "opfs") return null;
+  const cacheRaw = hasOwn(rec, "cache") ? rec.cache : undefined;
+  if (!isRecord(cacheRaw)) {
+    throw new Error("diskMetaToOpfsBasePath requires remote disk cache metadata");
+  }
+  const cacheRec = cacheRaw as Record<string, unknown>;
+  const backend = hasOwn(cacheRec, "backend") ? cacheRec.backend : undefined;
+  if (backend !== "opfs") return null;
+  const fileNameRaw = hasOwn(cacheRec, "fileName") ? cacheRec.fileName : undefined;
+  if (typeof fileNameRaw !== "string") {
+    throw new Error("cache.fileName must be a string");
+  }
   return joinOpfsPath(OPFS_DISKS_PATH, {
     dirField: "OPFS_DISKS_PATH",
-    fileName: meta.cache.fileName,
+    fileName: fileNameRaw,
     fileField: "cache.fileName",
   });
 }
@@ -141,19 +208,41 @@ export function diskMetaToOpfsBasePath(meta: DiskImageMetadata): string | null {
  * Returns `null` when the disk cannot be expressed as OPFS paths (e.g. IDB-backed).
  */
 export function diskMetaToOpfsCowPaths(meta: DiskImageMetadata): OpfsCowPaths | null {
-  if (meta.source === "local") {
-    if (meta.backend !== "opfs") return null;
-    if (meta.kind !== "hdd") return null;
+  if (!isRecord(meta)) {
+    throw new Error("diskMetaToOpfsCowPaths requires disk metadata (expected an object)");
+  }
+  const rec = meta as Record<string, unknown>;
+  const source = hasOwn(rec, "source") ? rec.source : undefined;
+  if (source === "local") {
+    const backend = hasOwn(rec, "backend") ? rec.backend : undefined;
+    const kind = hasOwn(rec, "kind") ? rec.kind : undefined;
+    if (backend !== "opfs") return null;
+    if (kind !== "hdd") return null;
     const basePath = diskMetaToOpfsBasePath(meta);
     if (!basePath) return null;
     const overlayPath = opfsOverlayPathForCow(meta);
     return { basePath, overlayPath };
   }
 
-  if (meta.cache.backend !== "opfs") return null;
+  if (source !== "remote") {
+    throw new Error(`diskMetaToOpfsCowPaths: unexpected disk source=${String(source)}`);
+  }
+  const cacheRaw = hasOwn(rec, "cache") ? rec.cache : undefined;
+  if (!isRecord(cacheRaw)) {
+    throw new Error("diskMetaToOpfsCowPaths requires remote disk cache metadata");
+  }
+  const cacheRec = cacheRaw as Record<string, unknown>;
+  const backend = hasOwn(cacheRec, "backend") ? cacheRec.backend : undefined;
+  if (backend !== "opfs") return null;
+
+  const overlayBlockSizeBytesRaw = hasOwn(cacheRec, "overlayBlockSizeBytes") ? cacheRec.overlayBlockSizeBytes : undefined;
+  if (typeof overlayBlockSizeBytesRaw !== "number" || !Number.isFinite(overlayBlockSizeBytesRaw) || overlayBlockSizeBytesRaw <= 0) {
+    throw new Error("cache.overlayBlockSizeBytes must be a positive number");
+  }
+  const overlayBlockSizeBytes = overlayBlockSizeBytesRaw >>> 0;
+
   const basePath = diskMetaToOpfsBasePath(meta);
   if (!basePath) return null;
   const overlayPath = opfsOverlayPathForCow(meta);
-  return { basePath, overlayPath, overlayBlockSizeBytes: meta.cache.overlayBlockSizeBytes };
+  return { basePath, overlayPath, overlayBlockSizeBytes };
 }
-

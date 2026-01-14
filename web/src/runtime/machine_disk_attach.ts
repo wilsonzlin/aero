@@ -31,6 +31,14 @@ function alignUpBigInt(value: bigint, alignment: bigint): bigint {
   return ((value + alignment - 1n) / alignment) * alignment;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 async function callMaybeAsync(fn: (...args: unknown[]) => unknown, thisArg: unknown, args: unknown[]): Promise<void> {
   // Support both sync and async wasm-bindgen bindings.
   await Promise.resolve(fn.apply(thisArg, args));
@@ -129,53 +137,64 @@ function diskLabel(meta: DiskImageMetadata): string {
 export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: MachineBootDiskRole): MachineBootDiskPlan {
   // Remote streaming disks require async network I/O, which the synchronous Rust storage controllers
   // cannot perform today.
-  if (meta.source === "remote") {
+  if (!isRecord(meta)) {
+    throw new Error("machine runtime received invalid disk metadata (expected an object)");
+  }
+  const metaRec = meta as Record<string, unknown>;
+  const source = hasOwn(metaRec, "source") ? metaRec.source : undefined;
+  if (source === "remote") {
     throw new Error("machine runtime does not yet support remote streaming disks");
   }
 
-  if (meta.source !== "local") {
-    const source = (meta as unknown as { source?: unknown }).source;
+  if (source !== "local") {
     throw new Error(`machine runtime received unexpected disk source=${String(source)}`);
   }
 
   // Local metadata can still represent a remote-streaming disk via `meta.remote`. Reject those for
   // now as well: the base bytes are fetched on-demand and therefore async.
-  if (meta.remote) {
+  // Treat `meta` as untrusted: do not observe inherited `remote` values (prototype pollution).
+  const legacyRemote = hasOwn(metaRec, "remote") ? metaRec.remote : undefined;
+  if (legacyRemote) {
     throw new Error("machine runtime does not yet support remote streaming disks");
   }
 
-  if (meta.backend !== "opfs") {
+  const backend = hasOwn(metaRec, "backend") ? metaRec.backend : undefined;
+  if (backend !== "opfs") {
     throw new Error(
-      `machine runtime currently requires OPFS-backed disks (disk=${diskLabel(meta)} backend=${meta.backend})`,
+      `machine runtime currently requires OPFS-backed disks (disk=${diskLabel(meta)} backend=${String(backend)})`,
     );
   }
 
   const warnings: string[] = [];
 
   if (role === "hdd") {
-    if (meta.kind !== "hdd") {
-      throw new Error(`machine runtime expected an HDD disk, got kind=${meta.kind} (disk=${diskLabel(meta)})`);
+    const kind = hasOwn(metaRec, "kind") ? metaRec.kind : undefined;
+    if (kind !== "hdd") {
+      throw new Error(`machine runtime expected an HDD disk, got kind=${String(kind)} (disk=${diskLabel(meta)})`);
     }
-    if (meta.format === "unknown") {
+    const format = hasOwn(metaRec, "format") ? metaRec.format : undefined;
+    if (format === "unknown") {
       throw new Error(
         `machine runtime requires explicit HDD format metadata (disk=${diskLabel(meta)} format=unknown)`,
       );
     }
-    if (meta.format !== "raw" && meta.format !== "aerospar") {
+    if (format !== "raw" && format !== "aerospar") {
       throw new Error(
-        `machine runtime only supports raw/aerospar HDD images for now (disk=${diskLabel(meta)} format=${meta.format})`,
+        `machine runtime only supports raw/aerospar HDD images for now (disk=${diskLabel(meta)} format=${String(format)})`,
       );
     }
-    return { opfsPath: opfsPathForDisk(meta), format: meta.format === "aerospar" ? "aerospar" : "raw", warnings };
+    return { opfsPath: opfsPathForDisk(meta), format: format === "aerospar" ? "aerospar" : "raw", warnings };
   }
 
-  if (meta.kind !== "cd") {
-    throw new Error(`machine runtime expected a CD disk, got kind=${meta.kind} (disk=${diskLabel(meta)})`);
+  const kind = hasOwn(metaRec, "kind") ? metaRec.kind : undefined;
+  if (kind !== "cd") {
+    throw new Error(`machine runtime expected a CD disk, got kind=${String(kind)} (disk=${diskLabel(meta)})`);
   }
 
-  if (meta.format !== "iso") {
+  const format = hasOwn(metaRec, "format") ? metaRec.format : undefined;
+  if (format !== "iso") {
     throw new Error(
-      `machine runtime only supports ISO install media for now (disk=${diskLabel(meta)} format=${meta.format})`,
+      `machine runtime only supports ISO install media for now (disk=${diskLabel(meta)} format=${String(format)})`,
     );
   }
 

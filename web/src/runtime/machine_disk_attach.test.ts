@@ -65,6 +65,41 @@ describe("runtime/machine_disk_attach (metadata compatibility)", () => {
     );
   });
 
+  it("does not treat local disks as remote-streaming based on inherited Object.prototype.remote", () => {
+    const remoteExisting = Object.getOwnPropertyDescriptor(Object.prototype, "remote");
+    if (remoteExisting && remoteExisting.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "remote", {
+        value: { url: "https://example.com/evil.img" },
+        configurable: true,
+        writable: true,
+      });
+
+      const meta: DiskImageMetadata = {
+        source: "local",
+        id: "d-local",
+        name: "disk",
+        backend: "opfs",
+        kind: "hdd",
+        format: "raw",
+        fileName: "disk.img",
+        sizeBytes: 1024,
+        createdAtMs: 0,
+      };
+
+      const plan = planMachineBootDiskAttachment(meta, "hdd");
+      expect(plan.format).toBe("raw");
+      expect(plan.opfsPath).toBe(`${OPFS_DISKS_PATH}/${meta.fileName}`);
+    } finally {
+      if (remoteExisting) Object.defineProperty(Object.prototype, "remote", remoteExisting);
+      else Reflect.deleteProperty(Object.prototype, "remote");
+    }
+  });
+
   it("rejects unknown HDD format metadata for machine runtime", () => {
     const meta: DiskImageMetadata = {
       source: "local",
