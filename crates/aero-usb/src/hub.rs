@@ -1640,15 +1640,13 @@ impl UsbDeviceModel for UsbHubDevice {
         if self.configuration == 0 {
             return false;
         }
-        if !self.remote_wakeup_enabled {
-            return false;
-        }
 
         // If the upstream link is suspended and a downstream device requests remote wakeup,
         // propagate the resume event upstream.
         //
-        // This is gated on the hub's DEVICE_REMOTE_WAKEUP feature: if software has not enabled
-        // remote wakeup on the hub, it must not propagate downstream resume signaling upstream.
+        // Remote wake is driven by the downstream device's DEVICE_REMOTE_WAKEUP feature. Software
+        // does not need to enable DEVICE_REMOTE_WAKEUP on intermediate hubs for the resume signal
+        // to propagate upstream.
         if !self.upstream_suspended {
             return false;
         }
