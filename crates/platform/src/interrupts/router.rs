@@ -577,6 +577,28 @@ impl PlatformInterrupts {
         self.lapics[0].apic_id()
     }
 
+    /// Inject a fixed interrupt into the LAPIC whose `apic_id()` matches `apic_id`.
+    ///
+    /// If no LAPIC matches, the interrupt is dropped.
+    ///
+    /// Note: This intentionally bypasses `PlatformInterruptMode` (legacy PIC vs APIC routing). MSI
+    /// delivery is an APIC-local concept and should not depend on how legacy ISA IRQs are routed.
+    pub(crate) fn inject_fixed_for_apic(&self, apic_id: u8, vector: u8) {
+        let Some(lapic) = self.lapic_for_apic_id(apic_id) else {
+            return;
+        };
+        lapic.inject_fixed_interrupt(vector);
+    }
+
+    /// Inject a fixed interrupt into all LAPICs ("broadcast").
+    ///
+    /// Note: This intentionally bypasses `PlatformInterruptMode` (legacy PIC vs APIC routing). MSI
+    /// broadcast delivery should reach all CPUs regardless of legacy IRQ routing state.
+    pub(crate) fn inject_fixed_broadcast(&self, vector: u8) {
+        for lapic in &self.lapics {
+            lapic.inject_fixed_interrupt(vector);
+        }
+    }
     /// Reset a specific LAPIC's internal state back to its power-on baseline.
     ///
     /// This is used by machine-level INIT IPI delivery to reset the target vCPU's local APIC.
@@ -637,15 +659,6 @@ impl PlatformInterrupts {
             .iter()
             .find(|lapic| lapic.apic_id() == apic_id)
             .map(|lapic| lapic.as_ref())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn lapic_by_index(&self, cpu_index: usize) -> Option<&LocalApic> {
-        self.lapics.get(cpu_index).map(|lapic| lapic.as_ref())
-    }
-
-    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
-        self.lapics.iter().map(|lapic| lapic.as_ref())
     }
     fn set_gsi_level_internal(&mut self, gsi: u32, level: bool) {
         if let Some(slot) = self.gsi_level.get_mut(gsi as usize) {
