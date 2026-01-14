@@ -31,7 +31,8 @@ Canonical machine GPU device modes (today):
   - Wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping).
   - Exposes a minimal BAR0 MMIO surface used for bring-up (ABI/features, ring+fence transport with a no-op executor + IRQs, scanout0/cursor registers, vblank counters; implementation: `crates/aero-machine/src/aerogpu.rs`).
   - On the Rust side, the host can call `Machine::display_present()` to update a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`).
-    - In AeroGPU mode (no standalone VGA device model), `display_present()` presents (priority order) the WDDM scanout0 framebuffer if claimed, otherwise the BIOS VBE LFB, otherwise BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
+    - In AeroGPU mode (no standalone VGA device model), `display_present()` prefers the WDDM scanout0 framebuffer once it has been claimed by a valid scanout config; otherwise it falls back to BIOS VBE LFB or BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
+      - Once WDDM scanout is claimed, it does not fall back to legacy BIOS output until reset (disabled/invalid scanout yields a cleared output).
   - The full AeroGPU command execution model is not implemented in `aero-machine` yet.
   - Shared device-side AeroGPU building blocks (regs/ring/executor + reusable PCI wrapper) live in `crates/aero-devices-gpu/`. A legacy sandbox integration surface remains in `crates/emulator/src/devices/pci/aerogpu.rs` (see [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 
