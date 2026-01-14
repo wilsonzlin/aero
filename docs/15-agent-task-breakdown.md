@@ -445,7 +445,12 @@ See `docs/16-virtio-drivers-win7.md` for an implementation-oriented overview of 
 
 ### Virtio PCI transport (device model / emulator side)
 
-These tasks implement Aero’s virtio devices in the emulator. In addition to the modern virtio-pci transport used by Aero’s own Win7 drivers, we should also support **legacy/transitional virtio-pci** for maximum compatibility with older virtio-win drivers.
+These tasks cover Aero’s virtio devices on the device-model side. The canonical virtio implementation
+lives in `crates/aero-virtio` (used by `crates/aero-machine`); the legacy, emulator-local virtio stack
+has been removed.
+
+In addition to the modern virtio-pci transport used by Aero’s own Win7 drivers, we should also
+support **legacy/transitional virtio-pci** for maximum compatibility with older virtio-win drivers.
 
 See: [`16-virtio-pci-legacy-transitional.md`](./16-virtio-pci-legacy-transitional.md)
 
