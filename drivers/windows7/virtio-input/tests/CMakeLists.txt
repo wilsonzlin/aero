@@ -4,12 +4,16 @@ project(virtio_input_tests C)
 enable_testing()
 
 set(VIOINPUT_TEST_CFLAGS "")
-if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    # Keep assertions enabled even in Release builds (CMake adds -DNDEBUG by default).
-    set(VIOINPUT_TEST_CFLAGS -Wall -Wextra -Werror -UNDEBUG)
-elseif (MSVC)
-    # Keep assertions enabled even in Release builds (CMake adds /DNDEBUG by default).
+
+# Keep assertions enabled even in Release builds.
+#
+# - CMake defaults to defining NDEBUG in Release, which compiles out assert().
+# - For clang-cl, CMAKE_C_COMPILER_ID is "Clang" but the frontend is MSVC; prefer
+#   checking the frontend variant over compiler ID matching.
+if (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     set(VIOINPUT_TEST_CFLAGS /UNDEBUG)
+elseif (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(VIOINPUT_TEST_CFLAGS -Wall -Wextra -Werror -UNDEBUG)
 endif ()
 
 add_executable(hid_translate_test
