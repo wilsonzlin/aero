@@ -93,11 +93,11 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 #[test]
-fn d3d11_runtime_vertex_buffer_is_bindable_as_storage_for_vertex_pulling() {
+fn d3d11_runtime_ia_buffers_are_bindable_as_storage_for_vertex_pulling() {
     pollster::block_on(async {
         let test_name = concat!(
             module_path!(),
-            "::d3d11_runtime_vertex_buffer_is_bindable_as_storage_for_vertex_pulling"
+            "::d3d11_runtime_ia_buffers_are_bindable_as_storage_for_vertex_pulling"
         );
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
@@ -112,8 +112,9 @@ fn d3d11_runtime_vertex_buffer_is_bindable_as_storage_for_vertex_pulling() {
         }
 
         const VB: u32 = 1;
-        const SHADER: u32 = 2;
-        const PIPELINE: u32 = 3;
+        const IB: u32 = 2;
+        const SHADER: u32 = 3;
+        const PIPELINE: u32 = 4;
 
         // Any non-zero size works; keep it 16 bytes to satisfy any backend alignment rules.
         let size = 16u64;
@@ -131,6 +132,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         let mut w = CmdWriter::new();
         w.create_buffer(VB, size, BufferUsage::VERTEX | BufferUsage::COPY_DST);
         w.update_buffer(VB, 0, bytemuck::cast_slice(&[0x1234_5678u32, 0, 0, 0]));
+        w.create_buffer(IB, size, BufferUsage::INDEX | BufferUsage::COPY_DST);
+        w.update_buffer(IB, 0, bytemuck::cast_slice(&[0xDEAD_BEEFu32, 0, 0, 0]));
         w.create_shader_module_wgsl(SHADER, wgsl);
         w.create_compute_pipeline(
             PIPELINE,
@@ -143,20 +146,22 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             }],
         );
         w.set_pipeline(PipelineKind::Compute, PIPELINE);
-        w.set_bind_buffer(0, VB, 0, size);
-        w.begin_compute_pass();
-        w.dispatch(1, 1, 1);
-        w.end_compute_pass();
+        for (_label, buf) in [("vertex", VB), ("index", IB)] {
+            w.set_bind_buffer(0, buf, 0, size);
+            w.begin_compute_pass();
+            w.dispatch(1, 1, 1);
+            w.end_compute_pass();
+        }
 
-        // Validation check: binding a vertex buffer as `var<storage>` must not trigger a wgpu
-        // validation error (vertex pulling compute prepasses rely on this).
+        // Validation check: binding IA buffers as `var<storage>` must not trigger a wgpu validation
+        // error (vertex/index pulling compute prepasses rely on this).
         rt.device().push_error_scope(wgpu::ErrorFilter::Validation);
         rt.execute(&w.finish()).unwrap();
         rt.poll_wait();
         let err = rt.device().pop_error_scope().await;
         assert!(
             err.is_none(),
-            "vertex buffers must be created with STORAGE for vertex pulling, got: {err:?}"
+            "IA buffers must be created with STORAGE for vertex pulling, got: {err:?}"
         );
     });
 }
