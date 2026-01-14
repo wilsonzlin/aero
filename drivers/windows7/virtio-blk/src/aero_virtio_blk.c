@@ -2043,7 +2043,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     InterlockedIncrement(&devExt->PnpSrbCount);
     pnp = (PSCSI_PNP_REQUEST_BLOCK)srb->DataBuffer;
     if (pnp != NULL && srb->DataTransferLength >= sizeof(*pnp)) {
-      if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice) {
+      if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
         STOR_LOCK_HANDLE lock;
         BOOLEAN avoidMmio;
 
@@ -2051,11 +2051,12 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
          * Mark removed early (before taking the interrupt lock) so ISR/DPC paths
          * can quickly stop touching BAR0 MMIO during teardown.
          *
-         * Treat StorRemoveDevice as potential surprise removal: the device may
-         * already be gone by the time the miniport processes this SRB.
+         * Treat StorRemoveDevice/StorSurpriseRemoval as potential surprise
+         * removal: the device may already be gone by the time the miniport
+         * processes this SRB.
          */
         devExt->Removed = TRUE;
-        if (pnp->PnPAction == StorRemoveDevice) {
+        if (pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
           devExt->SurpriseRemoved = TRUE;
         }
 
@@ -2067,13 +2068,14 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
         devExt->Removed = TRUE;
 
         /*
-         * Treat StorRemoveDevice as potential surprise removal: by the time the
-         * miniport receives this action, the PCI function may already be gone.
+         * Treat StorRemoveDevice/StorSurpriseRemoval as potential surprise
+         * removal: by the time the miniport receives this action, the PCI
+         * function may already be gone.
          * Avoid BAR0 MMIO access and clear BAR-backed pointers/caches so any
          * accidental access becomes a no-op instead of touching unmapped MMIO.
          */
         avoidMmio = FALSE;
-        if (pnp->PnPAction == StorRemoveDevice) {
+        if (pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
           avoidMmio = TRUE;
           devExt->Vdev.CommonCfg = NULL;
           devExt->Vdev.NotifyBase = NULL;
