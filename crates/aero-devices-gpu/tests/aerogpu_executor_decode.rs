@@ -1,6 +1,6 @@
 use aero_devices_gpu::backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
-    AeroGpuCommandBackend,
+    AeroGpuCommandBackend, NullAeroGpuBackend,
 };
 use aero_devices_gpu::executor::{
     AeroGpuAllocTableDecodeError, AeroGpuCmdStreamDecodeError, AeroGpuExecutor,
@@ -1598,4 +1598,89 @@ fn scanout_writeback_converts_rgba_to_16bpp_formats() {
     regs.scanout0.format = AeroGpuFormat::B5G5R5A1Unorm;
     exec.process_doorbell(&mut regs, &mut mem);
     assert_eq!(mem.read_u16(fb_gpa), 0xFC00);
+}
+
+#[test]
+fn deferred_mode_retains_submission_until_complete_fence_called() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.irq_enable = irq_bits::FENCE;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::new(NullAeroGpuBackend::new()));
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, 0, 0, 0, 0, 7);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+
+    // Deferred mode should not advance fences without an explicit completion.
+    assert_eq!(regs.completed_fence, 0);
+    assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
+
+    exec.complete_fence(&mut regs, &mut mem, 7);
+    assert_eq!(regs.completed_fence, 7);
+    assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+}
+
+#[test]
+fn deferred_mode_advances_completed_fence_in_order_even_with_out_of_order_completions() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.irq_enable = irq_bits::FENCE;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::new(NullAeroGpuBackend::new()));
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 3, regs.abi_version);
+
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    let desc2_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 2 * stride;
+    write_submit_desc(&mut mem, desc0_gpa, 0, 0, 0, 0, 1);
+    write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, 2);
+    write_submit_desc(&mut mem, desc2_gpa, 0, 0, 0, 0, 3);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 3);
+    assert_eq!(regs.completed_fence, 0);
+
+    // Complete fence 2 out-of-order: must not advance without fence 1.
+    exec.complete_fence(&mut regs, &mut mem, 2);
+    assert_eq!(regs.completed_fence, 0);
+    assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
+
+    // Completing fence 1 should allow advancement up to 2 (since fence 2 is already complete).
+    exec.complete_fence(&mut regs, &mut mem, 1);
+    assert_eq!(regs.completed_fence, 2);
+    assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+
+    // Clear the IRQ bit and ensure completing fence 3 raises again.
+    regs.irq_status = 0;
+    exec.complete_fence(&mut regs, &mut mem, 3);
+    assert_eq!(regs.completed_fence, 3);
+    assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
 }
