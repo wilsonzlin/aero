@@ -194,7 +194,8 @@ rather than a complete xHCI.
     - A small xHCI extended capability list (xECP), including:
       - USB Legacy Support (BIOS owned cleared, OS owned set), and
       - Supported Protocol (USB 2.0 + speed IDs) sized to `port_count`.
-    - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
+    - Operational registers (subset): USBCMD, USBSTS, DNCTRL, CRCR, DCBAAP, CONFIG.
+    - Runtime registers (subset): MFINDEX, and Interrupter 0 regs (IMAN/ERST/ERDP).
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
     - command ring doorbell (doorbell 0) is latched; while the controller is running it triggers
       bounded command ring processing (`No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`) and
@@ -379,15 +380,17 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
-  - Today, `aero_usb::xhci::XhciController` snapshots:
+  - Today, `aero_usb::xhci::XhciController` snapshots (device ID `XHCI`, version `0.4`) capture:
     - operational/runtime state (`USBCMD`, `USBSTS`, `CONFIG`, `MFINDEX`, `CRCR`, `DCBAAP`, port count,
-      Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`), and
-    - per-port snapshot records (connection/change bits/reset timers/link state/speed + attached
+      Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP` + internal generation counters),
+    - per-port snapshot records (connection/change bits/reset timers/link state/speed + nested
       `AttachedUsbDevice` snapshot, when present),
-    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.4`.
-  - Current limitations: the `XHCI` snapshot does **not** yet capture pending event TRBs or xHCI
-    driver state (slots/contexts beyond what is mirrored into guest memory); restores should be
-    treated as “best-effort bring-up” rather than a bit-perfect resume of an in-flight xHCI driver.
+    - controller-local slot state (Slot/Endpoint context mirrors + transfer ring cursors),
+    - controller-local forward-progress state (command ring cursor/kick flag, active endpoints,
+      pending event TRBs, and event ring producer state).
+  - Current limitations: the snapshot only covers the subset of xHCI behavior implemented by this
+    model; guest RAM contents for rings/contexts/buffers are still owned by the VM memory snapshot,
+    and host-side async work (WebUSB/WebHID) is reset across restore.
 - The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.1`) and currently stores:
   - the underlying `aero_usb::xhci::XhciController` snapshot bytes,
   - a tick counter, and
