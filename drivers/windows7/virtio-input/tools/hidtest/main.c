@@ -1479,6 +1479,7 @@ static void print_usage(void)
     wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON\n");
     wprintf(L"  --reset-counters\n");
     wprintf(L"                 Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS)\n");
+    wprintf(L"                 (Depth gauges reflect current driver state and may remain non-zero after reset)\n");
     wprintf(L"                 (May be combined with --counters/--counters-json to verify reset)\n");
     wprintf(L"  --get-log-mask  Query the current Aero virtio-input diagnostics mask (DBG driver builds only)\n");
     wprintf(L"  --set-log-mask  Set the current Aero virtio-input diagnostics mask (DBG driver builds only)\n");

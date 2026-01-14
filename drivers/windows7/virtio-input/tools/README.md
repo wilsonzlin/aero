@@ -15,14 +15,14 @@ Currently:
   - Can reset in-driver diagnostics counters during a session:
     - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
     - `hidtest.exe --reset-counters`
-    - Tip: `hidtest.exe --reset-counters --counters` / `--counters-json` to reset and immediately verify a clean snapshot.
+    - Tip: `hidtest.exe --reset-counters --counters` / `--counters-json` to reset and immediately verify that the monotonic counters are cleared.
   - Includes optional probes for `IOCTL_VIOINPUT_QUERY_COUNTERS` / `IOCTL_VIOINPUT_QUERY_STATE` using short output
     buffers (verifies that the driver returns `STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` for
     version negotiation).
   - Includes optional negative tests that pass invalid METHOD_NEITHER pointers to validate driver hardening.
   - Useful for stressing the keyboard LED/statusq path when `StatusQDropOnFull` is enabled:
     - `hidtest.exe --keyboard --led-spam 10000`
-    - `hidtest.exe --keyboard --reset-counters` (start from a clean baseline; requires write access, rerun elevated if needed)
+    - `hidtest.exe --keyboard --reset-counters` (start from a clean monotonic-counter baseline; requires write access, rerun elevated if needed)
     - `hidtest.exe --keyboard --counters` (watch `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
   - Useful for diagnosing buffered input when there are no pending `IOCTL_HID_READ_REPORT` IRPs:
     - `hidtest.exe --counters`
