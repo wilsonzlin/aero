@@ -50,7 +50,7 @@ impl snapshot::SnapshotSource for TooManyMmusSource {
 
     fn mmu_states(&self) -> Vec<snapshot::VcpuMmuSnapshot> {
         // Intentionally exceed MAX_CPU_COUNT.
-        let count = (snapshot::limits::MAX_CPU_COUNT + 1) as u32;
+        let count = snapshot::limits::MAX_CPU_COUNT + 1;
         let mmu = snapshot::MmuState::default();
         (0..count)
             .map(|apic_id| snapshot::VcpuMmuSnapshot {
@@ -132,7 +132,7 @@ fn restore_snapshot_rejects_too_many_mmus_entries() {
     // MMUS section with only the count field set above MAX_CPU_COUNT. The decoder should reject it
     // before attempting to read any entries.
     let count = snapshot::limits::MAX_CPU_COUNT + 1;
-    let mmus_payload = (count as u32).to_le_bytes();
+    let mmus_payload = count.to_le_bytes();
     push_section(&mut bytes, snapshot::SectionId::MMUS, 2, 0, &mmus_payload);
 
     // Minimal RAM section (0-length full snapshot).

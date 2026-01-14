@@ -194,7 +194,7 @@ fn restore_snapshot_rejects_mismatched_mmus_vs_cpus_apic_ids() {
     ram_payload.extend_from_slice(&4096u32.to_le_bytes()); // chunk_size
     push_section(&mut bytes, snapshot::SectionId::RAM, 1, 0, &ram_payload);
 
-    let mut target = MultiCpuTarget::default();
+    let mut target = MultiCpuTarget;
     let err = snapshot::restore_snapshot(&mut Cursor::new(bytes), &mut target).unwrap_err();
     assert!(matches!(
         err,
