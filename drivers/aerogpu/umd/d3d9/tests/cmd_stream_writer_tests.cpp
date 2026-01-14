@@ -58,6 +58,15 @@ constexpr uint32_t kD3d9ShaderStagePs = 1u;
 constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
 constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
+// Fixed-function lighting constant block used by the D3D9 UMD. Keep local numeric
+// constants so these tests remain portable (they build without the Windows
+// SDK/WDK).
+constexpr uint32_t kFixedfuncLightingStartRegister = 208u;
+constexpr uint32_t kFixedfuncLightingVec4Count = 29u;
+constexpr uint32_t kFixedfuncLightingGlobalAmbientRegister = 236u;
+constexpr uint32_t kFixedfuncLightingGlobalAmbientRel =
+    kFixedfuncLightingGlobalAmbientRegister - kFixedfuncLightingStartRegister;
+
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 constexpr D3DDDIFORMAT kD3dFmtIndex32 = static_cast<D3DDDIFORMAT>(102); // D3DFMT_INDEX32
 
@@ -19052,25 +19061,26 @@ bool TestFixedFuncXyzNormalStateBlockApplyReuploadsLightingConstants() {
     return false;
   }
 
-  constexpr uint32_t kLightingStartReg = 208u;
-  constexpr uint32_t kLightingVec4Count = 29u;
-  const CmdLoc lighting_consts =
-      FindLastShaderConstsFBefore(buf, len, draw.offset, AEROGPU_SHADER_STAGE_VERTEX, kLightingStartReg, kLightingVec4Count);
+  const CmdLoc lighting_consts = FindLastShaderConstsFBefore(buf,
+                                                             len,
+                                                             draw.offset,
+                                                             AEROGPU_SHADER_STAGE_VERTEX,
+                                                             kFixedfuncLightingStartRegister,
+                                                             kFixedfuncLightingVec4Count);
   if (!Check(lighting_consts.hdr != nullptr, "ApplyStateBlock triggers lighting constant upload")) {
     return false;
   }
   const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(lighting_consts.hdr);
-  constexpr size_t kLightingPayloadBytes = kLightingVec4Count * 4u * sizeof(float);
+  constexpr size_t kLightingPayloadBytes = kFixedfuncLightingVec4Count * 4u * sizeof(float);
   if (!Check(lighting_consts.hdr->size_bytes >= sizeof(*sc) + kLightingPayloadBytes, "lighting constant payload size")) {
     return false;
   }
   const float* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
   constexpr float kEps = 1e-6f;
-  constexpr uint32_t kGlobalAmbientRel = (236u - kLightingStartReg);
-  if (!Check(std::fabs(payload[kGlobalAmbientRel * 4 + 0] - 1.0f) < kEps &&
-                 std::fabs(payload[kGlobalAmbientRel * 4 + 1] - 0.0f) < kEps &&
-                 std::fabs(payload[kGlobalAmbientRel * 4 + 2] - 0.0f) < kEps &&
-                 std::fabs(payload[kGlobalAmbientRel * 4 + 3] - 1.0f) < kEps,
+  if (!Check(std::fabs(payload[kFixedfuncLightingGlobalAmbientRel * 4 + 0] - 1.0f) < kEps &&
+                 std::fabs(payload[kFixedfuncLightingGlobalAmbientRel * 4 + 1] - 0.0f) < kEps &&
+                 std::fabs(payload[kFixedfuncLightingGlobalAmbientRel * 4 + 2] - 0.0f) < kEps &&
+                 std::fabs(payload[kFixedfuncLightingGlobalAmbientRel * 4 + 3] - 1.0f) < kEps,
              "global ambient constant reflects state-block-applied D3DRS_AMBIENT")) {
     return false;
   }
