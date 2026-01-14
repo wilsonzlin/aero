@@ -2505,6 +2505,29 @@ mod tests {
         assert_eq!(base, 0xE100_0000 + 3 * 512 + 2 * 4);
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[test]
+    fn scanout_update_disables_when_pan_offsets_exceed_vram() {
+        let mut dev = VgaDevice::new();
+        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_mode(64, 32, 32, true);
+
+        // Crank the stride + offset high enough that the visible rectangle would exceed the VBE
+        // framebuffer region in VRAM. `active_scanout_update` must detect this and publish a
+        // disabled descriptor rather than an out-of-bounds scanout.
+        dev.vbe.virt_width = u16::MAX;
+        dev.vbe.y_offset = u16::MAX;
+
+        let update = dev.active_scanout_update();
+        assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(update.base_paddr_lo, 0);
+        assert_eq!(update.base_paddr_hi, 0);
+        assert_eq!(update.width, 0);
+        assert_eq!(update.height, 0);
+        assert_eq!(update.pitch_bytes, 0);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
+    }
+
     #[test]
     fn vbe_banked_window_maps_a0000_to_selected_bank() {
         let mut dev = VgaDevice::new();
