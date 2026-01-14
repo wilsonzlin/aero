@@ -137,6 +137,9 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
         return;
     }
 
+    // Exercise summary formatting (walks all chunks and builds a string).
+    let _ = dxbc.debug_summary();
+
     // Exercise common lookup helpers.
     for &fourcc in COMMON_FOURCCS {
         if let Some(chunk) = dxbc.get_chunk(fourcc) {
@@ -162,6 +165,9 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
         let _ = dxbc.get_signature(FourCC(*b"ISGN"));
         let _ = dxbc.get_signature(FourCC(*b"OSGN"));
         let _ = dxbc.get_signature(FourCC(*b"PSGN"));
+        let _ = dxbc.get_signature(FourCC(*b"ISG1"));
+        let _ = dxbc.get_signature(FourCC(*b"OSG1"));
+        let _ = dxbc.get_signature(FourCC(*b"PSG1"));
         let _ = aero_d3d11::parse_signatures(&dxbc);
     }
 
