@@ -791,7 +791,6 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::EndIf)
         }
-
         // ---- ALU / resource ops ----
         OPCODE_MOV => {
             let mut dst = decode_dst(&mut r)?;
