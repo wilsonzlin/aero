@@ -94,15 +94,53 @@ static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
     return true;
   }
 
+  size_t array_start = std::string::npos;
+
+  // Fast path: our in-tree JSON reporter emits `"artifacts":[...]` with no whitespace.
   const char* const kNeedle = "\"artifacts\":[";
   size_t pos = obj->find(kNeedle);
-  if (pos == std::string::npos) {
+  if (pos != std::string::npos) {
+    array_start = pos + strlen(kNeedle);
+  } else {
+    // More tolerant fallback in case a test emits pretty-printed JSON with whitespace
+    // around the ':' or '[' (e.g. `"artifacts": [ ... ]`).
+    const char* const kKey = "\"artifacts\"";
+    size_t key_pos = obj->find(kKey);
+    while (key_pos != std::string::npos) {
+      size_t i = key_pos + strlen(kKey);
+      while (i < obj->size()) {
+        const char c = (*obj)[i];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+          break;
+        }
+        i++;
+      }
+      if (i >= obj->size() || (*obj)[i] != ':') {
+        key_pos = obj->find(kKey, key_pos + 1);
+        continue;
+      }
+      i++;
+      while (i < obj->size()) {
+        const char c = (*obj)[i];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+          break;
+        }
+        i++;
+      }
+      if (i < obj->size() && (*obj)[i] == '[') {
+        array_start = i + 1;
+        break;
+      }
+      key_pos = obj->find(kKey, key_pos + 1);
+    }
+  }
+
+  if (array_start == std::string::npos) {
     if (err) {
       *err = "AppendArtifactsToTestReportJsonObject: missing artifacts array";
     }
     return false;
   }
-  const size_t array_start = pos + strlen(kNeedle);
   size_t array_end = std::string::npos;
   // Find the end of the artifacts array without being confused by ']' inside quoted strings.
   // We intentionally do not implement full JSON parsing here; this is just enough robustness for
