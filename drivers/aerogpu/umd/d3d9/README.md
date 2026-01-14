@@ -370,7 +370,7 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
   `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
   `kSupportedFvfXyzTex1`
-- `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE variants only**)
+- `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsPassthroughPosColor`, etc)

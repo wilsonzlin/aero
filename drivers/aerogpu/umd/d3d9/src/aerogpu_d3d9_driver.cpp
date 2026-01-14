@@ -2862,7 +2862,7 @@ constexpr uint32_t kSupportedFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 bool fixedfunc_fvf_supported(uint32_t fvf) {
   // Fixed-function bring-up paths which require a known internal FVF-driven
   // vertex declaration (e.g. patch emulation) are limited to pre-transformed
-  // XYZRHW variants.
+  // XYZRHW + DIFFUSE variants (optionally TEX1).
   return fvf == kSupportedFvfXyzrhwDiffuse || fvf == kSupportedFvfXyzrhwDiffuseTex1;
 }
 
