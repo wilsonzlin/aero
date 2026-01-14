@@ -191,7 +191,7 @@ existing `CommitVidPn` + `SetVidPnSourceAddress` behavior (4 bytes per pixel; pi
 **Mode list**
 
 `DxgkDdiRecommendMonitorModes` and `DxgkDdiEnumVidPnCofuncModality` restrict Windows to a small, stable set of
-progressive ~60Hz modes derived from:
+progressive ~60Hz modes (the MVP scanout cadence is fixed to ~60 Hz; other refresh rates are rejected) derived from:
 
 1. a preferred mode (`PreferredWidth`/`PreferredHeight` registry override → EDID preferred timing → fallback), plus
 2. a built-in curated list (currently 640×480, 800×600, 1024×768, 1280×720, 1280×800, 1366×768, 1600×900, 1920×1080).

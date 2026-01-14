@@ -323,6 +323,7 @@ For each entrypoint:
 - **AeroGPU MVP behavior:** Accept only:
   - 1 source, 1 target
   - Progressive scan
+  - ~60 Hz refresh rates (tolerate common EDID fractional encodings such as 59.94 Hz)
   - A small whitelist of modes and pixel formats (32bpp scanout-compatible):
     - `D3DDDIFMT_X8R8G8B8`
     - `D3DDDIFMT_A8R8G8B8` (byte-layout compatible; alpha ignored by scanout)
