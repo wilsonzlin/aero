@@ -247,6 +247,8 @@ fn d3d9_create_shader_dxbc_accepts_volume_sampler_declaration() {
         None => return,
     };
 
+    // Accepting `dcl_volume` does not imply full 3D texture binding support in the command
+    // protocol; the executor will bind a dummy 3D texture for declared volume samplers.
     let ps_bytes = assemble_ps3_dcl_volume_s0();
     let mut writer = AerogpuCmdWriter::new();
     writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
