@@ -754,6 +754,7 @@ rem Normalize legacy signing_policy values to the current surface (test|producti
 if /i "!GT_SIGNING_POLICY!"=="testsigning" set "GT_SIGNING_POLICY=test"
 if /i "!GT_SIGNING_POLICY!"=="test-signing" set "GT_SIGNING_POLICY=test"
 if /i "!GT_SIGNING_POLICY!"=="nointegritychecks" set "GT_SIGNING_POLICY=none"
+if /i "!GT_SIGNING_POLICY!"=="no-integrity-checks" set "GT_SIGNING_POLICY=none"
 if /i "!GT_SIGNING_POLICY!"=="prod" set "GT_SIGNING_POLICY=production"
 if /i "!GT_SIGNING_POLICY!"=="whql" set "GT_SIGNING_POLICY=production"
 if not defined GT_CERTS_REQUIRED (
