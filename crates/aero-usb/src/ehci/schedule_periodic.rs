@@ -113,11 +113,16 @@ fn walk_link<M: MemoryBus + ?Sized>(
             LP_TYPE_QH => {
                 link = process_qh(ctx, link.addr(), microframe);
             }
-            // Unsupported periodic descriptor types. We intentionally do not attempt to decode
-            // their layout; simply stop walking this frame's list.
-            LP_TYPE_ITD | LP_TYPE_SITD | LP_TYPE_FSTN | _ => {
-                return;
+            // Unsupported periodic descriptor types. We do not emulate their transfers yet, but we
+            // still follow their forward link pointers so that interrupt QHs later in the list can
+            // make progress (e.g. systems scheduling isochronous audio alongside HID polling).
+            //
+            // EHCI 3.6: iTD and siTD dword0 is the Next Link Pointer; FSTN dword0 is the Normal Path
+            // Link Pointer.
+            LP_TYPE_ITD | LP_TYPE_SITD | LP_TYPE_FSTN => {
+                link = LinkPointer(ctx.mem.read_u32(link.addr() as u64));
             }
+            _ => return,
         }
     }
 }

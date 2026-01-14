@@ -13,6 +13,8 @@ use util::{Alloc, TestMemory};
 
 const LP_TERMINATE: u32 = 1 << 0;
 const LP_QH: u32 = 0b01 << 1;
+const LP_SITD: u32 = 0b10 << 1;
+const LP_FSTN: u32 = 0b11 << 1;
 
 const QTD_STATUS_ACTIVE: u32 = 1 << 7;
 const QTD_TOKEN_IOC: u32 = 1 << 15;
@@ -330,4 +332,95 @@ fn ehci_periodic_smask_skips_non_matching_microframe() {
     assert_eq!(token_after & QTD_STATUS_ACTIVE, 0);
     assert_eq!((token_after >> QTD_TOKEN_BYTES_SHIFT) & 0x7fff, 0);
     assert_ne!(ehci.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_USBINT, 0);
+}
+
+#[test]
+fn ehci_periodic_skips_over_itd_sitd_fstn_to_reach_qh() {
+    let mut mem = TestMemory::new(0x20000);
+    let mut alloc = Alloc::new(0x1000);
+
+    let periodic_base = alloc.alloc(4096, 4096);
+    let itd_addr = alloc.alloc(32, 32);
+    let sitd_addr = alloc.alloc(32, 32);
+    let fstn_addr = alloc.alloc(32, 32);
+    let qh_addr = alloc.alloc(64, 32);
+    let qtd_addr = alloc.alloc(32, 32);
+    let buf_addr = alloc.alloc(64, 4);
+
+    // Periodic frame list: point every frame at an iTD, which links to an siTD, which links to an
+    // FSTN, which finally links to our QH. The controller should ignore the unsupported descriptors
+    // but still follow their forward pointers so the QH runs.
+    for i in 0..1024u32 {
+        // iTD link pointers are encoded as type=0, so the value is just the aligned address.
+        mem.write_u32(periodic_base + i * 4, itd_addr & 0xffff_ffe0);
+    }
+
+    // iTD dword0: Next Link Pointer -> siTD.
+    mem.write_u32(itd_addr + 0x00, (sitd_addr & 0xffff_ffe0) | LP_SITD);
+    // siTD dword0: Next Link Pointer -> FSTN.
+    mem.write_u32(sitd_addr + 0x00, (fstn_addr & 0xffff_ffe0) | LP_FSTN);
+    // FSTN dword0: Normal Path Link Pointer -> QH. dword1: Back Path Link Pointer (unused here).
+    mem.write_u32(fstn_addr + 0x00, (qh_addr & 0xffff_ffe0) | LP_QH);
+    mem.write_u32(fstn_addr + 0x04, LP_TERMINATE);
+
+    // qTD (IN, 8 bytes, IOC).
+    let token = QTD_STATUS_ACTIVE
+        | (PID_IN << QTD_TOKEN_PID_SHIFT)
+        | QTD_TOKEN_IOC
+        | (8 << QTD_TOKEN_BYTES_SHIFT);
+    mem.write_u32(qtd_addr + 0x00, LP_TERMINATE); // next qTD
+    mem.write_u32(qtd_addr + 0x04, LP_TERMINATE); // alt next qTD
+    mem.write_u32(qtd_addr + 0x08, token);
+    mem.write_u32(qtd_addr + 0x0c, buf_addr); // buffer 0
+    mem.write_u32(qtd_addr + 0x10, 0);
+    mem.write_u32(qtd_addr + 0x14, 0);
+    mem.write_u32(qtd_addr + 0x18, 0);
+    mem.write_u32(qtd_addr + 0x1c, 0);
+
+    // QH: device address 0, endpoint 1, max packet 8, SMASK=uframe 0, next qTD points at qtd.
+    let ep_char = (0u32) | (1u32 << 8) | (8u32 << 16);
+    let ep_caps = 0x01u32; // SMASK bit0
+    mem.write_u32(qh_addr + 0x00, LP_TERMINATE); // horiz link
+    mem.write_u32(qh_addr + 0x04, ep_char);
+    mem.write_u32(qh_addr + 0x08, ep_caps);
+    mem.write_u32(qh_addr + 0x0c, 0); // current qTD
+    mem.write_u32(qh_addr + 0x10, qtd_addr); // next qTD
+    mem.write_u32(qh_addr + 0x14, LP_TERMINATE); // alt next qTD
+
+    let expected = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+
+    let mut ehci = EhciController::new();
+    ehci.hub_mut()
+        .attach(0, Box::new(DummyInterruptIn::new(expected.clone())));
+
+    // Enable the port by performing a 50ms reset.
+    ehci.mmio_write(regs::reg_portsc(0), 4, regs::PORTSC_PP | regs::PORTSC_PR);
+    for _ in 0..50 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    // Clear any latched status bits from reset before starting the periodic schedule.
+    ehci.mmio_write(regs::REG_USBSTS, 4, regs::USBSTS_W1C_MASK);
+
+    ehci.mmio_write(regs::REG_PERIODICLISTBASE, 4, periodic_base);
+    ehci.mmio_write(regs::REG_FRINDEX, 4, 0);
+    ehci.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    ehci.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    ehci.tick_1ms(&mut mem);
+
+    let mut got = vec![0u8; 8];
+    mem.read(buf_addr, &mut got);
+    assert_eq!(got, expected);
+
+    let token_after = mem.read_u32(qtd_addr + 0x08);
+    assert_eq!(token_after & QTD_STATUS_ACTIVE, 0);
+    assert_eq!((token_after >> QTD_TOKEN_BYTES_SHIFT) & 0x7fff, 0);
+
+    // QH should have advanced to the qTD's next pointer (terminate).
+    let qh_next_after = mem.read_u32(qh_addr + 0x10);
+    assert_ne!(qh_next_after & LP_TERMINATE, 0);
+
+    let usbsts = ehci.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(usbsts & regs::USBSTS_USBINT, 0);
 }
