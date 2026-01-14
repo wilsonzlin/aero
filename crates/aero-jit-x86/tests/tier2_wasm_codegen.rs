@@ -1265,6 +1265,190 @@ fn tier2_trace_wasm_matches_interpreter_on_set_flags_preserves_unmasked_bits() {
 }
 
 #[test]
+fn tier2_trace_wasm_matches_interpreter_on_aux_carry_flag_guard() {
+    // Exercise AF (aux carry) computation on addition.
+    //
+    // 0x0f + 1 = 0x10, which sets AF=1.
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::Const { dst: v(0), value: 0x0f },
+            Instr::Const { dst: v(1), value: 1 },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::ALU,
+            },
+            Instr::LoadFlag {
+                dst: v(3),
+                flag: Flag::Af,
+            },
+            Instr::Guard {
+                cond: Operand::Value(v(3)),
+                expected: true,
+                exit_rip: 0x2000,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(2)),
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(3)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let env = RuntimeEnv::default();
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1234;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1 | RFLAGS_DF;
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    init_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0;
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    let res = run_trace_with_cached_regs(
+        &trace,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        1,
+        &opt.regalloc.cached,
+    );
+    assert_eq!(res.exit, RunExit::Returned);
+    assert_eq!(interp_state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x10);
+    assert_eq!(interp_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 1);
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, interp_state.cpu.rip);
+
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip_in_cpu, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip_in_cpu, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
+fn tier2_trace_wasm_matches_interpreter_on_overflow_flag_guard() {
+    // Exercise OF (signed overflow) computation on addition.
+    //
+    // 0x7fff.. + 1 = 0x8000.., which sets OF=1.
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::Const {
+                dst: v(0),
+                value: 0x7fff_ffff_ffff_ffff,
+            },
+            Instr::Const { dst: v(1), value: 1 },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::ALU,
+            },
+            Instr::LoadFlag {
+                dst: v(3),
+                flag: Flag::Of,
+            },
+            Instr::Guard {
+                cond: Operand::Value(v(3)),
+                expected: true,
+                exit_rip: 0x2000,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(2)),
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(3)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let env = RuntimeEnv::default();
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1234;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1 | RFLAGS_DF;
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    init_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0;
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    let res = run_trace_with_cached_regs(
+        &trace,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        1,
+        &opt.regalloc.cached,
+    );
+    assert_eq!(res.exit, RunExit::Returned);
+    assert_eq!(
+        interp_state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x8000_0000_0000_0000u64
+    );
+    assert_eq!(interp_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 1);
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, interp_state.cpu.rip);
+
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip_in_cpu, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip_in_cpu, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
 fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     // A tiny loop in Tier-2 IR form (built from a CFG) that increments RAX until it reaches 10,
     // then side-exits to RIP=100.
