@@ -33,7 +33,9 @@ In a finished package, this directory contains the driver package payload:
 - The MSBuild DebugLogs configuration outputs `aero_virtio_snd_dbg.sys`, but the canonical INF references
   `aero_virtio_snd.sys`. Stage it into this folder as the canonical name with:
   - `powershell -ExecutionPolicy Bypass -File ..\scripts\stage-built-sys.ps1 -Arch <x86|amd64> -Variant debuglogs -InputDir <msbuild-out>`
-- The legacy I/O-port bring-up package (`aero-virtio-snd-ioport.inf`, service `aeroviosnd_ioport`) is opt-in and not currently covered by the helper scripts.
+- The legacy I/O-port bring-up package (`aero-virtio-snd-ioport.inf`, service `aeroviosnd_ioport`) is opt-in and not staged by CI/Guest Tools.
+  `..\scripts\lint-inf.sh` includes a small set of sanity checks for it when the INF is present (for example ensuring it
+  does not opt into MSI/MSI-X, since the I/O-port legacy driver is INTx-only).
 - The legacy alias INF is checked in as `virtio-snd.inf.disabled` to avoid accidentally shipping/installing **two**
   INFs that match the same HWIDs.
 
