@@ -1666,28 +1666,17 @@ fuzz_target!(|data: &[u8]| {
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Geometry, /*slot=*/ 0, tex_handle);
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Hull, /*slot=*/ 1, tex_handle);
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Domain, /*slot=*/ 2, tex_handle);
-    // Keep BIND_SHADERS last so we can extend its payload by appending bytes.
-    w.bind_shaders(/*vs=*/ 10, /*ps=*/ 11, /*cs=*/ 12);
-    let mut cmd_proc_stage_ex_bind_shaders_ex = w.finish();
-    let bind_shaders_off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
-        + cmd::AerogpuCmdCreateTexture2d::SIZE_BYTES
-        + 3 * cmd::AerogpuCmdSetTexture::SIZE_BYTES;
-    // Patch BIND_SHADERS.size_bytes to include trailing `{gs, hs, ds}` handles.
-    if let Some(size_bytes) =
-        cmd_proc_stage_ex_bind_shaders_ex.get_mut(bind_shaders_off + 4..bind_shaders_off + 8)
-    {
-        size_bytes.copy_from_slice(
-            &((cmd::AerogpuCmdBindShaders::SIZE_BYTES + 12) as u32).to_le_bytes(),
-        );
-    }
-    cmd_proc_stage_ex_bind_shaders_ex.extend_from_slice(&100u32.to_le_bytes()); // gs
-    cmd_proc_stage_ex_bind_shaders_ex.extend_from_slice(&101u32.to_le_bytes()); // hs
-    cmd_proc_stage_ex_bind_shaders_ex.extend_from_slice(&102u32.to_le_bytes()); // ds
-    // Update command stream header size_bytes.
-    let cmd_proc_stage_ex_bind_shaders_ex_size = cmd_proc_stage_ex_bind_shaders_ex.len() as u32;
-    if let Some(size_bytes) = cmd_proc_stage_ex_bind_shaders_ex.get_mut(8..12) {
-        size_bytes.copy_from_slice(&cmd_proc_stage_ex_bind_shaders_ex_size.to_le_bytes());
-    }
+    // Emit the append-only extended BIND_SHADERS payload using the cmd_writer helper so we keep
+    // size_bytes/padding rules canonical.
+    w.bind_shaders_ex(
+        /*vs=*/ 10,
+        /*ps=*/ 11,
+        /*cs=*/ 12,
+        /*gs=*/ 100,
+        /*hs=*/ 101,
+        /*ds=*/ 102,
+    );
+    let cmd_proc_stage_ex_bind_shaders_ex = w.finish();
     fuzz_cmd_stream(&cmd_proc_stage_ex_bind_shaders_ex);
     fuzz_command_processor(&cmd_proc_stage_ex_bind_shaders_ex, None);
 
