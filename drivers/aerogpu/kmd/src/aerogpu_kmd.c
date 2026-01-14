@@ -1827,7 +1827,6 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
     for (UINT i = 0; i < Count; ++i) {
         AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
         if (!alloc) {
-            AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has null hAllocation", i);
             continue;
         }
 
@@ -1841,7 +1840,11 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
 
         const uint32_t allocId = (uint32_t)alloc->AllocationId;
         if (allocId == 0) {
-            AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has alloc_id=0", i);
+#if DBG
+            static volatile LONG g_BuildAllocTableZeroAllocIdLogCount = 0;
+            AEROGPU_LOG_RATELIMITED(
+                g_BuildAllocTableZeroAllocIdLogCount, 8, "BuildAllocTable: AllocationList[%u] has alloc_id=0", i);
+#endif
             continue;
         }
 
@@ -1985,7 +1988,13 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
     for (UINT i = 0; i < Count; ++i) {
         AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
         if (!alloc) {
-            AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has null hAllocation", i);
+#if DBG
+            static volatile LONG g_BuildAllocTableNullHandleLogCount = 0;
+            AEROGPU_LOG_RATELIMITED(g_BuildAllocTableNullHandleLogCount,
+                                    8,
+                                    "BuildAllocTable: AllocationList[%u] has null hAllocation",
+                                    i);
+#endif
             continue;
         }
         ExAcquireFastMutex(&alloc->CpuMapMutex);
