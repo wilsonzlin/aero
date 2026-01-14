@@ -107,6 +107,11 @@ members = [
 
 exclude = [
     "fuzz",
+    # `crates/aero-d3d9-shader` is a lightweight wrapper crate that currently shares its package
+    # name with the legacy SM2/SM3 parser in `crates/legacy/aero-d3d9-shader`. Keep it out of the
+    # workspace to avoid duplicate package names while still allowing `cargo` commands to be run
+    # from within that directory.
+    "crates/aero-d3d9-shader",
     # `crates/legacy/*` are reference-only; keep them out of the workspace so they don't
     # block workspace-wide builds, but mark them as excluded so they can still be built
     # directly via `--manifest-path` without Cargo treating them as a missing workspace member.
