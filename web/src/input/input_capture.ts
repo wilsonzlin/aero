@@ -1360,15 +1360,24 @@ function lockNavigatorKeyboard(
 ): Promise<void> {
   // Some implementations (or older typings) may be picky about the argument. Prefer an explicit
   // list of the keys we care about, but fall back to calling with no arguments if needed.
+  // Some browsers reject (rather than throw) when the argument is unsupported, so handle both.
+  const callWithoutArgs = (): Promise<void> => {
+    try {
+      return keyboard.lock();
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  };
   try {
-    return keyboard.lock(keyCodes);
+    return keyboard.lock(keyCodes).catch((err) => {
+      if (err instanceof TypeError) {
+        return callWithoutArgs();
+      }
+      return Promise.reject(err);
+    });
   } catch (err) {
     if (err instanceof TypeError) {
-      try {
-        return keyboard.lock();
-      } catch (err2) {
-        return Promise.reject(err2);
-      }
+      return callWithoutArgs();
     }
     return Promise.reject(err);
   }

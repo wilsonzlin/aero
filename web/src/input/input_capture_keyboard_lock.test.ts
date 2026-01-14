@@ -136,6 +136,41 @@ describe("InputCapture Keyboard Lock integration", () => {
     });
   });
 
+  it("falls back to calling keyboard.lock() with no args when passing a key list is rejected", async () => {
+    await withStubbedDocument(async () => {
+      const lock = vi.fn().mockImplementation((codes?: readonly string[]) => {
+        if (codes) {
+          return Promise.reject(new TypeError("unsupported key list"));
+        }
+        return Promise.resolve();
+      });
+      const unlock = vi.fn();
+
+      await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
+        const canvas = {
+          tabIndex: 0,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          focus: () => {},
+          requestPointerLock: () => {},
+        } as unknown as HTMLCanvasElement;
+
+        const ioWorker = { postMessage: () => {} };
+        const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
+
+        (capture as any).hasFocus = true;
+        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+
+        // Let the TypeError rejection be handled and the fallback call occur.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(lock).toHaveBeenCalledTimes(2);
+        expect(lock.mock.calls[0]?.[0]).toContain("Escape");
+        expect(lock.mock.calls[1]?.length).toBe(0);
+      });
+    });
+  });
+
   it("does not throw or leak unhandled rejections when keyboard lock is rejected", async () => {
     await withStubbedDocument(async () => {
       const lock = vi.fn<[readonly string[]], Promise<void>>().mockRejectedValue(new Error("nope"));
