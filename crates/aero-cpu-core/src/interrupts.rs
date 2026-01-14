@@ -585,7 +585,7 @@ pub fn exec_interrupt_assist_decoded<B: CpuBus>(
     _addr_size_override: bool,
 ) -> Result<InterruptAssistOutcome, CpuExit> {
     let ip = cpu.state.rip();
-    let next_ip = ip.wrapping_add(decoded.len as u64) & cpu.state.mode.ip_mask();
+    let next_ip = ip.wrapping_add(decoded.len as u64) & state::mask_bits(cpu.state.bitness());
 
     match decoded.instr.mnemonic() {
         Mnemonic::Cli => {

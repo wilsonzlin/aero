@@ -92,7 +92,7 @@ pub fn exec<B: CpuBus>(
                 0
             };
             let ret_size = state.bitness() / 8;
-            let target = pop(state, bus, ret_size)? & state.mode.ip_mask();
+            let target = pop(state, bus, ret_size)? & mask_bits(state.bitness());
             let sp = state.stack_ptr().wrapping_add(pop_imm as u64);
             state.set_stack_ptr(sp);
             state.set_rip(target);
@@ -352,12 +352,12 @@ fn branch_target<B: CpuBus>(
         OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 => {
             Ok(instr.near_branch_target())
         }
-        OpKind::Register => Ok(state.read_reg(instr.op0_register()) & state.mode.ip_mask()),
+        OpKind::Register => Ok(state.read_reg(instr.op0_register()) & mask_bits(state.bitness())),
         OpKind::Memory => {
             let bits = op_bits(state, instr, 0)?;
             let addr = calc_ea(state, instr, next_ip, true)?;
             let v = super::ops_data::read_mem(state, bus, addr, bits)?;
-            Ok(v & state.mode.ip_mask())
+            Ok(v & mask_bits(state.bitness()))
         }
         _ => Err(Exception::InvalidOpcode),
     }

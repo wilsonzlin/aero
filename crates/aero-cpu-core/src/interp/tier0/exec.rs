@@ -5,7 +5,7 @@ use crate::interrupts;
 use crate::interrupts::CpuCore;
 use crate::linear_mem::fetch_wrapped_seg_ip;
 use crate::mem::CpuBus;
-use crate::state::CpuState;
+use crate::state::{mask_bits, CpuState};
 use aero_x86::Register;
 
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ where
     let bitness = state.bitness();
     let addr_size_override = has_addr_size_override(&bytes, bitness);
     let decoded = decode(&bytes, ip, bitness).map_err(|_| Exception::InvalidOpcode)?;
-    let next_ip = ip.wrapping_add(decoded.len as u64) & state.mode.ip_mask();
+    let next_ip = ip.wrapping_add(decoded.len as u64) & mask_bits(bitness);
 
     let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
         Ok(v) => v,
@@ -366,7 +366,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
             }
         };
         let next_ip_raw = ip.wrapping_add(decoded.len as u64);
-        let next_ip = next_ip_raw & cpu.state.mode.ip_mask();
+        let next_ip = next_ip_raw & mask_bits(cpu.state.bitness());
 
         let outcome = match exec_decoded(
             cfg,
@@ -484,7 +484,7 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 
                 // Preserve the "basic block" behavior of `run_batch`: treat any
                 // control-transfer assist (i.e. RIP != fallthrough) as a branch.
-                let expected_next = next_ip_raw & cpu.state.mode.ip_mask();
+                let expected_next = next_ip_raw & mask_bits(cpu.state.bitness());
                 if cpu.state.rip() != expected_next {
                     return BatchResult {
                         executed,
@@ -600,7 +600,7 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
             }
         };
         let next_ip_raw = ip.wrapping_add(decoded.len as u64);
-        let next_ip = next_ip_raw & cpu.state.mode.ip_mask();
+        let next_ip = next_ip_raw & mask_bits(cpu.state.bitness());
 
         let outcome = match exec_decoded(
             cfg,
@@ -750,7 +750,7 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
 
                 // Preserve the "basic block" behavior of `run_batch`: treat any
                 // control-transfer assist (i.e. RIP != fallthrough) as a branch.
-                let expected_next = next_ip_raw & cpu.state.mode.ip_mask();
+                let expected_next = next_ip_raw & mask_bits(cpu.state.bitness());
                 if cpu.state.rip() != expected_next {
                     return BatchResult {
                         executed,
