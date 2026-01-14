@@ -5770,6 +5770,7 @@ function renderAudioPanel(): HTMLElement {
         // emitted by this export run without unpacking the tar manually.
         try {
           const files = entries.map((e) => ({ path: e.path, bytes: e.data.byteLength }));
+          files.sort((a, b) => a.path.localeCompare(b.path));
           entries.push({
             path: `${dir}/manifest.json`,
             data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), files }, null, 2)),
