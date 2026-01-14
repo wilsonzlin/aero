@@ -62,10 +62,12 @@ Virtio-input spans both the Rust device model and the current browser/worker run
     - Fixed PCI BDFs:
       - `00:0A.0` — virtio-input keyboard (`aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD`)
       - `00:0A.1` — virtio-input mouse (`aero_devices::pci::profile::VIRTIO_INPUT_MOUSE`)
-    - Interrupts: today this path is **INTx-only**. The MSI-X capability is exposed (virtio-pci
-      modern transport), but `aero_machine::Machine` currently constructs virtio-input with a
-      `NoopVirtioInterruptSink`, so MSI-X messages are not delivered. If a guest enables MSI-X, INTx
-      is suppressed (per virtio-pci semantics) and the device will be effectively silent.
+    - Interrupts: both **INTx** (baseline) and **MSI-X** are supported.
+      - MSI(-X) delivery is wired through `VirtioMsixInterruptSink` → `PlatformInterrupts::trigger_msi`
+        (see `crates/aero-machine/src/lib.rs::VirtioMsixInterruptSink`).
+      - Legacy INTx delivery is polled/routed via the machine’s PCI INTx sync loop (not via the virtio
+        interrupt sink), so it remains deterministic across devices.
+      - Regression test: `crates/aero-machine/tests/virtio_input_msix.rs`.
   - In the JS/WASM “single machine” API (`crates/aero-wasm::Machine`), virtio-input is opt-in at construction time:
     - `Machine.new_with_options(..., { enable_virtio_input: true })`
     - Injection APIs: `inject_virtio_key/rel/button/wheel` (Linux `evdev`-style codes)

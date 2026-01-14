@@ -25,9 +25,9 @@ If a test fails, treat the contract as the source of truth; fix code or bump the
 > the Aero virtio-input driver installed. This is complementary to the QEMU flows below (QEMU is
 > still the fastest way to compare against a reference virtio implementation).
 >
-> Caveat: in `aero_machine::Machine` today, virtio-input MSI-X delivery is not wired (the device is
-> constructed with `NoopVirtioInterruptSink`), so guests should keep MSI-X disabled and rely on INTx
-> (contract baseline) when validating virtio-input in the canonical machine.
+> Note: in `aero_machine::Machine`, virtio-input supports both INTx (baseline) and MSI-X. MSI-X
+> delivery is wired through `VirtioMsixInterruptSink` → `PlatformInterrupts::trigger_msi` and is
+> covered by `crates/aero-machine/tests/virtio_input_msix.rs`.
 >
 > **Windows images are not distributed.** This repo does not include proprietary Windows 7 images/ISOs.
 > For QEMU/host-harness testing you must supply your own Win7 media or a locally prepared image.
