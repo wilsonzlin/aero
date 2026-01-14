@@ -324,5 +324,5 @@ fuzz_target!(|data: &[u8]| {
     let ret_flags: u16 = u.arbitrary().unwrap_or(0x0200);
     write_interrupt_frame(&mut mem, &cpu, ret_ip, ret_cs, ret_flags);
 
-    bios.dispatch_interrupt(vector, &mut cpu, &mut mem, &mut disk);
+    bios.dispatch_interrupt(vector, &mut cpu, &mut mem, &mut disk, None);
 });
