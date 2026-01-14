@@ -647,6 +647,190 @@ static int RunD3D9DynamicVbLockSemantics(int argc, char** argv) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Phase 4: dynamic vertex buffer NOOVERWRITE overlap must fall back to DISCARD
+  // (rename) so previously-recorded draws remain intact.
+  // ---------------------------------------------------------------------------
+  //
+  // This complements Phase 2 (NOOVERWRITE append) by validating the overlap case.
+  //
+  // Use a minimal VS/PS pair so the GPU consumes the dynamic vertex buffer;
+  // AeroGPU's fixed-function FVF paths rewrite vertices into a scratch UP buffer
+  // and would not exercise VB renaming.
+  {
+    // Minimal vs_2_0:
+    //   mov oPos, v0
+    //   mov oD0, v1
+    //   mov oT0, v0
+    //   end
+    static const DWORD kVsPassthroughPosColor[] = {
+        0xFFFE0200u, // vs_2_0
+        0x03000001u, // mov
+        0x400F0000u, // oPos.xyzw
+        0x10E40000u, // v0.xyzw
+        0x03000001u, // mov
+        0x500F0000u, // oD0.xyzw
+        0x10E40001u, // v1.xyzw
+        0x03000001u, // mov
+        0x600F0000u, // oT0.xyzw
+        0x10E40000u, // v0.xyzw
+        0x0000FFFFu, // end
+    };
+
+    // ps_2_0:
+    //   mov oC0, v0
+    //   end
+    static const DWORD kPsPassthroughColor[] = {
+        0xFFFF0200u, // ps_2_0
+        0x03000001u, // mov
+        0x000F0800u, // oC0.xyzw
+        0x10E40000u, // v0.xyzw
+        0x0000FFFFu, // end
+    };
+
+    ComPtr<IDirect3DVertexShader9> vs;
+    hr = dev->CreateVertexShader(kVsPassthroughPosColor, vs.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateVertexShader (phase4)", hr);
+    }
+    ComPtr<IDirect3DPixelShader9> ps;
+    hr = dev->CreatePixelShader(kPsPassthroughColor, ps.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreatePixelShader (phase4)", hr);
+    }
+    hr = dev->SetVertexShader(vs.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetVertexShader (phase4)", hr);
+    }
+    hr = dev->SetPixelShader(ps.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetPixelShader (phase4)", hr);
+    }
+
+    const DWORD kFvfXyzDiffuse = D3DFVF_XYZ | D3DFVF_DIFFUSE;
+    hr = dev->SetFVF(kFvfXyzDiffuse);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF(XYZ|DIFFUSE) (phase4)", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> vb_dyn;
+    hr = dev->CreateVertexBuffer(sizeof(VertexXyzDiffuse) * 3,
+                                 D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                                 kFvfXyzDiffuse,
+                                 D3DPOOL_DEFAULT,
+                                 vb_dyn.put(),
+                                 NULL);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateVertexBuffer (phase4)", hr);
+    }
+
+    hr = dev->SetStreamSource(0, vb_dyn.get(), 0, sizeof(VertexXyzDiffuse));
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(vb_dyn) (phase4)", hr);
+    }
+    hr = dev->SetIndices(NULL);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetIndices(NULL) (phase4)", hr);
+    }
+
+    ComPtr<IDirect3DSurface9> phase4_rts[2];
+    for (int i = 0; i < 2; ++i) {
+      hr = dev->CreateRenderTarget(kWidth,
+                                   kHeight,
+                                   D3DFMT_X8R8G8B8,
+                                   D3DMULTISAMPLE_NONE,
+                                   0,
+                                   FALSE,
+                                   phase4_rts[i].put(),
+                                   NULL);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("CreateRenderTarget (phase4)", hr);
+      }
+    }
+
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("BeginScene (phase4)", hr);
+    }
+
+    for (int iter = 0; iter < 2; ++iter) {
+      hr = dev->SetRenderTarget(0, phase4_rts[iter].get());
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("SetRenderTarget (phase4)", hr);
+      }
+      hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("Clear (phase4)", hr);
+      }
+
+      VertexXyzDiffuse* v = NULL;
+      const DWORD flags = (iter == 0) ? D3DLOCK_DISCARD : D3DLOCK_NOOVERWRITE;
+      hr = vb_dyn->Lock(0, sizeof(VertexXyzDiffuse) * 3, (void**)&v, flags);
+      if (FAILED(hr) || !v) {
+        dev->EndScene();
+        return reporter.FailHresult("IDirect3DVertexBuffer9::Lock (phase4)", hr);
+      }
+
+      const DWORD color = (iter == 0) ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0);
+      v[0].x = -1.0f;
+      v[0].y = -1.0f;
+      v[0].z = 0.5f;
+      v[0].color = color;
+      v[1].x = 1.0f;
+      v[1].y = -1.0f;
+      v[1].z = 0.5f;
+      v[1].color = color;
+      v[2].x = 0.0f;
+      v[2].y = 1.0f;
+      v[2].z = 0.5f;
+      v[2].color = color;
+
+      hr = vb_dyn->Unlock();
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("IDirect3DVertexBuffer9::Unlock (phase4)", hr);
+      }
+
+      hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("DrawPrimitive (phase4)", hr);
+      }
+    }
+
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("EndScene (phase4)", hr);
+    }
+
+    dev->SetRenderTarget(0, backbuffer.get());
+
+    for (int iter = 0; iter < 2; ++iter) {
+      hr = dev->GetRenderTargetData(phase4_rts[iter].get(), sysmem.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetRenderTargetData (phase4)", hr);
+      }
+      D3DLOCKED_RECT lr;
+      ZeroMemory(&lr, sizeof(lr));
+      hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("LockRect (phase4)", hr);
+      }
+      const uint32_t pixel = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, kWidth / 2, kHeight / 2);
+      sysmem->UnlockRect();
+
+      const uint32_t expected = (uint32_t)((iter == 0) ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0));
+      if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+        return reporter.Fail("phase4 pixel mismatch at iter=%d: got=0x%08lX expected=0x%08lX",
+                             iter,
+                             (unsigned long)pixel,
+                             (unsigned long)expected);
+      }
+    }
+  }
+
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("PresentEx", hr);
