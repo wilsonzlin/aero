@@ -19554,6 +19554,7 @@ mod tests {
     use aero_gpu::GpuError;
     use aero_protocol::aerogpu::aerogpu_cmd::{
         AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx,
+        AerogpuVertexBufferBinding,
     };
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
     use std::collections::BTreeMap;
@@ -23662,24 +23663,26 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             );
             writer.upload_resource(VB, 0, vb_bytes);
 
+            // `vs_passthrough.dxbc` consumes POSITION+COLOR. Bind a matching input layout and a
+            // dummy vertex buffer so the draw can execute (the specific vertex contents are not
+            // important for this test).
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
             writer.create_shader_dxbc(
                 PS,
                 AerogpuShaderStage::Pixel,
                 &build_ps_dcl_resource_raw_t0_solid_green_dxbc(),
-            );
-            writer.create_input_layout(IL, ILAY_POS3_COLOR);
-            writer.set_input_layout(IL);
-            writer.set_vertex_buffers(
-                0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
             );
             writer.bind_shaders(VS, PS, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);

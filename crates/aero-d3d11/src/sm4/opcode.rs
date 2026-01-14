@@ -371,7 +371,6 @@ pub const OPCODE_DCL_TESS_DOMAIN: u32 = OPCODE_DCL_HS_DOMAIN;
 pub const OPCODE_DCL_TESS_PARTITIONING: u32 = OPCODE_DCL_HS_PARTITIONING;
 /// `dcl_tessellator_output_primitive` (triangle_cw/triangle_ccw/line).
 pub const OPCODE_DCL_TESS_OUTPUT_PRIMITIVE: u32 = OPCODE_DCL_HS_OUTPUT_TOPOLOGY;
-
 /// `dcl_thread_group` declaration.
 ///
 /// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.
