@@ -1,8 +1,7 @@
 //! Snapshot adapter for the deterministic SMP/APIC model.
 //!
-//! This bridges [`crate::SmpMachine`] into the `aero-snapshot` save/restore
-//! pipeline so we can validate multi-vCPU snapshots against a small, fully
-//! deterministic SMP/APIC model.
+//! This bridges [`crate::Machine`] into the `aero-snapshot` save/restore pipeline so we can
+//! validate multi-vCPU snapshots against a small, fully deterministic SMP/APIC model.
 
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
@@ -13,7 +12,7 @@ use aero_snapshot::{
 };
 
 use crate::lapic::APIC_REG_ICR_HIGH;
-use crate::{SmpMachine, VcpuRunState};
+use crate::{Machine, VcpuRunState};
 
 const SMP_INTERNAL_VERSION: u16 = 1;
 
@@ -164,7 +163,7 @@ fn decode_trampoline(data: &[u8]) -> Result<Option<crate::Trampoline>> {
     }
 }
 
-impl SnapshotSource for SmpMachine {
+impl SnapshotSource for Machine {
     fn snapshot_meta(&mut self) -> SnapshotMeta {
         SnapshotMeta::default()
     }
@@ -252,7 +251,7 @@ impl SnapshotSource for SmpMachine {
     }
 }
 
-impl SnapshotTarget for SmpMachine {
+impl SnapshotTarget for Machine {
     fn restore_cpu_state(&mut self, state: SnapshotCpuState) {
         // Legacy single-CPU snapshots restore into the BSP by convention.
         self.cpus[0].cpu.rip = state.rip;
@@ -366,4 +365,3 @@ impl SnapshotTarget for SmpMachine {
         Ok(())
     }
 }
-

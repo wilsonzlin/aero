@@ -278,12 +278,10 @@ quietly accreting more responsibilities.
 
 **Current owner**
 
-- `crates/aero-smp-model/*` (`SmpMachine`, vCPU scheduler, local APIC IPI delivery)
+- `crates/aero-smp/*` (`Machine`, vCPU scheduler, local APIC IPI delivery)
   - This crate was extracted out of `crates/emulator` to avoid collisions/confusion with the
     canonical `aero_machine::Machine`.
-  - `crates/emulator` retains a feature-gated legacy re-export (`emulator::smp` behind
-    `--features legacy-smp-model`) for compatibility, but it is intentionally not built/exposed by
-    default.
+  - `crates/emulator` retains a legacy re-export (`emulator::smp`) for compatibility.
 
 **Intended canonical home**
 
@@ -291,7 +289,7 @@ quietly accreting more responsibilities.
   state/MMIO, INIT/SIPI, cooperative AP execution) into a full multi-vCPU execution environment by
   adopting (or re-implementing) the SMP scheduling and APIC-delivery logic behind a stable API.
   See [`docs/21-smp.md`](./21-smp.md) for the up-to-date gap list.
-- If the SMP code needs to be reusable independently of `aero-machine`, `crates/aero-smp-model`
+- If the SMP code needs to be reusable independently of `aero-machine`, `crates/aero-smp`
   already provides a minimal deterministic model suitable for unit tests and snapshot validation.
 
 ---
@@ -344,7 +342,7 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
 8. **SMP integration decision**
     - Define a canonical SMP story for `aero-machine` (multi-vCPU API, scheduling model, snapshot
       story).
-    - Either integrate/adapt the existing `crates/aero-smp-model` code or replace it with a new
+    - Either integrate/adapt the existing `crates/aero-smp` code or replace it with a new
       implementation in the canonical stack.
 
 9. **End state: remove `crates/emulator` (optional)**

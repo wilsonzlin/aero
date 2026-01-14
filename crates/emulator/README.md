@@ -38,7 +38,7 @@ should be extended instead.
 
 - **AeroGPU PCI device model**: `src/devices/pci/aerogpu.rs` (+ `src/devices/aerogpu_*.rs`)
 - **GPU worker / command executor wiring**: `src/gpu_worker/*`
-- **Legacy deterministic SMP/APIC model**: extracted into `crates/aero-smp-model` (and re-exported as
-  `emulator::smp` behind `--features legacy-smp-model`).
+- **Legacy deterministic SMP/APIC model**: extracted into `crates/aero-smp` (and re-exported as
+  `emulator::smp`).
 
 These are explicitly tracked in the migration plan doc and should not quietly expand in scope.

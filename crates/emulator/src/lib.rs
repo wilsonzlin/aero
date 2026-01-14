@@ -84,25 +84,6 @@ fn main() {}
 ```
 "#
 )]
-#![cfg_attr(
-    not(feature = "legacy-smp-model"),
-    doc = r#"
-
-## Legacy deterministic SMP/APIC model (feature gated)
-
-The deterministic SMP/APIC model + snapshot harness lives in `crates/aero-smp-model` and is
-intentionally **not** part of the default `emulator` API surface.
-
-These compile-fail doctests ensure the default feature set does not accidentally expose the SMP
-model, while still allowing it to be enabled for targeted tests via `--features legacy-smp-model`.
-
-```compile_fail
-use emulator::smp;
-fn main() {}
-```
-"#
-)]
-
 #[cfg(feature = "legacy-audio")]
 pub mod audio;
 pub mod devices;
@@ -110,8 +91,4 @@ pub mod display;
 pub mod gpu_worker;
 pub mod io;
 pub mod machine;
-
-// The deterministic SMP/APIC model (and snapshot validation harness) lives in its own crate to
-// avoid collisions/confusion with `aero_machine::Machine`. Keep this as an opt-in legacy re-export.
-#[cfg(feature = "legacy-smp-model")]
 pub mod smp;

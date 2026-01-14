@@ -137,7 +137,7 @@ and block devices.
   `L2TunnelRingBackend`) live in `crates/aero-net-backend` and are re-exported by `emulator::io::net`
   for compatibility.
 
-#### `crates/aero-smp-model` (`aero-smp-model`)
+#### `crates/aero-smp` (`aero-smp`)
 
 **What it does**
 

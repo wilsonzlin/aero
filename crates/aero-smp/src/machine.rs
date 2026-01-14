@@ -27,13 +27,13 @@ pub struct Trampoline {
 }
 
 #[derive(Debug, Clone)]
-pub struct SmpMachine {
+pub struct Machine {
     pub cpus: Vec<Vcpu>,
     pub memory: Vec<u8>,
     pub trampoline: Option<Trampoline>,
 }
 
-impl SmpMachine {
+impl Machine {
     pub fn new(cpu_count: usize, memory_size: usize) -> Self {
         assert!(cpu_count >= 1, "must have at least one CPU (BSP)");
 
@@ -175,4 +175,3 @@ impl SmpMachine {
         Ok(tramp)
     }
 }
-

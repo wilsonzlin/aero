@@ -1,11 +1,6 @@
 //! Legacy re-export of the deterministic SMP/APIC model.
 //!
-//! The minimal SMP/APIC + snapshot harness was extracted into `aero-smp-model` to avoid
-//! collisions/confusion with the canonical `aero_machine::Machine`. This module is retained for
-//! backwards compatibility behind the `legacy-smp-model` feature.
+//! The deterministic SMP/APIC + snapshot harness lives in `crates/aero-smp`. This module is
+//! retained for backwards compatibility so existing `emulator::smp::*` imports keep working.
 
-pub use aero_smp_model::*;
-
-#[deprecated(note = "Use aero_smp_model::SmpMachine instead (or depend on aero-smp-model directly).")]
-pub type Machine = aero_smp_model::SmpMachine;
-
+pub use aero_smp::*;

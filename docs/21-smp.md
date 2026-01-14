@@ -33,7 +33,7 @@ Attempting to construct a canonical machine with `cpu_count == 0` fails with
 ## Why SMP is disabled in the canonical machine/platform
 
 The project has building blocks for multi-vCPU guests (ACPI table generation can emit multiple CPU
-entries, and there is a prototype SMP model in `crates/aero-smp-model/`), but the end-to-end
+entries, and there is a prototype SMP model in `crates/aero-smp/`), but the end-to-end
 full-system wiring is not complete yet.
 
 Key missing pieces include (what’s still left even with the current bring-up support):
@@ -71,10 +71,8 @@ Key missing pieces include (what’s still left even with the current bring-up s
 ## Where to track progress
 
 - This doc (`docs/21-smp.md`) is the canonical “what’s missing / what’s next” reference.
-- Prototype SMP plumbing lives in `crates/aero-smp-model/` (APIC IPI + AP startup state machine).
-  - For backwards compatibility it can also be accessed via `emulator::smp` when
-    `--features legacy-smp-model` is enabled, but it is intentionally **not** part of the default
-    `crates/emulator` API surface.
+- Prototype SMP plumbing lives in `crates/aero-smp/` (APIC IPI + AP startup state machine).
+  - For backwards compatibility it can also be accessed via `emulator::smp` (a pure re-export shim).
 - The higher-level roadmap mentions multi-core as a Windows 7 compatibility milestone:
   - `docs/14-project-milestones.md` → “Phase 4 … Multi-core / SMP emulation”
 - Firmware-side conceptual background (not necessarily implemented end-to-end yet):
@@ -86,4 +84,4 @@ Key missing pieces include (what’s still left even with the current bring-up s
 - For faster “boot to desktop” workflows, use snapshots (`docs/16-snapshots.md`) rather than relying
   on multi-core to speed up boot.
 - If you specifically want to experiment with AP startup/IPI logic (without full PCI/BIOS/Windows),
-  look at the unit-test-oriented SMP prototype in `crates/aero-smp-model/`.
+  look at the unit-test-oriented SMP prototype in `crates/aero-smp/`.

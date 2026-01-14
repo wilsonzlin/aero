@@ -1,5 +1,7 @@
-use aero_smp_model::{
-    DeterministicScheduler, Guest, SmpMachine, VcpuRunState, APIC_REG_ICR_HIGH, APIC_REG_ICR_LOW,
+#![cfg(not(target_arch = "wasm32"))]
+
+use aero_smp::{
+    DeterministicScheduler, Guest, Machine, VcpuRunState, APIC_REG_ICR_HIGH, APIC_REG_ICR_LOW,
     RESET_VECTOR,
 };
 use firmware::acpi::{AcpiConfig, AcpiTables};
@@ -61,7 +63,7 @@ fn icr_low_fixed_shorthand_all_excluding_self(vector: u8) -> u32 {
 
 #[test]
 fn ap_bring_up_init_sipi() {
-    let mut machine = SmpMachine::new(2, 0x20000);
+    let mut machine = Machine::new(2, 0x20000);
 
     // BSP starts at the reset vector; APs begin in wait-for-SIPI.
     assert_eq!(machine.cpus[0].cpu.rip, RESET_VECTOR);
@@ -87,7 +89,7 @@ fn ap_bring_up_init_sipi() {
 
 #[test]
 fn fixed_ipi_is_delivered_to_target_cpu() {
-    let mut machine = SmpMachine::new(2, 0x20000);
+    let mut machine = Machine::new(2, 0x20000);
     let tramp = machine.install_trampoline(0x8000, &[0xF4]).unwrap();
 
     // Bring up AP.
@@ -106,7 +108,7 @@ fn fixed_ipi_is_delivered_to_target_cpu() {
 
 #[test]
 fn ipi_destination_shorthand_all_excluding_self() {
-    let mut machine = SmpMachine::new(3, 0x20000);
+    let mut machine = Machine::new(3, 0x20000);
 
     machine.write_local_apic(0, APIC_REG_ICR_HIGH, icr_high_dest(0));
     machine.write_local_apic(
@@ -139,7 +141,7 @@ fn synthetic_smp_guest_boots_and_receives_ipi() {
     }
 
     impl Guest for SmpGuest {
-        fn on_tick(&mut self, cpu: usize, machine: &mut SmpMachine) {
+        fn on_tick(&mut self, cpu: usize, machine: &mut Machine) {
             self.booted[cpu] = machine.cpus[cpu].cpu.run_state == VcpuRunState::Running;
 
             if cpu == 0 && !self.sent_startup {
@@ -161,14 +163,14 @@ fn synthetic_smp_guest_boots_and_receives_ipi() {
             }
         }
 
-        fn on_interrupt(&mut self, cpu: usize, vector: u8, _machine: &mut SmpMachine) {
+        fn on_interrupt(&mut self, cpu: usize, vector: u8, _machine: &mut Machine) {
             if vector == 0x40 {
                 self.ipi_received[cpu] += 1;
             }
         }
     }
 
-    let mut machine = SmpMachine::new(2, 0x20000);
+    let mut machine = Machine::new(2, 0x20000);
     let tramp = machine.install_trampoline(0x8000, &[0xF4]).unwrap();
 
     // "Guest OS sees 2 CPUs": read MADT.
@@ -192,4 +194,3 @@ fn synthetic_smp_guest_boots_and_receives_ipi() {
     assert!(guest.booted[1], "AP should have been started via SIPI");
     assert_eq!(guest.ipi_received[1], 1, "AP should receive the fixed IPI");
 }
-

@@ -351,8 +351,8 @@ Multi-core enablement needs focused tests because bugs often manifest as hangs o
 
 These tests are implemented against the minimal deterministic SMP/APIC model in:
 
-- `crates/aero-smp-model` (crate `aero_smp_model`)
-  - Tests: `crates/aero-smp-model/tests/`
+- `crates/aero-smp` (crate `aero_smp`)
+  - Tests: `crates/aero-smp/tests/`
 
 ## Integration Tests
 

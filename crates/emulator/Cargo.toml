@@ -22,7 +22,10 @@ storage-device-crates = []
 # retained for reference and for targeted tests.
 legacy-audio = []
 # Legacy deterministic SMP/APIC model + snapshot harness.
-legacy-smp-model = ["dep:aero-smp-model"]
+#
+# Note: retained as a no-op for backwards compatibility; the SMP model is now always available via
+# `emulator::smp` and lives in `crates/aero-smp`.
+legacy-smp-model = []
 # Legacy emulator-specific PCI wrappers for `aero-usb` EHCI (USB 2.0) / xHCI (USB 3.x).
 #
 # The canonical PC platform uses `aero-devices` USB models instead; keep these wrappers behind
@@ -46,7 +49,7 @@ aero-edid = { path = "../aero-edid" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
-aero-smp-model = { path = "../aero-smp-model", optional = true }
+aero-smp = { path = "../aero-smp" }
 aero-platform = { path = "../platform" }
 aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-shared = { path = "../aero-shared" }

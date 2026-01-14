@@ -6,11 +6,11 @@
 //! "tick" executes one slice of one vCPU.
 
 use crate::cpu::VcpuRunState;
-use crate::machine::SmpMachine;
+use crate::machine::Machine;
 
 pub trait Guest {
-    fn on_tick(&mut self, cpu: usize, machine: &mut SmpMachine);
-    fn on_interrupt(&mut self, cpu: usize, vector: u8, machine: &mut SmpMachine);
+    fn on_tick(&mut self, cpu: usize, machine: &mut Machine);
+    fn on_interrupt(&mut self, cpu: usize, vector: u8, machine: &mut Machine);
 }
 
 /// A simple deterministic round-robin scheduler.
@@ -27,7 +27,7 @@ impl DeterministicScheduler {
     /// Run the machine for a fixed number of scheduler ticks.
     pub fn run_for_ticks(
         &mut self,
-        machine: &mut SmpMachine,
+        machine: &mut Machine,
         guest: &mut impl Guest,
         ticks: u64,
     ) {
@@ -58,4 +58,3 @@ impl Default for DeterministicScheduler {
         Self::new()
     }
 }
-
