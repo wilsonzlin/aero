@@ -184,6 +184,44 @@ describe("io/devices/xhci", () => {
     expect(bridge.tick_1ms).toHaveBeenCalledTimes(3);
   });
 
+  it("mirrors PCI command writes into the bridge when set_pci_command is implemented", () => {
+    const bridge: XhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frame: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      set_pci_command: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new XhciPciDevice({ bridge, irqSink });
+
+    dev.onPciCommandWrite(0x1_2345);
+    expect(bridge.set_pci_command).toHaveBeenCalledWith(0x2345);
+  });
+
+  it("calls poll() when available even if no full USB frame elapsed", () => {
+    const bridge: XhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      tick_1ms: vi.fn(),
+      poll: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new XhciPciDevice({ bridge, irqSink });
+    dev.onPciCommandWrite(1 << 2);
+
+    // First tick initializes the time base.
+    dev.tick(0);
+    // Less than 1ms elapsed; no frames should be stepped, but poll should still run.
+    dev.tick(0.5);
+
+    expect(bridge.tick_1ms).not.toHaveBeenCalled();
+    expect(bridge.poll).toHaveBeenCalledTimes(1);
+  });
+
   it("gates DMA stepping on PCI Bus Master Enable (command bit 2)", () => {
     const bridge: XhciControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),
