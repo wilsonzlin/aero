@@ -182,6 +182,28 @@ static void ResetSpinLockInstrumentation(void)
     WdfTestSpinLockSequence = 0;
 }
 
+static void AssertInterruptLocksReleased(_In_ const VIRTIO_PCI_INTERRUPTS* Interrupts)
+{
+    ULONG q;
+
+    assert(Interrupts != NULL);
+
+    if (Interrupts->CommonCfgLock != NULL) {
+        assert(Interrupts->CommonCfgLock->Held == FALSE);
+    }
+
+    if (Interrupts->ConfigLock != NULL) {
+        assert(Interrupts->ConfigLock->Held == FALSE);
+    }
+
+    if (Interrupts->QueueLocks != NULL) {
+        for (q = 0; q < Interrupts->QueueCount; q++) {
+            assert(Interrupts->QueueLocks[q] != NULL);
+            assert(Interrupts->QueueLocks[q]->Held == FALSE);
+        }
+    }
+}
+
 static void PrepareIntx(
     _Out_ PVIRTIO_PCI_INTERRUPTS Interrupts,
     _Out_ WDFDEVICE* DeviceOut,
@@ -353,6 +375,7 @@ static void TestIntxRealInterruptDispatch(void)
     assert(handled == TRUE);
     assert(interrupts.u.Intx.Interrupt->DpcQueued == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 0);
 
@@ -363,6 +386,7 @@ static void TestIntxRealInterruptDispatch(void)
     handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 2);
     assert(cb.QueueCallsPerIndex[0] == 1);
@@ -375,6 +399,7 @@ static void TestIntxRealInterruptDispatch(void)
     handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 2);
     assert(cb.QueueCallsPerIndex[0] == 1);
@@ -408,6 +433,7 @@ static void TestMsixDispatchAndRouting(void)
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 0);
 
@@ -417,6 +443,7 @@ static void TestMsixDispatchAndRouting(void)
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 1);
     assert(cb.QueueCallsPerIndex[0] == 1);
@@ -428,6 +455,7 @@ static void TestMsixDispatchAndRouting(void)
     handled = interrupts.u.Msix.Interrupts[2]->Isr(interrupts.u.Msix.Interrupts[2], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[2]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 1);
     assert(cb.QueueCallsPerIndex[0] == 0);
@@ -466,6 +494,7 @@ static void TestMsixLimitedVectorRouting(void)
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 0);
 
@@ -475,6 +504,7 @@ static void TestMsixLimitedVectorRouting(void)
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 4);
     for (q = 0; q < interrupts.QueueCount; q++) {
@@ -627,6 +657,7 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 2);
     assert(cb.QueueCallsPerIndex[0] == 1);
@@ -640,6 +671,7 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     handled = interrupts.u.Msix.Interrupts[2]->Isr(interrupts.u.Msix.Interrupts[2], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[2]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 2);
     assert(cb.QueueCallsPerIndex[0] == 0);
@@ -824,6 +856,7 @@ static void TestMsixSingleVectorFallbackRouting(void)
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 4);
     for (q = 0; q < interrupts.QueueCount; q++) {
@@ -985,6 +1018,7 @@ static void TestResetInProgressGating(void)
 
     InterlockedExchange(&interrupts.ResetInProgress, 1);
     WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 0);
     assert(interrupts.u.Intx.PendingIsrStatus == 0);
@@ -1031,6 +1065,7 @@ static void TestResetInProgressGating(void)
 
     InterlockedExchange(&interrupts.ResetInProgress, 1);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 0);
     assert(interrupts.ConfigLock->AcquireCalls == 0);
@@ -1284,6 +1319,7 @@ static void TestIntxQuiesceResume(void)
     assert(handled == TRUE);
     assert(interrupts.u.Intx.Interrupt->DpcQueued == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    AssertInterruptLocksReleased(&interrupts);
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 2);
 
