@@ -2492,7 +2492,14 @@ def _virtio_blk_reset_required_failure_message(
     return _virtio_blk_reset_missing_failure_message()
 
 
-def _virtio_input_binding_required_failure_message(tail: bytes) -> Optional[str]:
+def _virtio_input_binding_required_failure_message(
+    tail: bytes,
+    *,
+    saw_pass: bool = False,
+    saw_fail: bool = False,
+    saw_skip: bool = False,
+    marker_line: Optional[str] = None,
+) -> Optional[str]:
     """
     Enforce that virtio-input PCI binding validation ran and PASSed.
 
@@ -2500,16 +2507,45 @@ def _virtio_input_binding_required_failure_message(tail: bytes) -> Optional[str]
         A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
     """
     prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS" in tail:
+    # Prefer the incrementally captured last marker line when available so we don't depend on the rolling
+    # tail buffer still containing the marker.
+    if marker_line is not None:
+        st = _try_extract_marker_status(marker_line)
+        if st == "PASS":
+            return None
+        if st == "SKIP":
+            return (
+                "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while "
+                "--require-virtio-input-binding was enabled (guest selftest too old?)"
+            )
+        if st == "FAIL":
+            fields = _parse_marker_kv_fields(marker_line)
+            reason = fields.get("reason") or "unknown"
+            expected = fields.get("expected") or ""
+            actual = fields.get("actual") or ""
+
+            details = f"reason={reason}"
+            if expected:
+                details += f" expected={expected}"
+            if actual:
+                details += f" actual={actual}"
+            return (
+                "FAIL: VIRTIO_INPUT_BINDING_FAILED: virtio-input-binding marker reported FAIL while "
+                f"--require-virtio-input-binding was enabled ({details})"
+            )
+
+    # Fall back to saw flags tracked by the main harness loop (survive tail truncation), with a tail-scan
+    # fallback for unit tests / legacy call sites.
+    if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS" in tail:
         return None
 
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL" in tail:
-        marker_line = _try_extract_last_marker_line(tail, prefix)
+    if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL" in tail:
+        marker_line2 = _try_extract_last_marker_line(tail, prefix)
         reason = "unknown"
         expected = ""
         actual = ""
-        if marker_line is not None:
-            fields = _parse_marker_kv_fields(marker_line)
+        if marker_line2 is not None:
+            fields = _parse_marker_kv_fields(marker_line2)
             reason = fields.get("reason") or reason
             expected = fields.get("expected") or ""
             actual = fields.get("actual") or ""
@@ -2524,7 +2560,7 @@ def _virtio_input_binding_required_failure_message(tail: bytes) -> Optional[str]
             f"--require-virtio-input-binding was enabled ({details})"
         )
 
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" in tail:
+    if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" in tail:
         return (
             "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while "
             "--require-virtio-input-binding was enabled (guest selftest too old?)"
@@ -4374,6 +4410,8 @@ def main() -> int:
             virtio_snd_msix_marker_line: Optional[str] = None
             virtio_snd_msix_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
+            virtio_input_binding_marker_line: Optional[str] = None
+            virtio_input_binding_marker_carry = b""
             expect_blk_msi_config: Optional[str] = None
             udp_port_config: Optional[str] = None
             saw_virtio_blk_pass = False
@@ -4393,6 +4431,9 @@ def main() -> int:
             saw_virtio_input_fail = False
             saw_virtio_input_bind_pass = False
             saw_virtio_input_bind_fail = False
+            saw_virtio_input_binding_pass = False
+            saw_virtio_input_binding_fail = False
+            saw_virtio_input_binding_skip = False
             virtio_input_marker_time: Optional[float] = None
             saw_virtio_input_leds_pass = False
             saw_virtio_input_leds_fail = False
@@ -4505,6 +4546,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
                         carry=virtio_snd_msix_marker_carry,
+                    )
+                    virtio_input_binding_marker_line, virtio_input_binding_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_binding_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|",
+                        carry=virtio_input_binding_marker_carry,
                     )
                     tail = _append_serial_tail(tail, chunk)
                     if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
@@ -4676,6 +4723,21 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP" in tail
                     ):
                         saw_virtio_input_leds_skip = True
+                    if (
+                        not saw_virtio_input_binding_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS" in tail
+                    ):
+                        saw_virtio_input_binding_pass = True
+                    if (
+                        not saw_virtio_input_binding_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL" in tail
+                    ):
+                        saw_virtio_input_binding_fail = True
+                    if (
+                        not saw_virtio_input_binding_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" in tail
+                    ):
+                        saw_virtio_input_binding_skip = True
                     if (
                         not saw_virtio_input_events_ready
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
@@ -5983,7 +6045,13 @@ def main() -> int:
                                 result_code = 1
                                 break
                         if bool(getattr(args, "require_virtio_input_binding", False)):
-                            msg = _virtio_input_binding_required_failure_message(tail)
+                            msg = _virtio_input_binding_required_failure_message(
+                                tail,
+                                saw_pass=saw_virtio_input_binding_pass,
+                                saw_fail=saw_virtio_input_binding_fail,
+                                saw_skip=saw_virtio_input_binding_skip,
+                                marker_line=virtio_input_binding_marker_line,
+                            )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
@@ -6462,6 +6530,12 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
                             carry=virtio_snd_msix_marker_carry,
                         )
+                        virtio_input_binding_marker_line, virtio_input_binding_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_binding_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|",
+                            carry=virtio_input_binding_marker_carry,
+                        )
                         tail = _append_serial_tail(tail, chunk2)
                         if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
                             expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
@@ -6604,6 +6678,21 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP" in tail
                         ):
                             saw_virtio_input_leds_skip = True
+                        if (
+                            not saw_virtio_input_binding_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS" in tail
+                        ):
+                            saw_virtio_input_binding_pass = True
+                        if (
+                            not saw_virtio_input_binding_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL" in tail
+                        ):
+                            saw_virtio_input_binding_fail = True
+                        if (
+                            not saw_virtio_input_binding_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" in tail
+                        ):
+                            saw_virtio_input_binding_skip = True
                         if (
                             not saw_virtio_input_events_ready
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
@@ -7502,7 +7591,13 @@ def main() -> int:
                                     result_code = 1
                                     break
                             if bool(getattr(args, "require_virtio_input_binding", False)):
-                                msg = _virtio_input_binding_required_failure_message(tail)
+                                msg = _virtio_input_binding_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_input_binding_pass,
+                                    saw_fail=saw_virtio_input_binding_fail,
+                                    saw_skip=saw_virtio_input_binding_skip,
+                                    marker_line=virtio_input_binding_marker_line,
+                                )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -7710,6 +7805,14 @@ def main() -> int:
                     virtio_snd_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_input_binding_marker_carry:
+            raw = virtio_input_binding_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"):
+                try:
+                    virtio_input_binding_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
 
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
         blk_msix_tail = (
@@ -7734,7 +7837,7 @@ def main() -> int:
             virtio_net_msix_marker_line.encode("utf-8") if virtio_net_msix_marker_line is not None else tail
         )
         _emit_virtio_net_msix_host_marker(net_msix_tail)
-        _emit_virtio_input_binding_host_marker(tail)
+        _emit_virtio_input_binding_host_marker(tail, marker_line=virtio_input_binding_marker_line)
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         snd_msix_tail = (
@@ -9394,7 +9497,7 @@ def _emit_virtio_blk_recovery_host_marker(
     print("|".join(parts))
 
 
-def _emit_virtio_input_binding_host_marker(tail: bytes) -> None:
+def _emit_virtio_input_binding_host_marker(tail: bytes, *, marker_line: Optional[str] = None) -> None:
     """
     Best-effort: emit a host-side marker mirroring the guest's virtio-input PCI binding validation.
 
@@ -9405,9 +9508,10 @@ def _emit_virtio_input_binding_host_marker(tail: bytes) -> None:
     This does not affect harness PASS/FAIL unless --require-virtio-input-binding is enabled; it's also useful for
     log scraping/CI diagnostics.
     """
-    marker_line = _try_extract_last_marker_line(
-        tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
-    )
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
+        )
     if marker_line is None:
         return
 
