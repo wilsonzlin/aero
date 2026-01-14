@@ -753,3 +753,63 @@ fn alpha_test_always_is_treated_as_disabled_for_hash_and_wgsl() {
         "unexpected discard:\n{wgsl_always}"
     );
 }
+
+#[test]
+fn state_hash_ignores_lighting_when_fvf_has_no_normals() {
+    let stages = [TextureStageState::default(); 8];
+
+    let base = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState { enabled: false },
+    };
+    let lighting_enabled = FixedFunctionShaderDesc {
+        lighting: LightingState { enabled: true },
+        ..base.clone()
+    };
+
+    assert_eq!(
+        base.state_hash(),
+        lighting_enabled.state_hash(),
+        "lighting has no observable effect without normals and must not affect the shader cache key"
+    );
+
+    let wgsl_base = generate_fixed_function_shaders(&base).vertex_wgsl;
+    let wgsl_enabled = generate_fixed_function_shaders(&lighting_enabled).vertex_wgsl;
+    assert_eq!(
+        wgsl_base, wgsl_enabled,
+        "enabling lighting without normals should generate identical WGSL"
+    );
+}
+
+#[test]
+fn state_hash_ignores_lighting_when_vertices_are_xyzrhw() {
+    let stages = [TextureStageState::default(); 8];
+
+    let base = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZRHW | Fvf::NORMAL),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState { enabled: false },
+    };
+    let lighting_enabled = FixedFunctionShaderDesc {
+        lighting: LightingState { enabled: true },
+        ..base.clone()
+    };
+
+    assert_eq!(
+        base.state_hash(),
+        lighting_enabled.state_hash(),
+        "lighting has no observable effect for XYZRHW vertices and must not affect the cache key"
+    );
+
+    let wgsl_base = generate_fixed_function_shaders(&base).vertex_wgsl;
+    let wgsl_enabled = generate_fixed_function_shaders(&lighting_enabled).vertex_wgsl;
+    assert_eq!(
+        wgsl_base, wgsl_enabled,
+        "enabling lighting for XYZRHW vertices should generate identical WGSL"
+    );
+}

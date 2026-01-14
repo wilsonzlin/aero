@@ -212,7 +212,12 @@ impl FixedFunctionShaderDesc {
         );
 
         write_u8(&mut hash, self.fog.enabled as u8);
-        write_u8(&mut hash, self.lighting.enabled as u8);
+        // Lighting has no observable effect unless the vertex format provides normals and uses the
+        // untransformed XYZ position path.
+        let lighting_effective = self.lighting.enabled
+            && self.fvf.has_flag(Fvf::NORMAL)
+            && matches!(self.fvf.position_type(), Ok(PositionType::Xyz));
+        write_u8(&mut hash, lighting_effective as u8);
 
         hash
     }
