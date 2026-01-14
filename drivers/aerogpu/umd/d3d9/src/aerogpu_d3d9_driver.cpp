@@ -20806,12 +20806,13 @@ namespace {
 
 bool patch_sig_equal(const PatchCacheSignature& a, const PatchCacheSignature& b) {
   if (a.kind != b.kind) return false;
-  // D3DFVF_TEXCOORDSIZE* bits can contain garbage for *unused* texcoord sets.
-  // Patch emulation consumes TEXCOORD0.x (float1) / TEXCOORD0.xy (float2+) when TEX1
-  // is present, so ignore
-  // all TEXCOORDSIZE bits when matching patch cache signatures (stride_bytes
-  // still distinguishes float2 vs float3/float4 layouts).
-  if ((a.fvf & ~kD3dFvfTexCoordSizeMask) != (b.fvf & ~kD3dFvfTexCoordSizeMask)) return false;
+  // D3DFVF_TEXCOORDSIZE* bits can contain garbage for *unused* texcoord sets. Patch
+  // emulation supports float1/2/3/4 TEXCOORD0 when TEX1 is present, so cache keys
+  // must:
+  // - ignore garbage size bits for unused sets, but
+  // - still distinguish float1 vs float2/3/4 for TEX0 so we don't accidentally
+  //   reuse tessellated vertices with a different TEXCOORD0 layout.
+  if (fvf_layout_key(a.fvf) != fvf_layout_key(b.fvf)) return false;
   if (a.stride_bytes != b.stride_bytes) return false;
   if (a.start_vertex_offset != b.start_vertex_offset) return false;
   if (a.num_vertices != b.num_vertices) return false;
