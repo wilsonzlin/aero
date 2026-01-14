@@ -1509,14 +1509,20 @@ mod wasm {
                 )));
             }
 
-            let upload_bpr = if stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+            let upload_bpr = if height <= 1 {
+                // WebGPU's bytesPerRow alignment requirement does not apply when uploading a single
+                // row; avoid unnecessary padding/copying for 1-row framebuffers.
+                tight_row_bytes
+            } else if stride_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
                 stride_bytes
             } else {
                 padded_bytes_per_row(tight_row_bytes)
             };
 
             let data: &[u8];
-            if upload_bpr == stride_bytes {
+            if height <= 1 {
+                data = &rgba8[..tight_row_bytes as usize];
+            } else if upload_bpr == stride_bytes {
                 data = &rgba8[..expected_len];
             } else {
                 let total = upload_bpr as usize * height as usize;
@@ -1538,6 +1544,14 @@ mod wasm {
                 data = &self.upload_scratch;
             }
 
+            // The last row does not require padding out to `bytes_per_row`. Slice the input to the
+            // minimum required length so wgpu doesn't need to clone/copy extra bytes.
+            let required_len = u64::from(upload_bpr)
+                .saturating_mul(u64::from(height.saturating_sub(1)))
+                .saturating_add(u64::from(tight_row_bytes));
+            let required_len = usize::try_from(required_len)
+                .map_err(|_| JsValue::from_str("Upload size overflow"))?;
+
             self.queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &self.framebuffer_texture,
@@ -1545,7 +1559,7 @@ mod wasm {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                data,
+                &data[..required_len],
                 wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(upload_bpr),
@@ -1627,11 +1641,51 @@ mod wasm {
                     continue;
                 }
 
-                if stride_aligned {
-                    // Fast path: point directly into the source buffer. WebGPU will only read
-                    // `w*4` bytes per row, even though `bytes_per_row` is the full stride.
+                let row_bytes = w
+                    .checked_mul(4)
+                    .ok_or_else(|| JsValue::from_str("Dirty rect width overflow"))?;
+
+                if h <= 1 {
+                    // Single-row uploads do not require bytesPerRow alignment; point directly into
+                    // the source buffer even when `stride_bytes` is not aligned.
                     let base_off = y0 as usize * stride_bytes as usize + x0 as usize * 4;
-                    let data = &rgba8[base_off..expected_len];
+                    let end = base_off + row_bytes as usize;
+                    let data = &rgba8[base_off..end];
+
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &self.framebuffer_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: x0,
+                                y: y0,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(row_bytes),
+                            rows_per_image: Some(1),
+                        },
+                        wgpu::Extent3d {
+                            width: w,
+                            height: 1,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                } else if stride_aligned {
+                    // Fast path: point directly into the source buffer. WebGPU will only read
+                    // `row_bytes` per row, even though `bytes_per_row` is the full stride.
+                    let base_off = y0 as usize * stride_bytes as usize + x0 as usize * 4;
+                    let required_len = u64::from(stride_bytes)
+                        .saturating_mul(u64::from(h.saturating_sub(1)))
+                        .saturating_add(u64::from(row_bytes));
+                    let required_len = usize::try_from(required_len)
+                        .map_err(|_| JsValue::from_str("Upload size overflow"))?;
+                    let end = base_off + required_len;
+                    let data = &rgba8[base_off..end];
 
                     self.queue.write_texture(
                         wgpu::ImageCopyTexture {
@@ -1658,10 +1712,7 @@ mod wasm {
                     );
                 } else {
                     // Slow path: pack the rect into an aligned staging buffer.
-                    let tight_row_bytes = w
-                        .checked_mul(4)
-                        .ok_or_else(|| JsValue::from_str("Dirty rect width overflow"))?;
-                    let upload_bpr = padded_bytes_per_row(tight_row_bytes);
+                    let upload_bpr = padded_bytes_per_row(row_bytes);
                     let total = upload_bpr as usize * h as usize;
 
                     if self.upload_scratch_bytes_per_row != upload_bpr {
@@ -1674,11 +1725,18 @@ mod wasm {
                     for row in 0..h as usize {
                         let src_off = (y0 as usize + row) * stride_bytes as usize + x0 as usize * 4;
                         let dst_off = row * upload_bpr as usize;
-                        let dst_row = &mut self.upload_scratch[dst_off..dst_off + upload_bpr as usize];
-                        dst_row[..tight_row_bytes as usize]
-                            .copy_from_slice(&rgba8[src_off..src_off + tight_row_bytes as usize]);
-                        dst_row[tight_row_bytes as usize..].fill(0);
+                        let dst_row =
+                            &mut self.upload_scratch[dst_off..dst_off + upload_bpr as usize];
+                        dst_row[..row_bytes as usize]
+                            .copy_from_slice(&rgba8[src_off..src_off + row_bytes as usize]);
+                        dst_row[row_bytes as usize..].fill(0);
                     }
+
+                    let required_len = u64::from(upload_bpr)
+                        .saturating_mul(u64::from(h.saturating_sub(1)))
+                        .saturating_add(u64::from(row_bytes));
+                    let required_len = usize::try_from(required_len)
+                        .map_err(|_| JsValue::from_str("Upload size overflow"))?;
 
                     self.queue.write_texture(
                         wgpu::ImageCopyTexture {
@@ -1691,7 +1749,7 @@ mod wasm {
                             },
                             aspect: wgpu::TextureAspect::All,
                         },
-                        &self.upload_scratch,
+                        &self.upload_scratch[..required_len],
                         wgpu::ImageDataLayout {
                             offset: 0,
                             bytes_per_row: Some(upload_bpr),

@@ -97,6 +97,27 @@ test('aero-gpu-wasm upload_rgba8888_dirty_rects only uploads dirty region', asyn
 
     wasm.upload_rgba8888_dirty_rects(frame1, stride, new Uint32Array([rect.x, rect.y, rect.w, rect.h]));
 
+    // Frame 2: full yellow, with a single-row cyan dirty rect. This exercises the
+    // `copyHeight == 1` upload path.
+    const frame2 = new Uint8Array(stride * height);
+    for (let i = 0; i < frame2.length; i += 4) {
+      frame2[i + 0] = 255;
+      frame2[i + 1] = 255;
+      frame2[i + 2] = 0;
+      frame2[i + 3] = 255;
+    }
+    const rowRect = { x: 1, y: 2, w: 4, h: 1 };
+    for (let y = rowRect.y; y < rowRect.y + rowRect.h; y += 1) {
+      for (let x = rowRect.x; x < rowRect.x + rowRect.w; x += 1) {
+        const off = y * stride + x * 4;
+        frame2[off + 0] = 0;
+        frame2[off + 1] = 255;
+        frame2[off + 2] = 255;
+        frame2[off + 3] = 255;
+      }
+    }
+    wasm.upload_rgba8888_dirty_rects(frame2, stride, new Uint32Array([rowRect.x, rowRect.y, rowRect.w, rowRect.h]));
+
     const afterStats = (wasm.get_gpu_stats?.() as any) ?? {};
 
     const rgba = await wasm.request_screenshot();
@@ -129,25 +150,34 @@ test('aero-gpu-wasm upload_rgba8888_dirty_rects only uploads dirty region', asyn
   expect(result.width).toBe(16);
   expect(result.height).toBe(16);
   expect(result.statsDelta.fullCalls).toBe(1);
-  expect(result.statsDelta.dirtyCalls).toBe(1);
-  expect(result.statsDelta.dirtyRects).toBe(1);
+  expect(result.statsDelta.dirtyCalls).toBe(2);
+  expect(result.statsDelta.dirtyRects).toBe(2);
   expect(result.statsDelta.fullBytes).toBe(16 * 16 * 4);
-  expect(result.statsDelta.dirtyBytes).toBe(3 * 2 * 4);
+  expect(result.statsDelta.dirtyBytes).toBe(3 * 2 * 4 + 4 * 1 * 4);
 
   const actual = Buffer.from(result.rgbaBase64, 'base64');
   expect(actual.byteLength).toBe(16 * 16 * 4);
 
   const expected = Buffer.alloc(16 * 16 * 4);
   const rect = { x: 4, y: 5, w: 3, h: 2 };
+  const rowRect = { x: 1, y: 2, w: 4, h: 1 };
   for (let y = 0; y < 16; y += 1) {
     for (let x = 0; x < 16; x += 1) {
       const off = (y * 16 + x) * 4;
       const inRect = x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+      const inRowRect =
+        x >= rowRect.x && x < rowRect.x + rowRect.w && y >= rowRect.y && y < rowRect.y + rowRect.h;
       if (inRect) {
         // Green.
         expected[off + 0] = 0;
         expected[off + 1] = 255;
         expected[off + 2] = 0;
+        expected[off + 3] = 255;
+      } else if (inRowRect) {
+        // Cyan.
+        expected[off + 0] = 0;
+        expected[off + 1] = 255;
+        expected[off + 2] = 255;
         expected[off + 3] = 255;
       } else {
         // Red (from the previous full-frame upload).
