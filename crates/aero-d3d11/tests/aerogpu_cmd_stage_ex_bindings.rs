@@ -19,7 +19,10 @@ const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 // `stage_ex` values use DXBC program-type numbering (SM4/SM5 version token).
-const STAGE_EX_VERTEX: u32 = 1;
+//
+// Note: DXBC program types 0/1 (Pixel/Vertex) are intentionally invalid in AeroGPU's stage_ex
+// encoding; those stages must be represented via the legacy `shader_stage` field.
+const STAGE_EX_INVALID_VERTEX: u32 = 1;
 const STAGE_EX_GEOMETRY: u32 = 2;
 const STAGE_EX_HULL: u32 = 3;
 const STAGE_EX_DOMAIN: u32 = 4;
@@ -272,14 +275,8 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         push_set_samplers(&mut stream, AerogpuShaderStage::Pixel as u32, 0, 202, 0);
         push_set_texture(&mut stream, AerogpuShaderStage::Pixel as u32, 0, 302, 0);
 
-        // VS binding using the stage_ex extension must route to the VS bucket (not CS).
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            2,
-            304,
-            STAGE_EX_VERTEX,
-        );
+        // Vertex stage bindings are encoded directly via `shader_stage=VERTEX` (not stage_ex).
+        push_set_texture(&mut stream, AerogpuShaderStage::Vertex as u32, 2, 304, 0);
 
         // CS bindings (reserved0==0 is the real compute stage). Write slot 0 first; stage_ex writes
         // must not clobber it.
@@ -552,6 +549,46 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         assert_eq!(
             bindings.stage(ShaderStage::Compute).texture(1),
             Some(BoundTexture { texture: 303 })
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_stage_ex_vertex_value_is_rejected() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
+        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+
+        push_create_texture2d(&mut stream, 1);
+        // stage_ex=1 is the DXBC program type for Vertex, but it is intentionally invalid in the
+        // AeroGPU stage_ex encoding (0 is reserved for legacy/default compute; Vertex must use the
+        // legacy stage field).
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            1,
+            STAGE_EX_INVALID_VERTEX,
+        );
+        let stream = finish_stream(stream);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("stage_ex=1 must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("stage_ex=1"),
+            "error should mention invalid stage_ex=1, got: {msg}"
         );
     });
 }
