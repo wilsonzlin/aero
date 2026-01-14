@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 #[test]
 fn dbgctl_watch_fence_math_helper() {
@@ -27,12 +28,31 @@ fn dbgctl_watch_fence_math_helper() {
         .expect("failed to spawn C compiler");
     assert!(status.success(), "C compiler failed with status {status}");
 
-    let output = Command::new(&out_path)
-        .output()
-        .expect("failed to run compiled helper");
+    // `ETXTBSY` ("text file busy") can happen on some filesystems if the compiler/linker still has
+    // the output file open when we immediately attempt to execute it. Retry a few times with small
+    // backoff to make this test robust under parallel `cargo test` runs.
+    let output = {
+        let mut attempt = 0u32;
+        loop {
+            match Command::new(&out_path).output() {
+                Ok(output) => break output,
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 10 =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(5 * attempt as u64));
+                    continue;
+                }
+                Err(err) => panic!("failed to run compiled helper: {err}"),
+            }
+        }
+    };
     assert!(
         output.status.success(),
         "helper failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+
+    // Best-effort cleanup: avoid leaving compiled helpers behind in /tmp on CI.
+    let _ = std::fs::remove_file(&out_path);
 }
