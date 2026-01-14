@@ -14,7 +14,8 @@ fn route_string_encodes_ports_as_4_bit_values() {
 
     // Two hub tiers: root -> port2 -> port5 -> device
     let rs = XhciRouteString::encode_from_root(&[2, 5]).unwrap();
-    assert_eq!(rs.raw(), 0x52);
+    // Route String stores the port closest to the device in the least significant nibble.
+    assert_eq!(rs.raw(), 0x25);
     assert_eq!(rs.ports_from_root(), vec![2, 5]);
     assert_eq!(rs.ports_to_root(), vec![5, 2]);
 
@@ -54,4 +55,3 @@ fn route_string_rejects_gaps_and_overflow() {
         }
     );
 }
-

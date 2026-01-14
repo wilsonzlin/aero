@@ -634,6 +634,9 @@ pub enum XhciRouteStringError {
 ///
 /// The Route String is a 20-bit value made up of up to 5 4-bit nibbles. Each nibble encodes a
 /// downstream hub port number (`1..=15`). A `0` nibble terminates the string.
+///
+/// Note on nibble ordering: the least significant nibble (bits 3:0) is the port number closest to
+/// the device. Each successive nibble moves one hub hop closer to the root port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct XhciRouteString(u32);
 
@@ -676,6 +679,15 @@ impl XhciRouteString {
     /// Returns the sequence of downstream hub ports starting at the hub directly attached to the
     /// root port.
     pub fn ports_from_root(self) -> Vec<u8> {
+        // Nibble 0 is closest-to-device. Collect then reverse to root->device order.
+        let mut ports = self.ports_to_root();
+        ports.reverse();
+        ports
+    }
+
+    /// Returns the sequence of downstream hub ports starting at the hub directly attached to the
+    /// device (i.e. closest-to-device first).
+    pub fn ports_to_root(self) -> Vec<u8> {
         let mut ports = Vec::new();
         for i in 0..XHCI_ROUTE_STRING_MAX_DEPTH {
             let nibble = ((self.0 >> (4 * i)) & 0x0f) as u8;
@@ -684,14 +696,6 @@ impl XhciRouteString {
             }
             ports.push(nibble);
         }
-        ports
-    }
-
-    /// Returns the sequence of downstream hub ports starting at the hub directly attached to the
-    /// device (i.e. closest-to-device first).
-    pub fn ports_to_root(self) -> Vec<u8> {
-        let mut ports = self.ports_from_root();
-        ports.reverse();
         ports
     }
 
@@ -704,15 +708,17 @@ impl XhciRouteString {
             });
         }
 
+        // Build the Route String by appending port nibbles as we walk from root to device.
+        // The last hop ends up in the least significant nibble.
         let mut raw: u32 = 0;
-        for (i, &port) in ports.iter().enumerate() {
+        for &port in ports.iter() {
             if port == 0 || port > XHCI_ROUTE_STRING_MAX_PORT {
                 return Err(XhciRouteStringError::InvalidPort {
                     port,
                     max: XHCI_ROUTE_STRING_MAX_PORT,
                 });
             }
-            raw |= (port as u32) << (4 * i);
+            raw = (raw << 4) | (port as u32);
         }
         Self::from_raw(raw)
     }
