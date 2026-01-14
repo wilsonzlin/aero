@@ -141,11 +141,10 @@ Contract note:
       `aero_virtio_input.inf` (only the leading banner/comments may differ; see
       `drivers/windows7/virtio-input/scripts/check-inf-alias.py`; CI also enforces this via
       `scripts/ci/check-windows7-virtio-contract-consistency.py`).
-    - Because it is identical, it does **not** change HWID matching behavior.
+    - It is a filename-only alias and does **not** change HWID matching behavior.
     - It is checked in disabled-by-default (`*.inf.disabled`) to avoid accidentally shipping/installing two overlapping INFs.
   - Tablet devices bind via the separate tablet INF (`drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`,
-    `SUBSYS_00121AF4`). That HWID is more specific, so it wins over the generic fallback (if enabled) when both driver packages
-    are installed.
+    `SUBSYS_00121AF4`). That HWID is more specific, so it wins over the generic fallback when both driver packages are installed.
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (duplicate overlapping INFs can
     lead to confusing PnP driver selection). Ship/install **only one** of the two filenames at a time.
 - The driver also validates the Revision ID at runtime.
@@ -172,13 +171,14 @@ The canonical Windows 7 virtio-input driver source lives at:
 
 - `drivers/windows7/virtio-input/` (INF: `inf/aero_virtio_input.inf`, service: `aero_virtio_input`)
 
-The repo also carries an optional legacy alias INF (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
-for compatibility with older workflows/tools that still reference `virtio-input.inf`. The alias is a filename alias only and
-does not change HWID matching behavior.
+The repo also carries an optional legacy filename alias INF (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
+for compatibility with older workflows/tools that still reference `virtio-input.inf`. It is a filename-only alias and does **not**
+change HWID matching behavior.
 
-From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to
-`inf/aero_virtio_input.inf` (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-Do not ship/install both filenames at the same time: ship/install **only one** of the two INF basenames.
+From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to the canonical
+`inf/aero_virtio_input.inf` (only the leading banner/comments may differ; see
+`drivers/windows7/virtio-input/scripts/check-inf-alias.py`). Do not ship/install both filenames at the same time: ship/install
+**only one** of the two INF basenames.
 
 ### Notes
 
