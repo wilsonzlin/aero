@@ -11,7 +11,7 @@
  *
  *     cargo xtask fixtures
  *
- * Or regenerate just the checked-in AML blob with:
+ * Or regenerate just the legacy PCI DSDT AML blob (`crates/firmware/acpi/dsdt.aml`) with:
  *
  *     cargo run -p firmware --bin gen_dsdt --locked
  *
