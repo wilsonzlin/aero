@@ -293,27 +293,27 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
 
-  // Keep mipmap-related filter caps disabled for now.
-  //
-  // On Win7/WDDM, guest-backed allocations currently support a single
-  // subresource, so mipmapped textures fall back to host-backed storage (see
-  // `force_host_backing` in `device_create_resource`). Mip filtering is also not
-  // exercised by the DWM/compositor workload. Keep filtering caps conservative
-  // (min/mag only) so apps prefer the validated paths.
+  // Basic point/linear filtering including mip filters. Mipmapped textures are
+  // supported end-to-end, though some WDDM paths may fall back to host-backed
+  // storage for multi-subresource resources (see `force_host_backing` in
+  // `device_create_resource`).
   out->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
-                           D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+                           D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
+                           D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
 
   out->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
 
-  // These address modes are supported by the host pipeline. Border address mode
-  // is mapped to clamp-to-edge when the backend lacks clamp-to-border support.
+  // These address modes are supported by the host pipeline. Keep this
+  // conservative: clamp/wrap/mirror cover common D3D9-era workloads without
+  // advertising clamp-to-border semantics (which are not supported on all
+  // backends).
   out->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP |
-                            D3DPTADDRESSCAPS_MIRROR | D3DPTADDRESSCAPS_BORDER;
+                            D3DPTADDRESSCAPS_MIRROR;
 
   // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
   // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
-  out->TextureCaps = D3DPTEXTURECAPS_ALPHA;
+  out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
 
   out->MaxTextureWidth = 4096;
   out->MaxTextureHeight = 4096;
@@ -335,9 +335,11 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->MaxPrimitiveCount = 0xFFFFFu;
   out->MaxVertexIndex = 0xFFFFFu;
 
-  out->DeclTypes = D3DDTCAPS_FLOAT1 | D3DDTCAPS_FLOAT2 | D3DDTCAPS_FLOAT3 | D3DDTCAPS_FLOAT4 | D3DDTCAPS_D3DCOLOR |
-                   D3DDTCAPS_UBYTE4 | D3DDTCAPS_UBYTE4N | D3DDTCAPS_SHORT2 | D3DDTCAPS_SHORT4 | D3DDTCAPS_SHORT2N |
-                   D3DDTCAPS_SHORT4N | D3DDTCAPS_USHORT2N | D3DDTCAPS_USHORT4N;
+  // Only advertise declaration types that are implemented by the AeroGPU D3D9
+  // vertex-input path end-to-end. Over-advertising here can cause D3D9 runtimes
+  // and apps to select decl layouts we can't interpret correctly.
+  out->DeclTypes = D3DDTCAPS_FLOAT1 | D3DDTCAPS_FLOAT2 | D3DDTCAPS_FLOAT3 |
+                   D3DDTCAPS_FLOAT4 | D3DDTCAPS_D3DCOLOR | D3DDTCAPS_UBYTE4N;
 
   // D3D9 supports up to 4 MRTs, and the AeroGPU command stream can bind up to 4
   // (clamped to a contiguous prefix). Advertise 4 so apps don't unnecessarily
