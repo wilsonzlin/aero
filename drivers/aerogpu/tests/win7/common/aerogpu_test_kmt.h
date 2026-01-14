@@ -566,6 +566,28 @@ static inline bool AerogpuQueryCursor(const D3DKMT_FUNCS* f,
   return AerogpuEscapeWithTimeout(f, adapter, out_cursor, sizeof(*out_cursor), 2000, out_status);
 }
 
+static inline bool AerogpuQueryError(const D3DKMT_FUNCS* f,
+                                     D3DKMT_HANDLE adapter,
+                                     aerogpu_escape_query_error_out* out_error,
+                                     NTSTATUS* out_status) {
+  if (out_error) {
+    ZeroMemory(out_error, sizeof(*out_error));
+  }
+  if (!out_error) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  out_error->hdr.version = AEROGPU_ESCAPE_VERSION;
+  out_error->hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+  out_error->hdr.size = sizeof(*out_error);
+  out_error->hdr.reserved0 = 0;
+
+  return AerogpuEscapeWithTimeout(f, adapter, out_error, sizeof(*out_error), 2000, out_status);
+}
+
 static inline bool AerogpuDumpRingV2(const D3DKMT_FUNCS* f,
                                      D3DKMT_HANDLE adapter,
                                      uint32_t ring_id,

@@ -57,6 +57,31 @@ static int RunDeviceStateSanity(int argc, char** argv) {
   NTSTATUS st = 0;
   bool have_v2 = aerogpu_test::kmt::AerogpuEscapeWithTimeout(&kmt, adapter, &q2, sizeof(q2), 2000, &st);
   if (have_v2) {
+    // Also sanity-check QUERY_ERROR doesn't hang. This is particularly important around
+    // power-transition windows where MMIO reads can be unsafe.
+    {
+      aerogpu_escape_query_error_out qe;
+      NTSTATUS stErr = 0;
+      const bool okErr = aerogpu_test::kmt::AerogpuQueryError(&kmt, adapter, &qe, &stErr);
+      if (!okErr) {
+        if (stErr == aerogpu_test::kmt::kStatusNotSupported || stErr == aerogpu_test::kmt::kStatusInvalidParameter) {
+          aerogpu_test::PrintfStdout("INFO: %s: QUERY_ERROR escape not supported; skipping", kTestName);
+        } else {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("D3DKMTEscape(query-error) failed (NTSTATUS=0x%08lX)", (unsigned long)stErr);
+        }
+      } else if (qe.hdr.version != AEROGPU_ESCAPE_VERSION || qe.hdr.op != AEROGPU_ESCAPE_OP_QUERY_ERROR ||
+                 qe.hdr.size != sizeof(qe)) {
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+        aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+        return reporter.Fail("invalid QUERY_ERROR header (version=%lu op=%lu size=%lu)",
+                             (unsigned long)qe.hdr.version,
+                             (unsigned long)qe.hdr.op,
+                             (unsigned long)qe.hdr.size);
+      }
+    }
+
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
 
@@ -104,6 +129,31 @@ static int RunDeviceStateSanity(int argc, char** argv) {
 
   st = 0;
   bool have_v1 = aerogpu_test::kmt::AerogpuEscapeWithTimeout(&kmt, adapter, &q1, sizeof(q1), 2000, &st);
+
+  // Best-effort: also call QUERY_ERROR for timeout/hang coverage on older KMDs that still support it.
+  {
+    aerogpu_escape_query_error_out qe;
+    NTSTATUS stErr = 0;
+    const bool okErr = aerogpu_test::kmt::AerogpuQueryError(&kmt, adapter, &qe, &stErr);
+    if (!okErr) {
+      if (stErr == aerogpu_test::kmt::kStatusNotSupported || stErr == aerogpu_test::kmt::kStatusInvalidParameter) {
+        aerogpu_test::PrintfStdout("INFO: %s: QUERY_ERROR escape not supported; skipping", kTestName);
+      } else {
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+        aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+        return reporter.Fail("D3DKMTEscape(query-error) failed (NTSTATUS=0x%08lX)", (unsigned long)stErr);
+      }
+    } else if (qe.hdr.version != AEROGPU_ESCAPE_VERSION || qe.hdr.op != AEROGPU_ESCAPE_OP_QUERY_ERROR ||
+               qe.hdr.size != sizeof(qe)) {
+      aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+      return reporter.Fail("invalid QUERY_ERROR header (version=%lu op=%lu size=%lu)",
+                           (unsigned long)qe.hdr.version,
+                           (unsigned long)qe.hdr.op,
+                           (unsigned long)qe.hdr.size);
+    }
+  }
+
   aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);
 
