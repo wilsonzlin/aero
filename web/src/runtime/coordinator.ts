@@ -1969,10 +1969,14 @@ export class WorkerCoordinator {
         // Machine runtime uses a dedicated CPU worker that owns the canonical `api.Machine`
         // instance (full-system snapshots, disk reattachment, etc). Legacy runtime continues
         // to use `cpu.worker.ts`.
-        worker =
-          this.activeConfig?.vmRuntime === "machine"
-            ? new Worker(new URL("../workers/machine_cpu.worker.ts", import.meta.url), { type: "module" })
-            : new Worker(new URL("../workers/cpu.worker.ts", import.meta.url), { type: "module" });
+        //
+        // Keep these as explicit branches so Vite can statically detect + bundle both worker
+        // entrypoints.
+        if (this.activeConfig?.vmRuntime === "machine") {
+          worker = new Worker(new URL("../workers/machine_cpu.worker.ts", import.meta.url), { type: "module" });
+        } else {
+          worker = new Worker(new URL("../workers/cpu.worker.ts", import.meta.url), { type: "module" });
+        }
         break;
       case "gpu":
         worker = new Worker(new URL("../workers/gpu.worker.ts", import.meta.url), { type: "module" });

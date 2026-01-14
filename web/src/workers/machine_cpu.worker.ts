@@ -218,7 +218,7 @@ function attachMachineNetwork(): void {
 
 function ensureWasmMachine(): { api: WasmApi; machine: InstanceType<WasmApi["Machine"]> } {
   const api = wasmApi;
-  if (!api) throw new Error("WASM is not initialized; cannot restore machine snapshot.");
+  if (!api) throw new Error("WASM is not initialized; cannot perform machine snapshot operation.");
   if (!api.Machine) throw new Error("Machine export unavailable in this WASM build.");
   if (!wasmMachine) {
     wasmMachine = new api.Machine(getMachineRamSizeBytes());
@@ -387,6 +387,9 @@ ctx.onmessage = (ev) => {
 
         enqueueSnapshotOp(async () => {
           try {
+            if (!vmSnapshotPaused) {
+              throw new Error("Machine CPU worker is not paused; call vm.snapshot.pause before saving.");
+            }
             const { machine } = ensureWasmMachine();
             const fn =
               (machine as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
@@ -438,6 +441,9 @@ ctx.onmessage = (ev) => {
 
         enqueueSnapshotOp(async () => {
           try {
+            if (!vmSnapshotPaused) {
+              throw new Error("Machine CPU worker is not paused; call vm.snapshot.pause before restoring.");
+            }
             const { api, machine } = ensureWasmMachine();
             // Snapshot restore intentionally drops host-side disk backends (OPFS handles) and only
             // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).

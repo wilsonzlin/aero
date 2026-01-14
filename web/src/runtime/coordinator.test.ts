@@ -88,6 +88,26 @@ describe("runtime/coordinator", () => {
     expect((coordinator as any).workers.net).toBeTruthy();
   });
 
+  it("spawns the machine CPU worker entrypoint when vmRuntime=machine", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      vmRuntime: "machine",
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(String(cpuWorker.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+  });
+
   it("treats net as restartable without requiring a full VM restart", () => {
     const coordinator = new WorkerCoordinator();
     // With `net` marked restartable, this should not call `restart()` (which
