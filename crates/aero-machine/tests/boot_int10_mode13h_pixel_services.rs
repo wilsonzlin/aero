@@ -33,6 +33,30 @@ fn build_int10_mode13h_pixel_service_boot_sector() -> [u8; 512] {
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
     i += 2;
 
+    // INT 10h AH=0Dh: Read Graphics Pixel
+    //
+    // Read pixel at (0,0) back into AL (should be 4).
+    // mov ax, 0x0D00
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x00, 0x0D]);
+    i += 3;
+    // (CX,DX already 0 from previous calls)
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // Use the returned AL as the color for a second write at (1,0). If the read service is
+    // broken and returns 0, this pixel will stay black and the host-side assertions will fail.
+    //
+    // inc cx  ; x=1
+    sector[i] = 0x41;
+    i += 1;
+    // mov ah, 0x0C  ; preserve AL
+    sector[i..i + 2].copy_from_slice(&[0xB4, 0x0C]);
+    i += 2;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
     // hlt
     sector[i] = 0xF4;
 
@@ -77,4 +101,5 @@ fn boot_int10_mode13h_write_pixel_service_is_visible() {
 
     // Palette index 4 in the default VGA palette is EGA red: RGB(0xAA, 0x00, 0x00).
     assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_00AA);
+    assert_eq!(vga.borrow().get_framebuffer()[1], 0xFF00_00AA);
 }
