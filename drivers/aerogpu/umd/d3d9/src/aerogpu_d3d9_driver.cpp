@@ -20,6 +20,7 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #if defined(_WIN32)
@@ -9021,12 +9022,19 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_tex1_nodiffuse;
       dev->fixedfunc_vs_tex1_nodiffuse = nullptr;
     }
+    // Stage0 fixed-function PS variants may be reused across multiple cache
+    // slots (e.g. when two different stage0 keys map to the same fallback
+    // bytecode). Deduplicate deletes to avoid double-free.
+    std::unordered_set<Shader*> destroyed_stage0_ps;
+    destroyed_stage0_ps.reserve(sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]));
     for (Shader*& ps : dev->fixedfunc_stage0_ps_variants) {
       if (!ps) {
         continue;
       }
-      (void)emit_destroy_shader_locked(dev, ps->handle);
-      delete ps;
+      if (destroyed_stage0_ps.insert(ps).second) {
+        (void)emit_destroy_shader_locked(dev, ps->handle);
+        delete ps;
+      }
       ps = nullptr;
     }
     dev->fixedfunc_ps = nullptr;

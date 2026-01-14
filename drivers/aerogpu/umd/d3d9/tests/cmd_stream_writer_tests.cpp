@@ -13749,6 +13749,136 @@ bool TestFixedfuncStage0TextureStageStateRebindsPixelShader() {
   return Check(creates3 == creates2, "SetTextureStageState(TEXTURE) reuses cached shader");
 }
 
+// Stage0 PS variants can legally alias the same Shader* (e.g. if two different
+// stage0 keys map to the same fallback bytecode). Ensure device destruction does
+// not double-free in that case.
+bool TestFixedfuncStage0DestroyDedupsSharedPixelShaders() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {0.0f, 0.0f, 0.5f, 1.0f, kWhite};
+  verts[1] = {1.0f, 0.0f, 0.5f, 1.0f, kWhite};
+  verts[2] = {0.0f, 1.0f, 0.5f, 1.0f, kWhite};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  // Intentionally create a duplicate cache entry pointing at the same Shader*
+  // to emulate stage0 keys that share a fallback shader.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    Shader* shared = nullptr;
+    size_t shared_index = 0;
+    for (size_t i = 0; i < std::size(dev->fixedfunc_stage0_ps_variants); ++i) {
+      if (dev->fixedfunc_stage0_ps_variants[i]) {
+        shared = dev->fixedfunc_stage0_ps_variants[i];
+        shared_index = i;
+        break;
+      }
+    }
+    if (!Check(shared != nullptr, "fixedfunc stage0 PS created")) {
+      return false;
+    }
+
+    size_t dup_index = 0;
+    bool dup_found = false;
+    for (size_t i = 0; i < std::size(dev->fixedfunc_stage0_ps_variants); ++i) {
+      if (i == shared_index) {
+        continue;
+      }
+      if (!dev->fixedfunc_stage0_ps_variants[i]) {
+        dev->fixedfunc_stage0_ps_variants[i] = shared;
+        dup_index = i;
+        dup_found = true;
+        break;
+      }
+    }
+    if (!Check(dup_found, "found empty stage0 cache slot for duplicate")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_stage0_ps_variants[dup_index] == shared, "duplicate stage0 cache slot shares Shader*")) {
+      return false;
+    }
+  }
+
+  // If we reach here and the Cleanup destructor runs without aborting, the
+  // device destroy path successfully deduplicated stage0 PS deletes.
+  return true;
+}
+
 bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -31056,6 +31186,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFixedfuncStage0TextureStageStateRebindsPixelShader();
+  failures += !aerogpu::TestFixedfuncStage0DestroyDedupsSharedPixelShaders();
   failures += !aerogpu::TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants();
   failures += !aerogpu::TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants();
