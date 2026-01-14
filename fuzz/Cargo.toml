@@ -67,6 +67,9 @@ path = "../crates/aero-gpu-trace"
 # Legacy/reference shader token-stream parser (currently lives under `crates/legacy/`).
 path = "../crates/legacy/aero-d3d9-shader"
 
+[dependencies.aero-shared]
+path = "../crates/aero-shared"
+
 [dependencies.aero-protocol]
 path = "../emulator/protocol"
 

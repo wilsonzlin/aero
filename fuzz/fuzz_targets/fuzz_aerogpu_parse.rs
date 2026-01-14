@@ -1,6 +1,7 @@
 #![no_main]
 
 use aero_gpu::aerogpu_executor::AllocTable;
+use aero_gpu::frame_source::FrameSource;
 use aero_gpu::protocol_d3d11 as d3d11;
 use aero_gpu::VecGuestMemory;
 use aero_gpu::{
@@ -10,8 +11,13 @@ use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+use aero_shared::shared_framebuffer::{
+    FramebufferFormat, SharedFramebufferHeader, SharedFramebufferLayout, SHARED_FRAMEBUFFER_MAGIC,
+    SHARED_FRAMEBUFFER_VERSION,
+};
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
+use std::sync::atomic::Ordering;
 
 /// Max fuzz input size to avoid pathological allocations inside command-stream / alloc-table
 /// decoding paths.
@@ -392,6 +398,188 @@ fn fuzz_presenter(bytes: &[u8]) {
     };
 }
 
+fn fuzz_frame_source(bytes: &[u8]) {
+    // Fuzz the shared-memory framebuffer header parsing/validation paths used by the browser
+    // presenter. All header values are guest-controlled in the WASM/JS display pipeline.
+    //
+    // Keep dimensions small so the total shared-memory region (2 buffers + dirty tracking) stays
+    // bounded and we can safely call `poll_frame()` a few times per iteration.
+    const MAX_DIM: u32 = 64;
+    const MAX_STRIDE_BYTES: u32 = 1024;
+
+    let mut u = Unstructured::new(bytes);
+
+    let width = (u.arbitrary::<u8>().unwrap_or(0) as u32 % MAX_DIM) + 1;
+    let height = (u.arbitrary::<u8>().unwrap_or(0) as u32 % MAX_DIM) + 1;
+
+    // Only use tile sizes accepted by `SharedFramebufferLayout::new` (0 or power-of-two).
+    let tile_size = match u.arbitrary::<u8>().unwrap_or(0) % 7 {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 4,
+        4 => 8,
+        5 => 16,
+        _ => 32,
+    };
+
+    let bpp = FramebufferFormat::Rgba8.bytes_per_pixel();
+    let min_stride = width.saturating_mul(bpp);
+
+    // Derive a candidate stride, including values that may be too small (to exercise layout errors).
+    let stride_mode = u.arbitrary::<u8>().unwrap_or(0) % 4;
+    let stride_delta = u.arbitrary::<u16>().unwrap_or(0) as u32;
+    let stride_candidate = match stride_mode {
+        0 => min_stride,
+        1 => min_stride.saturating_add(stride_delta % 128),
+        2 => min_stride.saturating_sub(stride_delta % 32),
+        _ => stride_delta,
+    }
+    .min(MAX_STRIDE_BYTES);
+
+    // Allocate backing storage for a layout that is always valid and large enough for any header
+    // stride that can possibly succeed (i.e. `stride>=min_stride`).
+    let alloc_stride = stride_candidate.max(min_stride).min(MAX_STRIDE_BYTES);
+    let Ok(layout) = SharedFramebufferLayout::new(
+        width,
+        height,
+        alloc_stride,
+        FramebufferFormat::Rgba8,
+        tile_size,
+    ) else {
+        return;
+    };
+
+    // `total_byte_len()` is always aligned to 64, so it is also a multiple of 4.
+    let word_len = layout.total_byte_len() / 4;
+    if word_len == 0 {
+        return;
+    }
+    let mut backing_words = vec![0u32; word_len];
+
+    // Fuzzer-controlled header field candidates.
+    let magic_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let version_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let format_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let dirty_words_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let tiles_x_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let tiles_y_raw = u.arbitrary::<u32>().unwrap_or(0);
+
+    let active_index_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let frame_seq_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let buf0_seq_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let buf1_seq_raw = u.arbitrary::<u32>().unwrap_or(0);
+    let flags_raw = u.arbitrary::<u32>().unwrap_or(0);
+
+    let rest = u.take_rest();
+    let mut rest_u = Unstructured::new(rest);
+
+    // Mix the remaining bytes into the backing store so we don't only test zero-filled buffers.
+    let backing_bytes = unsafe {
+        std::slice::from_raw_parts_mut(backing_words.as_mut_ptr() as *mut u8, backing_words.len() * 4)
+    };
+    let copy_len = rest.len().min(backing_bytes.len());
+    backing_bytes[..copy_len].copy_from_slice(&rest[..copy_len]);
+
+    let header = unsafe { &*(backing_words.as_ptr() as *const SharedFramebufferHeader) };
+    header.init(layout);
+
+    // Apply fuzzed header values (may be inconsistent with the layout).
+    header.magic.store(magic_raw, Ordering::SeqCst);
+    header.version.store(version_raw, Ordering::SeqCst);
+    header.format.store(format_raw, Ordering::SeqCst);
+    header.stride_bytes.store(stride_candidate, Ordering::SeqCst);
+    header
+        .dirty_words_per_buffer
+        .store(dirty_words_raw, Ordering::SeqCst);
+    header.tiles_x.store(tiles_x_raw, Ordering::SeqCst);
+    header.tiles_y.store(tiles_y_raw, Ordering::SeqCst);
+
+    header.active_index.store(active_index_raw, Ordering::SeqCst);
+    header.frame_seq.store(frame_seq_raw, Ordering::SeqCst);
+    header.buf0_frame_seq.store(buf0_seq_raw, Ordering::SeqCst);
+    header.buf1_frame_seq.store(buf1_seq_raw, Ordering::SeqCst);
+    header.flags.store(flags_raw, Ordering::SeqCst);
+
+    let base_ptr = backing_words.as_mut_ptr() as *mut u8;
+
+    let mut drive = |mut source: FrameSource| {
+        let shared = source.shared();
+        let layout = shared.layout();
+        let header = shared.header();
+
+        // Try a few polls, updating sequence + dirty words so the logic sees both None and Some.
+        for _ in 0..3 {
+            let active_index = rest_u.arbitrary::<u32>().unwrap_or(0);
+            header.active_index.store(active_index, Ordering::SeqCst);
+            let active = (active_index & 1) as usize;
+
+            // Poke dirty words for the active buffer.
+            if layout.dirty_words_per_buffer != 0 {
+                if let Some(off) = layout.dirty_offset_bytes(active) {
+                    let start_word = off / 4;
+                    let len = layout.dirty_words_per_buffer as usize;
+                    if start_word + len <= backing_words.len() {
+                        let poke_words = len.min(4);
+                        for i in 0..poke_words {
+                            backing_words[start_word + i] = rest_u.arbitrary::<u32>().unwrap_or(0);
+                        }
+                        if rest_u.arbitrary::<bool>().unwrap_or(false) && poke_words != 0 {
+                            backing_words[start_word] |= 1;
+                        }
+                    }
+                }
+            }
+
+            let next_seq = header.frame_seq.load(Ordering::SeqCst).wrapping_add(1);
+            match active {
+                0 => header.buf0_frame_seq.store(next_seq, Ordering::SeqCst),
+                _ => header.buf1_frame_seq.store(next_seq, Ordering::SeqCst),
+            }
+            header.frame_seq.store(next_seq, Ordering::SeqCst);
+            header
+                .frame_dirty
+                .store(rest_u.arbitrary::<u32>().unwrap_or(0), Ordering::SeqCst);
+
+            if let Some(view) = source.poll_frame() {
+                let _ = view.dirty_rects_for_presenter();
+            }
+        }
+        // Exercise the "no new frame" fast path too.
+        let _ = source.poll_frame();
+    };
+
+    // Fuzzed header.
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
+
+    // Patched header: force valid magic/version/format and consistent layout-derived tile metadata
+    // so the fuzzer can reach the steady-state poll/present paths more often.
+    header.init(layout);
+    header.magic.store(SHARED_FRAMEBUFFER_MAGIC, Ordering::SeqCst);
+    header
+        .version
+        .store(SHARED_FRAMEBUFFER_VERSION, Ordering::SeqCst);
+    header
+        .format
+        .store(FramebufferFormat::Rgba8 as u32, Ordering::SeqCst);
+    header
+        .stride_bytes
+        .store(stride_candidate.max(min_stride), Ordering::SeqCst);
+    header
+        .dirty_words_per_buffer
+        .store(layout.dirty_words_per_buffer, Ordering::SeqCst);
+    header.tiles_x.store(layout.tiles_x, Ordering::SeqCst);
+    header.tiles_y.store(layout.tiles_y, Ordering::SeqCst);
+
+    header.active_index.store(active_index_raw, Ordering::SeqCst);
+    header.frame_seq.store(frame_seq_raw, Ordering::SeqCst);
+    header.buf0_frame_seq.store(buf0_seq_raw, Ordering::SeqCst);
+    header.buf1_frame_seq.store(buf1_seq_raw, Ordering::SeqCst);
+    header.flags.store(flags_raw, Ordering::SeqCst);
+
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
+}
+
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_SIZE_BYTES {
         return;
@@ -417,6 +605,7 @@ fuzz_target!(|data: &[u8]| {
     fuzz_d3d11_cmd_stream(ring_bytes);
     fuzz_bc_decompress(ring_bytes);
     fuzz_presenter(ring_bytes);
+    fuzz_frame_source(ring_bytes);
 
     // Additionally, try patching the fixed headers to valid magic/version values (while keeping
     // the rest of the input intact) so the fuzzer can reach deeper parsing paths more often.

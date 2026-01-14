@@ -1362,6 +1362,7 @@ dependencies = [
  "aero-net-e1000",
  "aero-net-stack",
  "aero-protocol",
+ "aero-shared",
  "aero-snapshot",
  "aero-storage",
  "aero-virtio",
