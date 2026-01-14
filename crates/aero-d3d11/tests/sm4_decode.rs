@@ -2274,8 +2274,8 @@ fn decodes_integer_minmax_abs_neg_ops() {
 
 #[test]
 fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
-    // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
-    // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
+    // These constants are used by compute/UAV decoding work; treat this test as a guard against
+    // accidental renumbering.
     assert_eq!(OPERAND_TYPE_NULL, 13);
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
     assert_eq!(OPCODE_SETP, 0x2c);
