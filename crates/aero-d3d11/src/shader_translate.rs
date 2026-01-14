@@ -3047,6 +3047,10 @@ fn emit_instructions(
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
                 let cond_scalar = format!("({cond_vec}).x");
+                // DXBC register files are untyped 32-bit lanes. `if_z` / `if_nz` are defined as a
+                // raw non-zero test on the underlying bits (not a float numeric compare), so we
+                // must compare via `bitcast<u32>` to preserve patterns like `0x80000000` (`-0.0`)
+                // used for boolean masks.
                 let cond_bits = format!("bitcast<u32>({cond_scalar})");
                 let expr = match test {
                     crate::sm4_ir::Sm4TestBool::Zero => format!("{cond_bits} == 0u"),

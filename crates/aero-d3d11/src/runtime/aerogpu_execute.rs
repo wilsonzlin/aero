@@ -502,6 +502,12 @@ impl AerogpuCmdRuntime {
                 );
                 return Ok(());
             }
+            // This `AerogpuCmdRuntime` is currently render-only and does not expose a compute
+            // dispatch path. Real DXBC blobs may still include compute shaders, so accept the
+            // create call for robustness but ignore the shader for now.
+            crate::ShaderStage::Compute => {
+                return Ok(());
+            }
             other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
         };
 

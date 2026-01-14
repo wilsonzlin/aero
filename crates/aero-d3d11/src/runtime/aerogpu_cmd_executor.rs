@@ -3912,6 +3912,15 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
     ) -> Result<()> {
+        // If a guest binds a compute shader and then issues a draw with no graphics shaders
+        // bound, treat it as an explicit (but unsupported) attempt to run compute work through
+        // the graphics pipeline.
+        //
+        // Compute shaders must be executed via the DISPATCH opcode.
+        if self.state.vs.is_none() && self.state.ps.is_none() && self.state.cs.is_some() {
+            bail!("aerogpu_cmd: draw called with only a compute shader bound (use DISPATCH)");
+        }
+
         let has_color_targets = self.state.render_targets.iter().any(|rt| rt.is_some());
         if !has_color_targets && self.state.depth_stencil.is_none() {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
@@ -13749,13 +13758,13 @@ mod tests {
                     format_u32: aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat::R8G8B8A8Unorm
                         as u32,
                     backing: None,
-                    row_pitch_bytes: 0,
-                    dirty: false,
-                    guest_backing_is_current: true,
-                    host_shadow: None,
-                    host_shadow_valid: Vec::new(),
-                },
-            );
+                     row_pitch_bytes: 0,
+                     dirty: false,
+                     guest_backing_is_current: true,
+                     host_shadow: None,
+                     host_shadow_valid: Vec::new(),
+                 },
+             );
 
             // Pixel shader writes to @location(0) and @location(2), but only RT0 is bound.
             const PS: u32 = 2;
@@ -13877,13 +13886,13 @@ mod tests {
                             as u32,
                         backing: None,
                         row_pitch_bytes: 0,
-                        dirty: false,
-                        guest_backing_is_current: true,
-                        host_shadow: None,
-                        host_shadow_valid: Vec::new(),
-                    },
-                );
-            }
+                         dirty: false,
+                         guest_backing_is_current: true,
+                         host_shadow: None,
+                         host_shadow_valid: Vec::new(),
+                     },
+                 );
+             }
 
             // Dummy vertex buffer required to activate the GS passthrough vertex path (avoids
             // needing an input layout for this unit test).
