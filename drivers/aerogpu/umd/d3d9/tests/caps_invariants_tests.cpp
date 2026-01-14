@@ -1,13 +1,20 @@
 #include <cstdint>
 #include <cstdio>
+#include <type_traits>
 #include <unordered_set>
+#include <utility>
 #include <vector>
  
 #include "aerogpu_d3d9_objects.h"
  
 namespace aerogpu {
 namespace {
- 
+
+template <typename T, typename = void>
+struct CapsHasBlendOpCaps : std::false_type {};
+template <typename T>
+struct CapsHasBlendOpCaps<T, std::void_t<decltype(std::declval<T>().BlendOpCaps)>> : std::true_type {};
+  
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
@@ -196,6 +203,19 @@ bool TestCapsFormatContract() {
   }
   if (!CheckEqU32(static_cast<uint32_t>(caps.MaxVolumeExtent), 0u, "caps.MaxVolumeExtent")) {
     return false;
+  }
+
+  // Blend ops are used by DWM-style workloads; the driver must advertise at least
+  // ADD and avoid catch-all/unknown bits.
+  if constexpr (CapsHasBlendOpCaps<D3DCAPS9>::value) {
+    constexpr uint32_t kD3dBlendOpCapsAdd = 0x00000001u; // D3DBLENDOPCAPS_ADD
+    constexpr uint32_t kAllowedBlendOpCapsBits = 0x0000001Fu; // ADD|SUB|REVSUB|MIN|MAX
+    if (!Check((caps.BlendOpCaps & kD3dBlendOpCapsAdd) != 0u, "BlendOpCaps includes ADD")) {
+      return false;
+    }
+    if (!Check((caps.BlendOpCaps & ~kAllowedBlendOpCapsBits) == 0u, "BlendOpCaps uses only known bits")) {
+      return false;
+    }
   }
 
   // Fixed-function fallback supports FVFs with TEX1, so FVFCaps must advertise at
