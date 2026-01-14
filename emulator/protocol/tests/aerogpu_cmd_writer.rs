@@ -1,14 +1,14 @@
 use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuBlendFactor, AerogpuBlendOp,
-    AerogpuCmdBindShaders, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc,
+    decode_cmd_bind_shaders_payload_le, decode_cmd_hdr_le, decode_cmd_stream_header_le,
+    AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdBindShaders, AerogpuCmdCreateInputLayout,
+    AerogpuCmdCreateShaderDxbc,
     AerogpuCmdExportSharedSurface, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
     AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF,
     AerogpuCmdSetTexture, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
     AerogpuCullMode, AerogpuFillMode, AerogpuShaderStage, AerogpuShaderStageEx,
-    AerogpuVertexBufferBinding,
-    AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuVertexBufferBinding, BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -61,6 +61,53 @@ fn cmd_writer_bind_shaders_with_gs_reuses_reserved0_field() {
             .unwrap(),
     );
     assert_eq!(reserved0, 22);
+}
+
+#[test]
+fn cmd_writer_bind_shaders_ex_emits_extended_packet() {
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_ex(11, 22, 33, 44, 55, 66);
+    w.flush();
+
+    let buf = w.finish();
+
+    let packet_offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[packet_offset..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
+    assert_eq!(size_bytes as usize, size_of::<AerogpuCmdBindShaders>() + 12);
+
+    let read_u32 = |off: usize| -> u32 {
+        u32::from_le_bytes(buf[off..off + 4].try_into().unwrap())
+    };
+
+    // Extended payload begins immediately after `struct aerogpu_cmd_bind_shaders`.
+    let ex_base = packet_offset + size_of::<AerogpuCmdBindShaders>();
+    assert_eq!(read_u32(ex_base), 44); // gs
+    assert_eq!(read_u32(ex_base + 4), 55); // hs
+    assert_eq!(read_u32(ex_base + 8), 66); // ds
+
+    let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&buf[packet_offset..]).unwrap();
+    // `AerogpuCmdBindShaders` is `#[repr(packed)]`, so copy fields out before asserting to avoid
+    // creating unaligned references.
+    let vs = cmd.vs;
+    let ps = cmd.ps;
+    let cs = cmd.cs;
+    let reserved0 = cmd.reserved0;
+    assert_eq!(vs, 11);
+    assert_eq!(ps, 22);
+    assert_eq!(cs, 33);
+    // Writer mirrors `gs` into the legacy `reserved0` field for backward compatibility.
+    assert_eq!(reserved0, 44);
+    assert_eq!(
+        ex,
+        Some(BindShadersEx {
+            gs: 44,
+            hs: 55,
+            ds: 66,
+        })
+    );
 }
 
 #[test]

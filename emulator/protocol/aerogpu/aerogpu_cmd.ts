@@ -654,6 +654,8 @@ export const AEROGPU_CMD_COPY_TEXTURE2D_SIZE = 64;
 export const AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE = 24;
 export const AEROGPU_CMD_DESTROY_SHADER_SIZE = 16;
 export const AEROGPU_CMD_BIND_SHADERS_SIZE = 24;
+// Extended BIND_SHADERS packet appends 3x u32 shader handles: {gs, hs, ds}.
+export const AEROGPU_CMD_BIND_SHADERS_EX_SIZE = AEROGPU_CMD_BIND_SHADERS_SIZE + 12;
 // Payload: aerogpu_cmd_set_shader_constants_f + float data[vec4_count * 4] + 4-byte alignment padding.
 export const AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE = 24;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE = 16;

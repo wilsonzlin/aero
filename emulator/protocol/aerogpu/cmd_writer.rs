@@ -550,6 +550,9 @@ impl AerogpuCmdWriter {
 
     /// Forward-compatible extension of `BIND_SHADERS` that appends GS/HS/DS handles after the
     /// base `struct aerogpu_cmd_bind_shaders`.
+    ///
+    /// Legacy compatibility: `gs` is also mirrored into the base struct's `reserved0` field so
+    /// decoders that only understand the original 24-byte packet can still bind a geometry shader.
     pub fn bind_shaders_ex(
         &mut self,
         vs: AerogpuHandle,

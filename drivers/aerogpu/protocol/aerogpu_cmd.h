@@ -556,21 +556,18 @@ struct aerogpu_cmd_bind_shaders {
   aerogpu_handle_t ps; /* 0 = unbound */
   aerogpu_handle_t cs; /* 0 = unbound */
   /*
-   * If non-zero, interpreted as the geometry shader (GS) handle.
+   * Reserved for ABI forward-compat.
    *
-   * ABI note (append-only extension for additional stages):
-   * `BIND_SHADERS` packets may be extended by appending additional stage handles after this base
-   * struct. Decoders MUST treat `hdr.size_bytes` as a minimum size and ignore any trailing bytes
-   * they do not understand.
+   * Legacy/compat encoding:
+   * - Some older streams/hosts repurposed this field as the geometry shader (GS) handle.
    *
-   * Extended payload (if `hdr.size_bytes >= sizeof(struct aerogpu_cmd_bind_shaders) + 12`):
-   *   aerogpu_handle_t gs; (0 = unbound)
-   *   aerogpu_handle_t hs; (0 = unbound)
-   *   aerogpu_handle_t ds; (0 = unbound)
-   *
-   * Note: the extended payload redundantly includes `gs` even though it can be encoded in
-   * `reserved0` for backwards compatibility with hosts that only understand the base 24-byte
-   * struct.
+   * ABI extension (append-only):
+   * - Decoders MUST treat `hdr.size_bytes` as a minimum size and ignore any trailing bytes they do
+   *   not understand.
+   * - If `hdr.size_bytes >= sizeof(struct aerogpu_cmd_bind_shaders) + 12` (36 bytes), three
+   *   additional u32 shader handles are appended immediately after this struct: `{gs, hs, ds}`.
+   * - In the extended form, hosts should prefer the appended handles. Writers may also mirror `gs`
+   *   into `reserved0` for best-effort support on hosts that only understand the 24-byte packet.
    */
   uint32_t reserved0;
 };

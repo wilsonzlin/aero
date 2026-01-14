@@ -122,7 +122,7 @@ typedef struct aerogpu_escape_query_fence_out {
    * individual submission; per-submission fence IDs come from the D3D runtime
    * callbacks (for example `SubmissionFenceId` / `NewFenceValue`).
    * `last_completed_fence` is useful for polling overall GPU forward progress.
-  */
+   */
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
   /*
