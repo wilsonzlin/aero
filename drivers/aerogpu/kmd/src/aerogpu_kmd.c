@@ -1501,6 +1501,18 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
     NTSTATUS st = STATUS_SUCCESS;
     UINT entryCount = 0;
 
+    /*
+     * BuildAllocTable uses an adapter-owned shared scratch buffer. To reduce the
+     * time that buffer is held under the mutex (and therefore reduce contention
+     * between concurrent submissions), copy small tables onto the stack and
+     * release the scratch lock early.
+     *
+     * Keep this conservative: kernel stack is limited, especially on x86.
+     */
+    enum { AEROGPU_ALLOC_TABLE_SCRATCH_STACK_COPY_MAX_ENTRIES = 64 };
+    struct aerogpu_alloc_entry stackEntries[AEROGPU_ALLOC_TABLE_SCRATCH_STACK_COPY_MAX_ENTRIES];
+    const struct aerogpu_alloc_entry* entriesToCopy = NULL;
+
     struct aerogpu_alloc_entry* tmpEntries = NULL;
     uint32_t* seen = NULL;
     UINT* seenIndex = NULL;
@@ -1510,6 +1522,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
     PVOID slowBlock = NULL;
     SIZE_T slowBlockBytes = 0;
     BOOLEAN usingCache = FALSE;
+    BOOLEAN scratchLockHeld = FALSE;
 
     PVOID tableVa = NULL;
     PHYSICAL_ADDRESS tablePa;
@@ -1550,6 +1563,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         seenGpa = Adapter->AllocTableScratch.SeenGpa;
         seenSize = Adapter->AllocTableScratch.SeenSize;
         usingCache = TRUE;
+        scratchLockHeld = TRUE;
     } else {
 #if DBG
         static volatile LONG g_BuildAllocTableScratchFallbackLogCount = 0;
@@ -1560,6 +1574,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
                                 cap);
 #endif
         ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
+        scratchLockHeld = FALSE;
 
         /* Allocation failure growing the cache. Fall back to one-off scratch allocations. */
         if (!AeroGpuAllocTableScratchAllocBlock(Count,
@@ -1590,6 +1605,14 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         goto cleanup;
     }
 
+    entriesToCopy = tmpEntries;
+    if (usingCache && entryCount <= AEROGPU_ALLOC_TABLE_SCRATCH_STACK_COPY_MAX_ENTRIES) {
+        RtlCopyMemory(stackEntries, tmpEntries, (SIZE_T)entryCount * sizeof(stackEntries[0]));
+        entriesToCopy = stackEntries;
+        ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
+        scratchLockHeld = FALSE;
+    }
+
     st = RtlSizeTMult((SIZE_T)entryCount, sizeof(struct aerogpu_alloc_entry), &entriesBytes);
     if (!NT_SUCCESS(st)) {
         st = STATUS_INTEGER_OVERFLOW;
@@ -1618,7 +1641,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     if (entryCount) {
         struct aerogpu_alloc_entry* outEntries = (struct aerogpu_alloc_entry*)(hdr + 1);
-        RtlCopyMemory(outEntries, tmpEntries, entriesBytes);
+        RtlCopyMemory(outEntries, entriesToCopy, entriesBytes);
     }
 
     *OutVa = tableVa;
@@ -1630,7 +1653,7 @@ cleanup:
     if (tableVa) {
         AeroGpuFreeContiguousNonCached(tableVa, tableSizeBytes);
     }
-    if (usingCache) {
+    if (scratchLockHeld) {
         ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
     }
     if (slowBlock) {
