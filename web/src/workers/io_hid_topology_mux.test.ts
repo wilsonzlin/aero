@@ -9,6 +9,34 @@ import type { WasmApi } from "../runtime/wasm_context";
 import { createXhciTopologyBridgeShim, IoWorkerHidTopologyMux } from "./io_hid_topology_mux";
 
 describe("workers/io_hid_topology_mux (xhci_hid_topology)", () => {
+  it("accepts xHCI topology exports even when free() is missing (shim provides a no-op free)", () => {
+    const bridge = {
+      attach_hub: vi.fn(),
+      detach_at_path: vi.fn(),
+      attach_webhid_device: vi.fn(),
+      attach_usb_hid_passthrough_device: vi.fn(),
+    };
+
+    const shim = createXhciTopologyBridgeShim(bridge);
+    expect(shim).not.toBeNull();
+    expect(() => shim!.free()).not.toThrow();
+
+    shim!.attach_hub?.(0, 4);
+    expect(bridge.attach_hub).toHaveBeenCalledWith(0, 4);
+  });
+
+  it("rejects xHCI topology exports when free is present but not a function", () => {
+    const bridge = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      free: 123 as any,
+      attach_hub: vi.fn(),
+      detach_at_path: vi.fn(),
+      attach_webhid_device: vi.fn(),
+      attach_usb_hid_passthrough_device: vi.fn(),
+    };
+    expect(createXhciTopologyBridgeShim(bridge)).toBeNull();
+  });
+
   it("routes hid.attach/hid.detach to xHCI when the bridge exposes topology APIs", () => {
     const xhci = {
       free: vi.fn(),
