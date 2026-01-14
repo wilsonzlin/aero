@@ -119,6 +119,13 @@ Notes:
   expected to attach via UHCI in the current web runtime.
 - WebUSB passthrough is also currently UHCI-focused; high-speed passthrough via EHCI/xHCI remains
   planned. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
+- The I/O worker has plumbing to *prefer* xHCI for guest-visible WebUSB passthrough when an xHCI
+  bridge implements the WebUSB hotplug/action API (`set_connected`, `drain_actions`, `push_completion`,
+  `reset`). The current `XhciControllerBridge` does not expose this interface, so the worker will
+  fall back to the UHCI-based WebUSB passthrough path.
+- Similarly, the web runtime has a code path to attach synthetic USB HID devices behind xHCI for
+  WASM builds that omit UHCI, but it relies on the same missing topology APIs. Today, synthetic USB
+  HID devices are expected to attach behind UHCI.
 - The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---
