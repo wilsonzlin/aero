@@ -97,6 +97,16 @@ async fn get_image_meta_with_if_none_match_returns_304() {
         .unwrap();
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        "*"
+    );
+    assert_eq!(
+        res.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -134,6 +144,22 @@ async fn get_image_data_with_if_none_match_returns_304() {
         .unwrap();
 
     assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        "*"
+    );
+    assert_eq!(
+        res.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        res.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }

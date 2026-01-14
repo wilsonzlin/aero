@@ -158,6 +158,24 @@ async fn bytes_concurrency_limit_rejects_second_in_flight_request() {
             .unwrap(),
         "*"
     );
+    assert_eq!(
+        resp2
+            .headers()
+            .get("access-control-expose-headers")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp2
+            .headers()
+            .get("cross-origin-resource-policy")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
 
     // Let the first request finish cleanly.
     let _ = release_tx.send(());
