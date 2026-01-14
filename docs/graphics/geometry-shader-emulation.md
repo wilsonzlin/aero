@@ -134,7 +134,10 @@ The executor currently uses **two distinct** compute prepass implementations for
     - `global_invocation_id.x` as a synthetic `SV_PrimitiveID`, and
     - `global_invocation_id.y` as a synthetic `SV_GSInstanceID` (used by GS instancing tests).
 - **Bindings:**
-  - `@group(0)` contains prepass IO (expanded vertices/indices, indirect args, counters, and a small uniform).
+  - `@group(0)` contains prepass IO:
+    - expanded vertices (`out_vertices`),
+    - packed indirect+counter state (`out_state`, sized by `GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES`), and
+    - small uniform parameters.
   - `@group(3)` provides the GS stage resource table (`cb#/t#/s#`) and (optionally) internal IA vertex pulling
     bindings.
 - **Used for:**
@@ -389,8 +392,9 @@ Known limitations include:
   - WebGL2 has no compute; GS emulation is WebGPU-only (or requires a separate CPU fallback path)
 - **Downlevel per-stage storage-buffer limits**
   - Some downlevel backends have very low `max_storage_buffers_per_shader_stage` (commonly 4). GS
-    emulation binds multiple storage buffers (expanded vertices/indices, counters/indirect args, and
-    sometimes IA pulling buffers), so some prepass variants may not be available on those backends.
+    emulation binds multiple storage buffers (expanded vertices + optional expanded indices,
+    counters/indirect args, and sometimes IA pulling buffers), so some prepass variants may not be
+    available on those backends.
     See `crates/aero-d3d11/tests/common/mod.rs` (`skip_if_compute_or_indirect_unsupported`) for the
     current skip heuristics used by tests.
 
