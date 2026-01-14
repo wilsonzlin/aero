@@ -60,6 +60,7 @@ test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse repo
   expect(volUpBrk).toEqual([0x00, 0x00]);
 
   // Mouse move: movementY=3 should become dy=+3 in HID (positive down).
+  // Report protocol includes a 5th byte for horizontal wheel (AC Pan).
   await page.evaluate(() => {
     const ev = new MouseEvent("mousemove", { bubbles: true, cancelable: true });
     Object.defineProperty(ev, "movementX", { value: 5 });
@@ -73,7 +74,7 @@ test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse repo
     const report = bridge.drain_next_mouse_report();
     return report ? Array.from(report) : null;
   });
-  expect(move).toEqual([0x00, 0x05, 0x03, 0x00]);
+  expect(move).toEqual([0x00, 0x05, 0x03, 0x00, 0x00]);
 
   // Buttons: left down then up.
   await page.evaluate(() => {
@@ -93,8 +94,8 @@ test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse repo
     return out;
   });
   expect(buttons).toEqual([
-    [0x01, 0x00, 0x00, 0x00],
-    [0x00, 0x00, 0x00, 0x00],
+    [0x01, 0x00, 0x00, 0x00, 0x00],
+    [0x00, 0x00, 0x00, 0x00, 0x00],
   ]);
 
   // Wheel: DOM deltaY>0 (scroll down) maps to HID wheel=-1 (0xFF).
@@ -114,7 +115,7 @@ test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse repo
     const report = bridge.drain_next_mouse_report();
     return report ? Array.from(report) : null;
   });
-  expect(wheel).toEqual([0x00, 0x00, 0x00, 0xff]);
+  expect(wheel).toEqual([0x00, 0x00, 0x00, 0xff, 0x00]);
 
   // Gamepad: send a packed report directly through the batch wire format.
   await page.evaluate(() => {
