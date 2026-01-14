@@ -733,10 +733,21 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "create_blank": {
-      const { name, sizeBytes } = msg.payload;
-      const kind = (msg.payload.kind || "hdd") as DiskKind;
-      const format = (msg.payload.format || "raw") as DiskFormat;
+      const payload = (msg.payload || {}) as { name?: unknown; sizeBytes?: unknown; kind?: unknown; format?: unknown };
+      const name = String(payload.name ?? "");
+      const sizeBytes = payload.sizeBytes;
+      const kind = (payload.kind ?? "hdd") as DiskKind;
+      const format = (payload.format ?? "raw") as DiskFormat;
+      if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
+        throw new Error("sizeBytes must be a positive safe integer");
+      }
+      if (sizeBytes % 512 !== 0) {
+        throw new Error("sizeBytes must be a multiple of 512");
+      }
       if (kind !== "hdd") throw new Error("Only HDD images can be created as blank disks");
+      if (format !== "raw") {
+        throw new Error(`Only raw HDD images can be created as blank disks (format=${format})`);
+      }
 
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
