@@ -6,9 +6,8 @@
 // This shim exists so `wasm-bindgen` can bundle a small JS module alongside the
 // generated WASM package without reaching outside the crate directory.
 //
-// IMPORTANT: This file is intentionally similar to
-// `crates/aero-d3d9/js/persistent_cache_shim.js`. The D3D11 WASM demo uses the
-// same global persistent cache API surface.
+// NOTE: This intentionally mirrors `crates/aero-d3d9/js/persistent_cache_shim.js`.
+// The D3D11 WASM demo uses the same global persistent cache API surface.
 function missingApiError() {
   return new Error(
     "AeroPersistentGpuCache is not installed on globalThis. " +

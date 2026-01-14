@@ -93,6 +93,17 @@ export type MachineHandle = {
         overlayBlockSizeBytes: number,
     ): Promise<void>;
     /**
+     * Open an existing OPFS-backed disk image (using the file's current size) and attach it as
+     * the canonical primary HDD (AHCI port 0), *without* creating a copy-on-write overlay.
+     *
+     * This also sets the snapshot disk overlay ref for `disk_id=0` to
+     * `{ base_image: path, overlay_image: "" }` so snapshot restore flows can reattach the same
+     * disk backend.
+     *
+     * Optional for older WASM builds.
+     */
+    set_primary_hdd_opfs_existing?(path: string): Promise<void>;
+    /**
      * Open an existing OPFS-backed disk image and attach it as the machine's canonical disk,
      * recording snapshot overlay refs (DISKS entry) for `disk_id=0`.
      *

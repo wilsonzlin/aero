@@ -9157,10 +9157,9 @@ impl AerogpuD3d11Executor {
             } = artifact;
 
             let reflection = ShaderReflection {
-                inputs: Vec::new(),
-                outputs: Vec::new(),
                 bindings: bindings.iter().map(PersistedBinding::to_binding).collect(),
                 rdef: None,
+                ..Default::default()
             };
             let vs_input_signature: Vec<VsInputSignatureElement> = vs_input_signature
                 .into_iter()

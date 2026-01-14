@@ -4484,7 +4484,35 @@ impl Machine {
         // so the JS coordinator can reopen these images after snapshot restore.
         self.inner
             .set_ahci_port0_disk_overlay_ref(&base_path, &overlay_path);
+        Ok(())
+    }
 
+    /// Attach the canonical primary HDD (`disk_id=0`, AHCI port 0) from an existing OPFS-backed
+    /// raw disk image *without* a copy-on-write overlay, and set the snapshot overlay reference
+    /// (`DISKS` entry).
+    ///
+    /// This is a minimal disk attach API intended for machine-mode bring-up and debugging (e.g.
+    /// when using a pre-writable disk image).
+    ///
+    /// This sets:
+    /// - `base_image = path`
+    /// - `overlay_image = ""`
+    ///
+    /// so that snapshot restore flows can reattach the same primary HDD based solely on snapshot
+    /// contents.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_primary_hdd_opfs_existing(&mut self, path: String) -> Result<(), JsValue> {
+        let overlay_path = path.clone();
+        let backend = aero_opfs::OpfsBackend::open_existing(&path)
+            .await
+            .map_err(|e| opfs_disk_error_to_js("Machine.set_primary_hdd_opfs_existing", &path, e))?;
+        self.inner
+            .set_disk_backend(Box::new(backend))
+            .map_err(|e| {
+                opfs_context_error_to_js("Machine.set_primary_hdd_opfs_existing", &path, e)
+            })?;
+
+        self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
         Ok(())
     }
 
