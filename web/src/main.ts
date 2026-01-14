@@ -10,8 +10,11 @@ import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampli
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
 import {
   CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  DROPPED_SAMPLES_INDEX as MIC_DROPPED_SAMPLES_INDEX,
   HEADER_BYTES as MIC_HEADER_BYTES,
   HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+  READ_POS_INDEX as MIC_READ_POS_INDEX,
+  WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
 } from "./audio/mic_ring.js";
 import { startSyntheticMic } from "./audio/synthetic_mic";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
@@ -4023,6 +4026,25 @@ function renderAudioPanel(): HTMLElement {
     };
   }
 
+  function snapshotMicAttachment(): unknown {
+    const att = micAttachment;
+    if (!att) return null;
+    const sab = att.ringBuffer;
+    if (!(sab instanceof SharedArrayBuffer)) return { sampleRate: att.sampleRate, error: "Invalid mic ring buffer type." };
+    try {
+      const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+      const capacitySamples = Atomics.load(header, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
+      const readPos = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+      const writePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+      const droppedSamples = Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
+      const available = (writePos - readPos) >>> 0;
+      const bufferedSamples = Math.min(available, capacitySamples);
+      return { sampleRate: att.sampleRate, capacitySamples, readPos, writePos, bufferedSamples, droppedSamples };
+    } catch {
+      return { sampleRate: att.sampleRate, error: "Failed to snapshot microphone ring counters." };
+    }
+  }
+
   const exportMetricsButton = el("button", {
     text: "Export audio metrics (json)",
     onclick: () => {
@@ -4050,6 +4072,7 @@ function renderAudioPanel(): HTMLElement {
             underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
             overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
           },
+          microphone: snapshotMicAttachment(),
         };
 
         downloadJson(report, `aero-audio-metrics-${ts}.json`);
@@ -4151,6 +4174,7 @@ function renderAudioPanel(): HTMLElement {
             underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
             overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
           },
+          microphone: snapshotMicAttachment(),
         };
 
         const entries: Array<{ path: string; data: Uint8Array }> = [
