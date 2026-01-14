@@ -511,6 +511,15 @@ let keyboardInputBackend: InputBackend = "ps2";
 const warnedForcedKeyboardBackendUnavailable = new Set<string>();
 const pressedKeyboardHidUsages = new Uint8Array(256);
 let pressedKeyboardHidUsageCount = 0;
+// Track pressed Consumer Control usages (Usage Page 0x0C) so we don't switch keyboard backends
+// while a consumer key is held. The IO worker routes some consumer keys through virtio-input and
+// others through the synthetic USB consumer-control device; switching the keyboard backend mid-hold
+// could otherwise deliver the release to a different backend and leave the previous one "stuck".
+//
+// The synthetic consumer-control device currently supports usages `0..=0x03FF`, so a 1024-entry
+// bitmap is sufficient and avoids per-event allocations.
+const pressedConsumerUsages = new Uint8Array(0x0400);
+let pressedConsumerUsageCount = 0;
 let mouseInputBackend: InputBackend = "ps2";
 const warnedForcedMouseBackendUnavailable = new Set<string>();
 let mouseButtonsMask = 0;
@@ -3125,6 +3134,8 @@ function teardownGuestStateForMachineHostOnlyMode(): void {
   keyboardInputBackend = "ps2";
   pressedKeyboardHidUsages.fill(0);
   pressedKeyboardHidUsageCount = 0;
+  pressedConsumerUsages.fill(0);
+  pressedConsumerUsageCount = 0;
   mouseInputBackend = "ps2";
   mouseButtonsMask = 0;
 
@@ -6146,6 +6157,23 @@ function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
   }
 }
 
+function updatePressedConsumerUsage(usageId: number, pressed: boolean): void {
+  const u = usageId & 0xffff;
+  if (u >= pressedConsumerUsages.length) return;
+  const prev = pressedConsumerUsages[u] ?? 0;
+  if (pressed) {
+    if (prev === 0) {
+      pressedConsumerUsages[u] = 1;
+      pressedConsumerUsageCount += 1;
+    }
+    return;
+  }
+  if (prev !== 0) {
+    pressedConsumerUsages[u] = 0;
+    pressedConsumerUsageCount = Math.max(0, pressedConsumerUsageCount - 1);
+  }
+}
+
 function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): void {
   keyboardUsbOk = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard);
 
@@ -6178,7 +6206,7 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
   const prevBackend = keyboardInputBackend;
   const nextBackend = chooseKeyboardInputBackend({
     current: keyboardInputBackend,
-    keysHeld: pressedKeyboardHidUsageCount !== 0,
+    keysHeld: pressedKeyboardHidUsageCount !== 0 || pressedConsumerUsageCount !== 0,
     virtioOk,
     usbOk,
     force,
@@ -6267,7 +6295,11 @@ function publishInputBackendStatus(opts: { virtioKeyboardOk: boolean; virtioMous
 
     Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, keyboardUsbOk ? 1 : 0);
     Atomics.store(status, StatusIndex.IoInputUsbMouseOk, mouseUsbOk ? 1 : 0);
-    Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, pressedKeyboardHidUsageCount | 0);
+    Atomics.store(
+      status,
+      StatusIndex.IoInputKeyboardHeldCount,
+      (pressedKeyboardHidUsageCount + pressedConsumerUsageCount) | 0,
+    );
     Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
   } catch {
     // ignore (best-effort)
@@ -6599,6 +6631,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // - virtio-input keyboard (media keys subset, exposed by the Win7 virtio-input driver as a Consumer Control collection), or
         // - a dedicated synthetic USB HID consumer-control device (supports the full usage ID range).
         if (usagePage === 0x0c) {
+          updatePressedConsumerUsage(usageId, pressed);
           // Prefer virtio-input when the virtio keyboard backend is active and the usage is representable as a Linux key code.
           if (keyboardInputBackend === "virtio" && virtioKeyboardOk && virtioKeyboard) {
             const keyCode = hidConsumerUsageToLinuxKeyCode(usageId);
@@ -6810,6 +6843,8 @@ function shutdown(): void {
       keyboardInputBackend = "ps2";
       pressedKeyboardHidUsages.fill(0);
       pressedKeyboardHidUsageCount = 0;
+      pressedConsumerUsages.fill(0);
+      pressedConsumerUsageCount = 0;
       mouseInputBackend = "ps2";
       mouseButtonsMask = 0;
 
