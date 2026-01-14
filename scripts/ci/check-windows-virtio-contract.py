@@ -659,7 +659,7 @@ def _check_profiles_against_contract(
 
     # Validate the shared virtio BAR + caps match the contract v1 fixed layout.
     virtio_bars_re = re.compile(
-        r"pub const VIRTIO_BARS:\s*\[PciBarProfile;\s*\d+\]\s*=\s*\[\s*PciBarProfile::mem(?P<bits>32|64)\(\s*(?P<index>[A-Z0-9_]+|0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<size>[A-Z0-9_]+|0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<pref>true|false)\s*\)\s*\]\s*;"
+        r"pub const VIRTIO_BARS:\s*\[PciBarProfile;\s*\d+\]\s*=\s*\[\s*PciBarProfile::mem(?P<bits>32|64)\(\s*(?P<index>[A-Z0-9_]+|0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<size>[A-Z0-9_]+|0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<pref>true|false)\s*(?:,\s*)?\)\s*\]\s*;"
     )
     m = virtio_bars_re.search(text)
     if not m:
