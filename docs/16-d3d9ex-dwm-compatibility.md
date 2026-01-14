@@ -226,6 +226,8 @@ To avoid creating share tokens that cannot be imported safely, the driver stack 
 - The KMD validates `NumAllocations == 1` for shared allocation create/open and fails deterministically otherwise.
 - The UMD should reject shared creations that would require multiple allocations (practically: keep shared surfaces to `mip_levels=1` (reject `MipLevels/Levels=0`, which requests a full mip chain) and `array_layers=1`, which matches typical DWM redirected surfaces).
 
+Guest-side validation: run `drivers/aerogpu/tests/win7/d3d9ex_shared_allocations` to validate the MVP policy above (in particular: shared `Levels=0` full mip-chain requests are rejected).
+
 ##### Shared-surface lifetime / destruction (host + Win7 driver contract)
 
 For correctness **and** to avoid leaking host-side GPU objects, the `share_token → resource` mapping must be removed once the **last** guest reference to that shared surface is closed.

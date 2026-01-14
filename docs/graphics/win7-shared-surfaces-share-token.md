@@ -133,6 +133,16 @@ Optional debug-only validation (when supported by the KMD):
 - The producer and consumer should observe the same debug token even when their numeric `HANDLE` values differ.
 - This debug token is **not** the protocol `u64 share_token` used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`; it exists only to help bring-up tooling prove that handle duplication/inheritance is working correctly.
 
+## Validation: shared resources must be single-allocation (MVP policy)
+
+Shared resources should be restricted to a single WDDM allocation (`NumAllocations == 1`) so `EXPORT_SHARED_SURFACE` /
+`IMPORT_SHARED_SURFACE` can safely associate one `share_token` with one underlying allocation. This implies rejecting shared
+textures that request a full mip chain (`Levels=0`) and other descriptors that would imply multiple allocations.
+
+Use:
+
+- `drivers/aerogpu/tests/win7/d3d9ex_shared_allocations/main.cpp`
+
 ## Validation: alloc_id uniqueness under DWM-like batching
 
 Use the multi-producer/persistence D3D9Ex test apps:

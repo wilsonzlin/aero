@@ -516,6 +516,7 @@ This subset is validated via:
   `d3d9_dynamic_vb_lock_semantics`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
   - On Win7 x64, `d3d9ex_shared_surface_wow64` validates cross-bitness shared-surface interop (WOW64 producer → native consumer; DWM scenario).
   - For DWM-like multi-producer batching / alloc_id collision coverage, also run `d3d9ex_shared_surface_many_producers` and `d3d9ex_alloc_id_persistence`.
+  - For MVP shared-surface allocation policy coverage (shared resources must be single-allocation), also run `d3d9ex_shared_allocations`.
 
 #### Running host-side unit tests (portable)
 
