@@ -859,6 +859,25 @@ test("AerogpuCmdWriter stage_ex optional parameters reject stageEx=0 (DXBC Pixel
   assert.throws(() => new AerogpuCmdWriter().setShaderConstantsB(AerogpuShaderStage.Vertex, 0, [1], zero));
 });
 
+test("AerogpuCmdWriter stage_ex Ex helpers reject stageEx=0 and do not emit packets", () => {
+  const w = new AerogpuCmdWriter();
+  const zero = AerogpuShaderStageEx.None;
+
+  assert.throws(() => w.setTextureEx(zero, 0, 99));
+  assert.throws(() => w.setSamplersEx(zero, 0, new Uint32Array([1])));
+  assert.throws(() => w.setConstantBuffersEx(zero, 0, [{ buffer: 3, offsetBytes: 0, sizeBytes: 16 }]));
+  assert.throws(() => w.setShaderResourceBuffersEx(zero, 0, [{ buffer: 4, offsetBytes: 0, sizeBytes: 32 }]));
+  assert.throws(() =>
+    w.setUnorderedAccessBuffersEx(zero, 0, [{ buffer: 5, offsetBytes: 4, sizeBytes: 16, initialCount: 0 }]),
+  );
+  assert.throws(() => w.setShaderConstantsFEx(zero, 0, new Float32Array([1, 2, 3, 4])));
+  assert.throws(() => w.setShaderConstantsIEx(zero, 0, new Int32Array([1, 2, 3, 4])));
+  assert.throws(() => w.setShaderConstantsBEx(zero, 0, [1]));
+
+  const bytes = w.finish();
+  assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE);
+});
+
 test("AerogpuCmdWriter.createShaderDxbc encodes stage=Pixel and keeps reserved0=0", () => {
   const w = new AerogpuCmdWriter();
   const dxbc = new Uint8Array([0xaa]);
