@@ -1467,7 +1467,7 @@ impl NvmeController {
     }
 
     fn cmd_write_zeroes(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
-        // Best-effort implementation: we materialize a zero-filled buffer (bounded by
+        // Best-effort implementation: materialize a zero-filled buffer (bounded by
         // `NVME_MAX_DMA_BYTES`) and issue a normal backend write. This ensures guests observe zeros
         // when they read the range back even if the backend has no fast "write zeroes" primitive.
         if cmd.nsid != 1 {
@@ -1495,6 +1495,7 @@ impl NvmeController {
         let Ok(len) = usize::try_from(len_u64) else {
             return (NvmeStatus::INVALID_FIELD, 0);
         };
+        // DoS guard: cap total zeroed bytes per command to the advertised MDTS-equivalent limit.
         if len > NVME_MAX_DMA_BYTES {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
@@ -1517,14 +1518,16 @@ impl NvmeController {
         cmd: NvmeCommand,
         memory: &mut dyn MemoryBus,
     ) -> (NvmeStatus, u32) {
-        // Best-effort implementation: support the Deallocate attribute, validate the DSM range
-        // list, and attempt to forward discard/TRIM requests to the backend.
-        //
-        // Backends that cannot reclaim storage may implement discard as a no-op success. NVMe
-        // deallocate is advisory, so failures are ignored after validation.
         if cmd.nsid != 1 {
             return (NvmeStatus::INVALID_NS, 0);
         }
+
+        // Best-effort implementation: support the Deallocate attribute, validate the DSM range
+        // list, and attempt to forward discard/TRIM requests to the backend (bounded by
+        // `NVME_MAX_DMA_BYTES`).
+        //
+        // Note: NVMe deallocate is advisory. Backends that cannot reclaim storage may implement
+        // discard as a no-op success; failures are ignored after validation.
 
         const DSM_ATTR_INTEGRAL_DATASET_FOR_READ: u32 = 1 << 0;
         const DSM_ATTR_INTEGRAL_DATASET_FOR_WRITE: u32 = 1 << 1;
@@ -1567,11 +1570,19 @@ impl NvmeController {
             return (status, 0);
         }
 
+        let sector_size = self.disk.sector_size() as u64;
+        if sector_size == 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
         let capacity = self.disk.total_sectors();
-        let mut parsed = Vec::<(u64, u64)>::new();
-        parsed.reserve_exact(ranges as usize);
+        let mut parsed: Vec<(u64, u64)> = Vec::with_capacity(ranges as usize);
+        let mut total_bytes: u64 = 0;
         for i in 0..ranges {
             let off = (i as usize) * 16;
+            // DSM range definition entry:
+            // - CDW0: Context Attributes (ignored)
+            // - CDW1: NLB (0-based)
+            // - CDW2-3: SLBA
             let nlb = u32::from_le_bytes(ranges_buf[off + 4..off + 8].try_into().unwrap());
             let slba = u64::from_le_bytes(ranges_buf[off + 8..off + 16].try_into().unwrap());
 
@@ -1584,6 +1595,18 @@ impl NvmeController {
             {
                 return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
             }
+
+            let Some(bytes) = sectors.checked_mul(sector_size) else {
+                return (NvmeStatus::INVALID_FIELD, 0);
+            };
+            total_bytes = match total_bytes.checked_add(bytes) {
+                Some(v) => v,
+                None => return (NvmeStatus::INVALID_FIELD, 0),
+            };
+            if total_bytes > NVME_MAX_DMA_BYTES as u64 {
+                return (NvmeStatus::INVALID_FIELD, 0);
+            }
+
             parsed.push((slba, sectors));
         }
 

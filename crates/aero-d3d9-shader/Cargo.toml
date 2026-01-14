@@ -3,7 +3,8 @@ name = "aero-d3d9-shader"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+publish = false
+description = "Legacy SM2/SM3 D3D9 token-stream parser + disassembler (not used by runtime)."
 
 [dependencies]
 aero-dxbc = { path = "../aero-dxbc" }
-

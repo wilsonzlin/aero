@@ -172,7 +172,8 @@ fn dataset_management_deallocate_accepts_sgl_datablock() {
     assert_eq!(cqe.cid, 0x11);
     assert_eq!(cqe.status & !0x1, 0);
 
-    // Read back all 3 sectors and ensure they are unchanged (DSM is a no-op for this backend).
+    // Read back all 3 sectors and ensure they are unchanged (discard is best-effort and this
+    // backend does not reclaim storage).
     let mut cmd = build_command(0x02, 0); // READ
     set_cid(&mut cmd, 0x12);
     set_nsid(&mut cmd, 1);
@@ -192,4 +193,3 @@ fn dataset_management_deallocate_accepts_sgl_datablock() {
     mem.read_physical(read_buf, &mut out);
     assert_eq!(out, payload);
 }
-

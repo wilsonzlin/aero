@@ -5,4 +5,3 @@
 //! `aero-d3d9-shader` to keep shader-related utilities in a dedicated crate when needed.
 
 pub use aero_dxbc;
-
