@@ -135,7 +135,6 @@ pub struct AerogpuD3d9Executor {
     clear_color_buffer: wgpu::Buffer,
     clear_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     clear_depth_pipelines: HashMap<ClearDepthPipelineKey, wgpu::RenderPipeline>,
-
     presented_scanouts: HashMap<u32, u32>,
 
     triangle_fan_index_buffers: HashMap<u32, TriangleFanIndexBuffer>,
@@ -11435,14 +11434,14 @@ mod tests {
         let aniso_supported = wgpu::DownlevelFlags::ANISOTROPIC_FILTERING;
 
         // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
-        let non_aniso = D3d9SamplerState {
+        let non_aniso = super::D3d9SamplerState {
             max_anisotropy: 16,
             ..Default::default()
         };
         let default_key = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
             device_features,
             no_aniso,
-            D3d9SamplerState::default(),
+            super::D3d9SamplerState::default(),
         );
         let non_aniso_key = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
             device_features,
@@ -11454,7 +11453,7 @@ mod tests {
             "MAXANISOTROPY should not affect the canonical sampler state when anisotropic filtering is not requested"
         );
 
-        let aniso_2 = D3d9SamplerState {
+        let aniso_2 = super::D3d9SamplerState {
             min_filter: d3d9::D3DTEXF_ANISOTROPIC,
             mag_filter: d3d9::D3DTEXF_ANISOTROPIC,
             mip_filter: d3d9::D3DTEXF_LINEAR,
@@ -11462,7 +11461,7 @@ mod tests {
             ..Default::default()
         };
 
-        let aniso_16 = D3d9SamplerState {
+        let aniso_16 = super::D3d9SamplerState {
             max_anisotropy: 16,
             ..aniso_2
         };

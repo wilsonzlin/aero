@@ -419,6 +419,17 @@ fn d3d9_half_pixel_center_cases() {
     //
     // Note: we intentionally create a separate executor instead of trying to share the underlying
     // wgpu device/queue. `wgpu::Device`/`wgpu::Queue` are not `Clone`, and the executor owns them.
+
+    // Explicit viewport (matches RT).
+    let off_explicit = run(&mut exec_off, Some((4.0, 4.0)));
+
+    // Default viewport (guest never calls SetViewport).
+    let off_default = run(&mut exec_off, None);
+
+    // Oversized viewport clamped to RT bounds.
+    let off_oversized = run(&mut exec_off, Some((8.0, 8.0)));
+
+    drop(exec_off);
     let mut exec_on = match pollster::block_on(AerogpuD3d9Executor::new_headless_with_config(
         AerogpuD3d9ExecutorConfig {
             half_pixel_center: true,
@@ -432,20 +443,14 @@ fn d3d9_half_pixel_center_cases() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
 
-    // Explicit viewport (matches RT).
-    let off = run(&mut exec_off, Some((4.0, 4.0)));
-    let on = run(&mut exec_on, Some((4.0, 4.0)));
-    assert_half_pixel_center_shift(&off, &on);
+    let on_explicit = run(&mut exec_on, Some((4.0, 4.0)));
+    assert_half_pixel_center_shift(&off_explicit, &on_explicit);
 
-    // Default viewport (guest never calls SetViewport).
-    let off = run(&mut exec_off, None);
-    let on = run(&mut exec_on, None);
-    assert_half_pixel_center_shift(&off, &on);
+    let on_default = run(&mut exec_on, None);
+    assert_half_pixel_center_shift(&off_default, &on_default);
 
-    // Oversized viewport clamped to RT bounds.
-    let off = run(&mut exec_off, Some((8.0, 8.0)));
-    let on = run(&mut exec_on, Some((8.0, 8.0)));
-    assert_half_pixel_center_shift(&off, &on);
+    let on_oversized = run(&mut exec_on, Some((8.0, 8.0)));
+    assert_half_pixel_center_shift(&off_oversized, &on_oversized);
 
     // Multi-context: ensure per-context uniform initialization even when viewports match.
     let exec = &mut exec_on;
