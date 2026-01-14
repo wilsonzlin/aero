@@ -11916,7 +11916,10 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 if cmd_bytes.len() < 32 {
                     break;
                 }
-                let handle = read_u32_le(cmd_bytes, 8)?;
+                let handle_raw = read_u32_le(cmd_bytes, 8)?;
+                let handle = self
+                    .shared_surfaces
+                    .resolve_cmd_handle(handle_raw, "RESOURCE_DIRTY_RANGE")?;
                 let mut needs_break = false;
 
                 let buffer_backing = self
@@ -27479,10 +27482,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
-
-            writer.create_buffer(BUF, AEROGPU_RESOURCE_USAGE_STORAGE, BUF_SIZE, ALLOC_ID, 0);
-            writer.export_shared_surface(BUF, SHARE_TOKEN);
-            writer.import_shared_surface(BUF_ALIAS, SHARE_TOKEN);
             writer.create_buffer(
                 VB,
                 AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -27491,6 +27490,21 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 0,
             );
             writer.upload_resource(VB, 0, vb_bytes);
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+
+            writer.create_buffer(BUF, AEROGPU_RESOURCE_USAGE_STORAGE, BUF_SIZE, ALLOC_ID, 0);
+            writer.export_shared_surface(BUF, SHARE_TOKEN);
+            writer.import_shared_surface(BUF_ALIAS, SHARE_TOKEN);
 
             // `vs_passthrough.dxbc` consumes POSITION+COLOR. Bind a matching input layout and a
             // dummy vertex buffer so the draw can execute (the specific vertex contents are not
@@ -27568,6 +27582,324 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             assert!(
                 buf.dirty.is_none(),
                 "dirty range should be cleared after implicit upload triggered by SET_TEXTURE inside render pass"
+            );
+        });
+    }
+
+    #[test]
+    fn resource_dirty_range_alias_for_bound_srv_buffer_restarts_render_pass() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            // SRV buffers are modeled as storage buffers in WGSL/WebGPU. Downlevel backends without
+            // compute/storage buffer support cannot exercise this path.
+            if !exec.caps.supports_compute {
+                skip_or_panic(
+                    module_path!(),
+                    "backend does not support compute/storage buffers",
+                );
+                return;
+            }
+
+            const RT: u32 = 1;
+            const BUF: u32 = 2;
+            const BUF_ALIAS: u32 = 10;
+            const SHARE_TOKEN: u64 = 0x0123_4567_89ab_cdef;
+            const VS: u32 = 3;
+            const PS: u32 = 4;
+            const VB: u32 = 5;
+            const IL: u32 = 6;
+            const ALLOC_ID: u32 = 1;
+            const BUF_SIZE: u64 = 16;
+
+            const VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const ILAY_POS3_COLOR: &[u8] =
+                include_bytes!("../../tests/fixtures/ilay_pos3_color.bin");
+
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            struct Vertex {
+                pos: [f32; 3],
+                color: [f32; 4],
+            }
+
+            fn bytes_of_vertices(verts: &[Vertex]) -> &[u8] {
+                // Safety: Vertex is #[repr(C)] and contains only plain f32 arrays with no padding.
+                unsafe {
+                    std::slice::from_raw_parts(
+                        verts.as_ptr() as *const u8,
+                        core::mem::size_of_val(verts),
+                    )
+                }
+            }
+
+            #[derive(Clone, Copy)]
+            struct SigParam {
+                semantic_name: &'static str,
+                semantic_index: u32,
+                register: u32,
+                mask: u8,
+            }
+
+            fn build_signature_chunk(params: &[SigParam]) -> Vec<u8> {
+                // Mirrors `aero_d3d11::signature::parse_signature_chunk` expectations.
+                let mut out = Vec::new();
+                out.extend_from_slice(&(params.len() as u32).to_le_bytes()); // param_count
+                out.extend_from_slice(&8u32.to_le_bytes()); // param_offset
+
+                let entry_size = 24usize;
+                let table_start = out.len();
+                out.resize(table_start + params.len() * entry_size, 0);
+
+                for (i, p) in params.iter().enumerate() {
+                    let semantic_name_offset = out.len() as u32;
+                    out.extend_from_slice(p.semantic_name.as_bytes());
+                    out.push(0);
+                    while out.len() % 4 != 0 {
+                        out.push(0);
+                    }
+
+                    let base = table_start + i * entry_size;
+                    out[base..base + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
+                    out[base + 4..base + 8].copy_from_slice(&p.semantic_index.to_le_bytes());
+                    out[base + 8..base + 12].copy_from_slice(&0u32.to_le_bytes()); // system_value_type
+                    out[base + 12..base + 16].copy_from_slice(&0u32.to_le_bytes()); // component_type
+                    out[base + 16..base + 20].copy_from_slice(&p.register.to_le_bytes());
+                    out[base + 20] = p.mask;
+                    out[base + 21] = p.mask; // read_write_mask
+                    out[base + 22] = 0; // stream
+                    out[base + 23] = 0; // min_precision
+                }
+
+                out
+            }
+
+            fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
+                let mut out = Vec::with_capacity(tokens.len() * 4);
+                for &t in tokens {
+                    out.extend_from_slice(&t.to_le_bytes());
+                }
+                out
+            }
+
+            fn opcode_token(opcode: u32, len: u32) -> u32 {
+                opcode | (len << sm4_opcode::OPCODE_LEN_SHIFT)
+            }
+
+            fn operand_token(
+                ty: u32,
+                num_components: u32,
+                selection_mode: u32,
+                component_sel: u32,
+                index_dim: u32,
+            ) -> u32 {
+                let mut token = 0u32;
+                token |= num_components & sm4_opcode::OPERAND_NUM_COMPONENTS_MASK;
+                token |= (selection_mode & sm4_opcode::OPERAND_SELECTION_MODE_MASK)
+                    << sm4_opcode::OPERAND_SELECTION_MODE_SHIFT;
+                token |= (ty & sm4_opcode::OPERAND_TYPE_MASK) << sm4_opcode::OPERAND_TYPE_SHIFT;
+                token |= (component_sel & sm4_opcode::OPERAND_COMPONENT_SELECTION_MASK)
+                    << sm4_opcode::OPERAND_COMPONENT_SELECTION_SHIFT;
+                token |= (index_dim & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
+                    << sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT;
+                token |= sm4_opcode::OPERAND_INDEX_REP_IMMEDIATE32
+                    << sm4_opcode::OPERAND_INDEX0_REP_SHIFT;
+                token |= sm4_opcode::OPERAND_INDEX_REP_IMMEDIATE32
+                    << sm4_opcode::OPERAND_INDEX1_REP_SHIFT;
+                token |= sm4_opcode::OPERAND_INDEX_REP_IMMEDIATE32
+                    << sm4_opcode::OPERAND_INDEX2_REP_SHIFT;
+                token
+            }
+
+            fn build_ps_dcl_resource_raw_t0_solid_green_dxbc() -> Vec<u8> {
+                // ps_5_0:
+                //   dcl_resource_raw t0
+                //   mov o0, l(0,1,0,1)
+                //   ret
+                let isgn = build_signature_chunk(&[]);
+                let osgn = build_signature_chunk(&[SigParam {
+                    semantic_name: "SV_Target",
+                    semantic_index: 0,
+                    register: 0,
+                    mask: 0x0f,
+                }]);
+                // ps_5_0 version token: type=0 (PS) in bits 16.., major=5 in bits 4..7.
+                let version_token = 5u32 << 4;
+                let t0 = vec![
+                    operand_token(
+                        sm4_opcode::OPERAND_TYPE_RESOURCE,
+                        0,
+                        sm4_opcode::OPERAND_SEL_MASK,
+                        0,
+                        sm4_opcode::OPERAND_INDEX_DIMENSION_1D,
+                    ),
+                    0u32,
+                ];
+                let dcl = vec![opcode_token(
+                    sm4_opcode::OPCODE_DCL_RESOURCE_RAW,
+                    (1 + t0.len()) as u32,
+                )];
+                let mov_token = sm4_opcode::OPCODE_MOV | (8u32 << sm4_opcode::OPCODE_LEN_SHIFT);
+                let dst_o0 = 0x0010_f022u32;
+                let imm_vec4 = 0x0000_f042u32;
+                let zero = 0.0f32.to_bits();
+                let one = 1.0f32.to_bits();
+                let ret_token = sm4_opcode::OPCODE_RET | (1u32 << sm4_opcode::OPCODE_LEN_SHIFT);
+
+                let mut tokens = Vec::new();
+                tokens.push(version_token);
+                tokens.push(0); // length patched below
+                tokens.extend_from_slice(&dcl);
+                tokens.extend_from_slice(&t0);
+                tokens.push(mov_token);
+                tokens.push(dst_o0);
+                tokens.push(0); // o0 index
+                tokens.push(imm_vec4);
+                tokens.extend_from_slice(&[zero, one, zero, one]);
+                tokens.push(ret_token);
+                tokens[1] = tokens.len() as u32;
+
+                let shex = tokens_to_bytes(&tokens);
+                dxbc_test_utils::build_container_owned(&[
+                    (FourCC(*b"ISGN"), isgn),
+                    (FourCC(*b"OSGN"), osgn),
+                    (FourCC(*b"SHEX"), shex),
+                ])
+            }
+
+            // Build a stream that:
+            //  - binds a guest-backed SRV buffer (via shared-surface alias)
+            //  - issues DRAW to start a render pass
+            //  - marks the SRV buffer dirty via RESOURCE_DIRTY_RANGE using the alias
+            //  - issues another DRAW without rebinding
+            //
+            // The executor must end the current render pass when the dirty-range targets an
+            // in-use resource, so the next draw can trigger a safe implicit upload and clear the
+            // dirty range.
+            let mut writer = AerogpuCmdWriter::new();
+
+            let w = 64u32;
+            let h = 64u32;
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AerogpuFormat::R8G8B8A8Unorm as u32,
+                w,
+                h,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+
+            let verts = [
+                Vertex {
+                    pos: [-1.0, -1.0, 0.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [-1.0, 3.0, 0.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [3.0, -1.0, 0.0],
+                    color: [0.0, 0.0, 1.0, 1.0],
+                },
+            ];
+            let vb_bytes = bytes_of_vertices(&verts);
+            writer.create_buffer(
+                VB,
+                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+                vb_bytes.len() as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(VB, 0, vb_bytes);
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+
+            writer.create_buffer(BUF, AEROGPU_RESOURCE_USAGE_STORAGE, BUF_SIZE, ALLOC_ID, 0);
+            writer.export_shared_surface(BUF, SHARE_TOKEN);
+            writer.import_shared_surface(BUF_ALIAS, SHARE_TOKEN);
+
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
+            writer.create_shader_dxbc(
+                PS,
+                AerogpuShaderStage::Pixel,
+                &build_ps_dcl_resource_raw_t0_solid_green_dxbc(),
+            );
+            writer.bind_shaders(VS, PS, 0);
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+
+            // Clear before the first draw so the render pass uses `LoadOp::Load` safely.
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
+
+            // Bind the SRV buffer through the legacy `SET_TEXTURE` packet (t0) using the alias.
+            writer.set_texture(AerogpuShaderStage::Pixel, 0, BUF_ALIAS);
+
+            writer.draw(3, 1, 0, 0);
+            writer.resource_dirty_range(BUF_ALIAS, 0, BUF_SIZE);
+            // Draw again without rebinding; the dirty-range must have ended the pass so this draw
+            // runs in a new pass after the implicit upload.
+            writer.draw(3, 1, 0, 0);
+
+            let stream = writer.finish();
+
+            let allocs = [AerogpuAllocEntry {
+                alloc_id: ALLOC_ID,
+                flags: 0,
+                gpa: 0,
+                size_bytes: BUF_SIZE,
+                reserved0: 0,
+            }];
+            let mut guest_mem = VecGuestMemory::new(BUF_SIZE as usize);
+            guest_mem
+                .write(
+                    0,
+                    &[
+                        0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+                    ],
+                )
+                .expect("guest buffer write");
+
+            exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+                .expect("execute_cmd_stream should succeed");
+
+            assert_eq!(
+                exec.bindings.stage(ShaderStage::Pixel).srv_buffer(0),
+                Some(BoundBuffer {
+                    buffer: BUF,
+                    offset: 0,
+                    size: None,
+                })
+            );
+
+            let buf = exec
+                .resources
+                .buffers
+                .get(&BUF)
+                .expect("buffer must exist after CREATE_BUFFER");
+            assert!(
+                buf.dirty.is_none(),
+                "dirty range should be cleared after RESOURCE_DIRTY_RANGE inside render pass (alias handle)"
             );
         });
     }
@@ -28731,7 +29063,6 @@ fn cs_main() {
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
-                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)
