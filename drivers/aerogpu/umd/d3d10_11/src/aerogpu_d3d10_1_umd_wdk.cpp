@@ -228,6 +228,7 @@ using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 using aerogpu::d3d10_11::atomic_max_u64;
+using aerogpu::d3d10_11::bind_flags_to_buffer_usage_flags;
 
 static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
   return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
