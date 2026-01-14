@@ -54,6 +54,40 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.MouseButtons?.Middle).toBe(4);
   });
 
+  it("surfaces storage_capabilities when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const caps = {
+      opfsSupported: true,
+      opfsSyncAccessSupported: false,
+      isWorkerScope: true,
+      crossOriginIsolated: false,
+      sharedArrayBufferSupported: true,
+      isSecureContext: true,
+    } as const;
+
+    const storage_capabilities = () => caps;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        storage_capabilities,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.storage_capabilities).toBe(storage_capabilities);
+    expect(api.storage_capabilities?.()).toEqual(caps);
+  });
+
   it("surfaces SharedRingBuffer/open_ring_by_kind when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 

@@ -1041,6 +1041,23 @@ export interface WasmApi {
     };
 
     /**
+     * Synchronous browser storage capability probes (OPFS + environment checks).
+     *
+     * This is intended to be called before attempting OPFS-backed disk/ISO attachment so the UI
+     * can surface clearer diagnostics (e.g. "OPFS unsupported" vs "sync access handles require a worker").
+     *
+     * Optional for older WASM builds.
+     */
+    storage_capabilities?: () => {
+        readonly opfsSupported: boolean;
+        readonly opfsSyncAccessSupported: boolean;
+        readonly isWorkerScope: boolean;
+        readonly crossOriginIsolated: boolean;
+        readonly sharedArrayBufferSupported: boolean;
+        readonly isSecureContext: boolean;
+    };
+
+    /**
      * Legacy shared-guest-memory Machine factories (free-function exports).
      *
      * Newer WASM builds prefer static constructors on {@link Machine} (e.g. `Machine.new_shared` /
@@ -2356,6 +2373,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         sum: mod.sum,
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
+        storage_capabilities: mod.storage_capabilities,
         tiered_vm_jit_abi_layout: mod.tiered_vm_jit_abi_layout,
         mem_load_u32: mod.mem_load_u32,
         jit_abi_constants: mod.jit_abi_constants,
