@@ -1151,6 +1151,17 @@ static BOOLEAN AeroGpuGetScanoutMmioSnapshot(_In_ const AEROGPU_ADAPTER* Adapter
             Out->Format = AEROGPU_FORMAT_B8G8R8X8_UNORM;
         }
         Out->PitchBytes = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
+        if (Out->PitchBytes == 0 && Out->Width != 0) {
+            /*
+             * Some boot/VBE paths may leave the pitch register unset. For a
+             * standard linear framebuffer, default to tightly packed rows based
+             * on the selected format.
+             */
+            ULONG bpp = 0;
+            if (AeroGpuBytesPerPixelFromFormat(Out->Format, &bpp) && bpp != 0 && Out->Width <= (0xFFFFFFFFu / bpp)) {
+                Out->PitchBytes = Out->Width * bpp;
+            }
+        }
         Out->FbPa.QuadPart =
             (LONGLONG)AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
         return TRUE;
@@ -1170,6 +1181,13 @@ static BOOLEAN AeroGpuGetScanoutMmioSnapshot(_In_ const AEROGPU_ADAPTER* Adapter
         Out->Format = AEROGPU_FORMAT_B8G8R8X8_UNORM;
     } else {
         Out->Format = AEROGPU_FORMAT_INVALID;
+    }
+
+    if (Out->PitchBytes == 0 && Out->Width != 0) {
+        ULONG bpp = 0;
+        if (AeroGpuBytesPerPixelFromFormat(Out->Format, &bpp) && bpp != 0 && Out->Width <= (0xFFFFFFFFu / bpp)) {
+            Out->PitchBytes = Out->Width * bpp;
+        }
     }
 
     Out->FbPa.QuadPart =
