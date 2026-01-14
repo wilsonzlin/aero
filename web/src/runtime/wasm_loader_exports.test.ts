@@ -143,6 +143,46 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.create_machine_shared_guest_memory_win7).toBe(createMachineSharedGuestMemoryWin7);
   });
 
+  it("supports camelCase guestRamLayout/memStoreU32/memLoadU32 naming (surfaced via canonical keys)", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const caps = {
+      opfsSupported: true,
+      opfsSyncAccessSupported: false,
+      isWorkerScope: true,
+      crossOriginIsolated: false,
+      sharedArrayBufferSupported: true,
+      isSecureContext: true,
+    } as const;
+
+    const memStoreU32 = (_offset: number, _value: number) => {};
+    const memLoadU32 = (_offset: number) => 0;
+    const guestRamLayout = (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 });
+    const storageCapabilities = () => caps;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        memStoreU32,
+        memLoadU32,
+        guestRamLayout,
+        storageCapabilities,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.mem_store_u32).toBe(memStoreU32);
+    expect(api.mem_load_u32).toBe(memLoadU32);
+    expect(api.guest_ram_layout).toBe(guestRamLayout);
+    expect(api.storage_capabilities).toBe(storageCapabilities);
+    expect(api.storage_capabilities?.()).toEqual(caps);
+  });
+
   it("surfaces SharedRingBuffer/open_ring_by_kind when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
