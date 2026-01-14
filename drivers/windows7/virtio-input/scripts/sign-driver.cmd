@@ -73,7 +73,7 @@ echo PFX: "%PFX_FILE%"
 echo SYS: "%SYS_FILE%"
 echo CAT: "%CAT_FILE%"
 if exist "%TABLET_CAT_FILE%" (
-  echo CAT: "%TABLET_CAT_FILE%"
+  echo CAT (tablet): "%TABLET_CAT_FILE%"
 )
 echo.
 
@@ -99,6 +99,6 @@ if exist "%TABLET_CAT_FILE%" (
 )
 
 echo.
-echo OK: Signed SYS and CAT.
+echo OK: Signed SYS and CAT(s).
 exit /b 0
 

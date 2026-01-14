@@ -354,7 +354,7 @@ This signs:
 
 - `inf\aero_virtio_input.sys`
 - `inf\aero_virtio_input.cat`
-- If you are shipping the tablet INF: also sign `inf\aero_virtio_tablet.cat`
+- If `inf\aero_virtio_tablet.cat` is present (tablet INF staged): also sign `inf\aero_virtio_tablet.cat`
 
 ## Verifying signatures (SYS + CAT)
 
@@ -370,7 +370,13 @@ By default the script verifies the staged package under `inf\`. You can pass an 
 .\scripts\verify-signature.cmd C:\path\to\driver-package
 ```
 
-The script exits non-zero if `signtool.exe` is not available in `PATH` or if either file is unsigned/invalid.
+The script verifies:
+
+- `aero_virtio_input.sys`
+- `aero_virtio_input.cat`
+- If present: `aero_virtio_tablet.cat`
+
+The script exits non-zero if `signtool.exe` is not available in `PATH` or if any present file is unsigned/invalid.
 
 ## Installation
 

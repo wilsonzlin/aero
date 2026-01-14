@@ -12,7 +12,7 @@ rem
 rem Verifies:
 rem   signtool verify /kp /v aero_virtio_input.sys
 rem   signtool verify /kp /v aero_virtio_input.cat
-rem   signtool verify /kp /v aero_virtio_tablet.cat (when present)
+rem   (optional) signtool verify /kp /v aero_virtio_tablet.cat
 
 set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..") do set ROOT_DIR=%%~fI
@@ -86,5 +86,5 @@ if exist "%TABLET_CAT_FILE%" (
 )
 
 echo.
-echo OK: SYS and CAT signatures verified.
+echo OK: SYS and CAT signature(s) verified.
 exit /b 0

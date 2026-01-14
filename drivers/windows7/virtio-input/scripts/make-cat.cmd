@@ -107,7 +107,7 @@ if exist "%TABLET_INF%" (
 
 echo.
 echo OK: Created "%CAT_FILE%"
-if exist "%TABLET_INF%" (
+if exist "%TABLET_CAT_FILE%" (
   echo OK: Created "%TABLET_CAT_FILE%"
 )
 exit /b 0
