@@ -196,6 +196,33 @@ describe("runtime disk worker protocol", () => {
     expect(String(resp.error.message)).toMatch(/unaligned|multiple/i);
   });
 
+  it("validates writeFrom payload alignment", async () => {
+    const posted: any[] = [];
+    const disk = {
+      sectorSize: 512,
+      capacityBytes: 4096,
+      async readSectors() {},
+      async writeSectors() {},
+      async flush() {},
+    };
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({ type: "request", requestId: 1, op: "open", payload: { spec: { kind: "local", meta: dummyLocalMeta } } });
+    const handle = posted.shift().result.handle as number;
+
+    const sab = new SharedArrayBuffer(1024);
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "writeFrom",
+      payload: { handle, lba: 0, src: { sab, offsetBytes: 0, byteLength: 513 } },
+    });
+    const resp = posted.shift();
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error.message)).toMatch(/unaligned|multiple/i);
+  });
+
   it("validates readInto SAB bounds + SAB requirement", async () => {
     const posted: any[] = [];
     const disk = {
