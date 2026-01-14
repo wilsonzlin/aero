@@ -532,19 +532,21 @@ where
         &self.page_versions
     }
 
-    /// Ensure the internal page-version table is at least `len` entries long.
+    /// Ensure the internal page-version table has at least `len` entries.
     ///
-    /// This is primarily intended for embedders that expose the dense table pointer to generated
-    /// code. Growing the table can reallocate; embedders should call this once with the maximum
-    /// expected guest-physical page count and then clamp out-of-range write notifications.
+    /// This is a *check* (not a resize): the table length is fixed at construction time via
+    /// [`JitConfig::code_version_max_pages`]. If `len` exceeds the configured length, this method
+    /// panics.
     pub fn ensure_page_version_table_len(&mut self, len: usize) {
         self.page_versions.ensure_len(len);
     }
 
     /// Return the `(ptr, len)` of the dense page-version table.
     ///
-    /// `ptr` points to `len` contiguous `u32` entries, indexed by 4KiB physical page number. The
-    /// pointer remains valid until the table is resized or reset.
+    /// `ptr` points to `len` contiguous `u32` entries, indexed by 4KiB physical page number.
+    ///
+    /// The pointer/length are stable for the lifetime of the runtime (no reallocations), including
+    /// across [`Self::reset`] which clears the table in place.
     pub fn page_version_table_ptr_len(&self) -> (*const u32, usize) {
         (
             self.page_versions.table_ptr(),
