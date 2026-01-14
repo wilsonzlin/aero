@@ -176,14 +176,11 @@ Aero’s binding model is stage-scoped. In the AeroGPU command-stream executor (
 - `@group(0)`: VS resources
 - `@group(1)`: PS resources
 - `@group(2)`: CS resources
-- `@group(3)`: reserved internal / emulation group:
+- `@group(3)`: reserved internal / emulation group (keeps the total bind-group count within WebGPU’s
+  baseline `maxBindGroups >= 4` guarantee):
   - GS/HS/DS (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
   - internal expansion helpers (vertex pulling, etc) using `@binding >= BINDING_BASE_INTERNAL` to
     avoid collisions with D3D `b#`/`t#`/`s#`/`u#` bindings.
-- `@group(4)`: optional dedicated internal emulation pipelines when the device supports at least 5
-  bind groups (`maxBindGroups >= 5`).
-  - Implementations may place scratch/counters/indirect args here (see `BIND_GROUP_INTERNAL_EMULATION`)
-    to avoid sharing a bind group with `stage_ex` resources.
 
 GS/HS/DS stages are emulated using compute passes, but their **D3D-stage resource bindings** are
 tracked independently and are expected to be provided to the emulation pipelines via a reserved
@@ -195,8 +192,6 @@ bind group:
   reserved high binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
   `crates/aero-d3d11/src/binding_model.rs`) so they do not collide with D3D register bindings (see
   [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
-  - Implementations may temporarily place these in `@group(4)` if the device supports at least 5 bind
-    groups.
   - Vertex pulling already uses this reserved range so it can be shared across emulation kernels.
 
 ### Binding number ranges within a stage group
