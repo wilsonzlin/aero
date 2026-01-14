@@ -661,6 +661,35 @@ static void test_message_route_can_enable_all_on_vector0_fallback(void)
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_default_mapping_multivector_message0_is_config_only(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_msg_desc(2); /* more than one message available */
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected = &intr;
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+
+    /*
+     * Default mapping for MessageCount>1 treats message 0 as config-only to avoid
+     * draining queues concurrently with per-queue message DPCs.
+     */
+    assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 0) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[0]) != FALSE);
+    assert(ctx.config_calls == 1);
+    assert(ctx.queue_calls == 0);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 static void test_message_isr_increments_dpc_inflight_before_queueing_dpc(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
@@ -729,6 +758,7 @@ int main(void)
     test_disconnect_cancels_queued_dpc();
     test_set_message_route_validation();
     test_message_route_can_enable_all_on_vector0_fallback();
+    test_message_default_mapping_multivector_message0_is_config_only();
     test_message_isr_increments_dpc_inflight_before_queueing_dpc();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
