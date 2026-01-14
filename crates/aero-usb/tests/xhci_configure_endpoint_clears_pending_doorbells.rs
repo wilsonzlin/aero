@@ -2,7 +2,7 @@ use std::boxed::Box;
 
 use aero_usb::xhci::context::{InputControlContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
@@ -53,6 +53,24 @@ fn write_interrupt_in_endpoint_context(
     MemoryBus::write_u32(mem, base + 12, (tr_dequeue_raw >> 32) as u32);
 }
 
+fn write_interrupt_in_endpoint_input_context(
+    mem: &mut TestMemory,
+    input_ctx_base: u64,
+    endpoint_id: u8,
+    ring_base: u64,
+) {
+    // Input context layout: [ICC][Slot][EP0][EP1 OUT][EP1 IN]...
+    let base = input_ctx_base + u64::from(endpoint_id + 1) * (CONTEXT_SIZE as u64);
+    // Endpoint state is xHC-owned; leave it zeroed and let Configure Endpoint set it.
+    MemoryBus::write_u32(mem, base, 0);
+    // Endpoint type (Interrupt IN = 7) + max packet size.
+    let dw1 = (7u32 << 3) | (8u32 << 16);
+    MemoryBus::write_u32(mem, base + 4, dw1);
+    let tr_dequeue_raw = (ring_base & !0x0f) | 1;
+    MemoryBus::write_u32(mem, base + 8, tr_dequeue_raw as u32);
+    MemoryBus::write_u32(mem, base + 12, (tr_dequeue_raw >> 32) as u32);
+}
+
 fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, ioc: bool) -> Trb {
     let mut trb = Trb::new(buf_ptr, len & Trb::STATUS_TRANSFER_LEN_MASK, 0);
     trb.set_trb_type(TrbType::Normal);
@@ -63,7 +81,7 @@ fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, ioc: bool) -> Trb {
     trb
 }
 
-fn run_drop_or_deconfigure(
+fn run_configure_endpoint(
     ctrl: &mut XhciController,
     mem: &mut TestMemory,
     slot_id: u8,
@@ -87,6 +105,23 @@ fn run_drop_or_deconfigure(
     assert_eq!(ev.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev.completion_code_raw(), CompletionCode::Success.as_u8());
     assert_eq!(ev.slot_id(), slot_id);
+}
+
+fn configure_interrupt_in_endpoint(
+    ctrl: &mut XhciController,
+    mem: &mut TestMemory,
+    slot_id: u8,
+    cmd_ring: u64,
+    input_ctx: u64,
+    endpoint_id: u8,
+    ring_base: u64,
+) {
+    let mut icc = InputControlContext::default();
+    icc.set_drop_flags(0);
+    icc.set_add_flags(1u32 << endpoint_id);
+    icc.write_to(mem, input_ctx);
+    write_interrupt_in_endpoint_input_context(mem, input_ctx, endpoint_id, ring_base);
+    run_configure_endpoint(ctrl, mem, slot_id, cmd_ring, input_ctx, |_| {});
 }
 
 #[test]
@@ -124,16 +159,9 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
 
-    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint updates the
-    // controller-local Slot Context from the output Device Context; if we leave it zeroed, the slot
-    // would no longer resolve to an attached device after the drop command completes.
-    let mut out_slot_ctx = SlotContext::default();
-    out_slot_ctx.set_root_hub_port_number(1);
-    out_slot_ctx.write_to(&mut mem, dev_ctx);
-
-    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint reads the Slot
-    // Context from the output Device Context and mirrors it back into controller-local state; if we
-    // leave it zeroed, the slot would no longer resolve to an attached device after the drop path.
+    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint mirrors the
+    // Slot Context from the output Device Context back into controller-local state; if we leave it
+    // zeroed, the slot would no longer resolve to the attached device after the drop command.
     let mut out_slot_ctx = SlotContext::default();
     out_slot_ctx.set_root_hub_port_number(1);
     out_slot_ctx.write_to(&mut mem, dev_ctx);
@@ -148,12 +176,11 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     icc.set_add_flags(0);
     icc.write_to(&mut mem, input_ctx);
 
-    run_drop_or_deconfigure(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |_| {});
+    run_configure_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |_| {});
 
-    // Re-populate the endpoint context (guest would re-run Configure Endpoint) and ring the doorbell
-    // again. If the pending bit was not cleared, this doorbell would be ignored and no DMA would
-    // occur.
-    write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
+    // Re-add the endpoint (guest would re-run Configure Endpoint) and ring the doorbell again. If
+    // the pending bit was not cleared, this doorbell would be ignored and no DMA would occur.
+    configure_interrupt_in_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
     ctrl.tick(&mut mem);
@@ -212,12 +239,12 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     // Deconfigure mode disables all non-EP0 endpoints. Like the drop path, it must clear the
     // pending-doorbell coalescing bitmap for those endpoints so they can be re-doorbelled later.
     InputControlContext::default().write_to(&mut mem, input_ctx);
-    run_drop_or_deconfigure(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |cmd| {
+    run_configure_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |cmd| {
         cmd.set_configure_endpoint_deconfigure(true)
     });
 
-    // Re-populate the endpoint context and ring the doorbell again.
-    write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
+    // Re-add the endpoint and ring the doorbell again.
+    configure_interrupt_in_endpoint(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
     ctrl.tick(&mut mem);
