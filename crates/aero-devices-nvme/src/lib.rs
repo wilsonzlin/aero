@@ -19,8 +19,9 @@
 //!
 //! - `WRITE ZEROES` materializes and writes a zero-filled buffer (bounded by
 //!   [`NVME_MAX_DMA_BYTES`]) so reads of the range return zeros.
-//! - `DSM deallocate` currently validates the range list and completes successfully but does not
-//!   attempt to reclaim backend storage (treats deallocate as a no-op).
+//! - `DSM deallocate` validates the range list and best-effort forwards discard/TRIM requests to the
+//!   backend (via [`DiskBackend::discard_sectors`]). Backends that cannot reclaim storage may treat
+//!   discard as a no-op success.
 //!
 //! Interrupts:
 //! - Legacy INTx is modelled via [`NvmeController::intx_level`].
@@ -1516,12 +1517,11 @@ impl NvmeController {
         cmd: NvmeCommand,
         memory: &mut dyn MemoryBus,
     ) -> (NvmeStatus, u32) {
-        // Best-effort implementation: support the Deallocate attribute and validate the DSM range
-        // list, but treat the actual deallocation request as a no-op if the backend has no native
-        // trim/discard operation.
+        // Best-effort implementation: support the Deallocate attribute, validate the DSM range
+        // list, and attempt to forward discard/TRIM requests to the backend.
         //
-        // This improves guest compatibility (many stacks issue DSM/TRIM) without requiring the disk
-        // backend abstraction to expose hole-punching primitives.
+        // Backends that cannot reclaim storage may implement discard as a no-op success. NVMe
+        // deallocate is advisory, so failures are ignored after validation.
         if cmd.nsid != 1 {
             return (NvmeStatus::INVALID_NS, 0);
         }

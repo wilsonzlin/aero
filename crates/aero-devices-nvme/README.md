@@ -76,8 +76,9 @@ Some storage maintenance commands depend on backend support that is not universa
 
 - `WRITE ZEROES` is implemented by writing an actual zero-filled buffer to the backend (bounded by
   the controller's `NVME_MAX_DMA_BYTES` limit).
-- `DSM deallocate` is currently treated as a validated no-op that returns `SUCCESS`. The range list
-  is parsed and LBA bounds are validated, but no backend "trim/discard" operation is performed.
+- `DSM deallocate` parses and validates the range list, then best-effort forwards discard/TRIM
+  requests to the backend. Backends that cannot reclaim storage may treat discard as a no-op
+  success.
 
 ## Windows 7 notes
 
