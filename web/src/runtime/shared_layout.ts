@@ -76,7 +76,8 @@ export const StatusIndex = {
   IoInputBatchReceivedCounter: 28,
   // Total input batches dropped by the input injector (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
   IoInputBatchDropCounter: 29,
-  // Total backend switches (ps2↔usb↔virtio) observed by the I/O worker input pipeline.
+  // Total backend switches (ps2↔usb↔virtio) observed by the legacy I/O worker input routing layer.
+  // In `vmRuntime=machine` these counters are currently expected to remain zero (no backend switching).
   IoKeyboardBackendSwitchCounter: 30,
   IoMouseBackendSwitchCounter: 31,
 
