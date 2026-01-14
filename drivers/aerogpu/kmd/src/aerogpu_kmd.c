@@ -3682,6 +3682,10 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
      * Assumes Adapter->AllocationsLock is held by the caller on entry and that it
      * should still be held on return.
      *
+     * Note: this helper may temporarily release and re-acquire AllocationsLock
+     * when inserting a new share-token tracking node. Callers must not rely on
+     * uninterrupted lock ownership across this call.
+     *
      * Avoid ExAllocatePoolWithTag while holding the spin lock (NonPagedPool is
      * legal at DISPATCH_LEVEL, but can increase hold time and contention).
      */
@@ -3975,6 +3979,11 @@ static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AER
     KIRQL oldIrql;
     AEROGPU_SHARE_TOKEN_REF* toFree = NULL;
     KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+    /*
+     * Increment share-token refs before making the allocation visible in
+     * Adapter->Allocations. The increment helper may drop/re-acquire
+     * AllocationsLock to allocate a tracking node.
+     */
     const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken, &oldIrql, &toFree);
     InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);

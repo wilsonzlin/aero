@@ -243,6 +243,7 @@ def main() -> int:
                 errors.append(f"{path.relative_to(ROOT)}: missing required reference: {required}")
 
     check_no_pool_alloc_under_allocations_lock(errors)
+    check_track_allocation_share_token_order(errors)
 
     if errors:
         print("ERROR: AeroGPU shared-surface ShareToken contract regression detected.", file=sys.stderr)
@@ -252,6 +253,56 @@ def main() -> int:
 
     print("OK: AeroGPU shared-surface ShareToken contract checks passed.")
     return 0
+
+
+def check_track_allocation_share_token_order(errors: list[str]) -> None:
+    """
+    Correctness guardrail for the share-token refcount tracking refactor:
+
+    `AeroGpuShareTokenRefIncrementLocked` is permitted to temporarily drop and
+    re-acquire `Adapter->AllocationsLock` in order to allocate a tracking node
+    outside the spin lock.
+
+    As a result, `AeroGpuTrackAllocation` must not make an allocation visible in
+    `Adapter->Allocations` *before* incrementing the share-token refcount; doing
+    so would allow another thread to observe/untrack the allocation while the
+    share-token state is transiently untracked.
+    """
+
+    kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
+    if not kmd_path.exists():
+        errors.append(f"{kmd_path.relative_to(ROOT)}: missing (cannot validate AeroGpuTrackAllocation share-token ordering)")
+        return
+
+    text = read_text(kmd_path)
+    span = extract_c_function_body_span(text, "AeroGpuTrackAllocation")
+    if span is None:
+        errors.append(f"{kmd_path.relative_to(ROOT)}: AeroGpuTrackAllocation not found")
+        return
+    brace_start, body = span
+    base_line = text[:brace_start].count("\n") + 1
+
+    re_inc = re.compile(r"\bAeroGpuShareTokenRefIncrementLocked\s*\(")
+    re_insert_alloc = re.compile(
+        r"\bInsert(?:Tail|Head)List\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*Allocations\b"
+    )
+
+    m_inc = re_inc.search(body)
+    if m_inc is None:
+        errors.append(f"{kmd_path.relative_to(ROOT)}:{base_line}: AeroGpuTrackAllocation missing call to AeroGpuShareTokenRefIncrementLocked")
+        return
+    m_insert = re_insert_alloc.search(body)
+    if m_insert is None:
+        errors.append(
+            f"{kmd_path.relative_to(ROOT)}:{base_line}: AeroGpuTrackAllocation missing insertion into Adapter->Allocations (cannot validate share-token ordering)"
+        )
+        return
+
+    if m_insert.start() < m_inc.start():
+        file_line = base_line + body[: m_insert.start()].count("\n")
+        errors.append(
+            f"{kmd_path.relative_to(ROOT)}:{file_line}: AeroGpuTrackAllocation inserts into Adapter->Allocations before incrementing ShareTokenRefs; keep increment before insertion (increment helper may drop AllocationsLock)"
+        )
 
 
 if __name__ == "__main__":
