@@ -1243,6 +1243,9 @@ describe("hid/WebHidBroker", () => {
       // earliest queued reports should be the ones delivered after the in-flight
       // send completes.
       expect(device.sendReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
+      expect(
+        warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
+      ).toBe(1);
 
       broker.destroy();
     } finally {
@@ -1279,6 +1282,9 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 0));
       expect(device.sendFeatureReport.mock.calls.length).toBe(limit + 1);
       expect(device.sendFeatureReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
+      expect(
+        warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
+      ).toBe(1);
 
       broker.destroy();
     } finally {
@@ -1322,6 +1328,9 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(device.sendReport.mock.calls.length).toBe(limit + 1);
       expect(device.sendReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
+      expect(
+        warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
+      ).toBe(1);
 
       broker.destroy();
     } finally {
@@ -1365,6 +1374,9 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(device.sendFeatureReport.mock.calls.length).toBe(limit + 1);
       expect(device.sendFeatureReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
+      expect(
+        warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
+      ).toBe(1);
 
       broker.destroy();
     } finally {
@@ -1409,6 +1421,9 @@ describe("hid/WebHidBroker", () => {
 
       expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
       expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
+      expect(
+        warn.mock.calls.filter((call) => String(call[0]).includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`)).length,
+      ).toBe(1);
 
       broker.destroy();
     } finally {
