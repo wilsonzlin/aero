@@ -1772,25 +1772,36 @@ mod tests {
         global: Object,
         key: JsValue,
         prev: JsValue,
+        had_key: bool,
     }
 
     impl GlobalThisValueGuard {
         fn set(key: &str, value: &JsValue) -> Self {
             let global = js_sys::global();
             let key_js = JsValue::from_str(key);
-            let prev = Reflect::get(&global, &key_js).expect("get global value");
+            let had_key = Reflect::has(&global, &key_js).expect("check global value");
+            let prev = if had_key {
+                Reflect::get(&global, &key_js).expect("get global value")
+            } else {
+                JsValue::UNDEFINED
+            };
             Reflect::set(&global, &key_js, value).expect("set global value");
             Self {
                 global,
                 key: key_js,
                 prev,
+                had_key,
             }
         }
     }
 
     impl Drop for GlobalThisValueGuard {
         fn drop(&mut self) {
-            let _ = Reflect::set(&self.global, &self.key, &self.prev);
+            if self.had_key {
+                let _ = Reflect::set(&self.global, &self.key, &self.prev);
+            } else {
+                let _ = Reflect::delete_property(&self.global, &self.key);
+            }
         }
     }
 
