@@ -211,6 +211,7 @@ echo                        Override the signing_policy read from manifest.json 
 echo                        (legacy aliases: testsigning=test, nointegritychecks=none)
 echo   /installcerts        Force installing certificates from certs\ even when signing_policy is production^|none (advanced; not recommended)
 echo   /verify-media        Verify Guest Tools media integrity (manifest.json SHA-256 file hashes) before installing
+echo                        Note: media verification runs before the elevation check; installation still requires Administrator.
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
 echo   /skipstorage         Skip boot-critical virtio-blk storage pre-seeding (alias: /skip-storage; advanced; unsafe to switch boot disk to virtio-blk)
 echo.
