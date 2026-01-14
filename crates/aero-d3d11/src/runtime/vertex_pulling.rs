@@ -409,6 +409,9 @@ impl VertexPullingLayout {
         s.push_str(
             "fn load_attr_unorm8x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let r = f32(w & 0xFFu) / 255.0;\n  let g = f32((w >> 8u) & 0xFFu) / 255.0;\n  let b = f32((w >> 16u) & 0xFFu) / 255.0;\n  let a = f32((w >> 24u) & 0xFFu) / 255.0;\n  return vec4<f32>(r, g, b, a);\n}\n\n",
         );
+        s.push_str(
+            "fn load_attr_unorm10_10_10_2(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let r = f32(w & 0x3FFu) / 1023.0;\n  let g = f32((w >> 10u) & 0x3FFu) / 1023.0;\n  let b = f32((w >> 20u) & 0x3FFu) / 1023.0;\n  let a = f32((w >> 30u) & 0x3u) / 3.0;\n  return vec4<f32>(r, g, b, a);\n}\n\n",
+        );
 
         s
     }
