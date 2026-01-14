@@ -9937,31 +9937,39 @@ bool TestFvfXyzNormalDiffusePacksMultipleLights() {
     return false;
   }
 
-  // Configure two enabled directional lights.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memset(&dev->lights[0], 0, sizeof(dev->lights[0]));
-    dev->lights[0].Type = D3DLIGHT_DIRECTIONAL;
-    dev->lights[0].Direction = {0.0f, 0.0f, -1.0f};
-    dev->lights[0].Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
-    dev->lights[0].Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
-    dev->light_valid[0] = true;
-    dev->light_enabled[0] = TRUE;
+  // Configure two enabled directional lights via host-test entrypoints.
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
 
-    std::memset(&dev->lights[1], 0, sizeof(dev->lights[1]));
-    dev->lights[1].Type = D3DLIGHT_DIRECTIONAL;
-    dev->lights[1].Direction = {0.0f, 0.0f, -1.0f};
-    dev->lights[1].Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
-    dev->lights[1].Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
-    dev->light_valid[1] = true;
-    dev->light_enabled[1] = TRUE;
+  D3DLIGHT9 light1 = light0;
+  light1.Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light1);
+  if (!Check(hr == S_OK, "SetLight(1)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(1, TRUE)")) {
+    return false;
+  }
 
-    dev->material_valid = true;
-    dev->material.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
-    dev->material.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
-    dev->material.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
-
-    dev->fixedfunc_lighting_dirty = true;
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
   }
 
   const VertexXyzNormalDiffuse tri[3] = {
