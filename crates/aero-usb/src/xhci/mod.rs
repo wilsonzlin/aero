@@ -2271,6 +2271,12 @@ impl XhciController {
         if self.host_controller_error {
             return;
         }
+        // Transfer execution is gated on `USBCMD.RUN`. Guests may ring endpoint doorbells while the
+        // controller is stopped; those doorbells should be remembered, but no DMA or ring progress
+        // should occur until the controller is running again.
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            return;
+        }
 
         let mut work = TickWork::default();
         let mut ring_poll_budget = budget::MAX_RING_POLL_STEPS_PER_FRAME;

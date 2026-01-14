@@ -122,6 +122,9 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
 
+    // Transfer-ring execution is gated on USBCMD.RUN.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     // Queue an endpoint doorbell but do not tick: the coalescing bitmap should mark it pending.
     ctrl.ring_doorbell(slot_id, EP_ID);
 
@@ -187,6 +190,9 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     let mut out_slot_ctx = SlotContext::default();
     out_slot_ctx.set_root_hub_port_number(1);
     out_slot_ctx.write_to(&mut mem, dev_ctx);
+
+    // Transfer-ring execution is gated on USBCMD.RUN.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Queue an endpoint doorbell but do not tick.
     ctrl.ring_doorbell(slot_id, EP_ID);
