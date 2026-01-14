@@ -1708,6 +1708,46 @@ func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
 	}
 }
 
+func TestAuth_APIKey_WebSocketSignal_HeaderAuth(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeAPIKey,
+		APIKey:                        "secret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	h := http.Header{}
+	h.Set("X-API-Key", "secret")
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, h)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got, err := parseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Type != "answer" {
+		t.Fatalf("unexpected message: %#v", got)
+	}
+}
+
 func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                      config.AuthModeJWT,
