@@ -346,35 +346,6 @@ func (c Config) ICEConfigError() error {
 	return c.iceConfigErr
 }
 
-// PeerConnectionICEServers returns the ICE server list to use when constructing
-// server-side PeerConnections.
-//
-// When TURN REST is enabled, the client-facing ICE list may include TURN URLs
-// without credentials (because credentials are injected per /webrtc/ice request).
-// Pion requires TURN credentials for server-side usage, so we filter out TURN
-// servers that don't have complete credentials.
-func (c Config) PeerConnectionICEServers() []webrtc.ICEServer {
-	if !c.TURNREST.Enabled() {
-		return c.ICEServers
-	}
-	out := make([]webrtc.ICEServer, 0, len(c.ICEServers))
-	for _, server := range c.ICEServers {
-		if !iceServerHasTURNURL(server) {
-			out = append(out, server)
-			continue
-		}
-		if strings.TrimSpace(server.Username) == "" {
-			continue
-		}
-		cred, ok := server.Credential.(string)
-		if !ok || strings.TrimSpace(cred) == "" {
-			continue
-		}
-		out = append(out, server)
-	}
-	return out
-}
-
 func Load(args []string) (Config, error) {
 	return load(os.LookupEnv, args)
 }
@@ -1462,14 +1433,4 @@ func parseIPList(s string) ([]string, error) {
 		return nil, fmt.Errorf("must include at least one IP")
 	}
 	return out, nil
-}
-
-func iceServerHasTURNURL(server webrtc.ICEServer) bool {
-	for _, raw := range server.URLs {
-		url := strings.ToLower(strings.TrimSpace(raw))
-		if strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:") {
-			return true
-		}
-	}
-	return false
 }
