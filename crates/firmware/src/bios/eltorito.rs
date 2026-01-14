@@ -27,6 +27,13 @@ const BIOS_SECTORS_PER_ISO_BLOCK: u64 = (ISO_BLOCK_BYTES / BIOS_SECTOR_BYTES) as
 /// Default no-emulation load segment per the El Torito spec when the catalog field is zero.
 const DEFAULT_LOAD_SEGMENT: u16 = 0x07C0;
 
+/// Upper bound for scanning the ISO9660 volume descriptor set when locating the El Torito boot
+/// record.
+///
+/// Real-world install media (e.g. Windows) places the boot record early in the descriptor set. Keep
+/// this bounded so malformed or adversarial images cannot force POST to walk a huge image.
+const MAX_VOLUME_DESCRIPTOR_SCAN: u32 = 128;
+
 /// Default "boot load size" used when the El Torito sector count field is zero.
 ///
 /// Some ISO authoring tools omit `-boot-load-size`, producing an initial/default entry with
@@ -80,9 +87,21 @@ pub(super) fn parse_boot_image(disk: &mut dyn BlockDevice) -> Result<ParsedBootI
 
 fn find_boot_catalog_lba(disk: &mut dyn BlockDevice) -> Result<u32, &'static str> {
     // ISO9660 volume descriptor set begins at logical block 16.
-    for iso_lba in 16u32.. {
+    let total_iso_blocks = disk.size_in_sectors() / BIOS_SECTORS_PER_ISO_BLOCK;
+    // Bound scanning by both the disk size and a fixed maximum descriptor count so pathological
+    // images cannot trigger extremely long loops.
+    let max_iso_lba_by_size = u32::try_from(total_iso_blocks).unwrap_or(u32::MAX);
+    let start = 16u32;
+    let end_exclusive = max_iso_lba_by_size.min(start.saturating_add(MAX_VOLUME_DESCRIPTOR_SCAN));
+    for iso_lba in start..end_exclusive {
         let mut block = [0u8; ISO_BLOCK_BYTES];
-        read_iso_block(disk, iso_lba, &mut block).map_err(|_| "Disk read error")?;
+        if let Err(err) = read_iso_block(disk, iso_lba, &mut block) {
+            // If we hit the end of the image while scanning for volume descriptors, treat it as a
+            // missing boot record rather than surfacing a disk read error.
+            match err {
+                DiskError::OutOfRange => break,
+            }
+        }
 
         let typ = block[0];
         if typ == 0xFF {
@@ -274,9 +293,51 @@ mod tests {
     use crate::bios::{Bios, BiosConfig, InMemoryDisk, TestMemory};
     use aero_cpu_core::state::{gpr, CpuMode, CpuState};
 
+    #[derive(Debug)]
+    struct CountingDisk {
+        inner: InMemoryDisk,
+        reads: usize,
+        max_reads: usize,
+    }
+
+    impl CountingDisk {
+        fn new(data: Vec<u8>, max_reads: usize) -> Self {
+            Self {
+                inner: InMemoryDisk::new(data),
+                reads: 0,
+                max_reads,
+            }
+        }
+    }
+
+    impl BlockDevice for CountingDisk {
+        fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+            self.reads = self.reads.saturating_add(1);
+            assert!(
+                self.reads <= self.max_reads,
+                "El Torito scan performed too many disk reads ({} > {})",
+                self.reads,
+                self.max_reads
+            );
+            self.inner.read_sector(lba, buf)
+        }
+
+        fn size_in_sectors(&self) -> u64 {
+            self.inner.size_in_sectors()
+        }
+    }
+
     fn write_iso_block(img: &mut [u8], iso_lba: usize, block: &[u8; ISO_BLOCK_BYTES]) {
         let off = iso_lba * ISO_BLOCK_BYTES;
         img[off..off + ISO_BLOCK_BYTES].copy_from_slice(block);
+    }
+
+    fn iso9660_volume_descriptor(typ: u8) -> [u8; ISO_BLOCK_BYTES] {
+        let mut desc = [0u8; ISO_BLOCK_BYTES];
+        desc[0] = typ;
+        desc[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+        desc[6] = ISO9660_VERSION;
+        desc
     }
 
     fn build_minimal_iso_no_emulation(
@@ -561,5 +622,60 @@ mod tests {
                 load_rba: boot_image_lba,
             }
         );
+    }
+
+    #[test]
+    fn parse_boot_image_missing_boot_record_without_terminator_returns_stable_error() {
+        // Build an image that looks like an ISO9660 descriptor set but never provides a terminator
+        // and never includes an El Torito boot record descriptor.
+        let extra_descriptors = 8u32;
+        let total_blocks = 16u32
+            .saturating_add(MAX_VOLUME_DESCRIPTOR_SCAN)
+            .saturating_add(extra_descriptors);
+        let mut img = vec![0u8; (total_blocks as usize) * ISO_BLOCK_BYTES];
+
+        for iso_lba in 16..(total_blocks as usize) {
+            let desc = iso9660_volume_descriptor(0x01);
+            write_iso_block(&mut img, iso_lba, &desc);
+        }
+
+        let cap_reads = (MAX_VOLUME_DESCRIPTOR_SCAN as usize)
+            * (BIOS_SECTORS_PER_ISO_BLOCK as usize);
+        let mut disk = CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
+
+        let err = parse_boot_image(&mut disk).unwrap_err();
+        assert_eq!(err, "Missing El Torito boot record");
+        assert_eq!(disk.reads, cap_reads);
+    }
+
+    #[test]
+    fn parse_boot_image_terminator_after_scan_cap_fails_quickly() {
+        // Place a well-formed terminator after the scan cap; the implementation should not walk
+        // arbitrarily far just to find the terminator.
+        let terminator_offset = 10u32;
+        let total_blocks = 16u32
+            .saturating_add(MAX_VOLUME_DESCRIPTOR_SCAN)
+            .saturating_add(terminator_offset)
+            .saturating_add(1);
+        let mut img = vec![0u8; (total_blocks as usize) * ISO_BLOCK_BYTES];
+
+        for iso_lba in 16..(total_blocks as usize) {
+            let desc = iso9660_volume_descriptor(0x01);
+            write_iso_block(&mut img, iso_lba, &desc);
+        }
+
+        let terminator_lba = 16u32
+            .saturating_add(MAX_VOLUME_DESCRIPTOR_SCAN)
+            .saturating_add(terminator_offset);
+        let term = iso9660_volume_descriptor(0xFF);
+        write_iso_block(&mut img, terminator_lba as usize, &term);
+
+        let cap_reads = (MAX_VOLUME_DESCRIPTOR_SCAN as usize)
+            * (BIOS_SECTORS_PER_ISO_BLOCK as usize);
+        let mut disk = CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
+
+        let err = parse_boot_image(&mut disk).unwrap_err();
+        assert_eq!(err, "Missing El Torito boot record");
+        assert_eq!(disk.reads, cap_reads);
     }
 }
