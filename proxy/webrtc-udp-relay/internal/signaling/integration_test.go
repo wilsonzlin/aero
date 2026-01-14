@@ -51,7 +51,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		Mode:            config.ModeDev,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	httpSrv := httpserver.New(cfg, log, httpserver.BuildInfo{})
+	httpSrv := httpserver.New(cfg, log, "", "")
 
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
 	signalingSrv := signaling.NewServer(signaling.Config{
@@ -236,7 +236,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 		Mode:            config.ModeDev,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	httpSrv := httpserver.New(cfg, log, httpserver.BuildInfo{})
+	httpSrv := httpserver.New(cfg, log, "", "")
 
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
 	signalingSrv := signaling.NewServer(signaling.Config{

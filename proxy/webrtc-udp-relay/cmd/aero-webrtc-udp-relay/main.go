@@ -84,9 +84,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	build := resolveBuildInfo(buildCommit, buildTime)
+	commit, buildTime := resolveBuildInfo(buildCommit, buildTime)
 
-	srv := httpserver.New(cfg, logger, build)
+	srv := httpserver.New(cfg, logger, commit, buildTime)
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
 	srv.SetMetrics(sessionMgr.Metrics())
 	authz, err := signaling.NewAuthAuthorizer(cfg)
@@ -189,7 +189,7 @@ func inboundFilterMode(mode config.UDPInboundFilterMode) relay.InboundFilterMode
 	}
 }
 
-func resolveBuildInfo(commit, buildTime string) httpserver.BuildInfo {
+func resolveBuildInfo(commit, buildTime string) (string, string) {
 	// Prefer ldflags-injected values (production builds) but fall back to the Go
 	// build info when available (useful for `go run` / dev builds).
 	if bi, ok := debug.ReadBuildInfo(); ok {
@@ -207,8 +207,5 @@ func resolveBuildInfo(commit, buildTime string) httpserver.BuildInfo {
 		}
 	}
 
-	return httpserver.BuildInfo{
-		Commit:    commit,
-		BuildTime: buildTime,
-	}
+	return commit, buildTime
 }

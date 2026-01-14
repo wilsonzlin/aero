@@ -34,7 +34,7 @@ type generator struct {
 	sessionIDSource func() (string, error)
 }
 
-type GeneratorConfig struct {
+type generatorConfig struct {
 	SharedSecret    string
 	TTLSeconds      int64
 	UsernamePrefix  string
@@ -42,7 +42,15 @@ type GeneratorConfig struct {
 	SessionIDSource func() (string, error)
 }
 
-func NewGenerator(cfg GeneratorConfig) (*generator, error) {
+func NewGenerator(sharedSecret string, ttlSeconds int64, usernamePrefix string) (*generator, error) {
+	return newGenerator(generatorConfig{
+		SharedSecret:   sharedSecret,
+		TTLSeconds:     ttlSeconds,
+		UsernamePrefix: usernamePrefix,
+	})
+}
+
+func newGenerator(cfg generatorConfig) (*generator, error) {
 	if cfg.SharedSecret == "" {
 		return nil, errors.New("shared secret is required")
 	}

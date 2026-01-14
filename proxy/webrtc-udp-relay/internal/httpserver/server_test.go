@@ -28,8 +28,7 @@ func startTestServer(t *testing.T, cfg config.Config, register func(*server)) st
 	t.Helper()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	build := BuildInfo{Commit: "abc", BuildTime: "time"}
-	srv := New(cfg, log, build)
+	srv := New(cfg, log, "abc", "time")
 	if register != nil {
 		register(srv)
 	}
@@ -125,11 +124,11 @@ func TestHealthzReadyzVersion(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 		}
-		var got BuildInfo
+		var got buildInfo
 		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		want := BuildInfo{Commit: "abc", BuildTime: "time"}
+		want := buildInfo{Commit: "abc", BuildTime: "time"}
 		if got != want {
 			t.Fatalf("got=%+v, want=%+v", got, want)
 		}

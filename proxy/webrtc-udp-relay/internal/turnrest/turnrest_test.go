@@ -9,7 +9,7 @@ import (
 )
 
 func TestGenerate_DeterministicWithFixedTime(t *testing.T) {
-	g, err := NewGenerator(GeneratorConfig{
+	g, err := newGenerator(generatorConfig{
 		SharedSecret:    "shared-secret",
 		TTLSeconds:      3600,
 		UsernamePrefix:  "aero",
@@ -42,7 +42,7 @@ func TestGenerate_DeterministicWithFixedTime(t *testing.T) {
 
 func TestGenerate_TTLBehavior(t *testing.T) {
 	now := time.Unix(42, 0).UTC()
-	g, err := NewGenerator(GeneratorConfig{
+	g, err := newGenerator(generatorConfig{
 		SharedSecret:    "secret",
 		TTLSeconds:      10,
 		UsernamePrefix:  "aero",
@@ -63,7 +63,7 @@ func TestGenerate_TTLBehavior(t *testing.T) {
 }
 
 func TestGenerate_CredentialBase64AndHMACSHA1(t *testing.T) {
-	g, err := NewGenerator(GeneratorConfig{
+	g, err := newGenerator(generatorConfig{
 		SharedSecret:    "secret",
 		TTLSeconds:      1,
 		UsernamePrefix:  "pfx",

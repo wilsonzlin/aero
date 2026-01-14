@@ -212,7 +212,7 @@ func startTestRelayServer(t *testing.T, relayCfg relay.Config, destPolicy *polic
 		Mode:            config.ModeDev,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	httpSrv := httpserver.New(cfg, log, httpserver.BuildInfo{})
+	httpSrv := httpserver.New(cfg, log, "", "")
 
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
 	signalingSrv := signaling.NewServer(signaling.Config{
@@ -256,7 +256,7 @@ func startTestRelayServerWithAuth(t *testing.T, relayCfg relay.Config, destPolic
 		APIKey:          apiKey,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	httpSrv := httpserver.New(cfg, log, httpserver.BuildInfo{})
+	httpSrv := httpserver.New(cfg, log, "", "")
 
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
 	authz, err := signaling.NewAuthAuthorizer(cfg)

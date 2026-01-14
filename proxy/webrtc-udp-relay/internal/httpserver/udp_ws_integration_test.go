@@ -364,8 +364,7 @@ func TestUDPWebSocket_ShutdownClosesConnections(t *testing.T) {
 	}
 
 	log := newTestLogger(t)
-	build := BuildInfo{Commit: "abc", BuildTime: "time"}
-	srv := New(cfg, log, build)
+	srv := New(cfg, log, "abc", "time")
 	registerUDPWS(t, cfg, srv)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

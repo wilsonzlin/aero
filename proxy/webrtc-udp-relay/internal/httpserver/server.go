@@ -22,7 +22,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/turnrest"
 )
 
-type BuildInfo struct {
+type buildInfo struct {
 	Commit    string `json:"commit"`
 	BuildTime string `json:"buildTime"`
 }
@@ -30,7 +30,7 @@ type BuildInfo struct {
 type server struct {
 	log   *slog.Logger
 	cfg   config.Config
-	build BuildInfo
+	build buildInfo
 
 	ready atomic.Bool
 
@@ -40,11 +40,11 @@ type server struct {
 	srv *http.Server
 }
 
-func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *server {
+func New(cfg config.Config, logger *slog.Logger, buildCommit, buildTime string) *server {
 	s := &server{
 		log:   logger,
 		cfg:   cfg,
-		build: build,
+		build: buildInfo{Commit: buildCommit, BuildTime: buildTime},
 		mux:   http.NewServeMux(),
 	}
 
@@ -180,12 +180,11 @@ func (s *server) registerRoutes() {
 			iceServers = []webrtc.ICEServer{}
 		}
 		if s.cfg.TURNREST.Enabled() {
-			gen, err := turnrest.NewGenerator(turnrest.GeneratorConfig{
-				SharedSecret:   s.cfg.TURNREST.SharedSecret,
-				TTLSeconds:     s.cfg.TURNREST.TTLSeconds,
-				UsernamePrefix: s.cfg.TURNREST.UsernamePrefix,
-				Now:            time.Now,
-			})
+			gen, err := turnrest.NewGenerator(
+				s.cfg.TURNREST.SharedSecret,
+				s.cfg.TURNREST.TTLSeconds,
+				s.cfg.TURNREST.UsernamePrefix,
+			)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return

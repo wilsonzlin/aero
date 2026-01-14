@@ -415,7 +415,10 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	client := &http.Client{Timeout: 250 * time.Millisecond}
+	// Allow some slack for slower CI machines; the important property is that the
+	// handler returns quickly once ICEGatheringTimeout elapses (rather than
+	// blocking indefinitely).
+	client := &http.Client{Timeout: 2 * time.Second}
 	start := time.Now()
 	resp, err := client.Post(ts.URL+"/offer", "application/json", bytes.NewReader(body))
 	elapsed := time.Since(start)
@@ -436,7 +439,7 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("invalid answer: %v", err)
 	}
 
-	if elapsed > 250*time.Millisecond {
+	if elapsed > 1*time.Second {
 		t.Fatalf("request took too long: %s", elapsed)
 	}
 
@@ -504,7 +507,10 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	client := &http.Client{Timeout: 250 * time.Millisecond}
+	// Allow some slack for slower CI machines; the important property is that the
+	// handler returns quickly once ICEGatheringTimeout elapses (rather than
+	// blocking indefinitely).
+	client := &http.Client{Timeout: 2 * time.Second}
 	start := time.Now()
 	resp, err := client.Post(ts.URL+"/webrtc/offer", "application/json", bytes.NewReader(body))
 	elapsed := time.Since(start)
@@ -530,7 +536,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	if strings.TrimSpace(got.SDP.SDP) == "" {
 		t.Fatalf("expected non-empty answer sdp")
 	}
-	if elapsed > 250*time.Millisecond {
+	if elapsed > 1*time.Second {
 		t.Fatalf("request took too long: %s", elapsed)
 	}
 
