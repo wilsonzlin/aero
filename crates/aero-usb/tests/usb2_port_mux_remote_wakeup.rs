@@ -412,8 +412,9 @@ fn usb2_port_mux_ehci_remote_wakeup_does_not_propagate_through_external_hub_with
     // must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
-    // Tick once to allow the root hub to observe the remote wakeup request.
-    ehci.tick_1ms(&mut mem);
+    for _ in 0..5 {
+        ehci.tick_1ms(&mut mem);
+    }
 
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(
