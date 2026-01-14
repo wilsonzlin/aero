@@ -107,7 +107,44 @@ class QmpMsixParsingTests(unittest.TestCase):
         self.assertEqual(blk.msix_enabled, False)
         self.assertEqual(blk.bdf(), "00:04.0")
 
+    def test_require_virtio_snd_msix_disabled_token(self) -> None:
+        h = self.harness
+
+        # Stub the QMP collector so we can unit test the failure token without a real QMP socket.
+        dev_id = sorted(h._VIRTIO_SND_PCI_DEVICE_IDS)[0]
+        query_infos = [
+            h._PciMsixInfo(
+                vendor_id=h._VIRTIO_PCI_VENDOR_ID,
+                device_id=dev_id,
+                bus=0,
+                slot=5,
+                function=0,
+                msix_enabled=False,
+                source="query-pci",
+            )
+        ]
+
+        def stub_collect(_endpoint):
+            return query_infos, [], True, False
+
+        orig = h._qmp_collect_pci_msix_info
+        h._qmp_collect_pci_msix_info = stub_collect
+        try:
+            msg = h._require_virtio_msix_check_failure_message(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=1),
+                require_virtio_net_msix=False,
+                require_virtio_blk_msix=False,
+                require_virtio_snd_msix=True,
+            )
+        finally:
+            h._qmp_collect_pci_msix_info = orig
+
+        assert msg is not None
+        self.assertTrue(
+            msg.startswith("FAIL: VIRTIO_SND_MSIX_NOT_ENABLED:"),
+            msg,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
