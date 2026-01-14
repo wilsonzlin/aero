@@ -211,8 +211,8 @@ static int RunCapsSmoke(int argc, char** argv) {
       "INFO: %s: d3d10_x_hw_options: cs_plus_raw_structured_via_4x=%u",
       kTestName,
       (unsigned)hw10x.ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x);
-  if (hw10x.ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x) {
-    return reporter.Fail("unexpected compute capability (expected FALSE until implemented)");
+  if (!hw10x.ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x) {
+    return reporter.Fail("missing compute capability (expected TRUE now that CS + UAV buffers + Dispatch are implemented)");
   }
 
   D3D11_FEATURE_DATA_D3D11_OPTIONS options;
