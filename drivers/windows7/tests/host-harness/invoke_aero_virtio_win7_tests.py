@@ -5066,15 +5066,17 @@ def main() -> int:
                         )
                         kbd_mode = "broadcast" if info.keyboard_device is None else "device"
                         mouse_mode = "broadcast" if info.mouse_device is None else "device"
-                        print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt={input_events_inject_attempts}|"
-                            f"kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
+                        _emit_virtio_input_events_inject_host_marker(
+                            ok=True,
+                            attempt=input_events_inject_attempts,
+                            kbd_mode=kbd_mode,
+                            mouse_mode=mouse_mode,
                         )
                     except Exception as e:
-                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
-                        print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt={input_events_inject_attempts}|reason={reason}",
-                            file=sys.stderr,
+                        _emit_virtio_input_events_inject_host_marker(
+                            ok=False,
+                            attempt=input_events_inject_attempts,
+                            reason=str(e) or type(e).__name__,
                         )
                         print(
                             f"FAIL: QMP_INPUT_INJECT_FAILED: failed to inject virtio-input events via QMP: {e}",
@@ -5099,15 +5101,16 @@ def main() -> int:
                     try:
                         info = _try_qmp_input_inject_virtio_input_media_keys(qmp_endpoint, qcode="volumeup")
                         kbd_mode = "broadcast" if info.keyboard_device is None else "device"
-                        print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt={input_media_keys_inject_attempts}|"
-                            f"kbd_mode={kbd_mode}"
+                        _emit_virtio_input_media_keys_inject_host_marker(
+                            ok=True,
+                            attempt=input_media_keys_inject_attempts,
+                            kbd_mode=kbd_mode,
                         )
                     except Exception as e:
-                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
-                        print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt={input_media_keys_inject_attempts}|reason={reason}",
-                            file=sys.stderr,
+                        _emit_virtio_input_media_keys_inject_host_marker(
+                            ok=False,
+                            attempt=input_media_keys_inject_attempts,
+                            reason=str(e) or type(e).__name__,
                         )
                         print(
                             f"FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: failed to inject virtio-input media key events via QMP: {e}",
@@ -5132,15 +5135,16 @@ def main() -> int:
                     try:
                         info = _try_qmp_input_inject_virtio_input_tablet_events(qmp_endpoint)
                         tablet_mode = "broadcast" if info.tablet_device is None else "device"
-                        print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt={input_tablet_events_inject_attempts}|"
-                            f"tablet_mode={tablet_mode}"
+                        _emit_virtio_input_tablet_events_inject_host_marker(
+                            ok=True,
+                            attempt=input_tablet_events_inject_attempts,
+                            tablet_mode=tablet_mode,
                         )
                     except Exception as e:
-                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
-                        print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt={input_tablet_events_inject_attempts}|reason={reason}",
-                            file=sys.stderr,
+                        _emit_virtio_input_tablet_events_inject_host_marker(
+                            ok=False,
+                            attempt=input_tablet_events_inject_attempts,
+                            reason=str(e) or type(e).__name__,
                         )
                         print(
                             f"FAIL: QMP_INPUT_TABLET_INJECT_FAILED: failed to inject virtio-input tablet events via QMP: {e}",
@@ -6559,6 +6563,68 @@ def _compute_wave_metrics_16bit_equiv(
 
 def _sanitize_marker_value(value: str) -> str:
     return value.replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+
+
+def _emit_virtio_input_events_inject_host_marker(
+    *,
+    ok: bool,
+    attempt: int,
+    kbd_mode: Optional[str] = None,
+    mouse_mode: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    if ok:
+        assert kbd_mode is not None and mouse_mode is not None
+        print(
+            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt={attempt}|"
+            f"kbd_mode={kbd_mode}|mouse_mode={mouse_mode}"
+        )
+        return
+    reason_tok = _sanitize_marker_value(reason or "unknown")
+    print(
+        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt={attempt}|reason={reason_tok}",
+        file=sys.stderr,
+    )
+
+
+def _emit_virtio_input_media_keys_inject_host_marker(
+    *,
+    ok: bool,
+    attempt: int,
+    kbd_mode: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    if ok:
+        assert kbd_mode is not None
+        print(
+            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt={attempt}|kbd_mode={kbd_mode}"
+        )
+        return
+    reason_tok = _sanitize_marker_value(reason or "unknown")
+    print(
+        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt={attempt}|reason={reason_tok}",
+        file=sys.stderr,
+    )
+
+
+def _emit_virtio_input_tablet_events_inject_host_marker(
+    *,
+    ok: bool,
+    attempt: int,
+    tablet_mode: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    if ok:
+        assert tablet_mode is not None
+        print(
+            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt={attempt}|tablet_mode={tablet_mode}"
+        )
+        return
+    reason_tok = _sanitize_marker_value(reason or "unknown")
+    print(
+        f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt={attempt}|reason={reason_tok}",
+        file=sys.stderr,
+    )
 
 
 def _check_required_virtio_input_bind_marker(
