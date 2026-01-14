@@ -392,6 +392,8 @@ To support D3D9Ex + DWM redirected surfaces and other cross-process shared alloc
 
 For robustness against Win7's varying `CloseAllocation` / `DestroyAllocation` call patterns, the KMD also maintains an adapter-global open refcount keyed by `share_token`. When the final cross-process allocation wrapper for a shared surface is released, the KMD emits `RELEASE_SHARED_SURFACE { share_token }` (a best-effort internal ring submission) so the host can remove the `share_token → resource` mapping used for future `IMPORT_SHARED_SURFACE` calls.
 
+Implementation note: this internal submission is emitted with `AEROGPU_SUBMIT_FLAG_NO_IRQ` and reuses the most recently submitted fence value as its `signal_fence` (it must not advance the OS-visible fence domain). Host-side executors must tolerate **duplicate fence values** in the ring stream.
+
 These values live in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv` / `aerogpu_wddm_alloc_priv_v2`):
 
 - The UMD supplies `alloc_id`/`flags` (and optional metadata) to the KMD.
