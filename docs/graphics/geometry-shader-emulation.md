@@ -330,8 +330,9 @@ Supported instructions/opcodes:
 
 Supported operand surface (initial):
 
-- temp regs (`r#`) and output regs (`o#`) (note: the translated GS prepass currently stores `o0`
-  (position) plus a small subset of `o#` varyings into the expanded vertex buffer; default is `o1`)
+- temp regs (`r#`) and output regs (`o#`) (note: `o0` is treated as `SV_Position` and stored in
+  `ExpandedVertex.pos`; non-position outputs `oN` are exported to `ExpandedVertex.varyings[N]` for the
+  set of output registers declared/written by the GS; unwritten slots default to zero)
 - GS inputs via `v#[]` (no vertex index out of range for the declared input primitive)
 - constant buffers (`cb#[]`) for statically indexed reads (requires `dcl_constantbuffer`)
 - resources used by the supported read-only ops above:
@@ -382,8 +383,9 @@ Known limitations include:
     Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,
     `trianglestrip` → triangle list).
   - The expanded-vertex record stores `SV_Position` plus up to 32 `@location(N)` varyings
-    (`vec4<f32>` each, indexed by location). The translated GS prepass currently only populates a
-    small subset of those varying slots (default: `o1`); other varying slots default to zero.
+    (`vec4<f32>` each, indexed by location). The translated GS prepass exports non-position output
+    registers `oN` to `ExpandedVertex.varyings[N]` for the set of output registers declared/written by
+    the GS; varyings that are not written default to zero.
 - **No layered rendering semantics**
   - No `SV_RenderTargetArrayIndex` / `SV_ViewportArrayIndex` style outputs (future work)
 - **No fixed-function GS-side rasterizer discard**
