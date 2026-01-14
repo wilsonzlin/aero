@@ -104,6 +104,9 @@ static CM_PARTIAL_RESOURCE_DESCRIPTOR make_msg_desc(_In_ USHORT MessageCount)
     RtlZeroMemory(&desc, sizeof(desc));
     desc.Type = CmResourceTypeInterrupt;
     desc.Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    desc.u.MessageInterrupt.Vector = 0x20;
+    desc.u.MessageInterrupt.Level = 0x5;
+    desc.u.MessageInterrupt.Affinity = 0x1;
     desc.u.MessageInterrupt.MessageCount = MessageCount;
     return desc;
 }
@@ -132,6 +135,7 @@ static void test_connect_validation(void)
     WdkTestResetIoDisconnectInterruptCount();
     WdkTestResetIoConnectInterruptExCount();
     WdkTestResetIoDisconnectInterruptExCount();
+    WdkTestResetLastIoConnectInterruptExParams();
 
     desc = make_msg_desc(2);
 
@@ -157,6 +161,9 @@ static void test_connect_validation(void)
     assert(WdkTestGetIoDisconnectInterruptCount() == 0);
     assert(WdkTestGetIoConnectInterruptExCount() == 0);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+    assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == NULL);
+    assert(WdkTestGetLastIoConnectInterruptExMessageCount() == 0);
+    assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == 0);
 }
 
 static void test_intx_connect_and_dispatch(void)
@@ -172,9 +179,16 @@ static void test_intx_connect_and_dispatch(void)
     desc = make_int_desc();
     RtlZeroMemory(&ctx, sizeof(ctx));
 
+    WdkTestResetIoConnectInterruptCount();
+    WdkTestResetIoDisconnectInterruptCount();
+    WdkTestResetIoConnectInterruptExCount();
+    WdkTestResetIoDisconnectInterruptExCount();
+
     status = VirtioPciWdmInterruptConnect(&dev, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     assert(intr.Mode == VirtioPciWdmInterruptModeIntx);
+    assert(WdkTestGetIoConnectInterruptCount() == 1);
+    assert(WdkTestGetIoConnectInterruptExCount() == 0);
     ctx.expected = &intr;
 
     /* Spurious interrupt: status byte contains 0. */
@@ -214,6 +228,8 @@ static void test_intx_connect_and_dispatch(void)
     assert(ctx.queue_calls == 2);
 
     VirtioPciWdmInterruptDisconnect(&intr);
+    assert(WdkTestGetIoDisconnectInterruptCount() == 1);
+    assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
 }
 
 static void test_message_connect_disconnect_calls_wdk_routines(void)
@@ -225,6 +241,7 @@ static void test_message_connect_disconnect_calls_wdk_routines(void)
 
     WdkTestResetIoConnectInterruptExCount();
     WdkTestResetIoDisconnectInterruptExCount();
+    WdkTestResetLastIoConnectInterruptExParams();
 
     desc = make_msg_desc(4);
     status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
@@ -235,6 +252,9 @@ static void test_message_connect_disconnect_calls_wdk_routines(void)
     assert(intr.u.Message.MessageInfo->MessageCount == 4);
     assert(WdkTestGetIoConnectInterruptExCount() == 1);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+    assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &dev);
+    assert(WdkTestGetLastIoConnectInterruptExMessageCount() == 4);
+    assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == desc.u.MessageInterrupt.Level);
 
     VirtioPciWdmInterruptDisconnect(&intr);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 1);
