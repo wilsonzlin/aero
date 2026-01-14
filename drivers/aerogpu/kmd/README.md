@@ -194,7 +194,7 @@ existing `CommitVidPn` + `SetVidPnSourceAddress` behavior (4 bytes per pixel; pi
 progressive ~60Hz modes derived from:
 
 1. a preferred mode (`PreferredWidth`/`PreferredHeight` registry override → EDID preferred timing → fallback), plus
-2. a built-in curated list (currently 800×600, 1024×768, 1280×720, 1280×800, 1366×768, 1600×900, 1920×1080).
+2. a built-in curated list (currently 640×480, 800×600, 1024×768, 1280×720, 1280×800, 1366×768, 1600×900, 1920×1080).
 
 An optional `MaxWidth`/`MaxHeight` registry cap filters out larger modes to keep primary allocation sizes under
 control on constrained guests.

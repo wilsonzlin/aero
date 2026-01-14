@@ -3800,16 +3800,15 @@ static BOOLEAN AeroGpuIsSupportedVidPnModeDimensions(_In_ ULONG Width, _In_ ULON
     }
 
     /*
-     * Allow minor horizontal rounding differences (for example 1366 vs 1368)
+     * Allow minor rounding differences (for example 1366 vs 1368, or 768 vs 769)
      * that can arise from EDID standard timing quantisation.
      */
     for (UINT i = 0; i < count; ++i) {
-        if (modes[i].Height != Height) {
-            continue;
-        }
         const ULONG mw = modes[i].Width;
-        const ULONG diff = (mw > Width) ? (mw - Width) : (Width - mw);
-        if (diff <= 2u) {
+        const ULONG mh = modes[i].Height;
+        const ULONG diffW = (mw > Width) ? (mw - Width) : (Width - mw);
+        const ULONG diffH = (mh > Height) ? (mh - Height) : (Height - mh);
+        if (diffW <= 2u && diffH <= 2u) {
             return TRUE;
         }
     }
@@ -4695,8 +4694,22 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
             RtlZeroMemory(&sms, sizeof(sms));
             status = vidpn.pfnGetSourceModeSetInterface(pEnum->hFunctionalVidPn, hSourceModeSet, &sms);
             if (NT_SUCCESS(status) && sms.pfnCreateNewModeInfo && sms.pfnAddMode && sms.pfnReleaseModeInfo) {
-                const ULONG pinW = modes[0].Width;
-                const ULONG pinH = modes[0].Height;
+                ULONG pinW = 0;
+                ULONG pinH = 0;
+                for (UINT pi = 0; pi < modeCount; ++pi) {
+                    const ULONG pw = modes[pi].Width;
+                    const ULONG ph = modes[pi].Height;
+                    if (AeroGpuIsSupportedVidPnModeDimensions(pw, ph)) {
+                        pinW = pw;
+                        pinH = ph;
+                        break;
+                    }
+                }
+                if (pinW == 0 || pinH == 0) {
+                    /* Should not happen: modeCount>0 implies at least one supported mode. */
+                    pinW = modes[0].Width;
+                    pinH = modes[0].Height;
+                }
                 for (UINT i = 0; i < modeCount; ++i) {
                     const ULONG w = modes[i].Width;
                     const ULONG h = modes[i].Height;
@@ -4759,8 +4772,22 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
             RtlZeroMemory(&tms, sizeof(tms));
             status = vidpn.pfnGetTargetModeSetInterface(pEnum->hFunctionalVidPn, hTargetModeSet, &tms);
             if (NT_SUCCESS(status) && tms.pfnCreateNewModeInfo && tms.pfnAddMode && tms.pfnReleaseModeInfo) {
-                const ULONG pinW = modes[0].Width;
-                const ULONG pinH = modes[0].Height;
+                ULONG pinW = 0;
+                ULONG pinH = 0;
+                for (UINT pi = 0; pi < modeCount; ++pi) {
+                    const ULONG pw = modes[pi].Width;
+                    const ULONG ph = modes[pi].Height;
+                    if (AeroGpuIsSupportedVidPnModeDimensions(pw, ph)) {
+                        pinW = pw;
+                        pinH = ph;
+                        break;
+                    }
+                }
+                if (pinW == 0 || pinH == 0) {
+                    /* Should not happen: modeCount>0 implies at least one supported mode. */
+                    pinW = modes[0].Width;
+                    pinH = modes[0].Height;
+                }
                 for (UINT i = 0; i < modeCount; ++i) {
                     const ULONG w = modes[i].Width;
                     const ULONG h = modes[i].Height;
