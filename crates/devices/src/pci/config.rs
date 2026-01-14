@@ -472,6 +472,13 @@ impl PciConfigSpace {
     /// This is intended for platform/device reset flows: real hardware clears MSI/MSI-X enable
     /// bits on reset so a reboot starts from a sane interrupt baseline.
     ///
+    /// In addition to disabling delivery, this also clears any device-latched pending state:
+    /// - MSI per-vector mask/pending bits (when present), and
+    /// - MSI-X PBA pending bits.
+    ///
+    /// Without this, a device reset followed by re-enabling MSI/MSI-X could spuriously deliver
+    /// stale interrupts.
+    ///
     /// This is capability-aware and defensive: it first locates the capabilities via the standard
     /// PCI capabilities list, and then bounds-checks the computed config-space offsets.
     pub fn disable_msi_msix(&mut self) {
@@ -859,10 +866,13 @@ pub trait PciDevice {
         // Default: clear command register (BARs remain programmed by firmware / allocator).
         //
         // Also clear MSI/MSI-X enable state so a platform reset (machine reset / BIOS POST) starts
-        // from a sane baseline. Some device models reset their internal MSI/MSI-X routing (e.g.
-        // vector selects) but rely on PCI capability enable bits to decide whether to suppress
-        // legacy INTx; leaving MSI-X enabled across reset can therefore result in a device that
-        // never interrupts until the guest reprograms MSI-X.
+        // from a sane baseline. This also clears any latched MSI/MSI-X pending state (MSI pending
+        // bits, MSI-X PBA bits) so a reset cannot later deliver stale interrupts.
+        //
+        // Some device models reset their internal MSI/MSI-X routing (e.g. vector selects) but rely
+        // on PCI capability enable bits to decide whether to suppress legacy INTx; leaving MSI-X
+        // enabled across reset can therefore result in a device that never interrupts until the
+        // guest reprograms MSI-X.
         let cfg = self.config_mut();
         cfg.set_command(0);
         cfg.disable_msi_msix();
