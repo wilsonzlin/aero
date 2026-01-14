@@ -5513,12 +5513,14 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
   // active. Reject to avoid accidentally accepting an MSAA view and silently
   // binding it as a non-MSAA Texture2D.
   if (!have_view_dim) {
-    bool has_msaa_union = false;
-    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMS) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMSArray) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMS) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMSArray) { has_msaa_union = true; }
-    if (has_msaa_union) {
+    bool has_ambiguous_union = false;
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMS) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMSArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMS) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMSArray) { has_ambiguous_union = true; }
+    if (has_ambiguous_union) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing view dimension discriminator handle=%u)",
                            static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
@@ -5684,12 +5686,14 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
   if (!have_view_dim) {
-    bool has_msaa_union = false;
-    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMS) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMSArray) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMS) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMSArray) { has_msaa_union = true; }
-    if (has_msaa_union) {
+    bool has_ambiguous_union = false;
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMS) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMSArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMS) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMSArray) { has_ambiguous_union = true; }
+    if (has_ambiguous_union) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing view dimension discriminator handle=%u)",
                            static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
@@ -5860,12 +5864,14 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
   if (!have_view_dim) {
-    bool has_msaa_union = false;
-    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMS) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMSArray) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMS) { has_msaa_union = true; }
-    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMSArray) { has_msaa_union = true; }
-    if (has_msaa_union) {
+    bool has_ambiguous_union = false;
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMS) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMSArray) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMS) { has_ambiguous_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMSArray) { has_ambiguous_union = true; }
+    if (has_ambiguous_union) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing view dimension discriminator handle=%u)",
                            static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
