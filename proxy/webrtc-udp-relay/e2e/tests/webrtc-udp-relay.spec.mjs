@@ -507,8 +507,9 @@ async function spawnRelayServer(extraEnv = {}) {
         L2_BACKEND_ORIGIN_OVERRIDE: "",
         L2_BACKEND_WS_ORIGIN: "",
         L2_BACKEND_TOKEN: "",
-         L2_BACKEND_WS_TOKEN: "",
-         L2_MAX_MESSAGE_BYTES: "",
+        L2_BACKEND_WS_TOKEN: "",
+        L2_BACKEND_FORWARD_AERO_SESSION: "",
+        L2_MAX_MESSAGE_BYTES: "",
          // Deterministic inbound allowlist / filtering settings.
          UDP_INBOUND_FILTER_MODE: "",
          UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT: "",
