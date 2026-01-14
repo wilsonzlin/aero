@@ -1256,7 +1256,11 @@ export class WorkerCoordinator {
     const cpu = this.workers.cpu;
     const io = this.workers.io;
     const net = this.workers.net;
-    if (this.activeConfig?.vmRuntime === "machine") {
+    // Capture the config at the start of the snapshot operation. `activeConfig` can change while
+    // we await worker RPCs (e.g. user changes vmRuntime), so keep this initial check isolated so
+    // later branches can re-check `this.activeConfig` without TS narrowing it away.
+    const configAtStart = this.activeConfig;
+    if (configAtStart?.vmRuntime === "machine") {
       if (!cpu?.worker) {
         throw new Error("Cannot save VM snapshot: CPU worker is not running.");
       }
@@ -1363,7 +1367,9 @@ export class WorkerCoordinator {
     const cpu = this.workers.cpu;
     const io = this.workers.io;
     const net = this.workers.net;
-    if (this.activeConfig?.vmRuntime === "machine") {
+    // See `snapshotSaveToOpfs` for rationale.
+    const configAtStart = this.activeConfig;
+    if (configAtStart?.vmRuntime === "machine") {
       if (!cpu?.worker) {
         throw new Error("Cannot restore VM snapshot: CPU worker is not running.");
       }
