@@ -901,7 +901,14 @@ struct ShaderResource {
     entry_point: &'static str,
     vs_input_signature: Vec<VsInputSignatureElement>,
     reflection: ShaderReflection,
+    sm4_metadata: Sm4ShaderMetadata,
     wgsl_source: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Sm4ShaderMetadata {
+    /// Hull shader input control point count (`dcl_inputcontrolpoints N`).
+    hs_input_control_points: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4168,6 +4175,44 @@ impl AerogpuD3d11Executor {
             bail!("DRAW_INDEXED without index buffer");
         }
 
+        // Tessellation emulation validation.
+        //
+        // D3D11 patchlist topologies are only valid when a hull shader + domain shader are bound,
+        // and the patchlist control point count must match the hull shader's
+        // `dcl_inputcontrolpoints`.
+        if let CmdPrimitiveTopology::PatchList { control_points } = self.state.primitive_topology {
+            let actual = u32::from(control_points);
+
+            let hs_handle = self.state.hs.ok_or_else(|| {
+                anyhow!(
+                    "PATCHLIST draw requires HS+DS, but no hull shader (HS) is bound (topology=PatchList{actual})"
+                )
+            })?;
+            let hs = self
+                .resources
+                .shaders
+                .get(&hs_handle)
+                .ok_or_else(|| anyhow!("unknown hull shader {hs_handle}"))?;
+            if hs.stage != ShaderStage::Hull {
+                bail!("shader {hs_handle} is not a hull shader");
+            }
+            let expected = hs.sm4_metadata.hs_input_control_points.ok_or_else(|| {
+                anyhow!("hull shader {hs_handle} is missing dcl_inputcontrolpoints metadata")
+            })?;
+
+            if expected != actual {
+                bail!(
+                    "patchlist control point count mismatch: hull shader expects {expected} input control points, but primitive topology is PatchList{actual}"
+                );
+            }
+
+            if self.state.ds.is_none() {
+                bail!(
+                    "PATCHLIST draw requires HS+DS, but no domain shader (DS) is bound (topology=PatchList{actual})"
+                );
+            }
+        }
+
         if primitive_count == 0 || instance_count == 0 {
             report.commands = report.commands.saturating_add(1);
             *stream.cursor = cmd_end;
@@ -4209,7 +4254,6 @@ impl AerogpuD3d11Executor {
             CmdPrimitiveTopology::PatchList { .. }
         ) || self.state.hs.is_some()
             || self.state.ds.is_some();
-
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
@@ -11735,7 +11779,6 @@ impl AerogpuD3d11Executor {
         // Compute-stage DXBC frequently omits signature chunks entirely. The signature-driven
         // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
         let signature_driven = should_use_signature_driven_translator(stage, &signatures);
-
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
             ShaderStage::Pixel => "fs_main",
@@ -11833,47 +11876,58 @@ impl AerogpuD3d11Executor {
             }
         };
 
-        let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
-            &self.device,
-            map_pipeline_cache_stage(stage),
-            &wgsl,
-            Some("aerogpu_cmd shader"),
-        );
-
-        let vs_input_signature = if stage == ShaderStage::Vertex {
-            if signature_driven {
-                let module =
-                    crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
-                extract_vs_input_signature_unique_locations(&signatures, &module)
-                    .context("extract VS input signature")?
-            } else {
-                extract_vs_input_signature(&signatures).context("extract VS input signature")?
+        // Extract any SM4/SM5 metadata needed by emulation paths.
+        let mut sm4_metadata = Sm4ShaderMetadata::default();
+        if stage == ShaderStage::Hull {
+            let decls =
+                crate::sm4::decode::decode_program_decls(&program).context("decode SM4/5 decls")?;
+            for decl in &decls {
+                if let crate::Sm4Decl::InputControlPointCount { count } = decl {
+                    sm4_metadata.hs_input_control_points = Some(*count);
+                    break;
+                }
             }
-        } else {
-            Vec::new()
-        };
-
-        let depth_clamp_wgsl_hash = if stage == ShaderStage::Vertex {
-            let clamped = wgsl_depth_clamp_variant(&wgsl);
-            let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
-                &self.device,
-                map_pipeline_cache_stage(stage),
-                &clamped,
-                Some("aerogpu_cmd VS (depth clamp)"),
-            );
-            Some(hash)
-        } else {
-            None
-        };
+        }
 
         let shader = ShaderResource {
             stage,
-            wgsl_hash: hash,
-            depth_clamp_wgsl_hash,
+            wgsl_hash: {
+                let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                    &self.device,
+                    map_pipeline_cache_stage(stage),
+                    &wgsl,
+                    Some("aerogpu_cmd shader"),
+                );
+                hash
+            },
+            depth_clamp_wgsl_hash: if stage == ShaderStage::Vertex {
+                let clamped = wgsl_depth_clamp_variant(&wgsl);
+                let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                    &self.device,
+                    map_pipeline_cache_stage(stage),
+                    &clamped,
+                    Some("aerogpu_cmd VS (depth clamp)"),
+                );
+                Some(hash)
+            } else {
+                None
+            },
             dxbc_hash_fnv1a64,
             entry_point,
-            vs_input_signature,
+            vs_input_signature: if stage == ShaderStage::Vertex {
+                if signature_driven {
+                    let module =
+                        crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
+                    extract_vs_input_signature_unique_locations(&signatures, &module)
+                        .context("extract VS input signature")?
+                } else {
+                    extract_vs_input_signature(&signatures).context("extract VS input signature")?
+                }
+            } else {
+                Vec::new()
+            },
             reflection,
+            sm4_metadata,
             wgsl_source: wgsl,
         };
 
@@ -12158,6 +12212,7 @@ impl AerogpuD3d11Executor {
                 entry_point,
                 vs_input_signature,
                 reflection,
+                sm4_metadata: Sm4ShaderMetadata::default(),
                 wgsl_source: wgsl,
             };
             self.resources.shaders.insert(shader_handle, shader);
@@ -18171,6 +18226,7 @@ mod tests {
                     entry_point: "fs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: fs_wgsl.to_owned(),
                 },
             );
@@ -18373,6 +18429,7 @@ mod tests {
                     entry_point: "vs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: vs_wgsl.to_owned(),
                 },
             );
@@ -18393,6 +18450,7 @@ mod tests {
                     entry_point: "fs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: fs_wgsl.to_owned(),
                 },
             );
@@ -18563,6 +18621,7 @@ mod tests {
                     entry_point: "vs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: vs_wgsl.to_owned(),
                 },
             );
@@ -18583,6 +18642,7 @@ mod tests {
                     entry_point: "fs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: fs_wgsl.to_owned(),
                 },
             );
@@ -19805,6 +19865,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     entry_point: "vs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: String::new(),
                 },
             );
@@ -19828,6 +19889,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     entry_point: "ps_main",
                     vs_input_signature: Vec::new(),
                     reflection: ps_reflection,
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: String::new(),
                 },
             );
@@ -21380,6 +21442,7 @@ fn cs_main() {
                     entry_point: "cs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: wgsl.to_string(),
                 },
             );

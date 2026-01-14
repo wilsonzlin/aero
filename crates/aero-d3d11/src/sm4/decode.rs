@@ -322,6 +322,103 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
     })
 }
 
+/// Decode only the declaration/metadata section of an SM4/SM5 token stream.
+///
+/// This is useful for stages that the translator does not implement yet (e.g. HS/DS) where we may
+/// still want to extract declaration metadata (such as `dcl_inputcontrolpoints`) without requiring
+/// the full instruction stream to decode successfully.
+pub fn decode_program_decls(program: &Sm4Program) -> Result<Vec<Sm4Decl>, Sm4DecodeError> {
+    let declared_len = *program.tokens.get(1).unwrap_or(&0) as usize;
+    if declared_len < 2 || declared_len > program.tokens.len() {
+        return Err(Sm4DecodeError {
+            at_dword: 1,
+            kind: Sm4DecodeErrorKind::InvalidDeclaredLength {
+                declared: declared_len,
+                available: program.tokens.len(),
+            },
+        });
+    }
+
+    let toks = &program.tokens[..declared_len];
+
+    let mut decls = Vec::new();
+
+    let mut i = 2usize;
+    while i < toks.len() {
+        let opcode_token = toks[i];
+        let opcode = opcode_token & OPCODE_MASK;
+        let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
+        if len == 0 {
+            return Err(Sm4DecodeError {
+                at_dword: i,
+                kind: Sm4DecodeErrorKind::InstructionLengthZero,
+            });
+        }
+        if i + len > toks.len() {
+            return Err(Sm4DecodeError {
+                at_dword: i,
+                kind: Sm4DecodeErrorKind::InstructionOutOfBounds {
+                    start: i,
+                    len,
+                    available: toks.len(),
+                },
+            });
+        }
+
+        let inst_toks = &toks[i..i + len];
+
+        // Treat all customdata blocks as declarations/metadata, even if interspersed inside the
+        // instruction stream.
+        if opcode == OPCODE_CUSTOMDATA {
+            let mut class_pos = 1usize;
+            let mut extended = (opcode_token & OPCODE_EXTENDED_BIT) != 0;
+            while extended {
+                let Some(ext) = inst_toks.get(class_pos).copied() else {
+                    break;
+                };
+                class_pos += 1;
+                extended = (ext & OPCODE_EXTENDED_BIT) != 0;
+            }
+            let Some(class) = inst_toks.get(class_pos).copied() else {
+                decls.push(Sm4Decl::CustomData {
+                    class: CUSTOMDATA_CLASS_COMMENT,
+                    len_dwords: len as u32,
+                });
+                i += len;
+                continue;
+            };
+
+            if class == CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER {
+                decls.push(Sm4Decl::ImmediateConstantBuffer {
+                    dwords: inst_toks.get(class_pos + 1..).unwrap_or(&[]).to_vec(),
+                });
+            } else {
+                decls.push(Sm4Decl::CustomData {
+                    class,
+                    len_dwords: len as u32,
+                });
+            }
+            i += len;
+            continue;
+        }
+
+        if opcode == OPCODE_NOP {
+            i += len;
+            continue;
+        }
+
+        if opcode < DECLARATION_OPCODE_MIN {
+            break;
+        }
+
+        let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
+        decls.push(decl);
+        i += len;
+    }
+
+    Ok(decls)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
