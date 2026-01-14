@@ -256,7 +256,11 @@ fn decode_active_endpoints(
     }
 
     let mut out = VecDeque::new();
-    let mut seen = vec![0u32; slots_len];
+    out.try_reserve_exact(count)
+        .map_err(|_| SnapshotError::OutOfMemory)?;
+    // Snapshot corruption could encode duplicate active endpoints, which would defeat the
+    // `active_endpoint_pending` coalescing bitmap (potentially allowing unbounded growth).
+    let mut seen = [0u32; 256];
     for _ in 0..count {
         let slot_id = d.u8()?;
         let endpoint_id = d.u8()?;
@@ -494,6 +498,8 @@ fn decode_pending_events(buf: &[u8]) -> SnapshotResult<VecDeque<Trb>> {
     }
 
     let mut out = VecDeque::new();
+    out.try_reserve_exact(count)
+        .map_err(|_| SnapshotError::OutOfMemory)?;
     for _ in 0..count {
         let bytes = d.bytes(TRB_LEN)?;
         let mut arr = [0u8; TRB_LEN];
@@ -677,10 +683,8 @@ impl IoSnapshot for XhciController {
         //
         // Keep those legacy snapshots loadable by detecting field "shapes" (tag 26 is a vec-bytes
         // blob in valid snapshots and is never exactly 8 bytes).
-        let ep0_td_full_overwritten = match (
-            r.bytes(TAG_TIME_MS),
-            r.bytes(TAG_LAST_TICK_DMA_DWORD),
-        ) {
+        let ep0_td_full_overwritten = match (r.bytes(TAG_TIME_MS), r.bytes(TAG_LAST_TICK_DMA_DWORD))
+        {
             (Some(time_bytes), Some(tick_bytes)) => match (time_bytes.len(), tick_bytes.len()) {
                 // Current mapping: tag 27 = time_ms (u64) and tag 28 = last_tick_dma_dword (u32).
                 (8, 4) => {
@@ -696,7 +700,9 @@ impl IoSnapshot for XhciController {
                     false
                 }
                 _ => {
-                    return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms/last_tick"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "xhci time_ms/last_tick",
+                    ));
                 }
             },
             // Only the tick field present.
@@ -711,7 +717,9 @@ impl IoSnapshot for XhciController {
                         self.last_tick_dma_dword = 0;
                     }
                     _ => {
-                        return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms/last_tick"));
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "xhci time_ms/last_tick",
+                        ));
                     }
                 }
                 false
@@ -862,7 +870,9 @@ impl IoSnapshot for XhciController {
 
 #[cfg(test)]
 mod tests {
-    use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter, SnapshotVersion};
+    use aero_io_snapshot::io::state::{
+        IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter,
+    };
 
     use super::XhciController;
 
@@ -916,10 +926,7 @@ mod tests {
         // Rewrite the snapshot to mimic the legacy 0.7 tag mapping:
         // - tag 27: last_tick_dma_dword (u32)
         // - no time_ms field
-        let mut w = SnapshotWriter::new(
-            XhciController::DEVICE_ID,
-            SnapshotVersion::new(0, 7),
-        );
+        let mut w = SnapshotWriter::new(XhciController::DEVICE_ID, SnapshotVersion::new(0, 7));
         for (tag, field) in r.iter_fields() {
             if tag == super::TAG_TIME_MS {
                 // Drop time_ms.
