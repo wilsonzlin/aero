@@ -692,6 +692,90 @@ func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_SessionEndpoint(t *te
 	}
 }
 
+func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_HTTPOfferEndpoints(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:    config.AuthModeJWT,
+		JWTSecret:   "supersecret",
+		MaxSessions: 2,
+	}
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test_a", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test_b", now-9)
+
+	prealloc := func(t *testing.T, ts *httptest.Server, token string) {
+		t.Helper()
+
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest(prealloc): %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do(prealloc): %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("prealloc /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
+		}
+	}
+
+	t.Run("POST /webrtc/offer", func(t *testing.T) {
+		ts, _ := startSignalingServer(t, cfg)
+		prealloc(t, ts, tokenA)
+
+		body, err := json.Marshal(map[string]any{"sdp": offerSDP})
+		if err != nil {
+			t.Fatalf("marshal offer: %v", err)
+		}
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/webrtc/offer", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+tokenB)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("/webrtc/offer status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+
+	t.Run("POST /offer", func(t *testing.T) {
+		ts, _ := startSignalingServer(t, cfg)
+		prealloc(t, ts, tokenA)
+
+		body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: offerSDP.Type, SDP: offerSDP.SDP}})
+		if err != nil {
+			t.Fatalf("marshal offer: %v", err)
+		}
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/offer", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+tokenB)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("/offer status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+}
+
 func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:  config.AuthModeJWT,
