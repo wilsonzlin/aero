@@ -2,6 +2,7 @@
 
 import type { AeroConfig } from "../config/aero_config";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
+import { InputEventType } from "../input/event_queue";
 import {
   createSharedMemoryViews,
   ringRegionsForWorker,
@@ -24,6 +25,7 @@ import {
   restoreMachineSnapshotFromOpfsAndReattachDisks,
 } from "../runtime/machine_snapshot_disks";
 import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 
 /**
  * Minimal "machine CPU" worker entrypoint.
@@ -50,6 +52,17 @@ let currentConfigVersion = 0;
 // The machine CPU worker does not yet use this to attach disks, but it accepts the
 // message so coordinators/harnesses can share a single schema.
 let pendingBootDisks: SetBootDisksMessage | null = null;
+
+type InputBatchMessage = {
+  type: "in:input-batch";
+  buffer: ArrayBuffer;
+  recycle?: boolean;
+};
+
+type InputBatchRecycleMessage = {
+  type: "in:input-batch-recycle";
+  buffer: ArrayBuffer;
+};
 
 type MachineSnapshotSerializedError = { name: string; message: string; stack?: string };
 type MachineSnapshotResultOk = { ok: true };
@@ -156,8 +169,118 @@ function enqueueSnapshotOp(op: () => Promise<void>): void {
   snapshotOpChain = snapshotOpChain.then(op).catch(() => undefined);
 }
 
+function postInputBatchRecycle(buffer: ArrayBuffer): void {
+  // `buffer` should be transferable in normal InputCapture usage. Avoid crashing the worker if the
+  // buffer cannot be transferred for some reason; fall back to a structured clone.
+  const msg: InputBatchRecycleMessage = { type: "in:input-batch-recycle", buffer };
+  try {
+    ctx.postMessage(msg, [buffer]);
+  } catch {
+    try {
+      ctx.postMessage(msg);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function handleInputBatch(buffer: ArrayBuffer): void {
+  const machine = wasmMachine;
+  if (!machine) {
+    // CI `--skip-wasm` or early startup: nothing to inject into.
+    return;
+  }
+
+  const decoded = validateInputBatchBuffer(buffer);
+  if (!decoded.ok) {
+    // Drop malformed input batches; keep the worker alive.
+    return;
+  }
+
+  const { words, count } = decoded;
+  const base = INPUT_BATCH_HEADER_WORDS;
+  for (let i = 0; i < count; i += 1) {
+    const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
+    const type = words[off] >>> 0;
+    if (type === InputEventType.KeyScancode) {
+      const packed = words[off + 2] >>> 0;
+      const len = Math.min(words[off + 3] >>> 0, 4);
+      if (len === 0) continue;
+      try {
+        if (typeof machine.inject_key_scancode_bytes === "function") {
+          machine.inject_key_scancode_bytes(packed, len);
+        } else if (typeof machine.inject_keyboard_bytes === "function") {
+          const bytes = new Uint8Array(len);
+          for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
+          machine.inject_keyboard_bytes(bytes);
+        }
+      } catch {
+        // ignore
+      }
+    } else if (type === InputEventType.MouseMove) {
+      const dx = words[off + 2] | 0;
+      const dyPs2 = words[off + 3] | 0;
+      try {
+        if (typeof machine.inject_ps2_mouse_motion === "function") {
+          machine.inject_ps2_mouse_motion(dx, dyPs2, 0);
+        } else if (typeof machine.inject_mouse_motion === "function") {
+          // Machine expects browser-style coordinates (+Y down).
+          machine.inject_mouse_motion(dx, -dyPs2, 0);
+        }
+      } catch {
+        // ignore
+      }
+    } else if (type === InputEventType.MouseWheel) {
+      const dz = words[off + 2] | 0;
+      if (dz === 0) continue;
+      try {
+        if (typeof machine.inject_ps2_mouse_motion === "function") {
+          machine.inject_ps2_mouse_motion(0, 0, dz);
+        } else if (typeof machine.inject_mouse_motion === "function") {
+          machine.inject_mouse_motion(0, 0, dz);
+        }
+      } catch {
+        // ignore
+      }
+    } else if (type === InputEventType.MouseButtons) {
+      // DOM `MouseEvent.buttons` bitfield:
+      // - bit0 left, bit1 right, bit2 middle, bit3 back, bit4 forward.
+      //
+      // The canonical Machine PS/2 mouse model can surface back/forward (IntelliMouse
+      // Explorer extensions) when the guest enables it, so preserve the low 5 bits.
+      const buttons = words[off + 2] & 0xff;
+      const mask = buttons & 0x1f;
+      try {
+        if (typeof machine.inject_mouse_buttons_mask === "function") {
+          machine.inject_mouse_buttons_mask(mask);
+        } else if (typeof machine.inject_ps2_mouse_buttons === "function") {
+          machine.inject_ps2_mouse_buttons(mask);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 ctx.onmessage = (ev) => {
   const msg = ev.data as unknown;
+
+  const input = msg as Partial<InputBatchMessage | InputBatchRecycleMessage>;
+  if (input?.type === "in:input-batch") {
+    const buffer = input.buffer;
+    if (!(buffer instanceof ArrayBuffer)) return;
+    handleInputBatch(buffer);
+    if (input.recycle === true) {
+      postInputBatchRecycle(buffer);
+    }
+    return;
+  }
+  // `in:input-batch-recycle` is normally sent from this worker back to the input producer, but
+  // accept it as a no-op so callers can proxy recycle messages through multiple hops if needed.
+  if (input?.type === "in:input-batch-recycle") {
+    return;
+  }
 
   const vmSnapshot = msg as Partial<
     VmSnapshotPauseMessage | VmSnapshotResumeMessage | VmSnapshotSaveToOpfsMessage | VmSnapshotRestoreFromOpfsMessage

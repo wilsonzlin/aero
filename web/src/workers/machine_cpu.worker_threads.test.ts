@@ -4,6 +4,7 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
+import { InputEventType } from "../input/event_queue";
 import { allocateSharedMemorySegments, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
@@ -124,6 +125,67 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       worker.postMessage(makeInit(segments));
 
       await workerReady;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("recycles input batch buffers when requested (even without WASM)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const buf = new ArrayBuffer((2 + 4) * 4);
+      const words = new Int32Array(buf);
+      words[0] = 1; // count
+      words[1] = 0; // timestamp (unused in this test)
+      words[2] = InputEventType.KeyScancode;
+      words[3] = 0; // event timestamp
+      words[4] = 0x1c; // packed scancode bytes
+      words[5] = 1; // len
+      const expected = Array.from(words);
+      const expectedByteLength = buf.byteLength;
+
+      const recycledPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+
+      worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+
+      const recycled = (await recycledPromise) as { buffer?: unknown };
+      const recycledBuf = recycled.buffer;
+      if (!(recycledBuf instanceof ArrayBuffer)) {
+        throw new Error("expected in:input-batch-recycle to carry an ArrayBuffer");
+      }
+      if (recycledBuf.byteLength !== expectedByteLength) {
+        throw new Error(`expected recycled buffer byteLength=${expectedByteLength}, got ${recycledBuf.byteLength}`);
+      }
+      const got = Array.from(new Int32Array(recycledBuf));
+      if (got.join(",") !== expected.join(",")) {
+        throw new Error(`unexpected recycled buffer contents: got [${got.join(",")}] expected [${expected.join(",")}]`);
+      }
     } finally {
       await worker.terminate();
     }
