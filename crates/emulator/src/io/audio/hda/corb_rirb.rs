@@ -228,18 +228,21 @@ impl Rirb {
         let entries = rirb_entries(self.size);
         let next_wp = (self.wp + 1) % entries;
 
-        if let Some(addr) = (next_wp as u64)
+        let Some(addr) = (next_wp as u64)
             .checked_mul(8)
             .and_then(|offset| self.base().checked_add(offset))
             // Writing a u64 touches bytes `[addr, addr + 8)`.
             .and_then(|addr| addr.checked_add(8).map(|_| addr))
-        {
-            let encoded = resp.encode();
-            write_u64(mem, addr, encoded);
-        } else {
+        else {
             // Same overflow hazard as CORB: skip DMA writes on overflow so we never wrap around
             // into low guest physical addresses in release builds.
-        }
+            //
+            // Do not update WP/interrupt state for a response that was never written.
+            return;
+        };
+
+        let encoded = resp.encode();
+        write_u64(mem, addr, encoded);
 
         self.wp = next_wp;
         self.responses_since_irq = self.responses_since_irq.wrapping_add(1);
@@ -491,6 +494,8 @@ mod tests {
         // Program base close to u64::MAX (aligned down to 128 bytes).
         rirb.mmio_write(RirbReg::Lbase, 4, 0xFFFF_FFFF);
         rirb.mmio_write(RirbReg::Ubase, 4, 0xFFFF_FFFF);
+        rirb.mmio_write(RirbReg::Ctl, 1, (RIRBCTL_INTCTL | RIRBCTL_RUN) as u64);
+        rirb.mmio_write(RirbReg::RintCnt, 2, 1);
 
         // Force the next response to target wp=16.
         rirb.wp = 15;
@@ -508,9 +513,11 @@ mod tests {
             );
         }));
         assert!(result.is_ok(), "push_response panicked on address overflow");
-        // WP and internal bookkeeping must still advance.
-        assert_eq!(rirb.wp, 16);
-        assert_eq!(rirb.responses_since_irq, 1);
+        // No write -> no cursor advance or interrupt.
+        assert_eq!(rirb.wp, 15);
+        assert_eq!(rirb.responses_since_irq, 0);
+        assert_eq!(rirb.sts, 0);
+        assert_eq!(intsts, 0);
     }
 
     #[test]
@@ -538,6 +545,8 @@ mod tests {
         rirb.mmio_write(RirbReg::Size, 1, 0x2);
         rirb.mmio_write(RirbReg::Lbase, 4, 0xFFFF_FFFF);
         rirb.mmio_write(RirbReg::Ubase, 4, 0xFFFF_FFFF);
+        rirb.mmio_write(RirbReg::Ctl, 1, (RIRBCTL_INTCTL | RIRBCTL_RUN) as u64);
+        rirb.mmio_write(RirbReg::RintCnt, 2, 1);
 
         // Force the next response to target wp=15, which yields addr=u64::MAX-7 and overflows
         // when computing `addr + 8` (the end of the u64 write).
@@ -556,8 +565,10 @@ mod tests {
             );
         }));
         assert!(result.is_ok(), "push_response panicked on range overflow");
-        // WP and internal bookkeeping must still advance.
-        assert_eq!(rirb.wp, 15);
-        assert_eq!(rirb.responses_since_irq, 1);
+        // No write -> no cursor advance or interrupt.
+        assert_eq!(rirb.wp, 14);
+        assert_eq!(rirb.responses_since_irq, 0);
+        assert_eq!(rirb.sts, 0);
+        assert_eq!(intsts, 0);
     }
 }
