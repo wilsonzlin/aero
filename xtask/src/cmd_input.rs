@@ -183,6 +183,12 @@ Options:
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
+Environment:
+  AERO_NODE_DIR / AERO_WEB_DIR
+                        Override the Node workspace directory for the web unit-test step.
+                        If set to `web`, step 6 runs `npm run test:unit -- ...` inside `web/`.
+  AERO_WASM_PACKAGES    When running `--e2e`, defaults to `core` unless already set.
+
 Examples:
   cargo xtask input
   cargo xtask input --rust-only
