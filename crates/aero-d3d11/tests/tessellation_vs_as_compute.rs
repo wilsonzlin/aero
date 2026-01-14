@@ -2,6 +2,7 @@ mod common;
 
 use aero_d3d11::input_layout::{
     fnv1a_32, InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement,
+    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
 };
 use aero_d3d11::runtime::expansion_scratch::{
     ExpansionScratchAllocator, ExpansionScratchDescriptor,
@@ -97,6 +98,10 @@ fn unpack_vec4_u32_as_f32(words: &[u32]) -> Vec<[f32; 4]> {
         ]);
     }
     out
+}
+
+fn push_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_le_bytes());
 }
 
 #[test]
@@ -517,5 +522,241 @@ fn vs_as_compute_rejects_non_multiple_of_control_points() {
             err.to_string().contains("multiple of control_point_count"),
             "unexpected error: {err:#}"
         );
+    });
+}
+
+#[test]
+fn vs_as_compute_loads_f16x2_input() {
+    pollster::block_on(async {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute f16 test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        // ILAY: one element at location 0, R16G16_FLOAT (F16x2).
+        let mut ilay = Vec::new();
+        push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut ilay, 1); // element_count
+        push_u32(&mut ilay, 0); // reserved0
+                                // Element: semantic hash + index are arbitrary as long as signature matches.
+        push_u32(&mut ilay, 0xDEAD_BEEFu32);
+        push_u32(&mut ilay, 0);
+        push_u32(&mut ilay, 34); // DXGI_FORMAT_R16G16_FLOAT
+        push_u32(&mut ilay, 0); // input_slot
+        push_u32(&mut ilay, 0); // aligned_byte_offset
+        push_u32(&mut ilay, 0); // per-vertex
+        push_u32(&mut ilay, 0); // step rate
+        let layout = InputLayoutDesc::parse(&ilay).unwrap();
+
+        let signature = [VsInputSignatureElement {
+            semantic_name_hash: 0xDEAD_BEEF,
+            semantic_index: 0,
+            input_register: 0,
+            mask: 0x3,
+            shader_location: 0,
+        }];
+
+        let stride = 4u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).unwrap();
+
+        // One vertex: f16x2 = (1.0, 0.5)
+        let mut vb_bytes = Vec::new();
+        vb_bytes.extend_from_slice(&0x3c00u16.to_le_bytes()); // 1.0
+        vb_bytes.extend_from_slice(&0x3800u16.to_le_bytes()); // 0.5
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute f16 vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute f16 ia uniform"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        let cfg = VsAsComputeConfig {
+            control_point_count: 1,
+            out_reg_count: 1,
+            indexed: false,
+        };
+        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs =
+            alloc_vs_out_regs(&mut scratch, &device, 1, 1, cfg.out_reg_count).unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                &ia_uniform,
+                None,
+                None,
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute f16 encoder"),
+        });
+        pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_back_buffer(
+            &device,
+            &queue,
+            vs_out_regs.buffer.as_ref(),
+            vs_out_regs.offset,
+            vs_out_regs.size,
+        )
+        .await
+        .unwrap();
+        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
+        let vecs = unpack_vec4_u32_as_f32(&words);
+        assert_eq!(vecs, vec![[1.0, 0.5, 0.0, 1.0]]);
+    });
+}
+
+#[test]
+fn vs_as_compute_loads_u16x2_input() {
+    pollster::block_on(async {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute u16 test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        // ILAY: one element at location 0, R16G16_UINT (U16x2).
+        let mut ilay = Vec::new();
+        push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut ilay, 1); // element_count
+        push_u32(&mut ilay, 0); // reserved0
+                                // Element: semantic hash + index are arbitrary as long as signature matches.
+        push_u32(&mut ilay, 0xDEAD_BEEFu32);
+        push_u32(&mut ilay, 0);
+        push_u32(&mut ilay, 36); // DXGI_FORMAT_R16G16_UINT
+        push_u32(&mut ilay, 0); // input_slot
+        push_u32(&mut ilay, 0); // aligned_byte_offset
+        push_u32(&mut ilay, 0); // per-vertex
+        push_u32(&mut ilay, 0); // step rate
+        let layout = InputLayoutDesc::parse(&ilay).unwrap();
+
+        let signature = [VsInputSignatureElement {
+            semantic_name_hash: 0xDEAD_BEEF,
+            semantic_index: 0,
+            input_register: 0,
+            mask: 0x3,
+            shader_location: 0,
+        }];
+
+        let stride = 4u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).unwrap();
+
+        // One vertex: u16x2 = (123, 456).
+        let mut vb_bytes = Vec::new();
+        vb_bytes.extend_from_slice(&123u16.to_le_bytes());
+        vb_bytes.extend_from_slice(&456u16.to_le_bytes());
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute u16 vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute u16 ia uniform"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        let cfg = VsAsComputeConfig {
+            control_point_count: 1,
+            out_reg_count: 1,
+            indexed: false,
+        };
+        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs =
+            alloc_vs_out_regs(&mut scratch, &device, 1, 1, cfg.out_reg_count).unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                &ia_uniform,
+                None,
+                None,
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute u16 encoder"),
+        });
+        pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_back_buffer(
+            &device,
+            &queue,
+            vs_out_regs.buffer.as_ref(),
+            vs_out_regs.offset,
+            vs_out_regs.size,
+        )
+        .await
+        .unwrap();
+        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
+        let vecs = unpack_vec4_u32_as_f32(&words);
+        assert_eq!(vecs, vec![[123.0, 456.0, 0.0, 1.0]]);
     });
 }
