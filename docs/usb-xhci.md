@@ -78,6 +78,7 @@ Rust controller/model building blocks:
   - Controller MMIO model: `crates/aero-usb/src/xhci/mod.rs` (`XhciController`)
   - Register offsets/constants: `crates/aero-usb/src/xhci/regs.rs`
   - Root hub port model + PORTSC bits: `crates/aero-usb/src/xhci/port.rs`
+  - Snapshot encode/decode: `crates/aero-usb/src/xhci/snapshot.rs`
   - Interrupter 0 runtime regs (IMAN/ERST/ERDP): `crates/aero-usb/src/xhci/interrupter.rs`
   - Guest event ring producer (ERST-backed): `crates/aero-usb/src/xhci/event_ring.rs`
   - TRB helpers: `crates/aero-usb/src/xhci/trb.rs`
