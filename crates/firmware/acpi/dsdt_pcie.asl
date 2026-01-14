@@ -55,7 +55,7 @@ DefinitionBlock ("dsdt_pcie.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         Return (Package (0x02) { Zero, Zero })
     }
 
-    Scope (\_SB_)
+    Scope (_SB)
     {
         /*
          * Motherboard resources device.
@@ -79,6 +79,11 @@ DefinitionBlock ("dsdt_pcie.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 IO (Decode16, 0x0404, 0x0404, 0x01, 0x02) // PM1a_CNT_BLK
                 IO (Decode16, 0x0408, 0x0408, 0x01, 0x04) // PM_TMR_BLK
                 IO (Decode16, 0x0420, 0x0420, 0x01, 0x08) // GPE0_BLK
+
+                // Legacy platform-owned I/O ports.
+                IO (Decode16, 0x0022, 0x0022, 0x01, 0x02) // IMCR (0x22..0x23)
+                IO (Decode16, 0x0092, 0x0092, 0x01, 0x01) // A20 gate (0x92)
+                IO (Decode16, 0x0060, 0x0060, 0x01, 0x05) // i8042 (0x60..0x64)
 
                 // Reset port used by the FADT ResetReg.
                 IO (Decode16, 0x0CF9, 0x0CF9, 0x01, 0x01)
@@ -288,7 +293,12 @@ DefinitionBlock ("dsdt_pcie.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 Package () { 0x001FFFFF, 1, Zero, 10 },
                 Package () { 0x001FFFFF, 2, Zero, 11 },
                 Package () { 0x001FFFFF, 3, Zero, 12 },
-            })
+             })
+
+            Method (_OSC, 4, NotSerialized)
+            {
+                Return (Arg3)
+            }
         }
 
         Device (HPET)
@@ -328,7 +338,7 @@ DefinitionBlock ("dsdt_pcie.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
     }
 
     // CPU objects (default generator config emits CPU0 only).
-    Scope (\_PR_)
+    Scope (_PR)
     {
         Device (CPU0)
         {
@@ -343,4 +353,3 @@ DefinitionBlock ("dsdt_pcie.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
     Name (_S4, Package (0x02) { 0x04, 0x04 })
     Name (_S5, Package (0x02) { 0x05, 0x05 })
 }
-
