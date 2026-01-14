@@ -160,9 +160,8 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
-  - A tiny **host-side** USB2-only root hub/port model (`attach_device`, `read_portsc`, reset timer,
-    Port Status Change Event TRBs). This is primarily used by tests; it is not yet wired through the
-    guest-visible MMIO port register block or a real guest event ring.
+  - Topology-only slot binding (`Address Device`/`Configure Endpoint`) via Slot Context `RootHubPortNumber` + `RouteString`.
+  - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change Event TRBs (events are buffered host-side until a guest event ring/interrupter is implemented).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
   - Forwards MMIO reads/writes into the canonical Rust controller model (`aero_usb::xhci::XhciController`).
   - `step_frames()` / `tick()` counter only (no scheduling yet).
@@ -229,12 +228,10 @@ MMIO controller stubs.
 
 ### Still MVP-relevant but not implemented yet
 
-- Guest-visible port register block + delivery of port-change events via a real guest event ring
-  (today, ports/events exist primarily as host-side helpers for tests).
-- Doorbell array + runtime interrupter registers (ERST/ERDP, IMAN/IMOD, etc) and wiring them into
-  the controller core.
-- Full command ring + event ring integration (today, command-ring processing exists as standalone
-  helpers/tests, but the controller MMIO surface does not yet expose the full model).
+- Full root hub model (USB3 ports, additional link states, full port register/event coverage).
+- Delivery of port-change events via a real guest event ring/interrupter (today events are buffered host-side via `pop_pending_event()`).
+- Doorbell array + runtime interrupter registers (ERST/ERDP, IMAN/IMOD, etc) and wiring them into the controller core.
+- Full command ring + event ring integration (today, command-ring processing exists as standalone helpers/tests, but the controller MMIO surface does not yet expose the full model).
 - Endpoint 0 control transfer engine wired into the controller (beyond the test harness).
 - Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
 
@@ -244,9 +241,7 @@ MMIO controller stubs.
 
 xHCI is a large spec. The MVP intentionally leaves out many features that guests and/or real hardware may use:
 
-- **Guest-visible root hub / port model** (PORTSC operational registers + change-event delivery via
-  a real guest event ring). A small host-side USB2 port model exists, but it is not yet wired into
-  the MMIO register model.
+- **Root hub / port model** beyond the current USB2-only PORTSC + reset timer scaffolding (no USB3 ports/link states yet, and no guest event ring/interrupter).
 - **Full command ring/event ring integration** and the full xHCI slot/endpoint context state machines
   (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). Some command/endpoint-management
   helpers exist for tests, but they are not yet exposed as a guest-visible controller.
