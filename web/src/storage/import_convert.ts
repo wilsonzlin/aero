@@ -1,5 +1,6 @@
 import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
+import { readResponseBytesWithLimit } from "./response_json.ts";
 
 export type ImageFormat = "raw" | "qcow2" | "vhd" | "iso";
 export type ConvertedFormat = "aerospar" | "iso";
@@ -52,6 +53,41 @@ interface RandomAccessSource {
   readAt(offset: number, length: number): Promise<Uint8Array<ArrayBuffer>>;
 }
 
+function assertIdentityContentEncoding(headers: Headers, label: string): void {
+  const raw = headers.get("content-encoding");
+  if (!raw) return;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === "identity") return;
+  throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
+}
+
+function assertNoTransformCacheControl(headers: Headers, label: string): void {
+  // Range reads are byte-addressed. Any intermediary transform can break deterministic byte
+  // semantics. Require `Cache-Control: no-transform` as defence-in-depth.
+  //
+  // Note: Cache-Control is CORS-safelisted, so it is readable cross-origin without
+  // `Access-Control-Expose-Headers`.
+  const raw = headers.get("cache-control");
+  if (!raw) {
+    throw new Error(`${label} missing Cache-Control header (expected include 'no-transform')`);
+  }
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (!tokens.includes("no-transform")) {
+    throw new Error(`${label} Cache-Control missing no-transform: ${raw}`);
+  }
+}
+
+async function cancelBody(resp: Response): Promise<void> {
+  try {
+    await resp.body?.cancel();
+  } catch {
+    // ignore best-effort cancellation failures
+  }
+}
+
 class FileSource implements RandomAccessSource {
   private readonly file: File;
   constructor(file: File) {
@@ -83,6 +119,7 @@ class UrlSource implements RandomAccessSource {
     this.signal = signal;
   }
   async readAt(offset: number, length: number): Promise<Uint8Array<ArrayBuffer>> {
+    if (length === 0) return new Uint8Array(new ArrayBuffer(0));
     const end = offset + length;
     if (offset < 0 || length < 0 || end > this.size) {
       throw new RangeError(`readAt out of range: ${offset}+${length} (size=${this.size})`);
@@ -93,12 +130,21 @@ class UrlSource implements RandomAccessSource {
       },
       signal: this.signal,
     });
-    if (!res.ok) throw new Error(`range fetch failed (${res.status})`);
-    const ab = await res.arrayBuffer();
-    if (ab.byteLength !== length) {
-      throw new Error(`short range read: expected ${length}, got ${ab.byteLength}`);
+    try {
+      if (!res.ok) throw new Error(`range fetch failed (${res.status})`);
+      if (res.status !== 206 && !(res.status === 200 && offset === 0 && end === this.size)) {
+        throw new Error(`range fetch did not return 206 Partial Content (status=${res.status})`);
+      }
+      assertIdentityContentEncoding(res.headers, "range fetch");
+      assertNoTransformCacheControl(res.headers, "range fetch");
+      const bytes = await readResponseBytesWithLimit(res, { maxBytes: length, label: "range fetch body" });
+      if (bytes.byteLength !== length) {
+        throw new Error(`short range read: expected ${length}, got ${bytes.byteLength}`);
+      }
+      return bytes;
+    } finally {
+      await cancelBody(res);
     }
-    return new Uint8Array(ab);
   }
 }
 
@@ -272,13 +318,25 @@ async function fetchSize(url: string, signal: AbortSignal | undefined): Promise<
 
   // Fallback: Range GET and parse Content-Range.
   const res = await fetch(url, { headers: { Range: "bytes=0-0" }, signal });
-  const cr = res.headers.get("content-range");
-  if (!res.ok || !cr) throw new Error("unable to determine remote size (missing Content-Range)");
-  const match = cr.match(/\/(\d+)$/);
-  if (!match) throw new Error(`unexpected Content-Range: ${cr}`);
-  const size = Number(match[1]);
-  if (!Number.isSafeInteger(size) || size < 0) throw new Error(`invalid size from Content-Range: ${cr}`);
-  return size;
+  try {
+    const cr = res.headers.get("content-range");
+    if (!res.ok || !cr) throw new Error("unable to determine remote size (missing Content-Range)");
+    assertIdentityContentEncoding(res.headers, "size probe");
+    assertNoTransformCacheControl(res.headers, "size probe");
+    // Best-effort: consume the body so servers that ignore Range don't accidentally stream the
+    // full object. (We only expect a single byte.)
+    const body = await readResponseBytesWithLimit(res, { maxBytes: 1, label: "size probe body" });
+    if (body.byteLength !== 1) {
+      throw new Error(`unexpected size probe body length ${body.byteLength} (expected 1)`);
+    }
+    const match = cr.match(/\/(\d+)$/);
+    if (!match) throw new Error(`unexpected Content-Range: ${cr}`);
+    const size = Number(match[1]);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error(`invalid size from Content-Range: ${cr}`);
+    return size;
+  } finally {
+    await cancelBody(res);
+  }
 }
 
 async function writeManifest(
