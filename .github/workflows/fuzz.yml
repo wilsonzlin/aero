@@ -28,7 +28,7 @@ jobs:
         run: cargo install --locked cargo-fuzz
 
       - name: Verify fuzz Cargo.lock is up to date
-        run: cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
+        run: cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --features ci-smoke --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
 
       - name: fuzz_tier0_step (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_tier0_step -- -max_total_time=10
