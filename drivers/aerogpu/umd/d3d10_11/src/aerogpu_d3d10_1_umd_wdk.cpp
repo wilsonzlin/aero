@@ -8294,7 +8294,90 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    emit_upload_resource_locked(dev, res, dst_layout.offset_bytes, dst_layout.size_bytes);
+    if (res->backing_alloc_id == 0 && pArgs->pDstBox) {
+      // Host-owned resources are updated via UPLOAD_RESOURCE payloads. For
+      // boxed updates, upload one contiguous range per updated row so we do not
+      // overwrite unrelated regions of the subresource with any stale CPU-side
+      // mirror data.
+      const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_layout.row_pitch_bytes);
+      const uint64_t x_off_u64 =
+          static_cast<uint64_t>(block_left) * static_cast<uint64_t>(fmt_layout.bytes_per_block);
+      for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+        const uint64_t upload_offset =
+            dst_layout.offset_bytes + static_cast<uint64_t>(block_top + y) * row_pitch_u64 + x_off_u64;
+        emit_upload_resource_locked(dev, res, upload_offset, static_cast<uint64_t>(row_bytes));
+      }
+      return;
+    }
+
+    if (res->backing_alloc_id == 0) {
+      emit_upload_resource_locked(dev, res, dst_layout.offset_bytes, dst_layout.size_bytes);
+      return;
+    }
+
+    if (!pArgs->pDstBox) {
+      emit_upload_resource_locked(dev, res, dst_layout.offset_bytes, dst_layout.size_bytes);
+      return;
+    }
+
+    const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
+    if (!cb || !cb->pfnLockCb || !cb->pfnUnlockCb || res->wddm_allocation_handle == 0) {
+      set_error(dev, E_FAIL);
+      return;
+    }
+
+    D3DDDICB_LOCK lock_args = {};
+    lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+    InitLockForWrite(&lock_args);
+
+    HRESULT hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_args);
+    if (FAILED(hr) || !lock_args.pData) {
+      set_error(dev, FAILED(hr) ? hr : E_FAIL);
+      return;
+    }
+
+    HRESULT copy_hr = S_OK;
+    uint32_t wddm_pitch = 0;
+    __if_exists(D3DDDICB_LOCK::Pitch) {
+      wddm_pitch = lock_args.Pitch;
+    }
+    if (!ValidateWddmTexturePitch(res, wddm_pitch)) {
+      copy_hr = E_FAIL;
+      goto UnlockBox;
+    }
+    uint32_t dst_pitch = dst_layout.row_pitch_bytes;
+    if (wddm_pitch && dst_layout.mip_level == 0) {
+      dst_pitch = wddm_pitch;
+    }
+    if (dst_pitch < row_bytes) {
+      copy_hr = E_INVALIDARG;
+      goto UnlockBox;
+    }
+
+    uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
+    for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+      const size_t dst_off =
+          static_cast<size_t>(block_top + y) * dst_pitch +
+          static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
+      const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
+      std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
+    }
+
+  UnlockBox:
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    InitUnlockForWrite(&unlock_args);
+    hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_args);
+    if (FAILED(hr)) {
+      set_error(dev, hr);
+      return;
+    }
+    if (FAILED(copy_hr)) {
+      set_error(dev, copy_hr);
+      return;
+    }
+
+    emit_dirty_range_locked(dev, res, dst_layout.offset_bytes, dst_layout.size_bytes);
     return;
   }
 
