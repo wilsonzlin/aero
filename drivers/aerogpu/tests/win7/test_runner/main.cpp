@@ -505,7 +505,7 @@ static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err)
       return true;
     }
     if (err) {
-      *err = "path exists but is not a directory";
+      *err = "path exists but is not a directory (" + aerogpu_test::WideToUtf8(dir) + ")";
     }
     return false;
   }
