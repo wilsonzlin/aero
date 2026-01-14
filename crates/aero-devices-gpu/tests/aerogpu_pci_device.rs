@@ -1,11 +1,12 @@
+use aero_devices::pci::PciDevice;
 use aero_devices_gpu::pci::AeroGpuDeviceConfig;
+use aero_devices_gpu::regs::FEATURE_VBLANK;
 use aero_devices_gpu::regs::{irq_bits, mmio, ring_control, AerogpuErrorCode, AEROGPU_MMIO_MAGIC};
 use aero_devices_gpu::ring::{
-    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
-    FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
+    AEROGPU_RING_MAGIC, FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 use aero_devices_gpu::AeroGpuPciDevice;
-use aero_devices::pci::PciDevice;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuRingHeader as ProtocolRingHeader;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuSubmitDesc as ProtocolSubmitDesc;
 use memory::{MemoryBus, MmioHandler};
@@ -78,6 +79,38 @@ fn pci_wrapper_gates_aerogpu_mmio_on_pci_command_mem_bit() {
 }
 
 #[test]
+fn pci_reset_preserves_vblank_feature_gating_from_device_config() {
+    // If the device model is configured without a vblank clock, it must not advertise FEATURE_VBLANK
+    // (otherwise guests may wait forever for vblank edges that will never arrive).
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+    let mut dev = AeroGpuPciDevice::new(cfg);
+    assert_eq!(dev.regs.features & FEATURE_VBLANK, 0);
+
+    // After a device reset, the config-derived feature gating must still apply.
+    dev.reset();
+    assert_eq!(dev.regs.features & FEATURE_VBLANK, 0);
+    assert_eq!(dev.regs.scanout0_vblank_period_ns, 0);
+}
+
+#[test]
+fn pci_reset_preserves_configured_vblank_period() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(10),
+        ..Default::default()
+    };
+    let mut dev = AeroGpuPciDevice::new(cfg);
+    assert_ne!(dev.regs.features & FEATURE_VBLANK, 0);
+    assert_eq!(dev.regs.scanout0_vblank_period_ns, 100_000_000);
+
+    dev.reset();
+    assert_ne!(dev.regs.features & FEATURE_VBLANK, 0);
+    assert_eq!(dev.regs.scanout0_vblank_period_ns, 100_000_000);
+}
+
+#[test]
 fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
@@ -100,7 +133,10 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
 
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
     let fence_gpa = 0x3000u64;
@@ -152,7 +188,10 @@ fn pci_wrapper_gates_aerogpu_intx_on_pci_command_intx_disable_bit() {
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
 
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
     dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
@@ -271,7 +310,10 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
 
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::ERROR as u64);
 
-    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::None as u32);
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::None as u32
+    );
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4), 0);
     assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4), 0);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4), 0);
@@ -280,7 +322,10 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
     dev.tick(&mut mem, 0);
 
     assert!(dev.irq_level());
-    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::Backend as u32);
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::Backend as u32
+    );
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4) as u32, 42);
     assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4) as u32, 0);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
@@ -290,7 +335,10 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
     assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
     assert!(!dev.irq_level());
 
-    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::Backend as u32);
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::Backend as u32
+    );
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4) as u32, 42);
     assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4) as u32, 0);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);

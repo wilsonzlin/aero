@@ -302,10 +302,7 @@ impl AeroGpuPciDevice {
         self.regs.cursor.read_rgba(mem)
     }
 
-    pub fn read_presented_scanout_rgba8(
-        &mut self,
-        scanout_id: u32,
-    ) -> Option<(u32, u32, Vec<u8>)> {
+    pub fn read_presented_scanout_rgba8(&mut self, scanout_id: u32) -> Option<(u32, u32, Vec<u8>)> {
         let scanout = self.executor.read_presented_scanout_rgba8(scanout_id)?;
         Some((scanout.width, scanout.height, scanout.rgba8))
     }
@@ -480,8 +477,8 @@ impl AeroGpuPciDevice {
                     (self.regs.scanout0.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
             }
             mmio::SCANOUT0_FB_GPA_HI => {
-                self.regs.scanout0.fb_gpa = (self.regs.scanout0.fb_gpa & 0x0000_0000_ffff_ffff)
-                    | (u64::from(value) << 32);
+                self.regs.scanout0.fb_gpa =
+                    (self.regs.scanout0.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
             }
 
             mmio::CURSOR_ENABLE => self.regs.cursor.enable = value != 0,
@@ -523,6 +520,13 @@ impl PciDevice for AeroGpuPciDevice {
 
         // Reset register/executor state (device-local reset; guest memory DMA state is not touched).
         self.regs = AeroGpuRegs::default();
+        // Re-apply device-model configuration that affects what the guest sees in registers.
+        // `vblank_hz` is not guest-controlled; resets must preserve whether vblank is advertised.
+        if let Some(period_ns) = self.vblank_period_ns {
+            self.regs.scanout0_vblank_period_ns = period_ns.min(u64::from(u32::MAX)) as u32;
+        } else {
+            self.regs.features &= !FEATURE_VBLANK;
+        }
         self.executor.reset();
         self.irq_level = false;
         self.doorbell_pending = false;
