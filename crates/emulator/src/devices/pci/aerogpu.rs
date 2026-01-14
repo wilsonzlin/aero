@@ -46,14 +46,22 @@ impl Default for AeroGpuDeviceConfig {
 //   legacy VGA window (`0xA0000..0xBFFFF`, 128KiB) aliases into `VRAM[0..LEGACY_VGA_VRAM_BYTES)`.
 // - `VRAM[VBE_LFB_OFFSET..]`: VBE linear framebuffer (LFB).
 const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = aero_devices_gpu::VBE_LFB_OFFSET as u32;
+const LEGACY_VGA_WINDOW_BASE: u32 = aero_gpu_vga::VGA_LEGACY_MEM_START;
+const LEGACY_VGA_WINDOW_SIZE: u32 = aero_gpu_vga::VGA_LEGACY_MEM_LEN;
 const _: () = {
     assert!(
         AEROGPU_PCI_BAR1_LFB_OFFSET == aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32,
         "AeroGPU BAR1 VBE LFB offset must match the canonical VGA/VBE VRAM layout"
     );
+    assert!(
+        aero_devices_gpu::LEGACY_VGA_PADDR_BASE as u32 == LEGACY_VGA_WINDOW_BASE,
+        "AeroGPU legacy VGA base must match the canonical VGA legacy decode window"
+    );
+    assert!(
+        aero_devices_gpu::LEGACY_VGA_VRAM_BYTES as u32 == LEGACY_VGA_WINDOW_SIZE,
+        "AeroGPU legacy VGA window size must match the canonical VGA legacy decode window"
+    );
 };
-const LEGACY_VGA_WINDOW_BASE: u32 = aero_devices_gpu::LEGACY_VGA_PADDR_BASE as u32;
-const LEGACY_VGA_WINDOW_SIZE: u32 = aero_devices_gpu::LEGACY_VGA_VRAM_BYTES as u32;
 
 pub struct AeroGpuPciDevice {
     config: PciConfigSpace,

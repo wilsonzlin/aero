@@ -384,7 +384,6 @@ mod tests {
         };
         let update = scanout_config_to_scanout_state_update(&rgbx, SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, AeroGpuFormat::R8G8B8X8Unorm as u32);
-
         let rgba = AeroGpuScanoutConfig {
             format: AeroGpuFormat::R8G8B8A8Unorm,
             ..cfg.clone()

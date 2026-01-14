@@ -237,7 +237,7 @@ mod tests {
         let dev = 5;
 
         // Present function 0 with the multifunction bit set, and also populate function 1.
-        pci.add_dev(0, dev, 0, 0x1234, 0x1111, 1);
+        pci.add_dev(0, dev, 0, 0x1234, 0x1112, 1);
         pci.add_dev(0, dev, 1, 0x1234, 0x2222, 1);
         pci.dev_mut(0, dev, 0).unwrap().header = 0x80u32 << 16;
 
@@ -263,7 +263,7 @@ mod tests {
 
         // Present function 0 with the multifunction bit clear, but also populate function 1.
         // BIOS enumeration should stop after function 0 and never touch function 1.
-        pci.add_dev(0, dev, 0, 0x1234, 0x1111, 1);
+        pci.add_dev(0, dev, 0, 0x1234, 0x1112, 1);
         pci.add_dev(0, dev, 1, 0x1234, 0x2222, 1);
         pci.dev_mut(0, dev, 0).unwrap().header = 0x00u32 << 16;
 

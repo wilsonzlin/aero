@@ -1,4 +1,4 @@
-use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT, VGA_LEGACY_MEM_START};
 use emulator::devices::vga::{DisplayOutput, PortIO, VgaDevice};
 
 #[test]
@@ -7,7 +7,7 @@ fn vga_mode13h_renders_via_canonical_device() {
     dev.set_mode_13h();
 
     // Write a single pixel index and render.
-    dev.mem_write_u8(0xA0000, 1);
+    dev.mem_write_u8(VGA_LEGACY_MEM_START, 1);
     dev.present();
 
     assert_eq!(dev.get_resolution(), (320, 200));
