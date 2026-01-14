@@ -48,6 +48,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("machine_input_backends"))
         .stdout(predicate::str::contains("machine_defaults_usb_hid"))
         .stdout(predicate::str::contains(
+            "webhid_report_descriptor_synthesis --test machine_virtio_input",
+        ))
+        .stdout(predicate::str::contains(
             "machine_i8042_snapshot_pending_bytes",
         ))
         .stdout(predicate::str::contains("machine_virtio_input"))

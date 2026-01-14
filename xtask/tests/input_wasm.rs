@@ -414,6 +414,7 @@ fn said_with_wasm_rust_only_runs_aero_wasm_integration_tests(
         "machine_input_injection",
         "machine_input_backends",
         "machine_defaults_usb_hid",
+        "webhid_report_descriptor_synthesis",
         "machine_virtio_input",
     ] {
         assert!(
