@@ -31,6 +31,7 @@ namespace {
 // D3DERR_INVALIDCALL from d3d9.h.
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
+constexpr uint32_t kD3d9ShaderStagePs = 1u;
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 
 // ABI-compatible D3DVERTEXELEMENT9 encoding (8 bytes, packed). The UMD treats
@@ -6402,6 +6403,254 @@ bool TestDestroyBoundShaderUnbinds() {
     return false;
   }
   return Check(bind.offset < destroy.offset, "unbind occurs before destroy");
+}
+
+bool TestPartialShaderStageBindingVsOnlyBindsFixedfuncPsAndDraws() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSHADER hVs{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vs = false;
+
+    ~Cleanup() {
+      if (has_vs && device_funcs.pfnDestroyShader) {
+        device_funcs.pfnDestroyShader(hDevice, hVs);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x00, 0x01, 0x02, 0x03};
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(create_dev.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            dxbc,
+                                            static_cast<uint32_t>(sizeof(dxbc)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader returned handle")) {
+    return false;
+  }
+  cleanup.hVs = hVs;
+  cleanup.has_vs = true;
+
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS)")) {
+    return false;
+  }
+
+  // Explicitly clear PS (NULL stage); draw should still succeed by binding an
+  // internal fixed-function PS fallback.
+  D3D9DDI_HSHADER null_shader{};
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStagePs, null_shader);
+  if (!Check(hr == S_OK, "SetShader(PS=NULL)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
+  if (!Check(hr == S_OK, "DrawPrimitive(VS-only)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(bind.offset < draw.offset, "BIND_SHADERS occurs before DRAW")) {
+    return false;
+  }
+
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0, "BIND_SHADERS has non-zero VS")) {
+    return false;
+  }
+  if (!Check(bind_cmd->ps != 0, "BIND_SHADERS has non-zero PS fallback")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
+bool TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSHADER hPs{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_ps = false;
+
+    ~Cleanup() {
+      if (has_ps && device_funcs.pfnDestroyShader) {
+        device_funcs.pfnDestroyShader(hDevice, hPs);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  // Configure a supported fixed-function FVF so the driver can synthesize an
+  // internal VS for PS-only draws.
+  constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+  constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+  const uint32_t fvf = kD3dFvfXyzRhw | kD3dFvfDiffuse;
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, fvf);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0xAA, 0xBB, 0xCC, 0xDD};
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(create_dev.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            dxbc,
+                                            static_cast<uint32_t>(sizeof(dxbc)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader returned handle")) {
+    return false;
+  }
+  cleanup.hPs = hPs;
+  cleanup.has_ps = true;
+
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS)")) {
+    return false;
+  }
+
+  // Explicitly clear VS (NULL stage); draw should still succeed by binding an
+  // internal fixed-function VS fallback.
+  D3D9DDI_HSHADER null_shader{};
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, null_shader);
+  if (!Check(hr == S_OK, "SetShader(VS=NULL)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
+  if (!Check(hr == S_OK, "DrawPrimitive(PS-only)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "DRAW emitted")) {
+    return false;
+  }
+
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(bind.offset < draw.offset, "BIND_SHADERS occurs before DRAW")) {
+    return false;
+  }
+
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0, "BIND_SHADERS has non-zero VS fallback")) {
+    return false;
+  }
+  if (!Check(bind_cmd->ps != 0, "BIND_SHADERS has non-zero PS")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
 }
 
 bool TestDestroyBoundVertexDeclUnbinds() {
@@ -16298,6 +16547,8 @@ int main() {
   failures += !aerogpu::TestOpenResourceUsesReserved0PitchHintForUncompressedSingleMipSurface();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
+  failures += !aerogpu::TestPartialShaderStageBindingVsOnlyBindsFixedfuncPsAndDraws();
+  failures += !aerogpu::TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestSetVertexDeclDerivesFixedFunctionFvf();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();

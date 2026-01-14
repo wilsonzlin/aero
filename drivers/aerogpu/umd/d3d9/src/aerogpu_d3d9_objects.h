@@ -809,6 +809,15 @@ struct Device {
   // fallback needs to re-upload the combined matrix constant registers.
   bool fixedfunc_matrix_dirty = true;
 
+  // Fixed-function "interop" fallbacks used when exactly one shader stage is
+  // explicitly bound by the app (D3D9 allows VS-only or PS-only draws).
+  //
+  // - If `user_vs != nullptr` and `user_ps == nullptr`, we bind an internal
+  //   stage0 fixed-function pixel shader to `ps` at draw time.
+  // - If `user_vs == nullptr` and `user_ps != nullptr`, we reuse the existing
+  //   fixed-function VS variants (`fixedfunc_vs*`) as a draw-time fallback.
+  Shader* fixedfunc_ps_interop = nullptr;
+
   // Scratch vertex buffer used to emulate DrawPrimitiveUP and fixed-function
   // transformed vertex uploads.
   Resource* up_vertex_buffer = nullptr;

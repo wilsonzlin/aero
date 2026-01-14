@@ -226,6 +226,11 @@ aerogpu_add_win7_test(d3d9_fixedfunc_textured_wvp
 )
 target_link_libraries(d3d9_fixedfunc_textured_wvp PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_shader_stage_interop
+  d3d9_shader_stage_interop/main.cpp
+)
+target_link_libraries(d3d9_shader_stage_interop PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_texture_16bit_formats
   d3d9ex_texture_16bit_formats/main.cpp
 )

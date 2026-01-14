@@ -4391,7 +4391,7 @@ const void* fixedfunc_ps_variant_bytes(FixedfuncStage0Key key, uint32_t* size_ou
   return set(fixedfunc::kPsPassthroughColor, sizeof(fixedfunc::kPsPassthroughColor));
 }
 
-HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot, Shader* fixedfunc_vs) {
+HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   if (!dev || !ps_slot) {
     return E_FAIL;
   }
@@ -4415,12 +4415,14 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot, Shad
 
   *ps_slot = new_ps;
 
-  // If fixed-function shaders are currently bound, rebind to the new PS so the
-  // change takes effect without waiting for a draw-time fallback rebinding path.
-  const bool fixedfunc_bound = (old_ps != nullptr && fixedfunc_vs != nullptr &&
-                                !dev->user_vs && !dev->user_ps &&
-                                dev->vs == fixedfunc_vs && dev->ps == old_ps);
-  if (fixedfunc_bound) {
+  // If the PS we're replacing is currently bound (either via the full
+  // fixed-function fallback or via shader-stage interop fallbacks where one
+  // shader stage is NULL), rebind to the new PS before destroying the old one.
+  //
+  // The host command stream executes commands in-order and expects shaders to be
+  // unbound before they are destroyed.
+  const bool ps_bound = (old_ps != nullptr && dev->ps == old_ps);
+  if (ps_bound) {
     dev->ps = new_ps;
     if (!emit_bind_shaders_locked(dev)) {
       dev->ps = old_ps;
@@ -4571,8 +4573,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
   }
-
-  const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot, *vs_slot);
+  const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
   if (FAILED(ps_hr)) {
     return ps_hr;
   }
@@ -4628,6 +4629,9 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
     return E_INVALIDARG;
   }
 
+  // ---------------------------------------------------------------------------
+  // Full fixed-function path (both stages null)
+  // ---------------------------------------------------------------------------
   // If the runtime did not bind any shaders, it is asking for the fixed-function
   // pipeline. We only support a narrow set of fixed-function fallbacks; validate
   // and bind them lazily at draw time.
@@ -4643,9 +4647,151 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
     return S_OK;
   }
 
-  // Non-fixed-function path: require explicit shaders.
-  if (!dev->vs || !dev->ps) {
+  // ---------------------------------------------------------------------------
+  // Shader-stage interop: VS-only or PS-only.
+  //
+  // D3D9 allows apps to bind exactly one shader stage and leave the other stage
+  // NULL. In that case the runtime uses the fixed-function pipeline for the
+  // missing stage.
+  //
+  // We emulate that by binding an internal fixed-function fallback shader for
+  // the missing stage at draw time (without mutating `user_vs/user_ps`).
+  // ---------------------------------------------------------------------------
+
+  // VS-only (PS is NULL): keep the user VS, bind a stage0 fixed-function PS.
+  if (dev->user_vs && !dev->user_ps) {
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, &dev->fixedfunc_ps_interop);
+    if (FAILED(ps_hr)) {
+      return (ps_hr == E_FAIL) ? kD3DErrInvalidCall : ps_hr;
+    }
+    if (!dev->fixedfunc_ps_interop) {
+      return kD3DErrInvalidCall;
+    }
+
+    Shader* desired_vs = dev->user_vs;
+    Shader* desired_ps = dev->fixedfunc_ps_interop;
+    if (dev->vs != desired_vs || dev->ps != desired_ps) {
+      Shader* prev_vs = dev->vs;
+      Shader* prev_ps = dev->ps;
+      dev->vs = desired_vs;
+      dev->ps = desired_ps;
+      if (!emit_bind_shaders_locked(dev)) {
+        dev->vs = prev_vs;
+        dev->ps = prev_ps;
+        return E_OUTOFMEMORY;
+      }
+    }
+    return (dev->vs && dev->ps) ? S_OK : kD3DErrInvalidCall;
+  }
+
+  // PS-only (VS is NULL): keep the user PS, bind a fixed-function VS synthesized
+  // from the active input layout/FVF.
+  if (!dev->user_vs && dev->user_ps) {
+    // Synthesize a minimal fixed-function VS based on the currently active FVF.
+    // This allows D3D9 "shader stage interop" where a pixel shader is set but
+    // the vertex shader stage is NULL.
+    Shader** vs_slot = nullptr;
+    VertexDecl* fvf_decl = nullptr;
+    const void* vs_bytes = nullptr;
+    uint32_t vs_size = 0;
+    bool needs_matrix = false;
+
+    switch (dev->fvf) {
+      case kSupportedFvfXyzrhwDiffuse:
+        vs_slot = &dev->fixedfunc_vs;
+        fvf_decl = dev->fvf_vertex_decl;
+        vs_bytes = fixedfunc::kVsPassthroughPosColor;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+        break;
+      case kSupportedFvfXyzDiffuse:
+        // Bring-up: treat XYZ vertices as already in clip space (no WVP transform).
+        vs_slot = &dev->fixedfunc_vs;
+        vs_bytes = fixedfunc::kVsPassthroughPosColor;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+        break;
+      case kSupportedFvfXyzrhwDiffuseTex1:
+        vs_slot = &dev->fixedfunc_vs_tex1;
+        fvf_decl = dev->fvf_vertex_decl_tex1;
+        vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
+        break;
+      case kSupportedFvfXyzDiffuseTex1:
+        // XYZ vertices require a WVP transform in the VS.
+        vs_slot = &dev->fixedfunc_vs_xyz_diffuse_tex1;
+        fvf_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
+        vs_bytes = fixedfunc::kVsWvpPosColorTex0;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
+        needs_matrix = true;
+        break;
+      default:
+        return kD3DErrInvalidCall;
+    }
+
+    if (!vs_slot || !vs_bytes || vs_size == 0) {
+      return E_FAIL;
+    }
+
+    if (!*vs_slot) {
+      *vs_slot = create_internal_shader_locked(dev, kD3d9ShaderStageVs, vs_bytes, vs_size);
+      if (!*vs_slot) {
+        return E_OUTOFMEMORY;
+      }
+    }
+
+    // Ensure the FVF-derived declaration is bound when the app is using SetFVF
+    // (internal declaration). When the app uses an explicit vertex declaration,
+    // preserve it.
+    if (fvf_decl && (!dev->vertex_decl || dev->vertex_decl == fvf_decl)) {
+      if (!emit_set_input_layout_locked(dev, fvf_decl)) {
+        return E_OUTOFMEMORY;
+      }
+    }
+
+    if (needs_matrix) {
+      const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+      if (FAILED(hr)) {
+        return hr;
+      }
+    }
+
+    Shader* desired_vs = *vs_slot;
+    Shader* desired_ps = dev->user_ps;
+    if (!desired_vs || !desired_ps) {
+      return kD3DErrInvalidCall;
+    }
+    if (dev->vs != desired_vs || dev->ps != desired_ps) {
+      Shader* prev_vs = dev->vs;
+      Shader* prev_ps = dev->ps;
+      dev->vs = desired_vs;
+      dev->ps = desired_ps;
+      if (!emit_bind_shaders_locked(dev)) {
+        dev->vs = prev_vs;
+        dev->ps = prev_ps;
+        return E_OUTOFMEMORY;
+      }
+    }
+
+    return (dev->vs && dev->ps) ? S_OK : kD3DErrInvalidCall;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fully programmable path: both stages explicitly bound by the runtime.
+  // ---------------------------------------------------------------------------
+  if (!dev->user_vs || !dev->user_ps) {
     return kD3DErrInvalidCall;
+  }
+
+  // Defensive: ensure the currently-bound pipeline matches the runtime bindings.
+  if (dev->vs != dev->user_vs || dev->ps != dev->user_ps) {
+    Shader* prev_vs = dev->vs;
+    Shader* prev_ps = dev->ps;
+    dev->vs = dev->user_vs;
+    dev->ps = dev->user_ps;
+    if (!emit_bind_shaders_locked(dev)) {
+      dev->vs = prev_vs;
+      dev->ps = prev_ps;
+      return E_OUTOFMEMORY;
+    }
   }
   return S_OK;
 }
@@ -7675,6 +7821,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_xyz_diffuse_tex1->handle);
       delete dev->fixedfunc_ps_xyz_diffuse_tex1;
       dev->fixedfunc_ps_xyz_diffuse_tex1 = nullptr;
+    }
+    if (dev->fixedfunc_ps_interop) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps_interop->handle);
+      delete dev->fixedfunc_ps_interop;
+      dev->fixedfunc_ps_interop = nullptr;
     }
     if (dev->up_vertex_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_vertex_buffer->handle);
@@ -13428,8 +13579,7 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
        ss == kD3dTssAlphaOp || ss == kD3dTssAlphaArg1 || ss == kD3dTssAlphaArg2) &&
       fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     Shader** ps_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fixedfunc_ps : &dev->fixedfunc_ps_tex1;
-    Shader* vs_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? dev->fixedfunc_vs : dev->fixedfunc_vs_tex1;
-    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot, vs_slot);
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
     if (FAILED(ps_hr)) {
       return trace.ret(ps_hr);
     }
