@@ -1130,10 +1130,8 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let resp = virtio_snd_pcm_status(status, 0);
         let resp_len = (resp_desc.len as usize).min(resp.len());
         let mut resp_written = 0usize;
-        if resp_len != 0 {
-            if mem.write(resp_desc.addr, &resp[..resp_len]).is_ok() {
-                resp_written = resp_len;
-            }
+        if resp_len != 0 && mem.write(resp_desc.addr, &resp[..resp_len]).is_ok() {
+            resp_written = resp_len;
         }
 
         (payload_written + resp_written) as u32
