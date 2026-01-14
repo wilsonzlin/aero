@@ -4547,9 +4547,22 @@ impl Machine {
     ///
     /// This attaches a host-side ISO backend to the IDE secondary master ATAPI device without
     /// mutating guest-visible tray/media state (it uses the snapshot-restore attachment path).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_install_media_iso(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> io::Result<()> {
+        self.attach_ide_secondary_master_iso_for_restore(disk)
+    }
+
+    /// wasm32 variant of [`Machine::attach_install_media_iso`].
+    ///
+    /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
+    /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
+    #[cfg(target_arch = "wasm32")]
+    pub fn attach_install_media_iso(
+        &mut self,
+        disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> io::Result<()> {
         self.attach_ide_secondary_master_iso_for_restore(disk)
     }
