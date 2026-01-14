@@ -1108,6 +1108,118 @@ fn tier1_inline_tlb_cross_page_store_fastpath_hits_prefilled_tlb_entries() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_permission_miss_on_second_page_calls_translate() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    // Pre-fill both pages, but omit READ permission on the second page to force a translate due to
+    // the permission check.
+    let flags_page0 = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags_page0;
+    let page1_vaddr = 0x1000u64;
+    let flags_page1 = TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM; // missing READ
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags_page1;
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_permission_miss_on_second_page_calls_translate() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    // Pre-fill both pages, but omit WRITE permission on the second page to force a translate due to
+    // the permission check.
+    let flags_page0 = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags_page0;
+    let page1_vaddr = 0x1000u64;
+    let flags_page1 = TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM; // missing WRITE
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags_page1;
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_fastpath_handles_all_offsets() {
     // For a W64 load, any address in the last 7 bytes of a 4KiB page crosses into the next page.
     // Exercise all offsets to ensure the split load + recombine logic is correct.
@@ -1879,6 +1991,7 @@ fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured() {
     );
 
     assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 1);
 }
 
@@ -1922,6 +2035,7 @@ fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured() {
     );
 
     assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_writes, 1);
 }
 
@@ -1970,6 +2084,7 @@ fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured_w16() 
     assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xffff, 0xBEEF);
 
     assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 1);
     assert_eq!(host_state.slow_mem_writes, 0);
 }
@@ -2014,6 +2129,7 @@ fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured_w16()
     );
 
     assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 1);
 }
@@ -2063,6 +2179,7 @@ fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured_w32() 
     assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0xDEAD_BEEF);
 
     assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 1);
     assert_eq!(host_state.slow_mem_writes, 0);
 }
@@ -2107,6 +2224,7 @@ fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured_w32()
     );
 
     assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 1);
 }
@@ -2445,6 +2563,115 @@ fn tier1_inline_tlb_mmio_store_exit_does_not_clobber_unreached_written_gpr() {
     assert_eq!(got_cpu.rip, 0x1000);
     assert_eq!(host_state.mmio_exit_calls, 1);
     assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rbx.as_u8() as usize],
+        0xDEAD_BEEF_DEAD_BEEF
+    );
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_load_exit_does_not_clobber_unreached_written_gpr() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xFF9);
+    let _ = b.load(Width::W64, addr);
+
+    // Same scenario as `tier1_inline_tlb_mmio_load_exit_does_not_clobber_unreached_written_gpr`,
+    // but for a cross-page MMIO exit (page0 is RAM, page1 is non-RAM).
+    let v0 = b.const_int(Width::W64, 0x1234_5678_9abc_def0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rbx,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let mut cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0xDEAD_BEEF_DEAD_BEEF;
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rbx.as_u8() as usize],
+        0xDEAD_BEEF_DEAD_BEEF
+    );
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_mmio_store_exit_does_not_clobber_unreached_written_gpr() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xFF9);
+    let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, addr, value);
+
+    // Same scenario as `tier1_inline_tlb_mmio_store_exit_does_not_clobber_unreached_written_gpr`,
+    // but for a cross-page MMIO exit (page0 is RAM, page1 is non-RAM).
+    let v0 = b.const_int(Width::W64, 0x1234_5678_9abc_def0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rbx,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let mut cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    cpu.gpr[Gpr::Rbx.as_u8() as usize] = 0xDEAD_BEEF_DEAD_BEEF;
+
+    let ram = vec![0u8; 0x1000];
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_ram, vec![0u8; 0x1000]);
+
+    assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 2);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
 
