@@ -147,6 +147,35 @@ IRQ bits (`IRQ_STATUS` / `IRQ_ENABLE`):
 
 The interrupt line is asserted when `(IRQ_STATUS & IRQ_ENABLE) != 0`.
 
+#### 2.4.1 Error reporting registers (ABI 1.3+)
+
+When `AEROGPU_IRQ_ERROR` is asserted, the device also latches structured error
+details into the following **read-only** MMIO registers:
+
+| Offset | Name | Access | Description |
+|---:|---|:--:|---|
+| `0x0310` | `AEROGPU_MMIO_REG_ERROR_CODE` | RO | `enum aerogpu_error_code` (stable error code) |
+| `0x0314` | `AEROGPU_MMIO_REG_ERROR_FENCE_LO` | RO | Associated fence (low 32 bits) |
+| `0x0318` | `AEROGPU_MMIO_REG_ERROR_FENCE_HI` | RO | Associated fence (high 32 bits) |
+| `0x031C` | `AEROGPU_MMIO_REG_ERROR_COUNT` | RO | Monotonic error counter |
+
+Semantics:
+
+- `ERROR_*` registers are valid **only** when an error has been recorded (typically
+  accompanied by `AEROGPU_IRQ_ERROR`).
+- Clearing `IRQ_STATUS.ERROR` via `IRQ_ACK` does **not** clear the latched error
+  payload; the registers remain valid until overwritten by a subsequent error.
+
+Error code values (`enum aerogpu_error_code` in `aerogpu_pci.h`):
+
+| Name | Value | Meaning |
+|---|---:|---|
+| `AEROGPU_ERROR_NONE` | 0 | No error / no latched error payload |
+| `AEROGPU_ERROR_CMD_DECODE` | 1 | Malformed command stream / decode failure |
+| `AEROGPU_ERROR_OOB` | 2 | Out-of-bounds access / address overflow |
+| `AEROGPU_ERROR_BACKEND` | 3 | Backend/device execution error |
+| `AEROGPU_ERROR_INTERNAL` | `0xFFFF` | Internal/unclassified error |
+
 ### 2.5 Scanout 0 registers (framebuffer + timing)
 
 > These registers are present only when `AEROGPU_FEATURE_SCANOUT` is set.

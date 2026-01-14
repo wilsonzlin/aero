@@ -578,6 +578,7 @@ If the host backend/emulator detects a submission failure and raises `AEROGPU_IR
   - `D3DERR_DEVICELOST` (D3D9)
 - System log entries consistent with a graphics fault/TDR (often **Display** Event ID **4101** near the time of the error).
 - `aerogpu_dbgctl.exe --query-fence` reporting a non-zero `error_irq_count` and a `last_error_fence` near the failing submission.
+- `aerogpu_dbgctl.exe --status` or `--query-perf` printing a `Last error:` line with the device-latched error code + fence + error counter when supported by the installed KMD/device ABI (ABI 1.3+).
 
 ---
 
