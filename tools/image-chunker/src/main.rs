@@ -4536,6 +4536,272 @@ mod tests {
     }
 
     #[test]
+    fn validate_meta_matches_manifest_rejects_total_size_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let meta = Meta {
+            created_at: Utc::now(),
+            original_filename: "disk.img".to_string(),
+            total_size: manifest.total_size + SECTOR_SIZE as u64,
+            chunk_size: manifest.chunk_size,
+            chunk_count: manifest.chunk_count,
+            checksum_algorithm: ChecksumAlgorithm::Sha256.as_str().to_string(),
+        };
+        let err =
+            validate_meta_matches_manifest(&meta, &manifest).expect_err("expected validation error");
+        assert!(
+            err.to_string().contains("meta.json totalSize mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_meta_matches_manifest_rejects_chunk_size_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let meta = Meta {
+            created_at: Utc::now(),
+            original_filename: "disk.img".to_string(),
+            total_size: manifest.total_size,
+            chunk_size: manifest.chunk_size + SECTOR_SIZE as u64,
+            chunk_count: manifest.chunk_count,
+            checksum_algorithm: ChecksumAlgorithm::Sha256.as_str().to_string(),
+        };
+        let err =
+            validate_meta_matches_manifest(&meta, &manifest).expect_err("expected validation error");
+        assert!(
+            err.to_string().contains("meta.json chunkSize mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_meta_matches_manifest_rejects_chunk_count_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let meta = Meta {
+            created_at: Utc::now(),
+            original_filename: "disk.img".to_string(),
+            total_size: manifest.total_size,
+            chunk_size: manifest.chunk_size,
+            chunk_count: 2,
+            checksum_algorithm: ChecksumAlgorithm::Sha256.as_str().to_string(),
+        };
+        let err =
+            validate_meta_matches_manifest(&meta, &manifest).expect_err("expected validation error");
+        assert!(
+            err.to_string().contains("meta.json chunkCount mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_latest_v1_accepts_valid_latest() -> Result<()> {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let manifest_key = "images/demo/sha256-abc/manifest.json".to_string();
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: manifest.image_id.clone(),
+            version: manifest.version.clone(),
+            manifest_key: manifest_key.clone(),
+        };
+        validate_latest_v1(&latest, image_root_prefix, &manifest_key, &manifest)?;
+        Ok(())
+    }
+
+    #[test]
+    fn validate_latest_v1_rejects_schema_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let manifest_key = "images/demo/sha256-abc/manifest.json";
+        let latest = LatestV1 {
+            schema: "not-a-schema".to_string(),
+            image_id: manifest.image_id.clone(),
+            version: manifest.version.clone(),
+            manifest_key: manifest_key.to_string(),
+        };
+        let err =
+            validate_latest_v1(&latest, image_root_prefix, manifest_key, &manifest).expect_err(
+                "expected latest.json schema validation error",
+            );
+        assert!(
+            err.to_string().contains("latest.json schema mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_latest_v1_rejects_image_id_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let manifest_key = "images/demo/sha256-abc/manifest.json";
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: "other".to_string(),
+            version: manifest.version.clone(),
+            manifest_key: manifest_key.to_string(),
+        };
+        let err =
+            validate_latest_v1(&latest, image_root_prefix, manifest_key, &manifest).expect_err(
+                "expected latest.json imageId validation error",
+            );
+        assert!(
+            err.to_string().contains("latest.json imageId mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_latest_v1_rejects_manifest_key_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let manifest_key = "images/demo/sha256-abc/manifest.json";
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: manifest.image_id.clone(),
+            version: manifest.version.clone(),
+            manifest_key: "images/demo/sha256-abc/not-manifest.json".to_string(),
+        };
+        let err =
+            validate_latest_v1(&latest, image_root_prefix, manifest_key, &manifest).expect_err(
+                "expected latest.json manifestKey validation error",
+            );
+        assert!(
+            err.to_string().contains("latest.json manifestKey mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_latest_v1_rejects_version_mismatch_when_manifest_key_matches_verified() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-real".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let manifest_key = "images/demo/sha256-fake/manifest.json";
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: manifest.image_id.clone(),
+            version: "sha256-fake".to_string(),
+            manifest_key: manifest_key.to_string(),
+        };
+        let err =
+            validate_latest_v1(&latest, image_root_prefix, manifest_key, &manifest).expect_err(
+                "expected latest.json version mismatch",
+            );
+        assert!(
+            err.to_string().contains("latest.json version mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_latest_v1_rejects_manifest_key_mismatch_for_matching_version() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let verified_manifest_key = "images/demo/sha256-other/manifest.json";
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: manifest.image_id.clone(),
+            version: manifest.version.clone(),
+            manifest_key: "images/demo/sha256-abc/manifest.json".to_string(),
+        };
+        let err = validate_latest_v1(&latest, image_root_prefix, verified_manifest_key, &manifest)
+            .expect_err("expected latest.json manifestKey mismatch");
+        assert!(
+            err.to_string()
+                .contains("latest.json manifestKey mismatch for version"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn missing_chunk_is_non_retryable_even_with_context_wrapping() {
         let err = anyhow!("object not found (404)");
         let err = Err::<(), _>(err)
@@ -4544,6 +4810,32 @@ mod tests {
         assert!(
             !is_retryable_chunk_error(&err),
             "expected missing chunk to be non-retryable; error chain was: {}",
+            error_chain_summary(&err)
+        );
+    }
+
+    #[test]
+    fn size_mismatch_is_non_retryable_even_with_context_wrapping() {
+        let err = anyhow!("size mismatch: expected 512 bytes, got 511 bytes (Content-Length)");
+        let err = Err::<(), _>(err)
+            .context("GET s3://bucket/prefix/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(
+            !is_retryable_chunk_error(&err),
+            "expected size mismatch to be non-retryable; error chain was: {}",
+            error_chain_summary(&err)
+        );
+    }
+
+    #[test]
+    fn sha256_mismatch_is_non_retryable_even_with_context_wrapping() {
+        let err = anyhow!("sha256 mismatch: expected deadbeef, got cafebabe");
+        let err = Err::<(), _>(err)
+            .context("GET s3://bucket/prefix/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(
+            !is_retryable_chunk_error(&err),
+            "expected sha256 mismatch to be non-retryable; error chain was: {}",
             error_chain_summary(&err)
         );
     }
