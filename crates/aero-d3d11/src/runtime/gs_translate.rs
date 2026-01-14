@@ -67,7 +67,8 @@ pub enum GsTranslateError {
     InvalidVaryingLocation {
         /// Output register location (`o#`) requested as a varying.
         ///
-        /// Location 0 is reserved for position in the expanded-vertex scheme.
+        /// Location 0 is reserved for position in the expanded-vertex scheme, and varying locations
+        /// must be less than [`EXPANDED_VERTEX_MAX_VARYINGS`].
         loc: u32,
     },
     UnsupportedInputPrimitive {
@@ -316,8 +317,10 @@ pub struct GsPrepassTranslation {
 /// geometry prepass, parameterizing the expanded-vertex layout.
 ///
 /// `varyings` is a sorted, de-duplicated list of D3D output register locations (`o#`) that should be
-/// packed into the expanded vertex buffer. Location 0 is reserved for position (`o0`) and must not
-/// be included in `varyings`.
+/// written into the expanded vertex buffer's varying table (`ExpandedVertex.varyings[loc]`).
+///
+/// Location 0 is reserved for position (`o0`) and must not be included in `varyings`. Locations must
+/// also be less than [`EXPANDED_VERTEX_MAX_VARYINGS`].
 ///
 /// The generated WGSL uses the following fixed bind group layout:
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
@@ -1114,6 +1117,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("struct ExpandedVertex {");
     w.indent();
     w.line("pos: vec4<f32>,");
+    // Match the emulation passthrough VS (`runtime/wgsl_link.rs`), which expects a fixed-size
+    // varying table indexed by `@location(N)`.
     w.line(&format!(
         "varyings: array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>,"
     ));

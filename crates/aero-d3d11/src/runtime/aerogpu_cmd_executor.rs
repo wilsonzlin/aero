@@ -8005,7 +8005,7 @@ impl AerogpuD3d11Executor {
                                 &mut pass, cmd_bytes, allocs, guest_mem,
                             )?;
                         } else {
-                            exec_draw_indexed(&mut pass, cmd_bytes)?;
+                            self.exec_draw_indexed(&mut pass, cmd_bytes)?;
                         }
 
                         if used_cb_vs.first().is_some_and(|v| *v)
@@ -8850,7 +8850,7 @@ impl AerogpuD3d11Executor {
             .get(&ib.buffer)
             .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
 
-        let Some(shadow) = buf.shadow.as_deref() else {
+        let Some(shadow) = buf.host_shadow.as_deref() else {
             // Should be rare (shadow is allocated for index buffers on GL), but fall back to wgpu's
             // built-in behavior if we can't inspect the index data.
             pass.draw_indexed(index_range, base_vertex, instances);
@@ -10067,7 +10067,7 @@ impl AerogpuD3d11Executor {
             .resources
             .buffers
             .get(&dst_buffer)
-            .is_some_and(|dst| dst.shadow.is_some());
+            .is_some_and(|dst| dst.host_shadow.is_some());
         if dst_has_shadow {
             let size_usize: usize = size_bytes
                 .try_into()
@@ -10083,7 +10083,7 @@ impl AerogpuD3d11Executor {
                 .resources
                 .buffers
                 .get(&src_buffer)
-                .and_then(|src| src.shadow.as_deref())
+                .and_then(|src| src.host_shadow.as_deref())
             {
                 let end = src_offset_usize
                     .checked_add(size_usize)
@@ -10112,7 +10112,7 @@ impl AerogpuD3d11Executor {
             match src_bytes {
                 Some(bytes) => {
                     if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
-                        if let Some(dst_shadow) = dst.shadow.as_mut() {
+                        if let Some(dst_shadow) = dst.host_shadow.as_mut() {
                             let end =
                                 dst_offset_usize.checked_add(size_usize).ok_or_else(|| {
                                     anyhow!("COPY_BUFFER: dst shadow range overflows usize")
@@ -10126,7 +10126,7 @@ impl AerogpuD3d11Executor {
                 }
                 None => {
                     if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
-                        dst.shadow = None;
+                        dst.host_shadow = None;
                     }
                 }
             }
