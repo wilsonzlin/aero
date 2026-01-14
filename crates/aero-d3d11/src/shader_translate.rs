@@ -4705,7 +4705,11 @@ fn emit_instructions(
                         mask: *mask,
                     });
                 }
-                let addr_u = emit_src_vec4_u32(addr, inst_index, "store_raw", ctx)?;
+                // Raw UAV stores use byte offsets. The SM4/SM5 register file is untyped, so the
+                // address operand may be provided either as raw integer bits or as a numeric float
+                // (common when the compiler materializes an integer constant in a float register).
+                // Use the same float→u32 heuristic as `ld_uav_raw`.
+                let addr_u = emit_src_vec4_u32_int(addr, inst_index, "store_raw", ctx)?;
                 let base_name = format!("store_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
