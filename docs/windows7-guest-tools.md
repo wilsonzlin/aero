@@ -133,8 +133,10 @@ Boot drive selection note (BIOS `DL`):
 
 - To boot the **installer ISO**, select **CD0** as the BIOS boot drive (`DL=0xE0`) *before* reset/restart.
 - After installation (and for normal boots), select **HDD0** as the BIOS boot drive (`DL=0x80`) *before* reset/restart.
-- Aero’s legacy BIOS does **not** probe a “boot order” list; the host/runtime must select `DL`.
-  See [`docs/05-storage-topology-win7.md#boot-flows-normative`](./05-storage-topology-win7.md#boot-flows-normative).
+- Aero’s legacy BIOS boot selection is still primarily driven by an explicit boot drive number (`DL`),
+  but it also supports an optional “CD-first when present” policy (attempt CD0 when install media is
+  attached, otherwise fall back to the configured boot drive). See
+  [`docs/05-storage-topology-win7.md#boot-flows-normative`](./05-storage-topology-win7.md#boot-flows-normative).
 
 Then:
 
