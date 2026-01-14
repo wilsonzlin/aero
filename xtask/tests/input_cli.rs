@@ -88,6 +88,8 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("usb2_companion_routing"))
         .stdout(predicate::str::contains("webusb_passthrough_uhci"))
         .stdout(predicate::str::contains("xhci_controller_webusb_ep0"))
+        .stdout(predicate::str::contains("xhci_doorbell0"))
+        .stdout(predicate::str::contains("xhci_usbcmd_run_gates_transfers"))
         .stdout(predicate::str::contains("hid_builtin_snapshot"))
         .stdout(predicate::str::contains("hid_usage_keyboard_fixture"))
         .stdout(predicate::str::contains("hid_usage_consumer_fixture"))
