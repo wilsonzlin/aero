@@ -513,8 +513,10 @@ fn bios_vbe_sync_mode_and_derived_lfb_base_from_vram_bar_base_and_lfb_offset() {
     // Use a derived base outside the BIOS PCI BAR allocator default window
     // (`0xE000_0000..0xF000_0000`) to ensure this path does not rely on that sub-window.
     let lfb_offset: u32 = VBE_FRAMEBUFFER_OFFSET as u32;
-    let vram_bar_base: u32 = 0xCFFC_0000;
-    let expected_lfb_base: u32 = 0xD000_0000;
+    // Deliberately choose an *unaligned* base so the machine must mask it down to the legacy VGA
+    // BAR size alignment requirement.
+    let vram_bar_base: u32 = 0xCFFC_1000;
+    let expected_lfb_base: u32 = 0xD000_1000;
     assert_eq!(
         vram_bar_base.wrapping_add(lfb_offset),
         expected_lfb_base,
