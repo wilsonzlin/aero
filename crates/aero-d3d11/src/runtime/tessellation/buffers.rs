@@ -102,6 +102,41 @@ impl TessellationSizingParams {
     }
 }
 
+/// Computes the number of patches for a patchlist draw given the number of control points and
+/// elements (vertices or indices).
+///
+/// D3D11 patchlist topologies define patches as fixed-size groups of `control_points` elements.
+/// Both indexed and non-indexed draws follow the same rule; callers should pass:
+/// - `element_count = vertex_count` for non-indexed draws
+/// - `element_count = index_count` for indexed draws
+pub fn patch_count_total_from_element_count(
+    element_count: u32,
+    control_points: u32,
+) -> Result<u32, TessellationSizingError> {
+    if control_points == 0 {
+        return Err(TessellationSizingError::InvalidParam(
+            "control_points must be > 0",
+        ));
+    }
+    if control_points > 32 {
+        return Err(TessellationSizingError::InvalidParam(
+            "control_points must be <= 32",
+        ));
+    }
+    if element_count == 0 {
+        return Err(TessellationSizingError::InvalidParam(
+            "element_count must be > 0",
+        ));
+    }
+    let cp = control_points as u32;
+    if element_count % cp != 0 {
+        return Err(TessellationSizingError::InvalidParam(
+            "element_count must be divisible by control_points",
+        ));
+    }
+    Ok(element_count / cp)
+}
+
 fn checked_mul_u64(a: u64, b: u64, what: &'static str) -> Result<u64, TessellationSizingError> {
     a.checked_mul(b)
         .ok_or(TessellationSizingError::Overflow(what))
@@ -351,6 +386,19 @@ mod tests {
             TessellationDrawScratchSizes::new(TessellationSizingParams::new(1, 33, 1, 1)),
             Err(TessellationSizingError::InvalidParam(_))
         ));
+    }
+
+    #[test]
+    fn patch_count_from_element_count_matches_expected() {
+        assert_eq!(
+            patch_count_total_from_element_count(12, 3).unwrap(),
+            4,
+            "12 vertices with 3 control points => 4 patches"
+        );
+        assert!(patch_count_total_from_element_count(11, 3).is_err());
+        assert!(patch_count_total_from_element_count(0, 3).is_err());
+        assert!(patch_count_total_from_element_count(3, 0).is_err());
+        assert!(patch_count_total_from_element_count(3, 33).is_err());
     }
 
     #[test]

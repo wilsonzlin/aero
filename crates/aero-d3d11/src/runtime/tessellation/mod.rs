@@ -104,3 +104,48 @@ impl TessellationRuntime {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+    use std::sync::Arc;
+
+    #[test]
+    fn alloc_draw_scratch_allocates_expected_sizes() {
+        pollster::block_on(async {
+            let exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    eprintln!("skipping tessellation scratch allocation test: wgpu unavailable ({e:#})");
+                    return;
+                }
+            };
+
+            let mut scratch = ExpansionScratchAllocator::new(Default::default());
+            let mut rt = TessellationRuntime::default();
+            let params = buffers::TessellationSizingParams::new(2, 3, MAX_TESS_FACTOR, 2);
+            let draw = rt
+                .alloc_draw_scratch(exec.device(), &mut scratch, params)
+                .expect("alloc_draw_scratch should succeed");
+
+            assert_eq!(draw.vs_out.size, draw.sizes.vs_out_bytes);
+            assert_eq!(draw.hs_out.size, draw.sizes.hs_out_bytes);
+            assert_eq!(
+                draw.hs_patch_constants.size,
+                draw.sizes.hs_patch_constants_bytes
+            );
+            assert_eq!(draw.tess_metadata.size, draw.sizes.tess_metadata_bytes);
+            assert_eq!(draw.expanded_vertices.size, draw.sizes.expanded_vertex_bytes);
+            assert_eq!(draw.expanded_indices.size, draw.sizes.expanded_index_bytes);
+            assert_eq!(draw.indirect_args.size, draw.sizes.indirect_args_bytes);
+
+            // All allocations should share the same backing buffer when capacity is sufficient.
+            assert!(Arc::ptr_eq(&draw.vs_out.buffer, &draw.hs_out.buffer));
+            assert!(Arc::ptr_eq(
+                &draw.vs_out.buffer,
+                &draw.expanded_vertices.buffer
+            ));
+        });
+    }
+}
