@@ -14,8 +14,12 @@ Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
 Policy:
   - The alias INF is a *filename alias only*.
-  - From the first section header (typically `[Version]`) onward, the alias must
-    remain byte-for-byte identical to the canonical INF.
+  - It is allowed to diverge from the canonical INF only in the models sections
+    (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict revision-gated
+    generic fallback HWID match (no SUBSYS).
+  - Outside those models sections, from the first section header (typically
+    `[Version]`) onward, it must remain byte-for-byte identical to the canonical
+    INF.
   - Only the leading banner/comment block may differ.
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -147,13 +151,18 @@ def main() -> int:
         )
         return 0
 
-    canonical_body = inf_functional_bytes(canonical)
-    alias_body = inf_functional_bytes(alias)
+    canonical_body = strip_inf_sections(
+        inf_functional_bytes(canonical), sections={"aero.ntx86", "aero.ntamd64"}
+    )
+    alias_body = strip_inf_sections(inf_functional_bytes(alias), sections={"aero.ntx86", "aero.ntamd64"})
     if canonical_body == alias_body:
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
-    sys.stderr.write("The alias INF must match the canonical INF from [Version] onward.\n\n")
+    sys.stderr.write(
+        "The alias INF must match the canonical INF from [Version] onward outside the models sections "
+        "([Aero.NTx86] / [Aero.NTamd64]).\n\n"
+    )
 
     canonical_lines = _decode_lines_for_diff(canonical_body)
     alias_lines = _decode_lines_for_diff(alias_body)
