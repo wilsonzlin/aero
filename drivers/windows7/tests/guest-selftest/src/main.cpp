@@ -3557,7 +3557,7 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
   // Verify the miniport IOCTL query still works after the forced reset.
   AerovblkQueryInfoResult after{};
   bool after_ok = false;
-  DWORD last_err = ERROR_SUCCESS;
+  last_err = ERROR_SUCCESS;
   for (int attempt = 0; attempt < 5; attempt++) {
     DWORD err = ERROR_SUCCESS;
     HANDLE pd2 = TryOpenPhysicalDriveForIoctl(target.disk_number, &err);
