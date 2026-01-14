@@ -71,12 +71,15 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Geometry shaders (GS):
   - D3D10/D3D10.1: GS DDIs are stubbed (`GsSetShader*` no-op).
   - D3D11:
-    - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `AEROGPU_CMD_BIND_SHADERS.reserved0`).
+    - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
     - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are currently stubbed in the Win7 UMD.
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; the host uses a **compute prepass + indirect draw** path when GS/HS/DS emulation is required.
     - Current implementation is **placeholder scaffolding**: the prepass writes synthetic triangle-list geometry (one triangle per input primitive) and does **not** yet translate/execute the GS DXBC.
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts legacy `stage = GEOMETRY` creates for robustness but ignores them.
+    - Win7 test subset (initial target for real GS execution):
+      - Input topologies: `PointList` and `TriangleList` (non-adjacency).
+      - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strips are expanded into a triangle list (no primitive-restart indices).
   - Known unsupported / not yet implemented:
     - Stream-output (SO / `CreateGeometryShaderWithStreamOutput`, `SOSetTargets`, etc.).
     - Multi-stream GS output (`emit_stream` / `cut_stream`; non-zero stream indices are rejected at shader-create time).
