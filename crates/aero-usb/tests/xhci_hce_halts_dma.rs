@@ -1,6 +1,8 @@
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
+use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::{regs, XhciController};
-use aero_usb::MemoryBus;
+use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
 #[derive(Default)]
 struct CountingMem {
@@ -100,31 +102,95 @@ fn xhci_step_1ms_does_not_dma_after_host_controller_error() {
 }
 
 #[test]
-fn xhci_run_does_not_dma_after_host_controller_error() {
+fn xhci_tick_1ms_with_dma_does_not_dma_after_host_controller_error_even_with_run_set() {
     let mut mem = CountingMem::new(0x20_000);
     let mut xhci = XhciController::new();
 
+    // Program CRCR so the tick path has a valid DMA target.
+    let crcr_addr = 0x3000u64;
+    MemoryBus::write_u32(&mut mem, crcr_addr, 0x1122_3344);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     force_hce(&mut xhci, &mut mem);
 
-    // Setting RUN should not perform the DMA-on-RUN probe while HCE is latched.
+    // With HCE latched, even `tick_1ms_with_dma` must not touch guest memory (DMA-on-RUN probe +
+    // CRCR dword read are suppressed).
     mem.reset_counts();
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci.tick_1ms_with_dma(&mut mem);
     assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
     assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
 }
 
 #[test]
-fn xhci_doorbell_does_not_dma_after_host_controller_error() {
+fn xhci_tick_does_not_dma_after_host_controller_error_even_with_active_endpoint() {
+    #[derive(Default)]
+    struct NakDevice;
+
+    impl UsbDeviceModel for NakDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Ack
+        }
+
+        fn handle_in_transfer(&mut self, _ep_addr: u8, _max_len: usize) -> UsbInResult {
+            UsbInResult::Nak
+        }
+
+        fn handle_out_transfer(&mut self, _ep_addr: u8, _data: &[u8]) -> UsbOutResult {
+            UsbOutResult::Nak
+        }
+    }
+
     let mut mem = CountingMem::new(0x20_000);
-    let mut xhci = XhciController::new();
+    let mut xhci = XhciController::with_port_count(1);
+
+    xhci.attach_device(0, Box::new(NakDevice));
+    while xhci.pop_pending_event().is_some() {}
+
+    // Enable a slot (requires DCBAAP), then clear DCBAAP so the transfer engine uses only the
+    // controller-local ring cursor (test harness convenience).
+    xhci.set_dcbaap(0x1000);
+    let slot_id = xhci.enable_slot(&mut mem).slot_id;
+    xhci.set_dcbaap(0);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    assert_eq!(
+        xhci.address_device(slot_id, slot_ctx).completion_code,
+        aero_usb::xhci::CommandCompletionCode::Success,
+        "address device"
+    );
+
+    // Queue an active bulk/interrupt endpoint with a single runnable TRB so `tick()` would normally
+    // DMA.
+    let ring_addr = 0x4000u64;
+    let mut trb = Trb::new(0, 0, 0);
+    trb.set_trb_type(TrbType::Normal);
+    trb.set_cycle(true);
+    trb.write_to(&mut mem, ring_addr);
+    xhci.set_endpoint_ring(slot_id, 2, ring_addr, true);
+    xhci.ring_doorbell(slot_id, 2);
+
+    // Sanity check: the controller should have recorded at least one active endpoint.
+    const TAG_ACTIVE_ENDPOINTS: u16 = 22;
+    let snapshot = xhci.save_state();
+    let r = SnapshotReader::parse(&snapshot, *b"XHCI").expect("parse snapshot");
+    let active = r
+        .bytes(TAG_ACTIVE_ENDPOINTS)
+        .expect("missing active endpoints field");
+    let count = u32::from_le_bytes(active[0..4].try_into().unwrap());
+    assert_eq!(count, 1, "expected one queued active endpoint");
 
     force_hce(&mut xhci, &mut mem);
 
-    // Endpoint doorbells attempt to run transfer execution and drain the event ring immediately.
-    // With HCE latched, we should not touch guest memory.
-    let doorbell1 = u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE);
+    // With HCE latched, the controller must not touch guest memory even if work is queued.
     mem.reset_counts();
-    xhci.mmio_write(doorbell1, 4, 2);
+    xhci.tick(&mut mem);
     assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
     assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
 }
