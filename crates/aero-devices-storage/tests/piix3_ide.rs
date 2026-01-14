@@ -4630,6 +4630,59 @@ fn atapi_packet_phase_irq_can_be_acknowledged_while_nien_is_set() {
 }
 
 #[test]
+fn atapi_alt_status_does_not_clear_irq_latch_on_packet_phase() {
+    let iso = MemIso::new(1);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_primary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on primary channel.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(PRIMARY_PORTS.cmd_base, 2);
+    }
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    // Issue a DMA-capable READ(10) packet. This should raise the packet-phase IRQ requesting the
+    // 12-byte packet; the DMA completion IRQ won't occur until the BMIDE engine is started and
+    // `tick()` runs.
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, PRIMARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    // ALT_STATUS reads must not acknowledge/clear the IDE IRQ latch.
+    let _ = ioports.read(PRIMARY_PORTS.ctrl_base, 1);
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "ALT_STATUS read cleared IRQ latch"
+    );
+
+    // STATUS reads still acknowledge/clear the latch.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn atapi_software_reset_clears_pending_dma_request() {
     let mut iso = MemIso::new(1);
     let expected: Vec<u8> = (0..2048u32)
