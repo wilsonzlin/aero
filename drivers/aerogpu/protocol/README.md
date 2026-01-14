@@ -257,6 +257,7 @@ validation rules, `backing_offset_bytes` / `row_pitch_bytes` interpretation, ali
    (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
    dxgkrnl preserves the blob and returns the exact same bytes on cross-process
    `OpenResource`, so both processes observe the same `share_token`.
+  Canonical rationale and Win7 guest validation tests: `docs/graphics/win7-shared-surfaces-share-token.md`.
   - **Collision policy:** `share_token` must be treated as a **globally unique**
     identifier. The host must detect and reject:
     - `EXPORT_SHARED_SURFACE` attempting to bind an already-exported token to a
