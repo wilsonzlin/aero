@@ -2525,6 +2525,58 @@ fn atapi_identify_device_aborts_with_signature() {
 }
 
 #[test]
+fn atapi_identify_packet_device_returns_identify_data() {
+    // Many OSes also issue IDENTIFY PACKET DEVICE (0xA1) to ATAPI drives to fetch identify words.
+    // This should succeed even without media present.
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(None),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Select master on secondary channel.
+    io.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // IDENTIFY PACKET DEVICE.
+    io.write(SECONDARY_PORTS.cmd_base + 7, 1, 0xA1);
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    // Read 256 words.
+    let mut buf = vec![0u8; 512];
+    for i in 0..256 {
+        let w = io.read(SECONDARY_PORTS.cmd_base, 2) as u16;
+        buf[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+
+    // Word 0: ATAPI device (0x8580) + packet size indicator (bit0=1).
+    let word0 = u16::from_le_bytes([buf[0], buf[1]]);
+    assert_eq!(word0, 0x8581);
+
+    // Word 49: DMA capability bit should be set.
+    let word49 = u16::from_le_bytes([buf[49 * 2], buf[49 * 2 + 1]]);
+    assert_ne!(word49 & (1 << 8), 0);
+
+    // Model string words 27..46 (40 bytes), ATA-encoded (bytes swapped within each word).
+    let mut model_bytes = Vec::new();
+    for chunk in buf[27 * 2..47 * 2].chunks_exact(2) {
+        model_bytes.push(chunk[1]);
+        model_bytes.push(chunk[0]);
+    }
+    let model = String::from_utf8_lossy(&model_bytes);
+    assert!(
+        model.contains("Aero ATAPI CD-ROM"),
+        "unexpected model string: {model:?}"
+    );
+
+    // Reading STATUS acknowledges and clears the pending IRQ.
+    let _ = io.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+}
+
+#[test]
 fn atapi_inquiry_and_read_10_pio() {
     let mut iso = MemIso::new(2);
     iso.data[2048..2053].copy_from_slice(b"WORLD");
