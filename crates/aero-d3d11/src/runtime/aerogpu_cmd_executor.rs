@@ -16034,352 +16034,6 @@ fn get_or_create_render_pipeline_for_state<'a>(
     Ok((key, pipeline, wgpu_slot_to_d3d_slot))
 }
 
-#[cfg(test)]
-fn expanded_draw_passthrough_vs_wgsl(pass_locations: &BTreeSet<u32>) -> String {
-    let mut wgsl = String::new();
-    wgsl.push_str("struct VsIn {\n");
-    wgsl.push_str("    @location(0) v0: vec4<f32>,\n");
-    for &loc in pass_locations {
-        if loc == 0 {
-            continue;
-        }
-        wgsl.push_str(&format!("    @location({loc}) v{loc}: vec4<f32>,\n"));
-    }
-    wgsl.push_str("};\n\n");
-
-    wgsl.push_str("struct VsOut {\n");
-    wgsl.push_str("    @builtin(position) pos: vec4<f32>,\n");
-    for &loc in pass_locations {
-        if loc == 0 {
-            continue;
-        }
-        wgsl.push_str(&format!("    @location({loc}) o{loc}: vec4<f32>,\n"));
-    }
-    wgsl.push_str("};\n\n");
-
-    wgsl.push_str("@vertex\n");
-    wgsl.push_str("fn vs_main(input: VsIn) -> VsOut {\n");
-    wgsl.push_str("    var out: VsOut;\n");
-    wgsl.push_str("    out.pos = input.v0;\n");
-    for &loc in pass_locations {
-        if loc == 0 {
-            continue;
-        }
-        wgsl.push_str(&format!("    out.o{loc} = input.v{loc};\n"));
-    }
-    wgsl.push_str("    return out;\n");
-    wgsl.push_str("}\n");
-    wgsl
-}
-
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn get_or_create_render_pipeline_for_expanded_draw<'a>(
-    device: &wgpu::Device,
-    pipeline_cache: &'a mut PipelineCache,
-    pipeline_layout: &wgpu::PipelineLayout,
-    resources: &AerogpuD3d11Resources,
-    state: &AerogpuD3d11State,
-    layout_key: PipelineLayoutKey,
-    expanded_reg_count: u32,
-    expanded_topology: wgpu::PrimitiveTopology,
-) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline)> {
-    let ps_handle = state
-        .ps
-        .ok_or_else(|| anyhow!("render draw without bound PS"))?;
-    let ps = resources
-        .shaders
-        .get(&ps_handle)
-        .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
-    if ps.stage != ShaderStage::Pixel {
-        bail!("shader {ps_handle} is not a pixel shader");
-    }
-
-    if expanded_reg_count == 0 {
-        bail!("expanded draw: expanded_reg_count must be > 0");
-    }
-    let expanded_reg_count_usize: usize = expanded_reg_count
-        .try_into()
-        .map_err(|_| anyhow!("expanded draw: expanded_reg_count out of range"))?;
-
-    // Expanded post-DS vertex buffers model each output register as one `vec4<f32>` attribute, so
-    // validate against the device's vertex attribute limit before attempting pipeline creation.
-    let max_vertex_attributes = device.limits().max_vertex_attributes as usize;
-    if expanded_reg_count_usize > max_vertex_attributes {
-        bail!("expanded draw: expanded_reg_count={expanded_reg_count} exceeds device vertex attribute limit ({max_vertex_attributes})");
-    }
-
-    // Pass through all non-position registers (1..reg_count-1).
-    let pass_locations: BTreeSet<u32> = (1..expanded_reg_count).collect();
-    let base_vs_wgsl = expanded_draw_passthrough_vs_wgsl(&pass_locations);
-    let selected_vs_wgsl = if state.depth_clip_enabled {
-        std::borrow::Cow::Borrowed(base_vs_wgsl.as_str())
-    } else {
-        std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&base_vs_wgsl))
-    };
-
-    // Link VS/PS interfaces by trimming unused varyings (mirrors the normal pipeline path).
-    let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
-    let vs_outputs = super::wgsl_link::locations_in_struct(&base_vs_wgsl, "VsOut")?;
-
-    let mut ps_link_locations = ps_declared_inputs.clone();
-    let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl_source.as_str());
-
-    let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
-        .difference(&vs_outputs)
-        .copied()
-        .collect();
-    if !ps_missing_locations.is_empty() {
-        let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
-        let used_missing: Vec<u32> = ps_missing_locations
-            .intersection(&ps_used_locations)
-            .copied()
-            .collect();
-        if let Some(&loc) = used_missing.first() {
-            bail!("pixel shader reads @location({loc}), but expanded VS does not output it");
-        }
-        ps_link_locations = ps_declared_inputs
-            .intersection(&vs_outputs)
-            .copied()
-            .collect();
-        if ps_link_locations != ps_declared_inputs {
-            linked_ps_wgsl =
-                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-                    linked_ps_wgsl.as_ref(),
-                    &ps_link_locations,
-                ));
-        }
-    }
-
-    // Trim fragment shader outputs to the currently-bound render target slots (skipping gaps).
-    // This mirrors the main pipeline path: D3D discards writes to unbound RTVs, but WebGPU
-    // requires outputs to have a matching `ColorTargetState`.
-    let keep_output_locations: BTreeSet<u32> = state
-        .render_targets
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, rt)| rt.is_some().then_some(idx as u32))
-        .collect();
-    let declared_outputs = super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
-    let missing_outputs: BTreeSet<u32> = declared_outputs
-        .difference(&keep_output_locations)
-        .copied()
-        .collect();
-    if !missing_outputs.is_empty() {
-        linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
-            linked_ps_wgsl.as_ref(),
-            &keep_output_locations,
-        ));
-    }
-
-    let fragment_shader = if linked_ps_wgsl.as_ref() == ps.wgsl_source.as_str() {
-        ps.wgsl_hash
-    } else {
-        let (hash, _module) = pipeline_cache.get_or_create_shader_module(
-            device,
-            map_pipeline_cache_stage(ShaderStage::Pixel),
-            linked_ps_wgsl.as_ref(),
-            Some("aerogpu_cmd expanded linked pixel shader"),
-        );
-        hash
-    };
-
-    let needs_trim = vs_outputs != ps_link_locations;
-    let final_vs_wgsl = if needs_trim {
-        super::wgsl_link::trim_vs_outputs_to_locations(
-            selected_vs_wgsl.as_ref(),
-            &ps_link_locations,
-        )
-    } else {
-        selected_vs_wgsl.into_owned()
-    };
-    let (vertex_shader, _module) = pipeline_cache.get_or_create_shader_module(
-        device,
-        map_pipeline_cache_stage(ShaderStage::Vertex),
-        &final_vs_wgsl,
-        Some("aerogpu_cmd expanded passthrough VS"),
-    );
-
-    // Expanded vertex buffer layout: `reg_count` contiguous `vec4<f32>` registers.
-    let expanded_stride_bytes: wgpu::BufferAddress = expanded_reg_count
-        .checked_mul(16)
-        .ok_or_else(|| anyhow!("expanded draw: expanded vertex stride overflow"))?
-        .into();
-    let mut expanded_attributes: Vec<wgpu::VertexAttribute> =
-        Vec::with_capacity(expanded_reg_count_usize);
-    for reg_index in 0..expanded_reg_count {
-        expanded_attributes.push(wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x4,
-            offset: (reg_index as wgpu::BufferAddress) * 16,
-            shader_location: reg_index,
-        });
-    }
-    let vertex_buffer = VertexBufferLayoutOwned {
-        array_stride: expanded_stride_bytes,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: expanded_attributes,
-    };
-    let vb_layout = vertex_buffer.as_wgpu();
-    let vb_key: aero_gpu::pipeline_key::VertexBufferLayoutKey = (&vb_layout).into();
-
-    let depth_only_pass =
-        state.render_targets.iter().all(|rt| rt.is_none()) && state.depth_stencil.is_some();
-
-    let mut color_targets = if depth_only_pass {
-        Vec::with_capacity(1)
-    } else {
-        Vec::with_capacity(state.render_targets.len())
-    };
-    let mut color_target_states = if depth_only_pass {
-        Vec::with_capacity(1)
-    } else {
-        Vec::with_capacity(state.render_targets.len())
-    };
-
-    if depth_only_pass {
-        let ct = wgpu::ColorTargetState {
-            format: DEPTH_ONLY_DUMMY_COLOR_FORMAT,
-            blend: None,
-            write_mask: wgpu::ColorWrites::empty(),
-        };
-        color_targets.push(Some(ColorTargetKey {
-            format: ct.format,
-            blend: None,
-            write_mask: ct.write_mask,
-        }));
-        color_target_states.push(Some(ct));
-    } else {
-        for &rt in &state.render_targets {
-            let Some(rt) = rt else {
-                color_targets.push(None);
-                color_target_states.push(None);
-                continue;
-            };
-            let tex = resources
-                .textures
-                .get(&rt)
-                .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
-            let mut write_mask = state.color_write_mask;
-            if aerogpu_format_is_x8(tex.format_u32) {
-                write_mask &= !wgpu::ColorWrites::ALPHA;
-            }
-            let ct = wgpu::ColorTargetState {
-                format: tex.desc.format,
-                blend: state.blend,
-                write_mask,
-            };
-            color_targets.push(Some(ColorTargetKey {
-                format: ct.format,
-                blend: ct.blend.map(Into::into),
-                write_mask: ct.write_mask,
-            }));
-            color_target_states.push(Some(ct));
-        }
-    }
-
-    let depth_stencil_state = if let Some(ds_id) = state.depth_stencil {
-        let tex = resources
-            .textures
-            .get(&ds_id)
-            .ok_or_else(|| anyhow!("unknown depth-stencil texture {ds_id}"))?;
-
-        let depth_compare = if state.depth_enable {
-            state.depth_compare
-        } else {
-            wgpu::CompareFunction::Always
-        };
-        let depth_write_enabled = state.depth_enable && state.depth_write_enable;
-
-        let (read_mask, write_mask) = if state.stencil_enable {
-            (
-                state.stencil_read_mask as u32,
-                state.stencil_write_mask as u32,
-            )
-        } else {
-            (0, 0)
-        };
-
-        Some(wgpu::DepthStencilState {
-            format: tex.desc.format,
-            depth_write_enabled,
-            depth_compare,
-            stencil: wgpu::StencilState {
-                front: wgpu::StencilFaceState::IGNORE,
-                back: wgpu::StencilFaceState::IGNORE,
-                read_mask,
-                write_mask,
-            },
-            bias: wgpu::DepthBiasState {
-                constant: state.depth_bias,
-                slope_scale: 0.0,
-                clamp: 0.0,
-            },
-        })
-    } else {
-        None
-    };
-    let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
-
-    let strip_index_format = match expanded_topology {
-        wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip => {
-            Some(wgpu::IndexFormat::Uint32)
-        }
-        _ => None,
-    };
-    let key = RenderPipelineKey {
-        vertex_shader,
-        fragment_shader,
-        color_targets,
-        depth_stencil: depth_stencil_key,
-        primitive_topology: expanded_topology,
-        strip_index_format,
-        cull_mode: state.cull_mode,
-        front_face: state.front_face,
-        vertex_buffers: vec![vb_key],
-        sample_count: 1,
-        layout: layout_key,
-    };
-
-    let cull_mode = state.cull_mode;
-    let front_face = state.front_face;
-    let depth_stencil_state_for_pipeline = depth_stencil_state.clone();
-
-    let pipeline = pipeline_cache
-        .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("aerogpu_cmd expanded draw render pipeline"),
-                layout: Some(pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: vs,
-                    entry_point: "vs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[vb_layout],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: fs,
-                    entry_point: ps.entry_point,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &color_target_states,
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: expanded_topology,
-                    strip_index_format,
-                    front_face,
-                    cull_mode,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: depth_stencil_state_for_pipeline,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            })
-        })
-        .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-
-    Ok((key, pipeline))
-}
-
 fn build_vertex_buffers_for_pipeline(
     resources: &mut AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
@@ -18342,8 +17996,44 @@ mod tests {
                 },
             );
 
+            // Minimal VS resource; the expanded draw path will override this with a generated
+            // passthrough VS, but pipeline creation still validates that a VS is bound.
+            const VS: u32 = 2;
+            let vs_wgsl = r#"
+                struct VsOut {
+                    @builtin(position) pos: vec4<f32>,
+                };
+
+                @vertex
+                fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+                    _ = index;
+                    var out: VsOut;
+                    out.pos = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+            let (vs_hash, _module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                map_pipeline_cache_stage(ShaderStage::Vertex),
+                vs_wgsl,
+                Some("expanded_draw mrt trim VS"),
+            );
+            exec.resources.shaders.insert(
+                VS,
+                ShaderResource {
+                    stage: ShaderStage::Vertex,
+                    wgsl_hash: vs_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "vs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: vs_wgsl.to_owned(),
+                },
+            );
+
             // Pixel shader writes to @location(0) and @location(2), but only RT0 is bound.
-            const PS: u32 = 2;
+            const PS: u32 = 3;
             let fs_wgsl = r#"
                 struct PsOut {
                     @location(0) o0: vec4<f32>,
@@ -18379,29 +18069,57 @@ mod tests {
                 },
             );
 
+            exec.state.vs = Some(VS);
             exec.state.ps = Some(PS);
             exec.state.render_targets = vec![Some(RT)];
             exec.state.depth_stencil = None;
+            exec.state.emulated_expanded_vertex_buffer = Some(0);
 
-            let layout_key = PipelineLayoutKey::empty();
+            // Build a pipeline layout that includes the internal bind group used by the generated
+            // passthrough VS (`@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)`).
+            let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    exec.resources
+                        .shaders
+                        .get(&PS)
+                        .expect("PS inserted above")
+                        .reflection
+                        .bindings
+                        .as_slice(),
+                )],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("pipeline bindings build should succeed");
+            extend_pipeline_bindings_for_passthrough_vs(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                &mut pipeline_bindings,
+            )
+            .expect("pipeline bindings extension should succeed");
+            let layout_key = std::mem::replace(&mut pipeline_bindings.layout_key, PipelineLayoutKey::empty());
+            let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
+                .group_layouts
+                .iter()
+                .map(|l| l.layout.as_ref())
+                .collect();
             let pipeline_layout =
                 exec.device
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("expanded_draw mrt trim pipeline layout"),
-                        bind_group_layouts: &[],
+                        bind_group_layouts: &layout_refs,
                         push_constant_ranges: &[],
                     });
 
             exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let res = super::get_or_create_render_pipeline_for_expanded_draw(
+            let res = super::get_or_create_render_pipeline_for_state(
                 &exec.device,
                 &mut exec.pipeline_cache,
                 &pipeline_layout,
-                &exec.resources,
+                &mut exec.resources,
                 &exec.state,
                 layout_key,
-                1,
-                wgpu::PrimitiveTopology::TriangleList,
             );
             exec.device.poll(wgpu::Maintain::Wait);
             let err = exec.device.pop_error_scope().await;
