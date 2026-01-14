@@ -513,6 +513,9 @@ async fn publish(args: PublishArgs) -> Result<()> {
         }));
     }
     drop(result_tx);
+    // Drop the unused receiver handle so if all workers exit early (e.g. upload failures),
+    // the producer will observe the channel closing instead of deadlocking on a full queue.
+    drop(work_rx);
 
     let reader_path = args.file.clone();
     let reader_format = args.format;

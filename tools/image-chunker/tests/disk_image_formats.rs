@@ -258,8 +258,12 @@ fn chunking_rejects_qcow2_backing_file_without_parent() {
     // an explicit parent disk is provided, so the chunker (single-file open) must reject it.
     let backing_file_offset = 104u64;
     let backing_file_size = 8u32;
-    backend.write_at(8, &backing_file_offset.to_be_bytes()).unwrap();
-    backend.write_at(16, &backing_file_size.to_be_bytes()).unwrap();
+    backend
+        .write_at(8, &backing_file_offset.to_be_bytes())
+        .unwrap();
+    backend
+        .write_at(16, &backing_file_size.to_be_bytes())
+        .unwrap();
 
     let tmp = persist_mem_backend(backend);
 
