@@ -142,7 +142,6 @@ fn send_init_sipi(m: &mut Machine, dest_apic_id: u8, sipi_vector: u8) {
 }
 
 #[test]
-#[ignore = "requires SMP scheduling + per-vCPU interrupt polling (IOAPIC destination)"]
 fn smp_timer_irq_routed_to_ap() {
     let cfg = MachineConfig {
         cpu_count: 2,

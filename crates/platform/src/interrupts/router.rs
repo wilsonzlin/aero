@@ -525,6 +525,19 @@ impl PlatformInterrupts {
             .store(mode == PlatformInterruptMode::Apic, Ordering::SeqCst);
 
         if prev != PlatformInterruptMode::Apic && mode == PlatformInterruptMode::Apic {
+            // Ensure LAPICs are software-enabled (SVR[8]) when transitioning into APIC mode.
+            //
+            // INIT IPI delivery resets the destination LAPIC's SVR back to the power-on baseline
+            // (software enable bit cleared). If INIT is delivered while still in legacy PIC mode,
+            // `apic_enabled` is false and the INIT path intentionally avoids re-enabling the LAPIC.
+            //
+            // Once the platform later switches into APIC mode, IOAPIC/MSI delivery expects the
+            // destination LAPICs to be able to accept interrupts. Re-enable them here so SMP bring-up
+            // tests that do INIT+SIPI before switching to APIC mode can still observe IOAPIC delivery.
+            for lapic in self.lapics_iter() {
+                Self::enable_lapic_software(lapic);
+            }
+
             // If the IOAPIC has been programmed while still routing through the legacy
             // PIC (or has seen input levels change without delivery), Remote-IRR may not
             // represent a real in-service interrupt. Reset it before syncing asserted
