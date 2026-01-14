@@ -2411,61 +2411,15 @@ mod tests {
                 }
             "#;
 
-            // Baseline: the untrimmed shader should fail validation when paired with a single
-            // color target (it declares only @location(1)).
-            let vs = rt
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("d3d11 runtime unbound rt0 baseline vs"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
-                });
-            let fs = rt
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("d3d11 runtime unbound rt0 baseline fs"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
-                });
-            let layout = rt
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("d3d11 runtime unbound rt0 baseline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
-
-            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let _ = rt
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("d3d11 runtime unbound rt0 baseline pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &vs,
-                        entry_point: "vs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &fs,
-                        entry_point: "fs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                });
-            rt.device.poll(wgpu::Maintain::Wait);
-            let err = rt.device.pop_error_scope().await;
+            let keep_output_locations = BTreeSet::from([0u32]);
+            let expected_trimmed_wgsl =
+                super::super::wgsl_link::trim_ps_outputs_to_locations(fs_wgsl, &keep_output_locations);
             assert!(
-                err.is_some(),
-                "untrimmed shader writing only to @location(1) should fail validation"
+                !expected_trimmed_wgsl.contains("@location(1)"),
+                "sanity check: trimmed WGSL should drop unbound outputs"
             );
+            #[cfg(debug_assertions)]
+            let expected_trimmed_hash = aero_gpu::pipeline_key::hash_wgsl(&expected_trimmed_wgsl);
 
             // Now go through the D3D11 runtime command path; the runtime should trim outputs and
             // pipeline creation should succeed without validation errors.
@@ -2494,6 +2448,18 @@ mod tests {
                 err.is_none(),
                 "unexpected wgpu validation error while creating trimmed pipeline: {err:?}"
             );
+
+            #[cfg(debug_assertions)]
+            {
+                let cached = rt
+                    .pipelines
+                    .debug_shader_source(ShaderStage::Fragment, expected_trimmed_hash);
+                assert_eq!(
+                    cached,
+                    Some(expected_trimmed_wgsl.as_str()),
+                    "expected trimmed fragment WGSL to be cached when creating the pipeline"
+                );
+            }
         });
     }
 
@@ -2548,60 +2514,15 @@ mod tests {
                 }
             "#;
 
-            // Baseline: the untrimmed stage interface should fail validation.
-            let vs = rt
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("d3d11 runtime stage-link baseline vs"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
-                });
-            let fs = rt
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("d3d11 runtime stage-link baseline fs"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
-                });
-            let layout = rt
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("d3d11 runtime stage-link baseline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
-
-            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let _ = rt
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("d3d11 runtime stage-link baseline pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &vs,
-                        entry_point: "vs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &fs,
-                        entry_point: "fs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                });
-            rt.device.poll(wgpu::Maintain::Wait);
-            let err = rt.device.pop_error_scope().await;
+            let keep_input_locations = BTreeSet::from([0u32]);
+            let expected_trimmed_wgsl =
+                super::super::wgsl_link::trim_ps_inputs_to_locations(fs_wgsl, &keep_input_locations);
             assert!(
-                err.is_some(),
-                "untrimmed stage interface should fail validation, but got: {err:?}"
+                !expected_trimmed_wgsl.contains("@location(1)"),
+                "sanity check: trimmed WGSL should drop missing inputs"
             );
+            #[cfg(debug_assertions)]
+            let expected_trimmed_hash = aero_gpu::pipeline_key::hash_wgsl(&expected_trimmed_wgsl);
 
             // Now go through the D3D11 runtime command path; the runtime should trim the stage
             // interface and pipeline creation should succeed without validation errors.
@@ -2630,6 +2551,18 @@ mod tests {
                 err.is_none(),
                 "unexpected wgpu validation error while creating trimmed pipeline: {err:?}"
             );
+
+            #[cfg(debug_assertions)]
+            {
+                let cached = rt
+                    .pipelines
+                    .debug_shader_source(ShaderStage::Fragment, expected_trimmed_hash);
+                assert_eq!(
+                    cached,
+                    Some(expected_trimmed_wgsl.as_str()),
+                    "expected trimmed fragment WGSL to be cached when creating the pipeline"
+                );
+            }
         });
     }
 
