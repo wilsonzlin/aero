@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
-use core::mem::offset_of;
 use std::collections::{HashSet, VecDeque};
 
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
-use aero_devices_gpu::ring::write_fence_page;
+use aero_devices_gpu::ring::{
+    write_fence_page, AEROGPU_RING_HEADER_SIZE_BYTES as RING_HEADER_SIZE_BYTES, RING_HEAD_OFFSET,
+    RING_TAIL_OFFSET,
+};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
@@ -27,10 +29,6 @@ use aero_shared::cursor_state::CursorStateUpdate;
 use aero_shared::scanout_state::{
     ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM,
 };
-
-const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
-const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
-const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 // -----------------------------------------------------------------------------
