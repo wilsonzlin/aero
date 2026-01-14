@@ -251,6 +251,7 @@ impl Usb2PortMux {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn ehci_port_routable(&self, port: usize) -> bool {
         let Some(p) = self.ports.get(port) else {
             return false;
@@ -339,6 +340,7 @@ impl Usb2PortMux {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ViewKind {
     Uhci,
+    #[allow(dead_code)]
     Ehci,
 }
 
