@@ -2,9 +2,9 @@ mod common;
 
 use std::fs;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::{DxbcFile, FourCC};
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -65,10 +65,6 @@ fn end_cmd(stream: &mut [u8], start: usize) {
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
-}
-
-fn make_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
-    dxbc_test_utils::build_container_owned(chunks)
 }
 
 struct SigParam<'a> {
@@ -169,10 +165,10 @@ fn make_vs_passthrough_pos_tex2() -> Vec<u8> {
         },
     ]);
 
-    make_dxbc(&[
-        (FOURCC_ISGN, isgn),
-        (FOURCC_OSGN, osgn),
-        (FOURCC_SHDR, shdr_patched),
+    dxbc_test_utils::build_container(&[
+        (FOURCC_ISGN, &isgn),
+        (FOURCC_OSGN, &osgn),
+        (FOURCC_SHDR, &shdr_patched),
     ])
 }
 

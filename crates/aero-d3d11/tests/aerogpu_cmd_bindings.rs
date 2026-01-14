@@ -1,8 +1,8 @@
 mod common;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -73,14 +73,6 @@ fn build_ilay_pos3() -> Vec<u8> {
     out.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
 
     out
-}
-
-fn make_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
 }
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -213,19 +205,20 @@ fn build_ps_solid_red_dxbc() -> Vec<u8> {
 
     // Stage type 0 is pixel.
     let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
-    make_dxbc(&[
-        (*b"SHEX", tokens_to_bytes(&tokens)),
-        // Empty input signature; translator should emit a fragment entry point with no inputs.
-        (*b"ISGN", build_sig_chunk(&[])),
-        (
-            *b"OSGN",
-            build_sig_chunk(&[SigParam {
-                name: "SV_Target",
-                index: 0,
-                reg: 0,
-                mask: 0b1111,
-            }]),
-        ),
+    let shex = tokens_to_bytes(&tokens);
+    // Empty input signature; translator should emit a fragment entry point with no inputs.
+    let isgn = build_sig_chunk(&[]);
+    let osgn = build_sig_chunk(&[SigParam {
+        name: "SV_Target",
+        index: 0,
+        reg: 0,
+        mask: 0b1111,
+    }]);
+
+    dxbc_test_utils::build_container(&[
+        (FourCC(*b"SHEX"), &shex),
+        (FourCC(*b"ISGN"), &isgn),
+        (FourCC(*b"OSGN"), &osgn),
     ])
 }
 
@@ -259,42 +252,40 @@ fn build_vs_pos3_tex2_to_pos_tex_dxbc() -> Vec<u8> {
         1,
         &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
     );
-    make_dxbc(&[
-        (*b"SHEX", tokens_to_bytes(&tokens)),
-        (
-            *b"ISGN",
-            build_sig_chunk(&[
-                SigParam {
-                    name: "POSITION",
-                    index: 0,
-                    reg: 0,
-                    mask: 0b0111,
-                },
-                SigParam {
-                    name: "TEXCOORD",
-                    index: 0,
-                    reg: 1,
-                    mask: 0b0011,
-                },
-            ]),
-        ),
-        (
-            *b"OSGN",
-            build_sig_chunk(&[
-                SigParam {
-                    name: "TEXCOORD",
-                    index: 0,
-                    reg: 0,
-                    mask: 0b0011,
-                },
-                SigParam {
-                    name: "SV_Position",
-                    index: 0,
-                    reg: 1,
-                    mask: 0b1111,
-                },
-            ]),
-        ),
+    let shex = tokens_to_bytes(&tokens);
+    let isgn = build_sig_chunk(&[
+        SigParam {
+            name: "POSITION",
+            index: 0,
+            reg: 0,
+            mask: 0b0111,
+        },
+        SigParam {
+            name: "TEXCOORD",
+            index: 0,
+            reg: 1,
+            mask: 0b0011,
+        },
+    ]);
+    let osgn = build_sig_chunk(&[
+        SigParam {
+            name: "TEXCOORD",
+            index: 0,
+            reg: 0,
+            mask: 0b0011,
+        },
+        SigParam {
+            name: "SV_Position",
+            index: 0,
+            reg: 1,
+            mask: 0b1111,
+        },
+    ]);
+
+    dxbc_test_utils::build_container(&[
+        (FourCC(*b"SHEX"), &shex),
+        (FourCC(*b"ISGN"), &isgn),
+        (FourCC(*b"OSGN"), &osgn),
     ])
 }
 

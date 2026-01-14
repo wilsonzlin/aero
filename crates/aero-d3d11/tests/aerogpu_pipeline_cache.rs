@@ -1,23 +1,15 @@
 mod common;
 
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_execute::AerogpuCmdRuntime;
 use aero_d3d11::runtime::aerogpu_state::{PrimitiveTopology, RasterizerState, VertexBufferBinding};
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     pos: [f32; 4],
     color: [f32; 4],
-}
-
-fn make_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
 }
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -141,15 +133,11 @@ fn build_test_vs_dxbc() -> Vec<u8> {
         1,
         &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
     );
-    make_dxbc(&[
-        (*b"SHEX", tokens_to_bytes(&tokens)),
-        (
-            *b"ISGN",
-            // Use mixed-case semantics to ensure our signature parsing is case-insensitive (the
-            // input layout blob uses the canonical uppercase hashes).
-            build_isgn_chunk(&[("Position", 0, 0), ("CoLoR", 0, 1)]),
-        ),
-    ])
+    let shex = tokens_to_bytes(&tokens);
+    // Use mixed-case semantics to ensure our signature parsing is case-insensitive (the
+    // input layout blob uses the canonical uppercase hashes).
+    let isgn = build_isgn_chunk(&[("Position", 0, 0), ("CoLoR", 0, 1)]);
+    dxbc_test_utils::build_container(&[(FourCC(*b"SHEX"), &shex), (FourCC(*b"ISGN"), &isgn)])
 }
 
 fn build_test_vs_dxbc_with_osgn() -> Vec<u8> {
@@ -182,16 +170,13 @@ fn build_test_vs_dxbc_with_osgn() -> Vec<u8> {
         1,
         &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
     );
-    make_dxbc(&[
-        (*b"SHEX", tokens_to_bytes(&tokens)),
-        (
-            *b"ISGN",
-            build_isgn_chunk(&[("Position", 0, 0), ("CoLoR", 0, 1)]),
-        ),
-        (
-            *b"OSGN",
-            build_osgn_chunk(&[("SV_Position", 0, 0), ("COLOR", 0, 1)]),
-        ),
+    let shex = tokens_to_bytes(&tokens);
+    let isgn = build_isgn_chunk(&[("Position", 0, 0), ("CoLoR", 0, 1)]);
+    let osgn = build_osgn_chunk(&[("SV_Position", 0, 0), ("COLOR", 0, 1)]);
+    dxbc_test_utils::build_container(&[
+        (FourCC(*b"SHEX"), &shex),
+        (FourCC(*b"ISGN"), &isgn),
+        (FourCC(*b"OSGN"), &osgn),
     ])
 }
 
@@ -214,7 +199,8 @@ fn build_test_ps_dxbc() -> Vec<u8> {
 
     // Stage type 0 is pixel.
     let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
-    make_dxbc(&[(*b"SHEX", tokens_to_bytes(&tokens))])
+    let shex = tokens_to_bytes(&tokens);
+    dxbc_test_utils::build_container(&[(FourCC(*b"SHEX"), &shex)])
 }
 
 fn build_test_ps_dxbc_with_signatures() -> Vec<u8> {
@@ -236,14 +222,14 @@ fn build_test_ps_dxbc_with_signatures() -> Vec<u8> {
 
     // Stage type 0 is pixel.
     let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
-    make_dxbc(&[
-        (*b"SHEX", tokens_to_bytes(&tokens)),
-        // Match the varying produced by the VS: v1 @ location(1).
-        (
-            *b"ISGN",
-            build_isgn_chunk(&[("SV_Position", 0, 0), ("COLOR", 0, 1)]),
-        ),
-        (*b"OSGN", build_osgn_chunk(&[("SV_Target", 0, 0)])),
+    let shex = tokens_to_bytes(&tokens);
+    // Match the varying produced by the VS: v1 @ location(1).
+    let isgn = build_isgn_chunk(&[("SV_Position", 0, 0), ("COLOR", 0, 1)]);
+    let osgn = build_osgn_chunk(&[("SV_Target", 0, 0)]);
+    dxbc_test_utils::build_container(&[
+        (FourCC(*b"SHEX"), &shex),
+        (FourCC(*b"ISGN"), &isgn),
+        (FourCC(*b"OSGN"), &osgn),
     ])
 }
 
