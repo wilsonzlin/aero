@@ -1880,6 +1880,28 @@ impl PciDevice for EhciPciConfigDevice {
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
 
+struct AeroGpuPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AeroGpuPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for AeroGpuPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 struct VgaPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -5774,7 +5796,6 @@ Track progress: docs/21-smp.md\n\
                 }
 
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
-                //
                 // The PC platform installs a range-based PCI I/O BAR router over most ports, so
                 // legacy VGA ports must be wired as exact per-port mappings to avoid overlapping
                 // range registrations (and to take precedence over the PCI I/O router).
@@ -6134,6 +6155,13 @@ Track progress: docs/21-smp.md\n\
             } else {
                 None
             };
+
+            if self.cfg.enable_aerogpu {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
+            }
 
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
