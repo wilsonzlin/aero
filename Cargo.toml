@@ -54,7 +54,6 @@ members = [
     "crates/aero-x86",
     "crates/aero-cpu-decoder",
     "crates/aero-dxbc",
-    "crates/aero-d3d9-shader",
     "crates/aero-d3d9",
     "crates/aero-debug",
     "crates/aero-interrupts",
