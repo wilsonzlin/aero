@@ -5339,6 +5339,11 @@ static bool DxgiViewFormatTriviallyCompatible(const AeroGpuDevice* dev,
   return res_aer != AEROGPU_FORMAT_INVALID && res_aer == view_aer;
 }
 
+static bool AerogpuFormatIsDepth(uint32_t aerogpu_format) {
+  return aerogpu_format == AEROGPU_FORMAT_D24_UNORM_S8_UINT ||
+         aerogpu_format == AEROGPU_FORMAT_D32_FLOAT;
+}
+
 static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
   bool ok = false;
   bool have_enum = false;
@@ -5452,6 +5457,21 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(view_format),
                          static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
+  }
+  {
+    const uint32_t resolved_fmt = view_format ? view_format : res->dxgi_format;
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, resolved_fmt);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      return E_NOTIMPL;
+    }
+    if (AerogpuFormatIsDepth(aer_fmt)) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateRenderTargetView: rejecting RTV for depth format res_fmt=%u view_fmt=%u (handle=%u)",
+          static_cast<unsigned>(res->dxgi_format),
+          static_cast<unsigned>(view_format),
+          static_cast<unsigned>(res->handle));
+      return E_INVALIDARG;
+    }
   }
 
   // Enforce "subresource 0" RTVs only (MipSlice==0, no arrays).
@@ -5613,6 +5633,21 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(view_format),
                          static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
+  }
+  {
+    const uint32_t resolved_fmt = view_format ? view_format : res->dxgi_format;
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, resolved_fmt);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      return E_NOTIMPL;
+    }
+    if (!AerogpuFormatIsDepth(aer_fmt)) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateDepthStencilView: rejecting DSV for non-depth format res_fmt=%u view_fmt=%u (handle=%u)",
+          static_cast<unsigned>(res->dxgi_format),
+          static_cast<unsigned>(view_format),
+          static_cast<unsigned>(res->handle));
+      return E_INVALIDARG;
+    }
   }
 
   // Enforce "subresource 0" DSVs only (MipSlice==0, no arrays).
