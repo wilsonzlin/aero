@@ -556,11 +556,11 @@ Recommended guardrails:
     downstream hub ports (1..4) are reserved for Aero's synthetic HID devices (keyboard/mouse/gamepad/
     consumer-control), so WebHID passthrough allocations start at guest paths like `0.5`.
     - Guest root port 1 is reserved for the guest-visible WebUSB passthrough device, so WebHID attachments
-      do not use path `1`. Increase the external hub port count instead if you need more guest attachment
-      paths.
+      do not use path `1`. Increase the external hub port count instead if you need more guest
+      attachment paths (note: clamped to 15 when the hub is hosted behind xHCI).
     - When the external hub is hosted behind xHCI, hub port numbers are limited to **1..=15** (xHCI Slot
       Context Route String 4-bit hub-port encoding), so the external hub port count is effectively capped
-      at 15 and “0.5+” means 0.5..=0.15.
+      at 15 and “0.5+” means hub ports 5..=15 (guest paths like `0.5`, `0.6`, …, `0.15`).
     - Implementation: `web/src/platform/webhid_passthrough.ts` (guest path allocator + UI hint)
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
