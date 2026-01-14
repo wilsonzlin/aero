@@ -1383,6 +1383,17 @@ pub struct AerogpuD3d11Executor {
     next_texture_view_id: u64,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
+    /// Scratch allocator for expanded index buffers produced by compute prepasses.
+    ///
+    /// Keep this separate from indirect-args scratch: wgpu's OpenGL backend fails when an index
+    /// buffer and indirect-arg buffer share the same underlying `wgpu::Buffer`.
+    expansion_index_scratch: ExpansionScratchAllocator,
+    /// Scratch allocator for indirect draw argument buffers used by compute-based expansion paths.
+    ///
+    /// On wgpu's OpenGL backend, `draw_indexed_indirect` fails if the index buffer and indirect-arg
+    /// buffer share the same underlying `wgpu::Buffer` (even if they use disjoint ranges). Keep
+    /// indirect args in a separate buffer so indexed indirect draws work reliably.
+    expansion_indirect_scratch: ExpansionScratchAllocator,
     /// Uniform-only scratch allocator used by compute-based expansion paths.
     ///
     /// WebGPU (wgpu) does not allow binding the same buffer as both `storage` and `uniform` within
@@ -1739,6 +1750,26 @@ impl AerogpuD3d11Executor {
             next_texture_view_id: 1,
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
+            expansion_index_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
+                label: Some("aero-d3d11 expansion index scratch"),
+                // Index buffers are typically small; keep this lightweight but allow growth.
+                per_frame_size: 64 * 1024, // 64 KiB
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDEX
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                ..ExpansionScratchDescriptor::default()
+            }),
+            expansion_indirect_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
+                label: Some("aero-d3d11 expansion indirect scratch"),
+                // Indirect argument buffers are tiny; keep this lightweight but allow growth.
+                per_frame_size: 64 * 1024, // 64 KiB
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                ..ExpansionScratchDescriptor::default()
+            }),
             expansion_uniform_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
                 label: Some("aero-d3d11 expansion uniform scratch"),
                 // Uniform payloads for geometry prepasses are small; keep this buffer lightweight but
@@ -2034,6 +2065,8 @@ impl AerogpuD3d11Executor {
         self.gpu_scratch.clear();
         self.gs_scratch.clear();
         self.expansion_scratch.reset();
+        self.expansion_index_scratch.reset();
+        self.expansion_indirect_scratch.reset();
         self.expansion_uniform_scratch.reset();
         self.tessellation.reset();
         self.encoder_has_commands = false;
@@ -3877,14 +3910,14 @@ impl AerogpuD3d11Executor {
             .alloc_vertex_output(&self.device, expanded_vertex_size)
             .map_err(|e| anyhow!("GS prepass: alloc expanded vertex buffer: {e}"))?;
         let expanded_index_alloc = self
-            .expansion_scratch
+            .expansion_index_scratch
             .alloc_index_output(&self.device, expanded_index_size)
             .map_err(|e| anyhow!("GS prepass: alloc expanded index buffer: {e}"))?;
         // The translated GS prepass uses both atomic counters and indirect args. Keep them in a
         // single storage buffer binding (see `runtime::gs_translate`) to stay within the WebGPU
         // minimum `max_storage_buffers_per_shader_stage` on downlevel backends.
         let state_alloc = self
-            .expansion_scratch
+            .expansion_indirect_scratch
             .alloc_gs_prepass_state_draw_indexed(&self.device)
             .map_err(|e| anyhow!("GS prepass: alloc indirect+counter state buffer: {e}"))?;
         let indirect_args_alloc = ExpansionScratchAlloc {
@@ -5021,11 +5054,11 @@ impl AerogpuD3d11Executor {
                 .alloc_vertex_output(&self.device, expanded_vertex_size)
                 .map_err(|e| anyhow!("geometry prepass: alloc expanded vertex buffer: {e}"))?;
             expanded_index_alloc = self
-                .expansion_scratch
+                .expansion_index_scratch
                 .alloc_index_output(&self.device, expanded_index_size)
                 .map_err(|e| anyhow!("geometry prepass: alloc expanded index buffer: {e}"))?;
             indirect_args_alloc = self
-                .expansion_scratch
+                .expansion_indirect_scratch
                 .alloc_indirect_draw_indexed(&self.device)
                 .map_err(|e| anyhow!("geometry prepass: alloc indirect args buffer: {e}"))?;
             let counter_alloc = self
@@ -13778,6 +13811,8 @@ impl AerogpuD3d11Executor {
         });
         self.submit_encoder(encoder, "aerogpu_cmd encoder after present");
         self.expansion_scratch.begin_frame();
+        self.expansion_index_scratch.begin_frame();
+        self.expansion_indirect_scratch.begin_frame();
         self.expansion_uniform_scratch.begin_frame();
         Ok(())
     }
@@ -13814,6 +13849,8 @@ impl AerogpuD3d11Executor {
         });
         self.submit_encoder(encoder, "aerogpu_cmd encoder after present_ex");
         self.expansion_scratch.begin_frame();
+        self.expansion_index_scratch.begin_frame();
+        self.expansion_indirect_scratch.begin_frame();
         self.expansion_uniform_scratch.begin_frame();
         Ok(())
     }
@@ -13821,6 +13858,8 @@ impl AerogpuD3d11Executor {
     fn exec_flush(&mut self, encoder: &mut wgpu::CommandEncoder) -> Result<()> {
         self.submit_encoder(encoder, "aerogpu_cmd encoder after flush");
         self.expansion_scratch.begin_frame();
+        self.expansion_index_scratch.begin_frame();
+        self.expansion_indirect_scratch.begin_frame();
         self.expansion_uniform_scratch.begin_frame();
         Ok(())
     }
