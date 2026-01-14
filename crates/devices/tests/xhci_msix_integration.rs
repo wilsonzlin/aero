@@ -300,6 +300,39 @@ fn xhci_msix_pending_bit_delivers_after_entry_is_programmed() {
 }
 
 #[test]
+fn xhci_msix_pba_mmio_write_is_ignored() {
+    #[derive(Default)]
+    struct NoopMsiSink;
+    impl aero_platform::interrupts::msi::MsiTrigger for NoopMsiSink {
+        fn trigger_msi(&mut self, _message: aero_platform::interrupts::msi::MsiMessage) {}
+    }
+
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+    dev.set_msi_target(Some(Box::new(NoopMsiSink::default())));
+
+    // Program a masked MSI-X entry so raising an interrupt sets PBA[0].
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, true);
+    enable_msix(&mut dev);
+
+    let pba_base = u64::from(
+        dev.config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability")
+            .pba_offset(),
+    );
+
+    dev.raise_event_interrupt();
+    let pba = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba & 1, 1, "masked MSI-X trigger should set PBA pending bit");
+
+    // PBA is read-only to the guest; writes must not clear the pending bit.
+    MmioHandler::write(&mut dev, pba_base, 8, 0);
+    let pba_after = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba_after & 1, 1, "PBA writes must be ignored");
+}
+
+#[test]
 fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
