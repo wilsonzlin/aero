@@ -538,12 +538,12 @@ stages/extensions).
 // Values match DXBC program-type IDs (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`):
 //   0 = Pixel, 1 = Vertex, 2 = Geometry, 3 = Hull, 4 = Domain, 5 = Compute.
 enum aerogpu_shader_stage_ex {
-   AEROGPU_STAGE_EX_PIXEL    = 0,
-   AEROGPU_STAGE_EX_VERTEX   = 1,
-   AEROGPU_STAGE_EX_GEOMETRY = 2,
-   AEROGPU_STAGE_EX_HULL     = 3,
-   AEROGPU_STAGE_EX_DOMAIN   = 4,
-   AEROGPU_STAGE_EX_COMPUTE  = 5,
+   AEROGPU_SHADER_STAGE_EX_PIXEL    = 0,
+   AEROGPU_SHADER_STAGE_EX_VERTEX   = 1,
+   AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
+   AEROGPU_SHADER_STAGE_EX_HULL     = 3,
+   AEROGPU_SHADER_STAGE_EX_DOMAIN   = 4,
+   AEROGPU_SHADER_STAGE_EX_COMPUTE  = 5,
 };
 
 // Note: in the *binding commands* described here, `stage_ex = 0` is treated as the legacy/default
@@ -653,6 +653,47 @@ fixed-function tessellation semantics). Today, adjacency and patchlist topologie
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
 
+#### 2.1.1) Derived counts (vertex invocations, primitive count, patch count)
+
+Compute expansion needs a few derived counts that are normally implicit in a fixed-function input
+assembler. These must be computed identically in both the runtime (for sizing) and the compute
+kernels (for bounds checks).
+
+Let:
+
+- `draw_kind` be `Draw` or `DrawIndexed`.
+- `input_vertex_invocations = (draw_kind == DrawIndexed) ? index_count : vertex_count`
+  - Note: this is the number of *vertex shader invocations* in the expansion path. It is **not**
+    the number of unique vertices (there is no vertex cache).
+
+For non-patch topologies, the number of *input primitives* (`input_prim_count`) is:
+
+| Topology | Vertices consumed | Primitive count |
+|---|---:|---:|
+| `POINTLIST` | 1 / prim | `input_vertex_invocations` |
+| `LINELIST` | 2 / prim | `input_vertex_invocations / 2` |
+| `LINESTRIP` | N | `max(0, input_vertex_invocations - 1)` |
+| `TRIANGLELIST` | 3 / prim | `input_vertex_invocations / 3` |
+| `TRIANGLESTRIP` | N | `max(0, input_vertex_invocations - 2)` |
+| `LINELIST_ADJ` | 4 / prim | `input_vertex_invocations / 4` |
+| `LINESTRIP_ADJ` | `2*prim + 2` | `max(0, (input_vertex_invocations.saturating_sub(2)) / 2)` |
+| `TRIANGLELIST_ADJ` | 6 / prim | `input_vertex_invocations / 6` |
+| `TRIANGLESTRIP_ADJ` | `2*prim + 4` | `max(0, (input_vertex_invocations.saturating_sub(4)) / 2)` |
+
+Rules:
+
+- Any leftover vertices that don’t form a full primitive are ignored (matching D3D behavior).
+- `*_ADJ` topologies require a GS that consumes adjacency (`lineadj`/`triadj`); otherwise the draw is
+  invalid.
+
+For patchlist topologies:
+
+- `control_points = topology - 32` (since `PATCHLIST_1 = 33`, …, `PATCHLIST_32 = 64`)
+- `patch_count = input_vertex_invocations / control_points`
+  - leftover indices/vertices are ignored.
+
+Patchlist draws are invalid unless both HS and DS are bound.
+
 #### 2.2) Scratch buffers (logical) and required WebGPU usages
 
 The expansion pipeline uses per-draw (or per-encoder) scratch allocations. These are *logical*
@@ -672,6 +713,7 @@ transient arena, as long as alignment requirements are respected.
     - Purpose: stores vertex shader outputs (control points) for the draw, consumable by HS/GS.
     - Usage: `STORAGE` (written/read by compute).
     - Layout: `array<ExpandedVertex>` (see below).
+    - Element count: `input_vertex_invocations * instance_count`.
 
 2. **Tessellation-out (`tess_out_vertices`, `tess_out_indices`)**
     - Purpose: stores post-DS vertices + optional indices.
@@ -682,6 +724,8 @@ transient arena, as long as alignment requirements are respected.
     - Purpose: stores post-GS vertices + indices suitable for final rasterization.
     - Usage (vertices): `STORAGE | VERTEX`
     - Usage (indices): `STORAGE | INDEX`
+    - Capacity sizing: derived from `input_prim_count * instance_count * gs_maxvertexcount`, plus
+      additional expansion when emitting list primitives without an index buffer (see below).
 
 4. **Indirect args (`indirect_args`)**
     - Purpose: written by compute, consumed by render pass as indirect draw parameters.
@@ -691,6 +735,45 @@ transient arena, as long as alignment requirements are respected.
     - Purpose: atomic counters used during expansion (output vertex count, output index count,
       overflow flags).
     - Usage: `STORAGE` (atomics) and optionally `COPY_SRC` for debugging readback.
+
+**GS output sizing: strip → list**
+
+Geometry shaders typically declare output topology as `line_strip` or `triangle_strip`. WebGPU can
+render strips, but handling `CutVertex`/restart semantics is simplest if we **expand to lists** in
+the compute pass:
+
+- `line_strip` → line list
+- `triangle_strip` → triangle list
+
+There are two valid implementation strategies:
+
+1. **Non-indexed list emission (simplest):** write vertices into `gs_out_vertices` in list order
+   (duplicating vertices as needed), and use `drawIndirect`.
+2. **Indexed list emission (less duplication):** write one vertex per `EmitVertex` and generate a
+   separate `gs_out_indices` list, then use `drawIndexedIndirect`.
+
+The baseline bring-up path should prefer (1). In that case, the worst-case per-primitive output
+vertex bound (for sizing `out_max_vertices`) is:
+
+| GS declared output | Max `EmitVertex` per input prim | Max list vertices per input prim |
+|---|---:|---:|
+| `point` | `M` | `M` |
+| `line_strip` | `M` | `2 * max(0, M - 1)` |
+| `triangle_strip` | `M` | `3 * max(0, M - 2)` |
+
+Where `M = gs_maxvertexcount` from the GS bytecode.
+
+So a conservative capacity is:
+
+```
+out_max_vertices =
+  input_prim_count * instance_count * max_list_vertices_per_input_prim
+```
+
+If using strategy (2), then:
+
+- `out_max_vertices = input_prim_count * instance_count * M`
+- `out_max_indices = input_prim_count * instance_count * max_list_vertices_per_input_prim`
 
 **Expanded vertex layout (concrete):**
 
@@ -756,8 +839,28 @@ Implementation rules:
 - `first_vertex/first_index/base_vertex` are written as 0 (the expansion output buffers are
    already in the correct space).
 - `instance_count` may be preserved for true instancing, but the baseline implementation may
-   legally **flatten instancing** by baking instance ID into the expansion passes and setting
-   `instance_count = 1` (this keeps output counts independent of instance).
+  legally **flatten instancing** by baking instance ID into the expansion passes and setting
+  `instance_count = 1` (this keeps output counts independent of instance).
+
+**Indirect args finalize step (required)**
+
+At the end of expansion, a small compute dispatch (typically 1 workgroup) MUST write the final
+indirect args based on the counters:
+
+- Non-indexed:
+  - `DrawIndirectArgs.vertex_count = counters.out_vertex_count`
+- Indexed:
+  - `DrawIndexedIndirectArgs.index_count = counters.out_index_count`
+
+In both cases:
+
+- If `counters.overflow != 0`, set the draw count(s) to 0 to deterministically skip the draw.
+- `first_vertex/first_index/base_vertex = 0` because expansion output buffers are already in the
+  correct coordinate space.
+- `first_instance = 0`.
+- `instance_count`:
+  - either preserve the original D3D `instance_count`, or
+  - flatten instancing and write `1` (P1 bring-up allowed).
 
 #### 2.4) Pass sequence (per draw)
 
