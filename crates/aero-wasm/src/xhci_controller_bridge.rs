@@ -31,6 +31,9 @@ const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
 // Maximum downstream port value encoded in an xHCI route string (4-bit nibbles).
 const XHCI_MAX_ROUTE_PORT: u32 = 15;
+// The Route String field is 20 bits wide (5 nibbles), so xHCI can only encode up to 5 downstream
+// hub tiers (root port + 5 hub ports).
+const XHCI_MAX_ROUTE_TIER_COUNT: usize = 5;
 
 // Defensive cap for host-provided snapshot payloads. This is primarily to keep the JS→WASM copy
 // bounded for `restore_state(bytes: &[u8])` parameters.
@@ -72,6 +75,12 @@ fn parse_xhci_usb_path(path: JsValue, port_count: u8) -> Result<Vec<u8>, JsValue
     if parts.is_empty() {
         return Err(js_error("USB topology path must not be empty"));
     }
+    if parts.len() > XHCI_MAX_ROUTE_TIER_COUNT + 1 {
+        return Err(js_error(format!(
+            "xHCI topology path too deep (max {} downstream hub tiers)",
+            XHCI_MAX_ROUTE_TIER_COUNT
+        )));
+    }
 
     let root = parts[0];
     if root >= port_count as u32 {
@@ -79,6 +88,11 @@ fn parse_xhci_usb_path(path: JsValue, port_count: u8) -> Result<Vec<u8>, JsValue
         let max = port_count.saturating_sub(1);
         return Err(js_error(format!(
             "xHCI root port out of range (expected 0..={max})"
+        )));
+    }
+    if root == WEBUSB_ROOT_PORT as u32 {
+        return Err(js_error(format!(
+            "xHCI root port {WEBUSB_ROOT_PORT} is reserved for WebUSB passthrough"
         )));
     }
 
@@ -595,6 +609,11 @@ impl XhciControllerBridge {
     /// preserve xHCI route-string constraints (hub port numbers are encoded as 4-bit nibbles).
     pub fn attach_hub(&mut self, root_port: u32, port_count: u32) -> Result<(), JsValue> {
         let ctrl_ports = self.ctrl.port_count();
+        if root_port == WEBUSB_ROOT_PORT as u32 {
+            return Err(js_error(format!(
+                "xHCI root port {WEBUSB_ROOT_PORT} is reserved for WebUSB passthrough"
+            )));
+        }
         if root_port >= ctrl_ports as u32 {
             let max = ctrl_ports.saturating_sub(1);
             return Err(js_error(format!(
