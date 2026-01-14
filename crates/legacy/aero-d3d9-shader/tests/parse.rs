@@ -682,6 +682,31 @@ fn malformed_predicated_relative_predicate_token_errors() {
 }
 
 #[test]
+fn malformed_predicated_relative_predicate_without_param_bit_errors() {
+    // Same as `malformed_predicated_relative_predicate_token_errors`, but with bit31 cleared on the
+    // predicate token. Some real-world D3D9 encodings omit bit31 on parameter tokens, and we want
+    // to ensure we still treat a relative predicate as malformed (since the predicate is always
+    // the final operand token).
+    let words = [
+        0xFFFE_0200,
+        0x1300_0001, // mov len=3 + predicated
+        0x800F_0000, // r0
+        0x0000_2000, // (relative) but missing the relative register token
+        0x0000_FFFF,
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 3,
+            remaining_tokens: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_mov_missing_dst_token_errors() {
     // mov with an empty operand list should be rejected.
     let words = [0xFFFE_0200, 0x0000_0001, 0x0000_FFFF];
