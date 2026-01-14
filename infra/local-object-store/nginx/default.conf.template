@@ -14,8 +14,11 @@ server {
         # Apply CORS headers at the proxy to emulate CDN/edge behavior.
         add_header 'Access-Control-Allow-Origin' '${CORS_ALLOWED_ORIGIN}' always;
         add_header 'Access-Control-Allow-Methods' 'GET,HEAD,PUT,POST,DELETE,OPTIONS' always;
-        add_header 'Access-Control-Allow-Headers' 'Authorization,Content-Type,Range,Origin,Accept,X-Amz-Date,X-Amz-Content-Sha256,X-Amz-Security-Token' always;
-        add_header 'Access-Control-Expose-Headers' 'ETag,Content-Length,Content-Range,Accept-Ranges,Content-Type' always;
+        # Disk streaming uses conditional requests (`If-Range`, `If-None-Match`, `If-Modified-Since`)
+        # in addition to `Range`, so ensure those headers are allowed for browser preflights.
+        add_header 'Access-Control-Allow-Headers' 'Range,If-Range,If-None-Match,If-Modified-Since,Authorization,Content-Type,Origin,Accept,X-Amz-Date,X-Amz-Content-Sha256,X-Amz-Security-Token' always;
+        # Expose headers that the streaming client needs to read from JS (`Content-Range`, `ETag`, etc).
+        add_header 'Access-Control-Expose-Headers' 'Accept-Ranges,Content-Range,Content-Length,Content-Encoding,ETag,Last-Modified,Cache-Control,Content-Type' always;
         add_header 'Access-Control-Max-Age' 86400 always;
         add_header 'Vary' 'Origin' always;
 
@@ -33,6 +36,8 @@ server {
         # Be explicit: forward Range headers through the proxy.
         proxy_set_header Range $http_range;
         proxy_set_header If-Range $http_if_range;
+        proxy_set_header If-None-Match $http_if_none_match;
+        proxy_set_header If-Modified-Since $http_if_modified_since;
 
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

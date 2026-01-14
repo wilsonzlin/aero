@@ -241,7 +241,7 @@ In DevTools → Network you should see an `OPTIONS` preflight followed by a `GET
 curl -i -X OPTIONS \
   -H 'Origin: http://localhost:5173' \
   -H 'Access-Control-Request-Method: GET' \
-  -H 'Access-Control-Request-Headers: range' \
+  -H 'Access-Control-Request-Headers: range, if-range, if-none-match, if-modified-since' \
   http://localhost:9000/disk-images/large.bin
 ```
 
@@ -251,7 +251,7 @@ curl -i -X OPTIONS \
 curl -i -X OPTIONS \
   -H 'Origin: http://localhost:5173' \
   -H 'Access-Control-Request-Method: GET' \
-  -H 'Access-Control-Request-Headers: range' \
+  -H 'Access-Control-Request-Headers: range, if-range, if-none-match, if-modified-since' \
   http://localhost:9002/disk-images/large.bin
 ```
 

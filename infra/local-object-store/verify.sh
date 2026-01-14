@@ -76,6 +76,7 @@ echo "$head_origin" | grep -i '^content-length:'
 echo "$head_origin" | grep -i '^accept-ranges: *bytes'
 echo "$head_origin" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$head_origin" | grep -i '^access-control-expose-headers:.*content-length'
+echo "$head_origin" | grep -i '^access-control-expose-headers:.*etag'
 
 echo "==> Verifying Range GET (206 + Content-Range) against origin..."
 range_origin="$(curl -fsS -D - -o /dev/null -H "Origin: ${allowed_origin}" -H 'Range: bytes=0-15' "${origin}/${bucket}/${obj}")"
@@ -83,23 +84,27 @@ require_status "$range_origin" '^HTTP/[^ ]+ 206 '
 echo "$range_origin" | grep -i '^content-range:'
 echo "$range_origin" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$range_origin" | grep -i '^access-control-expose-headers:.*content-range'
+echo "$range_origin" | grep -i '^access-control-expose-headers:.*etag'
 
 echo "==> Verifying browser-style CORS preflight against origin..."
 preflight_origin="$(curl -fsS -D - -o /dev/null -X OPTIONS \
   -H "Origin: ${allowed_origin}" \
   -H "Access-Control-Request-Method: GET" \
-  -H "Access-Control-Request-Headers: range" \
+  -H "Access-Control-Request-Headers: range, if-range, if-none-match, if-modified-since" \
   "${origin}/${bucket}/${obj}")"
 require_status "$preflight_origin" '^HTTP/[^ ]+ (200|204) '
 echo "$preflight_origin" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$preflight_origin" | grep -i '^access-control-allow-methods:.*GET'
 echo "$preflight_origin" | grep -i '^access-control-allow-headers:.*range'
+echo "$preflight_origin" | grep -i '^access-control-allow-headers:.*if-range'
+echo "$preflight_origin" | grep -i '^access-control-allow-headers:.*if-none-match'
+echo "$preflight_origin" | grep -i '^access-control-allow-headers:.*if-modified-since'
 
 echo "==> Verifying origin does not allow arbitrary CORS origins..."
 preflight_origin_bad="$(curl -fsS -D - -o /dev/null -X OPTIONS \
   -H "Origin: http://example.com" \
   -H "Access-Control-Request-Method: GET" \
-  -H "Access-Control-Request-Headers: range" \
+  -H "Access-Control-Request-Headers: range, if-range, if-none-match, if-modified-since" \
   "${origin}/${bucket}/${obj}")"
 require_status "$preflight_origin_bad" '^HTTP/[^ ]+ (200|204) '
 if echo "$preflight_origin_bad" | grep -qi '^access-control-allow-origin:'; then
@@ -120,6 +125,7 @@ echo "$head_proxy" | grep -i '^content-length:'
 echo "$head_proxy" | grep -i '^accept-ranges: *bytes'
 echo "$head_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$head_proxy" | grep -i '^access-control-expose-headers:.*content-length'
+echo "$head_proxy" | grep -i '^access-control-expose-headers:.*etag'
 
 echo "==> Verifying Range GET against proxy..."
 range_proxy="$(curl -fsS -D - -o /dev/null -H "Origin: ${allowed_origin}" -H 'Range: bytes=0-15' "${proxy}/${bucket}/${obj}")"
@@ -127,16 +133,20 @@ require_status "$range_proxy" '^HTTP/[^ ]+ 206 '
 echo "$range_proxy" | grep -i '^content-range:'
 echo "$range_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$range_proxy" | grep -i '^access-control-expose-headers:.*content-range'
+echo "$range_proxy" | grep -i '^access-control-expose-headers:.*etag'
 
 echo "==> Verifying CORS preflight against proxy..."
 preflight_proxy="$(curl -fsS -D - -o /dev/null -X OPTIONS \
   -H "Origin: ${allowed_origin}" \
   -H "Access-Control-Request-Method: GET" \
-  -H "Access-Control-Request-Headers: range" \
+  -H "Access-Control-Request-Headers: range, if-range, if-none-match, if-modified-since" \
   "${proxy}/${bucket}/${obj}")"
 require_status "$preflight_proxy" '^HTTP/[^ ]+ (200|204) '
 echo "$preflight_proxy" | grep -i "^access-control-allow-origin: ${allowed_origin}"
 echo "$preflight_proxy" | grep -i '^access-control-allow-methods:.*GET'
 echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*range'
+echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*if-range'
+echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*if-none-match'
+echo "$preflight_proxy" | grep -i '^access-control-allow-headers:.*if-modified-since'
 
 echo "==> Success."
