@@ -9099,7 +9099,17 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_CSUM_OFFLOAD_FAILED" {
-      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetCsumOffload was enabled"
+      $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $result.Tail -SerialLogPath $SerialLogPath
+      $detailsParts = @()
+      if ($null -ne $csum) {
+        if (-not [string]::IsNullOrEmpty($csum.Status)) { $detailsParts += "status=$($csum.Status)" }
+        if ($null -ne $csum.TxCsum) { $detailsParts += "tx_csum=$($csum.TxCsum)" }
+        if ($null -ne $csum.RxCsum) { $detailsParts += "rx_csum=$($csum.RxCsum)" }
+        if ($null -ne $csum.Fallback) { $detailsParts += "fallback=$($csum.Fallback)" }
+      }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetCsumOffload was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9115,7 +9125,16 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_CSUM_OFFLOAD_ZERO" {
-      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met (tx_csum=0)"
+      $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $result.Tail -SerialLogPath $SerialLogPath
+      $detailsParts = @()
+      if ($null -ne $csum) {
+        if ($null -ne $csum.TxCsum) { $detailsParts += "tx_csum=$($csum.TxCsum)" }
+        if ($null -ne $csum.RxCsum) { $detailsParts += "rx_csum=$($csum.RxCsum)" }
+        if ($null -ne $csum.Fallback) { $detailsParts += "fallback=$($csum.Fallback)" }
+      }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9131,7 +9150,24 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED" {
-      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetUdpCsumOffload was enabled"
+      $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $result.Tail -SerialLogPath $SerialLogPath
+      $detailsParts = @()
+      if ($null -ne $csum) {
+        if (-not [string]::IsNullOrEmpty($csum.Status)) { $detailsParts += "status=$($csum.Status)" }
+        $txUdp = $csum.TxUdp
+        if ($null -eq $txUdp) {
+          $txUdp = [UInt64]0
+          if ($null -ne $csum.TxUdp4) { $txUdp += $csum.TxUdp4 }
+          if ($null -ne $csum.TxUdp6) { $txUdp += $csum.TxUdp6 }
+        }
+        if ($null -ne $txUdp) { $detailsParts += "tx_udp=$txUdp" }
+        if ($null -ne $csum.TxUdp4) { $detailsParts += "tx_udp4=$($csum.TxUdp4)" }
+        if ($null -ne $csum.TxUdp6) { $detailsParts += "tx_udp6=$($csum.TxUdp6)" }
+        if ($null -ne $csum.Fallback) { $detailsParts += "fallback=$($csum.Fallback)" }
+      }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetUdpCsumOffload was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9147,7 +9183,30 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO" {
-      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO: UDP checksum offload requirement not met (tx_udp=0)"
+      $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $result.Tail -SerialLogPath $SerialLogPath
+      $txUdp = $null
+      $txUdp4 = $null
+      $txUdp6 = $null
+      $fallback = $null
+      if ($null -ne $csum) {
+        $txUdp = $csum.TxUdp
+        $txUdp4 = $csum.TxUdp4
+        $txUdp6 = $csum.TxUdp6
+        if ($null -eq $txUdp) {
+          $txUdp = [UInt64]0
+          if ($null -ne $txUdp4) { $txUdp += $txUdp4 }
+          if ($null -ne $txUdp6) { $txUdp += $txUdp6 }
+        }
+        $fallback = $csum.Fallback
+      }
+      $detailsParts = @()
+      if ($null -ne $txUdp) { $detailsParts += "tx_udp=$txUdp" }
+      if ($null -ne $txUdp4) { $detailsParts += "tx_udp4=$txUdp4" }
+      if ($null -ne $txUdp6) { $detailsParts += "tx_udp6=$txUdp6" }
+      if ($null -ne $fallback) { $detailsParts += "fallback=$fallback" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO: UDP checksum offload requirement not met$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
