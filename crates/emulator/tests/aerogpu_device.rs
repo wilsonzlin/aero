@@ -771,6 +771,33 @@ fn scanout_bgrx_srgb_forces_opaque_alpha() {
 }
 
 #[test]
+fn scanout_rgbx_forces_opaque_alpha() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    let fb_gpa = 0x5000u64;
+    // 2x1 pixels, RGBX: (R=1,G=2,B=3,X=0), (R=10,G=20,B=30,X=0).
+    // X8 formats should force the returned alpha channel to 0xFF.
+    mem.write_physical(fb_gpa, &[1, 2, 3, 0, 10, 20, 30, 0]);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 2);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 1);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8X8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 8);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
+
+    let rgba = dev.read_scanout0_rgba(&mut mem).unwrap();
+    assert_eq!(rgba, vec![1, 2, 3, 255, 10, 20, 30, 255]);
+}
+
+#[test]
 fn cursor_bgrx_forces_opaque_alpha() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());
@@ -787,6 +814,33 @@ fn cursor_bgrx_forces_opaque_alpha() {
         mmio::CURSOR_FORMAT,
         4,
         AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::CURSOR_PITCH_BYTES, 4, 4);
+    dev.mmio_write(&mut mem, mmio::CURSOR_FB_GPA_LO, 4, fb_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::CURSOR_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
+
+    let rgba = dev.read_cursor_rgba(&mut mem).unwrap();
+    assert_eq!(rgba, vec![240, 128, 16, 255]);
+}
+
+#[test]
+fn cursor_bgrx_srgb_forces_opaque_alpha() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    let fb_gpa = 0x5000u64;
+    // 1x1 pixel, BGRX: (R=240,G=128,B=16,X=0).
+    // sRGB variants should be treated identically (raw byte -> RGBA; no colorspace transform).
+    mem.write_physical(fb_gpa, &[16, 128, 240, 0]);
+
+    dev.mmio_write(&mut mem, mmio::CURSOR_ENABLE, 4, 1);
+    dev.mmio_write(&mut mem, mmio::CURSOR_WIDTH, 4, 1);
+    dev.mmio_write(&mut mem, mmio::CURSOR_HEIGHT, 4, 1);
+    dev.mmio_write(
+        &mut mem,
+        mmio::CURSOR_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8UnormSrgb as u32,
     );
     dev.mmio_write(&mut mem, mmio::CURSOR_PITCH_BYTES, 4, 4);
     dev.mmio_write(&mut mem, mmio::CURSOR_FB_GPA_LO, 4, fb_gpa as u32);
