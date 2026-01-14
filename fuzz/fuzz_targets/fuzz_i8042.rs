@@ -4,18 +4,74 @@ use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
 use aero_devices_input::i8042::MAX_PENDING_OUTPUT;
-use aero_devices_input::I8042Controller;
+use aero_devices_input::{I8042Controller, IrqSink, SystemControlSink};
 use aero_devices_input::Ps2MouseButton;
 use aero_io_snapshot::io::state::IoSnapshot;
 
 const MAX_OPS: usize = 1024;
 
+#[derive(Default)]
+struct NullIrqSink;
+
+impl IrqSink for NullIrqSink {
+    fn raise_irq(&mut self, _irq: u8) {}
+}
+
+#[derive(Default)]
+struct NullSystemControlSink {
+    a20: bool,
+}
+
+impl SystemControlSink for NullSystemControlSink {
+    fn set_a20(&mut self, enabled: bool) {
+        self.a20 = enabled;
+    }
+
+    fn request_reset(&mut self) {}
+
+    fn a20_enabled(&self) -> Option<bool> {
+        Some(self.a20)
+    }
+}
+
+fn seed_mouse(ctl: &mut I8042Controller) {
+    // Enable IRQ12 (mouse) in the i8042 command byte so AUX output exercises the IRQ path.
+    ctl.write_port(0x64, 0x60);
+    ctl.write_port(0x60, 0x47);
+
+    // Helper: send one byte to the mouse via i8042 command 0xD4.
+    let mut send_mouse = |b: u8| {
+        ctl.write_port(0x64, 0xD4);
+        ctl.write_port(0x60, b);
+    };
+
+    // Enable IntelliMouse Explorer (wheel + side/extra buttons): sample-rate sequence 200,200,80.
+    for rate in [200u8, 200u8, 80u8] {
+        send_mouse(0xF3); // set sample rate
+        send_mouse(rate);
+    }
+
+    // Enable data reporting so injected motion produces packets.
+    send_mouse(0xF4);
+
+    // Drain any queued ACK bytes from the output buffer so subsequent injection isn't blocked by a
+    // full buffer.
+    for _ in 0..32 {
+        let _ = ctl.read_port(0x60);
+    }
+}
+
 fuzz_target!(|data: &[u8]| {
     let mut u = Unstructured::new(data);
 
     let mut ctl = I8042Controller::new();
+    ctl.set_irq_sink(Box::new(NullIrqSink::default()));
+    ctl.set_system_control_sink(Box::new(NullSystemControlSink::default()));
+    seed_mouse(&mut ctl);
 
-    let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
+    // Ensure we always execute at least one operation so even empty inputs stress the state
+    // machines and invariants.
+    let ops: usize = u.int_in_range(1usize..=MAX_OPS).unwrap_or(1);
     for _ in 0..ops {
         let tag: u8 = u.arbitrary().unwrap_or(0);
         match tag % 8 {
@@ -70,6 +126,8 @@ fuzz_target!(|data: &[u8]| {
                 let snap = ctl.save_state();
                 let mut fresh = I8042Controller::new();
                 let _ = fresh.load_state(&snap);
+                fresh.set_irq_sink(Box::new(NullIrqSink::default()));
+                fresh.set_system_control_sink(Box::new(NullSystemControlSink::default()));
                 ctl = fresh;
             }
         }
