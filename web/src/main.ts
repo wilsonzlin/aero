@@ -4693,7 +4693,12 @@ function renderAudioPanel(): HTMLElement {
     }
     let available = (write - read) >>> 0;
     if (available > cap) available = cap;
-    if (available === 0) return { ok: false, error: "Audio output ringBuffer is empty." };
+    if (available === 0) {
+      return {
+        ok: false,
+        error: `Audio output ringBuffer is empty (read=${read} write=${write} cap=${cap} ctx=${audioContextState ?? "n/a"}).`,
+      };
+    }
 
     let underrunCount = 0;
     let overrunCount = 0;
@@ -4803,7 +4808,12 @@ function renderAudioPanel(): HTMLElement {
 
       let available = (writePos - readPos) >>> 0;
       if (available > capacitySamples) available = capacitySamples;
-      if (available === 0) return { ok: false, error: "Microphone ring buffer is empty." };
+      if (available === 0) {
+        return {
+          ok: false,
+          error: `Microphone ring buffer is empty (readPos=${readPos} writePos=${writePos} cap=${capacitySamples} dropped=${droppedSamples}).`,
+        };
+      }
 
       const data = new Float32Array(sab, MIC_HEADER_BYTES, capacitySamples);
       const maxSamples = Math.max(1, Math.floor(sampleRate * Math.max(0.1, opts.maxSeconds)));
