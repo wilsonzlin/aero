@@ -183,15 +183,20 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
 - **Device Manager → Properties → Resources**:
   - INTx usually shows a small IRQ number (often shared).
   - MSI/MSI-X often shows a very large IRQ number (e.g. `42949672xx`) and may show multiple IRQ entries.
-- **`aero-virtio-selftest.exe` markers**:
-  - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input|...` markers on stdout/COM1.
-  - The selftest also emits a `virtio-input-irq|INFO|...` line indicating which interrupt mode Windows assigned:
-    - `virtio-input-irq|INFO|mode=intx`
-    - `virtio-input-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
-  - To request a larger MSI-X table size under QEMU in the in-tree harness (best-effort), run the host harness with:
-    `-VirtioMsixVectors N` / `--virtio-msix-vectors N` (global) or `-VirtioInputVectors N` / `--virtio-input-vectors N`
-    (virtio-input only).
-  - See `../tests/guest-selftest/README.md` for how to build/run the tool.
+ - **`aero-virtio-selftest.exe` markers**:
+   - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input|...` markers on stdout/COM1.
+   - The selftest also emits a `virtio-input-irq|INFO|...` line indicating which interrupt mode Windows assigned:
+     - `virtio-input-irq|INFO|mode=intx`
+     - `virtio-input-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+   - Newer selftest binaries also emit a dedicated marker with **driver-observed MSI-X routing details** (via a diagnostics IOCTL):
+     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix>|messages=<n>|mapping=...|config_vector=...|queue0_vector=...|queue1_vector=...|...`
+     - This is informational by default; to make MSI-X a hard requirement:
+       - Guest-side: `aero-virtio-selftest.exe --require-input-msix`
+       - Host-side: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioInputMsix` / `invoke_aero_virtio_win7_tests.py --require-virtio-input-msix`
+   - To request a larger MSI-X table size under QEMU in the in-tree harness (best-effort), run the host harness with:
+     `-VirtioMsixVectors N` / `--virtio-msix-vectors N` (global) or `-VirtioInputVectors N` / `--virtio-input-vectors N`
+     (virtio-input only).
+   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 ## Testing (in-tree harness)
 
