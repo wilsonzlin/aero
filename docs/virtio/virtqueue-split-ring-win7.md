@@ -468,6 +468,19 @@ When the driver adds entries:
 * `new = avail_idx` after additions (and after writing `avail->idx`)
 * `event = used->avail_event` (device-written)
 
+Important details:
+
+* `old` must be the **last observed** avail index value used for the previous
+  kick suppression decision, **regardless** of whether a kick actually occurred.
+  (If you only update `old` when you kick, you can get incorrect suppression
+  behaviour after a series of suppressed kicks.)
+* Use a **full barrier** (store→load ordering) between publishing new available
+  entries (`avail->idx`) and reading `used->avail_event` / `used->flags`.
+  Otherwise, a weakly-ordered implementation could:
+  1) decide to suppress a kick based on an old `avail_event`, and
+  2) have the device observe an old `avail->idx`,
+  causing a missed wakeup / stalled queue.
+
 Notify if:
 
 * `vring_need_event(event, new, old)` is true
@@ -482,9 +495,13 @@ UINT16 new = vq->avail_idx;
 if (vq->num_added) {
     BOOLEAN kick;
     if (vq->features & VIRTIO_F_RING_EVENT_IDX) {
+        /* Full barrier: ensure avail publishes are visible before reading avail_event. */
+        KeMemoryBarrier();
         UINT16 event = le16_to_cpu(READ_ONCE(*vring_avail_event(vq->used, vq->qsz)));
         kick = vring_need_event(event, new, old);
     } else {
+        /* Full barrier: ensure avail publishes are visible before reading used->flags. */
+        KeMemoryBarrier();
         kick = !(le16_to_cpu(READ_ONCE(vq->used->flags)) & VRING_USED_F_NO_NOTIFY);
     }
 
@@ -538,7 +555,8 @@ for (;;) {
 
     /* Rearm interrupts for “next completion” */
     WRITE_ONCE(*vring_used_event(vq->avail, vq->qsz), cpu_to_le16(vq->last_used_idx));
-    KeMemoryBarrier(); /* wmb: ensure used_event visible before re-check */
+    /* Full barrier: ensure used_event is visible before re-checking used->idx. */
+    KeMemoryBarrier();
 
     /* Race check: did device add more used entries after we drained? */
     if (le16_to_cpu(READ_ONCE(vq->used->idx)) == vq->last_used_idx) {
