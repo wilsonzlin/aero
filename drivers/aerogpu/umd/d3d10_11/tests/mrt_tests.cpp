@@ -350,6 +350,61 @@ bool CreateSRV(TestDevice* dev, const TestResource* res, TestSrv* out) {
   return Check(hr == S_OK, "CreateShaderResourceView");
 }
 
+bool TestCreateSrvNotImplIsSafeToDestroy() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  // Create a valid shader-resource texture.
+  TestResource tex{};
+  if (!CreateTexture2D(&dev, kD3D11BindShaderResource, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &tex)) {
+    return false;
+  }
+
+  // Trigger E_NOTIMPL by requesting a view that slices mips.
+  AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW desc{};
+  desc.hResource = tex.hResource;
+  desc.Format = 0; // use resource format
+  desc.ViewDimension = AEROGPU_DDI_SRV_DIMENSION_TEXTURE2D;
+  desc.MostDetailedMip = 1; // non-zero => E_NOTIMPL
+  desc.MipLevels = 1;
+
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateShaderResourceViewSize(dev.hDevice, &desc);
+  if (!Check(size != 0, "CalcPrivateShaderResourceViewSize returned non-zero size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  D3D10DDI_HSHADERRESOURCEVIEW hView{};
+  hView.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateShaderResourceView(dev.hDevice, &desc, hView);
+  if (!Check(hr == E_NOTIMPL, "CreateShaderResourceView should return E_NOTIMPL for MostDetailedMip != 0")) {
+    return false;
+  }
+
+  // Even on failure, the view should be constructed so that Destroy is safe.
+  if (!Check(storage.size() >= sizeof(void*) + sizeof(aerogpu_handle_t), "srv storage has expected size")) {
+    return false;
+  }
+  void* expected_resource = nullptr;
+  aerogpu_handle_t expected_handle = 0;
+  if (!Check(std::memcmp(storage.data(), &expected_resource, sizeof(expected_resource)) == 0, "srv resource ptr initialized to null on failure")) {
+    return false;
+  }
+  if (!Check(std::memcmp(storage.data() + sizeof(void*), &expected_handle, sizeof(expected_handle)) == 0,
+             "srv handle initialized to 0 on failure")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, hView);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSetRenderTargetsEncodesMrtAndClamps() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -1436,6 +1491,7 @@ bool TestSrvBindingUnbindsAliasedDsvVs() {
 
 int main() {
   bool ok = true;
+  ok &= TestCreateSrvNotImplIsSafeToDestroy();
   ok &= TestSetRenderTargetsEncodesMrtAndClamps();
   ok &= TestSetRenderTargetsPreservesNullEntries();
   ok &= TestSetRenderTargetsUnbindsAliasedSrvsForMrt();

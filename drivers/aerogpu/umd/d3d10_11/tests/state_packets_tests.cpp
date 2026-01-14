@@ -757,6 +757,55 @@ bool TestDestroyAfterFailedCreateInputLayoutIsSafe() {
   return true;
 }
 
+bool TestCreateSamplerNullDescIsSafeToDestroy() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(sampler null desc)")) {
+    return false;
+  }
+
+  D3D10DDI_HSAMPLER hSampler = {};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateSamplerSize(dev.hDevice, /*desc=*/nullptr);
+  if (!Check(size >= sizeof(void*), "CalcPrivateSamplerSize returned non-trivial size (null desc)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hSampler.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateSampler(dev.hDevice, /*pDesc=*/nullptr, hSampler);
+  if (!Check(hr == E_INVALIDARG, "CreateSampler should return E_INVALIDARG for null desc")) {
+    return false;
+  }
+
+  struct SamplerPriv {
+    aerogpu_handle_t handle;
+    uint32_t filter;
+    uint32_t address_u;
+    uint32_t address_v;
+    uint32_t address_w;
+  };
+  SamplerPriv expected{};
+  expected.handle = 0;
+  expected.filter = AEROGPU_SAMPLER_FILTER_NEAREST;
+  expected.address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  expected.address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  expected.address_w = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+
+  if (!Check(storage.size() >= sizeof(expected), "sampler storage has expected size")) {
+    return false;
+  }
+  if (!Check(std::memcmp(storage.data(), &expected, sizeof(expected)) == 0, "sampler state initialized on failure")) {
+    return false;
+  }
+
+  // Destroy should be safe even after a failed create.
+  dev.device_funcs.pfnDestroySampler(dev.hDevice, hSampler);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestCreateDepthStencilStateRejectsInvalidDepthFunc() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(dss invalid depth_func)")) {
@@ -995,6 +1044,7 @@ int main() {
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
   ok &= TestDestroyAfterFailedCreateVertexShaderIsSafe();
   ok &= TestDestroyAfterFailedCreateInputLayoutIsSafe();
+  ok &= TestCreateSamplerNullDescIsSafeToDestroy();
   ok &= TestCreateDepthStencilStateRejectsInvalidDepthFunc();
   ok &= TestDepthDisableDisablesDepthWrites();
   ok &= TestSetDepthStencilStateEmitsPacket();

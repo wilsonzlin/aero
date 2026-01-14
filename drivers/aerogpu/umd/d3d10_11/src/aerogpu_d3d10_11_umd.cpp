@@ -4016,11 +4016,19 @@ HRESULT AEROGPU_APIENTRY CreateRTV(D3D10DDI_HDEVICE hDevice,
   AEROGPU_D3D10_TRACEF("CreateRTV hDevice=%p hResource=%p",
                        hDevice.pDrvPrivate,
                        pDesc ? pDesc->hResource.pDrvPrivate : nullptr);
-  if (!hDevice.pDrvPrivate || !pDesc || !hRtv.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hRtv.pDrvPrivate) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+
+  // Always construct the view object so DestroyRTV is safe even if we reject the
+  // descriptor.
+  auto* rtv = new (hRtv.pDrvPrivate) AeroGpuRenderTargetView();
+  rtv->resource = nullptr;
+
+  if (!pDesc || !pDesc->hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
-  auto* rtv = new (hRtv.pDrvPrivate) AeroGpuRenderTargetView();
   rtv->resource = res;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
@@ -4048,11 +4056,19 @@ HRESULT AEROGPU_APIENTRY CreateDSV(D3D10DDI_HDEVICE hDevice,
   AEROGPU_D3D10_TRACEF("CreateDSV hDevice=%p hResource=%p",
                        hDevice.pDrvPrivate,
                        pDesc ? pDesc->hResource.pDrvPrivate : nullptr);
-  if (!hDevice.pDrvPrivate || !pDesc || !hDsv.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hDsv.pDrvPrivate) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+
+  // Always construct the view object so DestroyDSV is safe even if we reject the
+  // descriptor.
+  auto* dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
+  dsv->resource = nullptr;
+
+  if (!pDesc || !pDesc->hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
-  auto* dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->resource = res;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
@@ -4074,7 +4090,16 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateShaderResourceViewSize(D3D10DDI_HDEVICE, cons
 HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
                                                   const AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
                                                   D3D10DDI_HSHADERRESOURCEVIEW hView) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyShaderResourceView is safe even
+  // if we reject the descriptor.
+  auto* view = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
+  view->texture = 0;
+
+  if (!pDesc || !pDesc->hResource.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -4093,7 +4118,6 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  auto* view = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
   view->resource = res;
   view->texture = res->handle;
   return S_OK;
@@ -4114,7 +4138,16 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateSamplerSize(D3D10DDI_HDEVICE, const AEROGPU_D
 HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
                                        const AEROGPU_DDIARG_CREATESAMPLER* pDesc,
                                        D3D10DDI_HSAMPLER hSampler) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hSampler.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the sampler object so DestroySampler is safe even if we
+  // reject the descriptor.
+  auto* s = new (hSampler.pDrvPrivate) AeroGpuSampler();
+  s->handle = 0;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -4125,7 +4158,6 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* s = new (hSampler.pDrvPrivate) AeroGpuSampler();
   s->handle = dev->adapter->next_handle.fetch_add(1);
   s->filter = aerogpu_sampler_filter_from_d3d_filter(pDesc->Filter);
   s->address_u = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressU);
@@ -4135,7 +4167,6 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {
     s->handle = 0;
-    s->~AeroGpuSampler();
     return E_OUTOFMEMORY;
   }
   cmd->sampler_handle = s->handle;
