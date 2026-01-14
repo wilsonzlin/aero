@@ -139,10 +139,10 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
-  - Byte-addressed MMIO register file (bounded, currently `0x4000` bytes).
-  - `tick()` counter only (no scheduling yet).
-  - Deterministic snapshot/restore of the register file + tick count.
-  - No IRQs yet (`irq_asserted()` always `false`).
+  - Forwards MMIO reads/writes into the canonical Rust controller model (`aero_usb::xhci::XhciController`).
+  - `step_frames()` / `tick()` counter only (no scheduling yet).
+  - Deterministic snapshot/restore of the controller state + tick count.
+  - IRQ level surfaced via `irq_asserted()` (level-triggered INTx semantics).
 
 These are **not** full xHCI implementations (no doorbells, no event ring, no port state machine; slot/context support is partial).
 
