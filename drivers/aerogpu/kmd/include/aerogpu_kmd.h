@@ -332,8 +332,20 @@ typedef struct _AEROGPU_ADAPTER {
     LIST_ENTRY RecentSubmissions;
     ULONG RecentSubmissionCount;
     DECLSPEC_ALIGN(8) ULONGLONG RecentSubmissionBytes;
-    ULONGLONG LastSubmittedFence;
-    ULONGLONG LastCompletedFence;
+    /*
+     * Fence tracking.
+     *
+     * Note: This driver is built for both x86 and x64. On x86, plain 64-bit
+     * loads/stores are not atomic and can tear (leading to bogus fence
+     * comparisons/clamping and flaky dbgctl output). Always access these fields
+     * via Interlocked*64 operations (e.g. AeroGpuAtomicReadU64/AeroGpuAtomicWriteU64)
+     * or while holding an appropriate lock on *all* paths that touch them.
+     *
+     * Interlocked*64 requires 8-byte alignment, so these fields are explicitly
+     * aligned.
+     */
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastSubmittedFence;
+    DECLSPEC_ALIGN(8) volatile ULONGLONG LastCompletedFence;
 
     /* ---- dbgctl performance/health counters ------------------------------ */
 
@@ -364,6 +376,9 @@ typedef struct _AEROGPU_ADAPTER {
      * failures are visible via dbgctl escapes without requiring kernel debugging.
      *
      * Counters are best-effort and monotonic for the lifetime of the adapter.
+     *
+     * Note: These are 64-bit fields accessed cross-thread (ISR/DPC + dbgctl). On
+     * x86, plain 64-bit loads/stores can tear; use interlocked operations.
      */
     DECLSPEC_ALIGN(8) volatile ULONGLONG ErrorIrqCount;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastErrorFence;
