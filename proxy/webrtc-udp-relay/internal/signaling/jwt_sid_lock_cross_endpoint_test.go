@@ -126,3 +126,66 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_AcrossSignalAndUDP(t *tes
 		t.Fatalf("unexpected ws2 message: %#v", ctrl)
 	}
 }
+
+func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_AcrossSignalAndUDP_UDPHeaderAuth(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:  config.AuthModeJWT,
+		JWTSecret: "supersecret",
+	}
+	ts, _ := startSignalingAndUDPServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	wsSignalURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + tokenA
+	ws1, _, err := websocket.DefaultDialer.Dial(wsSignalURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws1: %v", err)
+	}
+	t.Cleanup(func() { _ = ws1.Close() })
+
+	if err := ws1.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer ws1: %v", err)
+	}
+
+	// Ensure ws1 has allocated its relay session before attempting to create a
+	// /udp session with the same JWT sid.
+	_ = ws1.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := ws1.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws1: %v", err)
+	}
+	got, err := parseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse ws1: %v", err)
+	}
+	if got.Type != "answer" {
+		t.Fatalf("unexpected ws1 message: %#v", got)
+	}
+
+	wsUDPURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/udp"
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+tokenB)
+	ws2, _, err := websocket.DefaultDialer.Dial(wsUDPURL, h)
+	if err != nil {
+		t.Fatalf("dial ws2: %v", err)
+	}
+	t.Cleanup(func() { _ = ws2.Close() })
+
+	_ = ws2.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err = ws2.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws2: %v", err)
+	}
+	var ctrl udpWSControlMessage
+	if err := json.Unmarshal(msg, &ctrl); err != nil {
+		t.Fatalf("unmarshal ws2 message: %v", err)
+	}
+	if ctrl.Type != "error" || ctrl.Code != "session_already_active" {
+		t.Fatalf("unexpected ws2 message: %#v", ctrl)
+	}
+}

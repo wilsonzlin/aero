@@ -14,8 +14,9 @@ import (
 //
 // Credential sources:
 //   - HTTP: headers (preferred) and query string (fallback).
-//   - WebSocket: first message `{type:"auth", apiKey:"..."}` / `{type:"auth", token:"..."}`
-//     (preferred) and query string (fallback).
+//   - WebSocket: upgrade request headers (best for non-browser clients), query string
+//     (fallback), or first message `{type:"auth", apiKey:"..."}` / `{type:"auth", token:"..."}`
+//     (preferred for browser clients).
 type authAuthorizer struct {
 	mode     config.AuthMode
 	verifier auth.Verifier
