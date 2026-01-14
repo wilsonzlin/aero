@@ -1379,16 +1379,18 @@ The translation layer needs a targeted, growing set of reference scenes with **p
    indirect-draw arg generation and counter reset.
 9. **GS compute-path (RestartStrip)**: GS outputs a triangle strip with multiple `CutVertex` /
    `RestartStrip()` boundaries; validates strip→list conversion.
-10. **Adjacency input**: `TRIANGLELIST_ADJ` + GS consumes adjacency vertices; validates adjacency
+10. **GS instancing (`SV_GSInstanceID`)**: GS compiled with `[instance(2)]` uses `SV_GSInstanceID` to
+    offset/colour output; validates the GS instance dispatch dimension and built-in mapping.
+11. **Adjacency input**: `TRIANGLELIST_ADJ` + GS consumes adjacency vertices; validates adjacency
    topology decode + binding (even if the initial GS subset does not yet implement adjacency ops).
 
 ### P2 scenes
 
-11. **Compute blur**: run CS to blur a texture then render it
-12. **UAV write**: CS writes to structured buffer; PS reads and visualizes
-13. **Tess P2a (tri domain, integer)**: `PATCHLIST_3` + simple HS/DS produces a subdivided triangle
+12. **Compute blur**: run CS to blur a texture then render it
+13. **UAV write**: CS writes to structured buffer; PS reads and visualizes
+14. **Tess P2a (tri domain, integer)**: `PATCHLIST_3` + simple HS/DS produces a subdivided triangle
     grid (color = `SV_DomainLocation`), validates patchlist topology + HS/DS execution.
-14. **Tess P2b (quad domain, integer)**: `PATCHLIST_4` + simple HS/DS produces a subdivided quad.
+15. **Tess P2b (quad domain, integer)**: `PATCHLIST_4` + simple HS/DS produces a subdivided quad.
 
 Each scene should render to an offscreen texture and read back for comparison, using:
 
