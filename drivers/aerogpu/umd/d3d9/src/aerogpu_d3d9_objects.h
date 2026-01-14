@@ -467,6 +467,11 @@ struct Resource {
   uint32_t backing_offset_bytes = 0;
 
   // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
+  //
+  // Do not confuse this with the numeric value of the user-mode shared `HANDLE` (process-local for
+  // real NT handles, and sometimes a token-style value). See:
+  // docs/graphics/win7-shared-surfaces-share-token.md
+  //
   // 0 if the resource is not shareable.
   uint64_t share_token = 0;
 

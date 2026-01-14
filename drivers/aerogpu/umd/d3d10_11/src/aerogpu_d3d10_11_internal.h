@@ -1232,6 +1232,12 @@ struct Resource {
   uint32_t wddm_allocation_handle = 0;
 
   // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
+  //
+  // Do not confuse this with the numeric value of the user-mode shared `HANDLE` returned by
+  // IDXGIResource::GetSharedHandle(): NT `HANDLE` values are process-local (often different after
+  // DuplicateHandle), and some stacks use token-style shared handles. See:
+  // docs/graphics/win7-shared-surfaces-share-token.md
+  //
   // 0 if the resource is not shareable.
   uint64_t share_token = 0;
 
