@@ -539,6 +539,158 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
     (used, sampler_dim_key)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn parse_wgsl_attr_u32(line: &str, attr: &str) -> Option<u32> {
+    let pat = format!("@{attr}(");
+    let start = line.find(&pat)? + pat.len();
+    let end = line[start..].find(')')? + start;
+    line[start..end].trim().parse::<u32>().ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn validate_wgsl_binding_contract(
+    wgsl: &str,
+    stage: shader::ShaderStage,
+    half_pixel_center: bool,
+) -> Result<(), String> {
+    let mut has_constants = false;
+    let mut has_half_pixel = false;
+    let sampler_group_expected = match stage {
+        shader::ShaderStage::Vertex => 1u32,
+        shader::ShaderStage::Pixel => 2u32,
+    };
+
+    let mut tex_slots = HashSet::<u32>::new();
+    let mut samp_slots = HashSet::<u32>::new();
+
+    for line in wgsl.lines() {
+        if line.contains("var<uniform> constants") {
+            let group = parse_wgsl_attr_u32(line, "group")
+                .ok_or_else(|| "constants uniform is missing @group()".to_string())?;
+            let binding = parse_wgsl_attr_u32(line, "binding")
+                .ok_or_else(|| "constants uniform is missing @binding()".to_string())?;
+            if group != 0 || binding != 0 {
+                return Err(format!(
+                    "constants uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(0)"
+                ));
+            }
+            has_constants = true;
+            continue;
+        }
+
+        if line.contains("var<uniform> half_pixel") {
+            has_half_pixel = true;
+            let group = parse_wgsl_attr_u32(line, "group")
+                .ok_or_else(|| "half_pixel uniform is missing @group()".to_string())?;
+            let binding = parse_wgsl_attr_u32(line, "binding")
+                .ok_or_else(|| "half_pixel uniform is missing @binding()".to_string())?;
+            if group != 3 || binding != 0 {
+                return Err(format!(
+                    "half_pixel uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(3) @binding(0)"
+                ));
+            }
+            continue;
+        }
+
+        if let Some(pos) = line.find("var tex") {
+            let rest = &line[pos + "var tex".len()..];
+            let mut digits_end = 0usize;
+            for (i, ch) in rest.char_indices() {
+                if ch.is_ascii_digit() {
+                    digits_end = i + ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if digits_end == 0 {
+                continue;
+            }
+            let idx: u32 = rest[..digits_end]
+                .parse()
+                .map_err(|_| "failed to parse sampler index for tex binding".to_string())?;
+            if idx >= MAX_SAMPLERS as u32 {
+                continue;
+            }
+            let group = parse_wgsl_attr_u32(line, "group")
+                .ok_or_else(|| format!("tex{idx} binding is missing @group()"))?;
+            let binding = parse_wgsl_attr_u32(line, "binding")
+                .ok_or_else(|| format!("tex{idx} binding is missing @binding()"))?;
+            if group != sampler_group_expected {
+                return Err(format!(
+                    "tex{idx} has unexpected @group({group}); expected @group({sampler_group_expected})"
+                ));
+            }
+            let expected_binding = idx * 2;
+            if binding != expected_binding {
+                return Err(format!(
+                    "tex{idx} has unexpected @binding({binding}); expected @binding({expected_binding})"
+                ));
+            }
+            if !tex_slots.insert(idx) {
+                return Err(format!("WGSL declares tex{idx} more than once"));
+            }
+        }
+
+        if let Some(pos) = line.find("var samp") {
+            let rest = &line[pos + "var samp".len()..];
+            let mut digits_end = 0usize;
+            for (i, ch) in rest.char_indices() {
+                if ch.is_ascii_digit() {
+                    digits_end = i + ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if digits_end == 0 {
+                continue;
+            }
+            let idx: u32 = rest[..digits_end]
+                .parse()
+                .map_err(|_| "failed to parse sampler index for samp binding".to_string())?;
+            if idx >= MAX_SAMPLERS as u32 {
+                continue;
+            }
+            let group = parse_wgsl_attr_u32(line, "group")
+                .ok_or_else(|| format!("samp{idx} binding is missing @group()"))?;
+            let binding = parse_wgsl_attr_u32(line, "binding")
+                .ok_or_else(|| format!("samp{idx} binding is missing @binding()"))?;
+            if group != sampler_group_expected {
+                return Err(format!(
+                    "samp{idx} has unexpected @group({group}); expected @group({sampler_group_expected})"
+                ));
+            }
+            let expected_binding = idx * 2 + 1;
+            if binding != expected_binding {
+                return Err(format!(
+                    "samp{idx} has unexpected @binding({binding}); expected @binding({expected_binding})"
+                ));
+            }
+            if !samp_slots.insert(idx) {
+                return Err(format!("WGSL declares samp{idx} more than once"));
+            }
+        }
+    }
+
+    if !has_constants {
+        return Err("WGSL is missing the expected constants uniform binding".into());
+    }
+    if stage == shader::ShaderStage::Vertex && half_pixel_center && !has_half_pixel {
+        return Err("half_pixel_center is enabled but WGSL is missing the half_pixel uniform binding"
+            .into());
+    }
+    if stage == shader::ShaderStage::Vertex && !half_pixel_center && has_half_pixel {
+        return Err("WGSL declares half_pixel uniform but half_pixel_center is disabled".into());
+    }
+    if tex_slots != samp_slots {
+        return Err(format!(
+            "WGSL sampler declarations are inconsistent: textures={:?} samplers={:?}",
+            tex_slots, samp_slots
+        ));
+    }
+
+    Ok(())
+}
+
 #[derive(Debug)]
 struct InputLayout {
     decl: VertexDeclaration,
@@ -2964,6 +3116,34 @@ impl AerogpuD3d9Executor {
                         expected_stage_attr,
                         expected_fn_sig,
                         "cached WGSL is missing expected shader entry point; invalidating and retranslating"
+                    );
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        self.stats.set_d3d9_shader_cache_disabled(
+                            self.persistent_shader_cache.is_persistent_disabled(),
+                        );
+                        continue;
+                    }
+                    return self.create_shader_dxbc_in_memory(
+                        shader_handle,
+                        expected_stage,
+                        dxbc_bytes,
+                    );
+                }
+
+                if let Err(reason) = validate_wgsl_binding_contract(
+                    wgsl.as_str(),
+                    bytecode_stage,
+                    flags.half_pixel_center,
+                ) {
+                    debug!(
+                        shader_handle,
+                        %reason,
+                        "cached WGSL does not match expected binding contract; invalidating and retranslating"
                     );
                     if !invalidated_once {
                         invalidated_once = true;
