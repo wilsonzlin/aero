@@ -51,6 +51,11 @@ pub fn write_iso9660_joliet_from_dir(
             if name.eq_ignore_ascii_case("__MACOSX") {
                 return false;
             }
+            // Ignore common Windows shell metadata files early (saves path normalization + IO).
+            let lower = name.to_ascii_lowercase();
+            if matches!(lower.as_str(), "thumbs.db" | "ehthumbs.db" | "desktop.ini") {
+                return false;
+            }
             true
         }) {
         let entry = entry?;
