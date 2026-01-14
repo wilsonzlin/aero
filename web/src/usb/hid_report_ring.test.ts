@@ -10,6 +10,18 @@ import {
 } from "./hid_report_ring";
 
 describe("HidReportRing", () => {
+  it("validates createHidReportRingBuffer inputs", () => {
+    expect(() => createHidReportRingBuffer(0)).toThrow(/positive safe integer/);
+    expect(() => createHidReportRingBuffer(-1)).toThrow(/positive safe integer/);
+    expect(() => createHidReportRingBuffer(16 * 1024 * 1024 + 1)).toThrow(/must be <=/);
+  });
+
+  it("aligns createHidReportRingBuffer capacity to record alignment", () => {
+    const sab = createHidReportRingBuffer(65);
+    const ring = new HidReportRing(sab);
+    expect(ring.dataCapacityBytes()).toBe(68);
+  });
+
   it("pushes and pops a single variable-length record", () => {
     const sab = createHidReportRingBuffer(64);
     const ring = new HidReportRing(sab);

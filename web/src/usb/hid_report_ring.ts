@@ -75,8 +75,16 @@ function hidReportRingCorruption(message: string): Error {
 }
 
 export function createHidReportRingBuffer(dataCapacityBytes: number): SharedArrayBuffer {
-  const cap = dataCapacityBytes >>> 0;
-  if (cap === 0) throw new Error("dataCapacityBytes must be > 0");
+  if (!Number.isSafeInteger(dataCapacityBytes) || dataCapacityBytes <= 0) {
+    throw new Error(`dataCapacityBytes must be a positive safe integer (got ${String(dataCapacityBytes)})`);
+  }
+  // Avoid accidental multi-gigabyte allocations; this is plenty for HID traffic.
+  const max = 16 * 1024 * 1024;
+  if (dataCapacityBytes > max) {
+    throw new Error(`dataCapacityBytes must be <= ${max} (got ${String(dataCapacityBytes)})`);
+  }
+  // Record parsing relies on 4-byte alignment.
+  const cap = alignUp(dataCapacityBytes >>> 0, HID_REPORT_RECORD_ALIGN);
   return new SharedArrayBuffer(HID_REPORT_RING_CTRL_BYTES + cap);
 }
 
