@@ -3792,7 +3792,6 @@ def main() -> int:
     # - --with-input-tablet-events / --with-tablet-events
     # - --with-net-link-flap
     # - --with-blk-resize
-    # - --with-net-link-flap
     # - --require-virtio-*-msix
     # - --qemu-preflight-pci / --qmp-preflight-pci
     use_qmp = (
@@ -3802,7 +3801,6 @@ def main() -> int:
         or need_input_tablet_events
         or need_net_link_flap
         or need_blk_resize
-        or need_net_link_flap
         or need_msix_check
         or bool(args.qemu_preflight_pci)
     )
@@ -3842,7 +3840,6 @@ def main() -> int:
                     or need_input_tablet_events
                     or need_net_link_flap
                     or need_blk_resize
-                    or need_net_link_flap
                     or need_msix_check
                     or bool(args.qemu_preflight_pci)
                 ):
@@ -3863,8 +3860,6 @@ def main() -> int:
                         req_flags.append("--with-net-link-flap")
                     if need_blk_resize:
                         req_flags.append("--with-blk-resize")
-                    if need_net_link_flap:
-                        req_flags.append("--with-net-link-flap")
                     if need_msix_check:
                         req_flags.append("--require-virtio-*-msix")
                     if bool(args.qemu_preflight_pci):
@@ -3887,7 +3882,6 @@ def main() -> int:
         or need_input_tablet_events
         or need_net_link_flap
         or need_blk_resize
-        or need_net_link_flap
         or need_msix_check
         or bool(args.qemu_preflight_pci)
     ) and qmp_endpoint is None:
@@ -3908,8 +3902,6 @@ def main() -> int:
             req_flags.append("--with-net-link-flap")
         if need_blk_resize:
             req_flags.append("--with-blk-resize")
-        if need_net_link_flap:
-            req_flags.append("--with-net-link-flap")
         if need_msix_check:
             req_flags.append("--require-virtio-*-msix")
         if bool(args.qemu_preflight_pci):
