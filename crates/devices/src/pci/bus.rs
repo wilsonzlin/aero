@@ -4,6 +4,7 @@ use crate::pci::config::{
 };
 use crate::pci::{PciBarKind, PciBarRange, PciBdf, PciDevice};
 use crate::pci::{PciResourceAllocator, PciResourceError};
+use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -178,15 +179,42 @@ impl PciBus {
     }
 
     pub fn read_config(&mut self, bdf: PciBdf, offset: u16, size: u8) -> u32 {
+        if size == 0 {
+            return 0;
+        }
+        let size_usize = usize::from(size);
         let Some(dev) = self.devices.get_mut(&bdf) else {
             // Non-existent device functions return all 1s, sized to the access width.
             // (e.g. 0xFF for byte reads, 0xFFFF for word reads, 0xFFFF_FFFF for dword reads)
             return all_ones(size);
         };
+        if !matches!(size, 1 | 2 | 4) {
+            return 0;
+        }
+        let offset_usize = usize::from(offset);
+        if offset_usize
+            .checked_add(size_usize)
+            .map_or(true, |end| end > PCI_CONFIG_SPACE_SIZE)
+        {
+            return 0;
+        }
         dev.config_mut().read(offset, usize::from(size))
     }
 
     pub fn write_config(&mut self, bdf: PciBdf, offset: u16, size: u8, value: u32) {
+        if size == 0 {
+            return;
+        }
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
+        let offset_usize = usize::from(offset);
+        if offset_usize
+            .checked_add(usize::from(size))
+            .map_or(true, |end| end > PCI_CONFIG_SPACE_SIZE)
+        {
+            return;
+        }
         let effects = {
             let Some(dev) = self.devices.get_mut(&bdf) else {
                 return;
@@ -197,7 +225,6 @@ impl PciBus {
             // with a read-modify-write of the containing DWORD.
             //
             // This matches how real hardware behaves and avoids panicking on partial BAR writes.
-            let offset_usize = usize::from(offset);
             if (0x10..=0x27).contains(&offset_usize) {
                 let in_dword = (offset & 0x3) as u8;
                 if size == 4 && in_dword == 0 {
@@ -1024,4 +1051,25 @@ mod tests {
         assert_eq!(bus.read_config(bdf, 0x10, 4), 0x8000_0004);
         assert_eq!(bus.read_config(bdf, 0x14, 4), 0xffff_ffff);
     }
-}
+
+    #[test]
+    fn invalid_config_accesses_do_not_panic() {
+        let mut bus = PciBus::new();
+        let bdf = PciBdf::new(0, 1, 0);
+        bus.add_device(bdf, Box::new(Stub::new(0x1234, 0x0001)));
+
+        // Out-of-range reads from a present device should return 0 instead of panicking.
+        assert_eq!(bus.read_config(bdf, 0x100, 1), 0);
+        assert_eq!(bus.read_config(bdf, 0xFF, 2), 0);
+        assert_eq!(bus.read_config(bdf, 0xFE, 4), 0);
+
+        // Invalid sizes should be ignored and also not panic.
+        assert_eq!(bus.read_config(bdf, 0x00, 3), 0);
+        bus.write_config(bdf, 0x00, 3, 0xDEAD_BEEF);
+
+        // Writes that would go out of range should be ignored.
+        let vendor_id = bus.read_config(bdf, 0x00, 2);
+        bus.write_config(bdf, 0xFF, 2, 0xBEEF);
+        assert_eq!(bus.read_config(bdf, 0x00, 2), vendor_id);
+    }
+} 
