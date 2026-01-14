@@ -98,6 +98,9 @@ if (tooOld) {
     log("  If you use nvm:");
     log("    nvm install");
     log("    nvm use");
+    log("");
+    log("Override (unsupported):");
+    log("  AERO_ALLOW_UNSUPPORTED_NODE=1 (skip Node version enforcement)");
     process.exit(1);
   }
 } else if (enforceMajor && current.major !== expected.major) {
@@ -123,6 +126,9 @@ if (tooOld) {
     log("  If you use nvm:");
     log("    nvm install");
     log("    nvm use");
+    log("");
+    log("Override (unsupported):");
+    log("  AERO_ALLOW_UNSUPPORTED_NODE=1 (skip Node version enforcement)");
     process.exit(1);
   }
 } else if (current.raw !== expected.raw) {
