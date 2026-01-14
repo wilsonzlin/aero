@@ -15170,11 +15170,17 @@ impl AerogpuD3d11Executor {
         } else {
             stage_ex
         };
-        let pass_stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
-            AerogpuShaderStage::Compute as u32,
-            stage_ex,
-        )
-        .ok_or_else(|| anyhow!("DISPATCH: unknown stage_ex={stage_ex} (expected 0/2/3/4/5)"))?;
+        let pass_stage = resolve_stage(AerogpuShaderStage::Compute as u32, stage_ex)
+            .map_err(|e| anyhow!("DISPATCH: {e} (shader_stage=2, stage_ex={stage_ex})"))?;
+        let pass_stage = match pass_stage {
+            AerogpuD3dShaderStage::Compute => ShaderStage::Compute,
+            AerogpuD3dShaderStage::Geometry => ShaderStage::Geometry,
+            AerogpuD3dShaderStage::Hull => ShaderStage::Hull,
+            AerogpuD3dShaderStage::Domain => ShaderStage::Domain,
+            AerogpuD3dShaderStage::Vertex | AerogpuD3dShaderStage::Pixel => {
+                bail!("DISPATCH: invalid pass stage {pass_stage:?} (stage_ex={stage_ex})")
+            }
+        };
 
         // D3D11 treats any zero group count as a no-op dispatch.
         if group_count_x == 0 || group_count_y == 0 || group_count_z == 0 {
