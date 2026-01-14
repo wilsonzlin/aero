@@ -1478,6 +1478,7 @@ function Invoke-PackageDrivers {
     if (-not (Test-Path $inputRootResolved)) {
         throw "InputRoot does not exist: '$inputRootResolved'."
     }
+    Assert-NoReparsePointsInTree -Root $inputRootResolved -Context "InputRoot"
     if ($includeCerts) {
         if (-not (Test-Path -LiteralPath $certPathResolved -PathType Leaf)) {
             throw "CertPath does not exist: '$certPathResolved'."
