@@ -73,77 +73,46 @@ fn build_signature_chunk(seed: &[u8], entry_size: usize, param_count: usize) -> 
     //
     // The chunk is always self-consistent (offsets are in-bounds and strings are NUL terminated),
     // but many fields are derived from the seed so libFuzzer can influence parsing.
-    let header_len = 8usize;
     let entry_size = if entry_size == 32 { 32usize } else { 24usize };
     let param_count = param_count.clamp(1, 4);
-    let table_len = param_count * entry_size;
 
-    // Precompute string payloads.
-    let mut strings = Vec::new();
+    let mut semantic_names = Vec::<String>::with_capacity(param_count);
     for entry_index in 0..param_count {
         let base = 16 * entry_index;
         let name_len = (seed.get(base).copied().unwrap_or(0) % 16) as usize + 1;
+        let mut name = String::with_capacity(name_len);
         for i in 0..name_len {
             let b = seed.get(base + 1 + i).copied().unwrap_or(b'A');
-            strings.push(if b == 0 { b'A' } else { b });
+            let b = if b == 0 { b'A' } else { b };
+            name.push((b'A' + (b % 26)) as char);
         }
-        strings.push(0);
+        semantic_names.push(name);
     }
 
-    let mut out = vec![0u8; header_len + table_len + strings.len()];
-    out[0..4].copy_from_slice(&(param_count as u32).to_le_bytes());
-    out[4..8].copy_from_slice(&(header_len as u32).to_le_bytes());
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = (0..param_count)
+        .map(|entry_index| {
+            let mask = seed.get(32 + entry_index).copied().unwrap_or(0xF);
+            let rw_mask = seed.get(36 + entry_index).copied().unwrap_or(0xF);
+            let stream = (seed.get(40 + entry_index).copied().unwrap_or(0) % 4) as u32;
+            dxbc_test_utils::SignatureEntryDesc {
+                semantic_name: semantic_names[entry_index].as_str(),
+                semantic_index: u32::from(seed.get(2 + entry_index).copied().unwrap_or(0)),
+                system_value_type: u32::from(seed.get(6 + entry_index).copied().unwrap_or(0)),
+                component_type: u32::from(seed.get(10 + entry_index).copied().unwrap_or(0)),
+                register: u32::from(seed.get(14 + entry_index).copied().unwrap_or(0)),
+                mask,
+                read_write_mask: rw_mask,
+                stream,
+                min_precision: 0,
+            }
+        })
+        .collect();
 
-    let mut string_cursor = header_len + table_len;
-    for entry_index in 0..param_count {
-        let entry_start = header_len + entry_index * entry_size;
-        let name_offset = string_cursor as u32;
-        out[entry_start..entry_start + 4].copy_from_slice(&name_offset.to_le_bytes());
-
-        // Entry fields (these are common between v0/v1 for the first 20 bytes).
-        out[entry_start + 4..entry_start + 8].copy_from_slice(
-            &u32::from(seed.get(2 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
-        ); // semantic_index
-        out[entry_start + 8..entry_start + 12].copy_from_slice(
-            &u32::from(seed.get(6 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
-        ); // system_value_type
-        out[entry_start + 12..entry_start + 16].copy_from_slice(
-            &u32::from(seed.get(10 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
-        ); // component_type
-        out[entry_start + 16..entry_start + 20].copy_from_slice(
-            &u32::from(seed.get(14 + entry_index).copied().unwrap_or(0)).to_le_bytes(),
-        ); // register
-
-        let mask = seed.get(32 + entry_index).copied().unwrap_or(0xF);
-        let rw_mask = seed.get(36 + entry_index).copied().unwrap_or(0xF);
-        let stream = (seed.get(40 + entry_index).copied().unwrap_or(0) % 4) as u32;
-
-        if entry_size == 24 {
-            let packed = (mask as u32 & 0xFF)
-                | ((rw_mask as u32 & 0xFF) << 8)
-                | ((stream & 0xFF) << 16);
-            out[entry_start + 20..entry_start + 24].copy_from_slice(&packed.to_le_bytes());
-        } else {
-            // entry_size == 32
-            out[entry_start + 20] = mask;
-            out[entry_start + 21] = rw_mask;
-            out[entry_start + 24..entry_start + 28].copy_from_slice(&stream.to_le_bytes());
-            // min_precision at entry_start+28..32 is left as 0.
-        }
-
-        // Copy this entry's semantic string (already built/terminated).
-        let base = 16 * entry_index;
-        let name_len = (seed.get(base).copied().unwrap_or(0) % 16) as usize + 1;
-        let str_total = name_len + 1;
-        let str_start = string_cursor;
-        let str_end = str_start + str_total;
-        out[str_start..str_end].copy_from_slice(
-            &strings[str_start - (header_len + table_len)..str_end - (header_len + table_len)],
-        );
-        string_cursor = str_end;
+    match entry_size {
+        24 => dxbc_test_utils::build_signature_chunk_v0(&entries),
+        32 => dxbc_test_utils::build_signature_chunk_v1(&entries),
+        _ => unreachable!(),
     }
-
-    out
 }
 
 fn build_min_rdef_chunk(seed: &[u8]) -> Vec<u8> {

@@ -285,75 +285,36 @@ fn build_malformed_signature_chunk(seed: &[u8]) -> Vec<u8> {
 }
 
 fn build_patched_signature_chunk(fourcc: FourCC, seed: &[u8]) -> Vec<u8> {
-    // Build a small, self-consistent signature chunk payload (not including the DXBC chunk header).
-    //
-    // This intentionally keeps `param_count` small and ensures semantic name offsets point at valid
-    // NUL-terminated strings so signature parsing reaches deeper paths (vs. immediately bailing out
-    // on nonsense offsets/counts).
-    //
-    // The resulting buffer size stays well below `MAX_PATCHED_SIG_BYTES`.
     let mut u = Unstructured::new(seed);
-    let entry_size = if fourcc.0[3] == b'1' {
-        32usize
-    } else {
-        24usize
-    };
     let param_count = (u.arbitrary::<u8>().unwrap_or(0) % 4) as usize + 1; // 1..=4
-    let header_len = 8usize;
-    let table_len = param_count * entry_size;
 
-    let mut out = vec![0u8; header_len + table_len];
-    out[0..4].copy_from_slice(&(param_count as u32).to_le_bytes());
-    out[4..8].copy_from_slice(&(header_len as u32).to_le_bytes());
-
-    for entry_index in 0..param_count {
-        let entry_start = header_len + entry_index * entry_size;
-
-        // Place the semantic name after the table so it is never inside the header or entries region.
-        let semantic_name_offset = out.len() as u32;
-        out[entry_start..entry_start + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
-
-        let semantic_index = u32::from(u.arbitrary::<u8>().unwrap_or(0) % 8);
-        let system_value_type = u32::from(u.arbitrary::<u8>().unwrap_or(0));
-        let component_type = u32::from(u.arbitrary::<u8>().unwrap_or(0));
-        let register = u32::from(u.arbitrary::<u8>().unwrap_or(0));
-
-        out[entry_start + 4..entry_start + 8].copy_from_slice(&semantic_index.to_le_bytes());
-        out[entry_start + 8..entry_start + 12].copy_from_slice(&system_value_type.to_le_bytes());
-        out[entry_start + 12..entry_start + 16].copy_from_slice(&component_type.to_le_bytes());
-        out[entry_start + 16..entry_start + 20].copy_from_slice(&register.to_le_bytes());
-
-        // Keep masks simple and valid-looking.
-        let mask: u8 = 0xF;
-        let read_write_mask: u8 = 0xF;
-        let stream: u8 = u.arbitrary::<u8>().unwrap_or(0) % 4;
-
-        match entry_size {
-            24 => {
-                let packed = (mask as u32 & 0xFF)
-                    | ((read_write_mask as u32 & 0xFF) << 8)
-                    | ((stream as u32 & 0xFF) << 16);
-                out[entry_start + 20..entry_start + 24].copy_from_slice(&packed.to_le_bytes());
-            }
-            32 => {
-                out[entry_start + 20] = mask;
-                out[entry_start + 21] = read_write_mask;
-                out[entry_start + 24..entry_start + 28]
-                    .copy_from_slice(&(stream as u32).to_le_bytes());
-                // min_precision at entry_start+28..32 left as 0.
-            }
-            _ => unreachable!(),
-        }
-
-        // Append a small ASCII semantic name + NUL terminator (must be valid UTF-8).
+    let mut semantic_names = Vec::<String>::with_capacity(param_count);
+    for _ in 0..param_count {
+        // Generate a small ASCII semantic name so signature parsing can reach deeper paths.
         let name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+        let mut name = String::with_capacity(name_len);
         for _ in 0..name_len {
             let b = u.arbitrary::<u8>().unwrap_or(0);
-            out.push(b'A' + (b % 26));
+            name.push((b'A' + (b % 26)) as char);
         }
-        out.push(0);
+        semantic_names.push(name);
     }
 
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = (0..param_count)
+        .map(|i| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: semantic_names[i].as_str(),
+            semantic_index: u32::from(u.arbitrary::<u8>().unwrap_or(0) % 8),
+            system_value_type: u32::from(u.arbitrary::<u8>().unwrap_or(0)),
+            component_type: u32::from(u.arbitrary::<u8>().unwrap_or(0)),
+            register: u32::from(u.arbitrary::<u8>().unwrap_or(0)),
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: u32::from(u.arbitrary::<u8>().unwrap_or(0) % 4),
+            min_precision: 0,
+        })
+        .collect();
+
+    let out = dxbc_test_utils::build_signature_chunk_for_fourcc(fourcc, &entries);
     debug_assert!(out.len() <= MAX_PATCHED_SIG_BYTES);
     out
 }
