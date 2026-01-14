@@ -39,6 +39,10 @@ The `boot_vga_serial` boot sector:
 ## Fixture: `int_sanity`
 
 The `int_sanity` boot sector is a tiny BIOS interrupt smoke test used by
-unit/integration tests. The human-readable source lives in `int_sanity.asm`, but
-the committed `int_sanity.bin` is generated/validated by `cargo xtask fixtures`
-so CI does not require an assembler.
+unit/integration tests (e.g. `crates/legacy/vm/tests/boot_payloads.rs`). The
+human-readable source lives in `int_sanity.asm`, but the committed
+`int_sanity.bin` is generated/validated by `cargo xtask fixtures` so CI does not
+require an assembler.
+
+It exercises a small subset of BIOS interrupts (INT 10h/13h/15h/16h) and writes
+observable results into low RAM so the host-side harness can assert behaviour.
