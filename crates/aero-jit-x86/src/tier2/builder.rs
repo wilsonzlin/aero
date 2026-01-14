@@ -1360,7 +1360,6 @@ pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
         entry_rip: ir.entry_rip,
         base,
         next_value: &mut next_value,
-        const_values: HashMap::new(),
         instrs: Vec::new(),
         unsupported: false,
     };

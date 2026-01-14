@@ -13,7 +13,11 @@ fn run_x86(code: &[u8]) -> (Function, RunExit, T2State) {
 
     let env = RuntimeEnv::default();
     let mut state = T2State::default();
-    let exit = run_function(&func, &env, &mut bus, &mut state, 10);
+    // Make the initial flags explicit so the branch outcome depends on the shift.
+    state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    state.cpu.rip = 0;
+
+    let exit = run_function(&func, &env, &mut bus, &mut state, 16);
     (func, exit, state)
 }
 
@@ -47,4 +51,55 @@ fn tier2_shift_flag_updates_drive_jc_taken() {
     );
     assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
+}
+
+// mov al, 0x81
+// shl al, 1         ; CF=1
+// jc taken          ; must take
+// mov al, 0
+// int3
+// taken: mov al, 1
+// int3
+const SHL8_JC_CODE: &[u8] = &[
+    0xB0, 0x81, // mov al, 0x81
+    0xC0, 0xE0, 0x01, // shl al, 1
+    0x72, 0x03, // jc +3
+    0xB0, 0x00, // mov al, 0
+    0xCC, // int3
+    0xB0, 0x01, // mov al, 1
+    0xCC, // int3
+];
+
+// Same as above, but branch on OF instead of CF.
+// For `shl` with count==1, OF = CF XOR MSB(result). For 0x81 << 1, OF=1.
+const SHL8_JO_CODE: &[u8] = &[
+    0xB0, 0x81, // mov al, 0x81
+    0xC0, 0xE0, 0x01, // shl al, 1
+    0x70, 0x03, // jo +3
+    0xB0, 0x00, // mov al, 0
+    0xCC, // int3
+    0xB0, 0x01, // mov al, 1
+    0xCC, // int3
+];
+
+#[test]
+fn tier2_shl8_updates_cf_observed_by_jc() {
+    let (func, exit, state) = run_x86(SHL8_JC_CODE);
+
+    // If Tier-2 can't lower the shift-with-flags form, it deopts at the block entry.
+    assert!(!func.block(func.entry).instrs.is_empty());
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 0x0c });
+    assert_eq!(state.cpu.rip, 0x0c);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl8_updates_of_observed_by_jo() {
+    let (func, exit, state) = run_x86(SHL8_JO_CODE);
+    assert!(!func.block(func.entry).instrs.is_empty());
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 0x0c });
+    assert_eq!(state.cpu.rip, 0x0c);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
 }
