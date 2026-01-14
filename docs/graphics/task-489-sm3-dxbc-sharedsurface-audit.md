@@ -46,9 +46,15 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_loop_wgsl --locked
 **Status:** ✅ Done
 
 **Implementation (key files):**
-- `crates/aero-d3d9/src/vertex/location_map.rs` (`StandardLocationMap`)
+- `crates/aero-d3d9/src/vertex/location_map.rs` (`StandardLocationMap` + `AdaptiveLocationMap`)
 - `crates/aero-d3d9/src/sm3/ir_builder.rs` (semantic-driven input remap / duplicate detection)
 - `crates/aero-d3d9/src/sm3/wgsl.rs` (emits the remapped `@location(n)` interface)
+
+**Notes:**
+- The remap is implemented via `AdaptiveLocationMap`, which:
+  - reserves the fixed legacy assignments from `StandardLocationMap` for common semantics, and
+  - deterministically allocates any additional declared semantics (e.g. `TEXCOORD8`) to the lowest
+    remaining free locations.
 
 **Implementing commits (high-signal):**
 - `be5d5b05` — `feat(aero-d3d9/sm3): remap vertex inputs to canonical WGSL locations`
