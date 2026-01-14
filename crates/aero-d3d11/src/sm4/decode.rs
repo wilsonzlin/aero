@@ -190,7 +190,7 @@ fn official_dxbc_customdata_len(toks: &[u32], at: usize) -> Option<usize> {
             candidates.push(v);
         }
     }
-    if raw % 4 == 0 {
+    if raw.is_multiple_of(4) {
         let raw_dwords = raw / 4;
         for add in 0..=2usize {
             if let Some(v) = raw_dwords.checked_add(add) {
