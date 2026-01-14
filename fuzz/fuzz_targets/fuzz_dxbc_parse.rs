@@ -19,6 +19,11 @@ const MAX_FULL_SCAN_CHUNK_COUNT: usize = 1024;
 const MAX_SIGNATURE_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_SIGNATURE_ENTRIES: usize = 256;
 
+/// Reflection parsers (`RDEF`/`CTAB`) can allocate entry tables and strings based on declared
+/// counts/offsets. Keep chunk sizes small to ensure parsing stays bounded and fuzz throughput
+/// remains stable.
+const MAX_REFLECTION_CHUNK_BYTES: usize = 32 * 1024;
+
 /// Patched DXBC builder chunk payload caps (kept small to avoid large allocations in signature
 /// parsing helpers and to keep the synthesized container fast to parse).
 const MAX_PATCHED_SIG_BYTES: usize = 4096;
@@ -36,6 +41,7 @@ const COMMON_FOURCCS: &[FourCC] = &[
     FourCC(*b"SHEX"),
     FourCC(*b"RDEF"),
     FourCC(*b"STAT"),
+    FourCC(*b"CTAB"),
     FourCC(*b"SPDB"),
     FourCC(*b"SFI0"),
     FourCC(*b"IFCE"),
@@ -88,6 +94,21 @@ fn fuzz_signature_decoders(fourcc: FourCC, bytes: &[u8]) {
     let _ = aero_d3d11::parse_signature_chunk(fourcc, bytes);
 }
 
+fn fuzz_reflection_decoders(fourcc: FourCC, bytes: &[u8]) {
+    if bytes.len() > MAX_REFLECTION_CHUNK_BYTES {
+        return;
+    }
+    match fourcc.0 {
+        [b'R', b'D', b'E', b'F'] => {
+            let _ = aero_dxbc::parse_rdef_chunk_for_fourcc(fourcc, bytes);
+        }
+        [b'C', b'T', b'A', b'B'] => {
+            let _ = aero_dxbc::parse_ctab_chunk(bytes);
+        }
+        _ => {}
+    }
+}
+
 fn fuzz_dxbc_container(bytes: &[u8]) {
     let dxbc = match DxbcFile::parse(bytes) {
         Ok(dxbc) => dxbc,
@@ -104,6 +125,7 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
 
         // Exercise signature parsing helpers when the chunk id matches.
         fuzz_signature_decoders(chunk.fourcc, chunk.data);
+        fuzz_reflection_decoders(chunk.fourcc, chunk.data);
     }
 
     let chunk_count = dxbc.header().chunk_count as usize;
@@ -115,6 +137,7 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
     for &fourcc in COMMON_FOURCCS {
         if let Some(chunk) = dxbc.get_chunk(fourcc) {
             fuzz_signature_decoders(chunk.fourcc, chunk.data);
+            fuzz_reflection_decoders(chunk.fourcc, chunk.data);
         }
     }
 
