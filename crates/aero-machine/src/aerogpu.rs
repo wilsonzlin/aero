@@ -951,20 +951,8 @@ impl AeroGpuMmioDevice {
         // Only accept the subset of formats that the shared scanout consumer can interpret; if we
         // publish an unsupported format value to the shared state, the browser runtime might treat
         // an unknown pixel layout as RGBA and mis-present memory.
-        match fmt {
-            x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
-            {
-                Some(x)
-            }
+        match AeroGpuFormat::from_u32(fmt).bytes_per_pixel() {
+            Some(2) | Some(4) => Some(fmt),
             _ => None,
         }
     }
@@ -990,13 +978,10 @@ impl AeroGpuMmioDevice {
         // The shared scanout descriptor stores pitch in bytes, and scanout consumers interpret the
         // framebuffer layout based on the published `format`. Validate that the stride is large
         // enough for the implied bytes-per-pixel and does not land mid-pixel between rows.
-        let bytes_per_pixel = match format {
-            x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
-            {
-                2u64
-            }
-            _ => 4u64,
+        let bytes_per_pixel = match AeroGpuFormat::from_u32(format).bytes_per_pixel() {
+            Some(2) => 2u64,
+            Some(4) => 4u64,
+            _ => return Self::scanout0_disabled_update(),
         };
 
         let Some(row_bytes) = u64::from(width).checked_mul(bytes_per_pixel) else {
@@ -1058,25 +1043,12 @@ impl AeroGpuMmioDevice {
         // pipeline (shared scanout state consumers) can render deterministically. Keep this
         // validation aligned with what we can publish in `ScanoutStateUpdate`, and with what the
         // machine can render via `AeroGpuScanout0State::read_rgba8888`.
-        let bytes_per_pixel = match self.scanout0_format {
-            x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
-            {
-                4u64
-            }
-            x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
-            {
-                2u64
-            }
-            _ => return false,
-        };
+        let bytes_per_pixel =
+            match AeroGpuFormat::from_u32(self.scanout0_format).bytes_per_pixel() {
+                Some(2) => 2u64,
+                Some(4) => 4u64,
+                _ => return false,
+            };
 
         let Some(row_bytes) = u64::from(self.scanout0_width).checked_mul(bytes_per_pixel) else {
             return false;
