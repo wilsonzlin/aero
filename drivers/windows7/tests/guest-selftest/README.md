@@ -294,6 +294,9 @@ Notes:
 - The `virtio-net` marker includes large transfer diagnostics:
   - `large_ok`, `large_bytes`, `large_fnv1a64`, `large_mbps`
   - `upload_ok`, `upload_bytes`, `upload_mbps`
+- The `virtio-net` marker also includes best-effort MSI/MSI-X allocation diagnostics:
+  - `msi`: `1` when Windows assigned message-signaled interrupts; `0` for INTx; `-1` if the query failed
+  - `msi_messages`: number of allocated messages (`0` for INTx; `-1` if the query failed)
 - The virtio-net section also emits an optional ctrl virtqueue diagnostic line (not parsed by the harness):
   - `virtio-net-ctrl-vq|INFO|...`
   - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.
