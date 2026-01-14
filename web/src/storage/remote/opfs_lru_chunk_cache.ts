@@ -54,6 +54,12 @@ type ChunkIndexV1 = {
   chunks: Record<string, { byteLength: number; lastAccess: number }>;
 };
 
+function emptyChunkIndexMap(): ChunkIndexV1["chunks"] {
+  // Use a null prototype so the cache never observes inherited keys (e.g. if `Object.prototype`
+  // is polluted with numeric properties like `"0"`).
+  return Object.create(null) as ChunkIndexV1["chunks"];
+}
+
 // Defensive bound: index.json can be attacker-controlled/corrupt and should not be allowed to
 // trigger arbitrarily large allocations/parses.
 const MAX_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -157,6 +163,7 @@ function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1
   if (!obj.chunks || typeof obj.chunks !== "object" || Array.isArray(obj.chunks)) return null;
 
   const chunks = obj.chunks as Record<string, unknown>;
+  const outChunks = emptyChunkIndexMap();
   let count = 0;
   for (const key in chunks) {
     if (!Object.prototype.hasOwnProperty.call(chunks, key)) continue;
@@ -181,18 +188,19 @@ function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1
     const lastAccess = (meta as { lastAccess?: unknown }).lastAccess;
     if (typeof byteLength !== "number" || !Number.isSafeInteger(byteLength) || byteLength < 0) return null;
     if (typeof lastAccess !== "number" || !Number.isSafeInteger(lastAccess) || lastAccess < 0) return null;
+    outChunks[key] = { byteLength, lastAccess };
   }
 
   const signature = validateSignature(obj.signature);
   if (obj.signature !== undefined && !signature) return null;
 
-  return {
-    version: 1,
-    signature,
-    chunkSize: obj.chunkSize,
-    accessCounter: obj.accessCounter,
-    chunks: obj.chunks as ChunkIndexV1["chunks"],
-  };
+  const out: ChunkIndexV1 = Object.create(null) as ChunkIndexV1;
+  out.version = 1;
+  if (signature !== undefined) out.signature = signature;
+  out.chunkSize = obj.chunkSize;
+  out.accessCounter = obj.accessCounter;
+  out.chunks = outChunks;
+  return out;
 }
 
 /**
@@ -218,7 +226,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     version: 1,
     chunkSize: 0,
     accessCounter: 0,
-    chunks: {},
+    chunks: emptyChunkIndexMap(),
   };
   private totalBytes = 0;
   private dirty = false;
@@ -537,7 +545,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           signature: this.expectedSignature ?? undefined,
           chunkSize: this.chunkSize,
           accessCounter: 0,
-          chunks: {},
+          chunks: emptyChunkIndexMap(),
         };
         this.dirty = true;
       }
@@ -876,7 +884,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
               signature: this.expectedSignature ?? undefined,
               chunkSize: this.chunkSize,
               accessCounter: 0,
-              chunks: {},
+              chunks: emptyChunkIndexMap(),
             };
             this.totalBytes = 0;
             this.dirty = false;
@@ -895,7 +903,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
         signature: this.expectedSignature ?? undefined,
         chunkSize: this.chunkSize,
         accessCounter: 0,
-        chunks: {},
+        chunks: emptyChunkIndexMap(),
       };
       this.totalBytes = 0;
       this.dirty = false;

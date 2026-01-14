@@ -159,6 +159,55 @@ describe("OpfsLruChunkCache", () => {
     await expect(cache.getChunk(1, 4)).resolves.toEqual(new Uint8Array([5, 6, 7, 8]));
   });
 
+  it("does not allow Object.prototype pollution to suppress index reconciliation", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const cacheKey = "test";
+
+    const aeroDir = await root.getDirectoryHandle("aero", { create: true });
+    const disksDir = await aeroDir.getDirectoryHandle("disks", { create: true });
+    const remoteCacheDir = await disksDir.getDirectoryHandle("remote-cache", { create: true });
+    const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: true });
+    const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: true });
+
+    // Write a single chunk on disk.
+    const chunkHandle = await chunksDir.getFileHandle("0.bin", { create: true });
+    const chunkWritable = await chunkHandle.createWritable({ keepExistingData: false });
+    await chunkWritable.write(new Uint8Array([1, 2, 3, 4]));
+    await chunkWritable.close();
+
+    // Write a valid but empty index.json so reconciliation must scan the filesystem.
+    const index = { version: 1, chunkSize: 4, accessCounter: 0, chunks: {} };
+    const indexHandle = await cacheDir.getFileHandle("index.json", { create: true });
+    const indexWritable = await indexHandle.createWritable({ keepExistingData: false });
+    await indexWritable.write(JSON.stringify(index));
+    await indexWritable.close();
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "0");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      // Simulate prototype pollution with a numeric key that would otherwise interfere with
+      // `chunks[key]` lookups.
+      Object.defineProperty(Object.prototype, "0", {
+        value: { byteLength: 999, lastAccess: 0 },
+        configurable: true,
+        writable: true,
+      });
+
+      const cache = await OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 });
+      await expect(cache.getChunkIndices()).resolves.toEqual([0]);
+      await expect(cache.getChunk(0, 4)).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "0", existing);
+      else delete (Object.prototype as any)["0"];
+    }
+  });
+
   it("respects maxBytes by evicting older entries", async () => {
     const root = new MemoryDirectoryHandle("root");
     restoreOpfs = installMemoryOpfs(root).restore;
