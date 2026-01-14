@@ -419,6 +419,11 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             src,
             modifiers,
         }
+        | IrOp::Sgn {
+            dst,
+            src,
+            modifiers,
+        }
         | IrOp::Exp {
             dst,
             src,
@@ -496,6 +501,12 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             modifiers,
         }
         | IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Crs {
             dst,
             src0,
             src1,
@@ -1095,6 +1106,22 @@ fn emit_op_line(
                 ScalarTy::Bool => Err(err("abs on bool source")),
             }
         }
+        IrOp::Sgn {
+            dst,
+            src,
+            modifiers,
+        } => {
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("sgn only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("sgn destination must be float"));
+            }
+            let e = apply_float_result_modifiers(format!("sign({s})"), modifiers)?;
+            emit_assign(dst, e)
+        }
         IrOp::Exp {
             dst,
             src,
@@ -1310,6 +1337,27 @@ fn emit_op_line(
             }
             let dot = format!("dot({a}, {b})");
             let e = apply_float_result_modifiers(format!("vec4<f32>({dot})"), modifiers)?;
+            emit_assign(dst, e)
+        }
+        IrOp::Crs {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
+            if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
+                return Err(err("crs only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("crs destination must be float"));
+            }
+            // D3D9 `crs`: cross product of the xyz components. The W component is not well-specified,
+            // but most shaders only consume `.xyz`. Set W to 1.0 for deterministic output.
+            let cross = format!("cross(({a}).xyz, ({b}).xyz)");
+            let e = apply_float_result_modifiers(format!("vec4<f32>({cross}, 1.0)"), modifiers)?;
             emit_assign(dst, e)
         }
         IrOp::MatrixMul {
@@ -1915,11 +1963,13 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Dp2Add { modifiers, .. }
         | IrOp::Dp3 { modifiers, .. }
         | IrOp::Dp4 { modifiers, .. }
+        | IrOp::Crs { modifiers, .. }
         | IrOp::MatrixMul { modifiers, .. }
         | IrOp::Rcp { modifiers, .. }
         | IrOp::Rsq { modifiers, .. }
         | IrOp::Frc { modifiers, .. }
         | IrOp::Abs { modifiers, .. }
+        | IrOp::Sgn { modifiers, .. }
         | IrOp::Exp { modifiers, .. }
         | IrOp::Log { modifiers, .. }
         | IrOp::Ddx { modifiers, .. }

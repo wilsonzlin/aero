@@ -330,6 +330,12 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src1,
                 modifiers,
             })?,
+            Opcode::Crs => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Crs {
+                dst,
+                src0,
+                src1,
+                modifiers,
+            })?,
             Opcode::M4x4 => push_matmul(&mut stack, inst, 4, 4)?,
             Opcode::M4x3 => push_matmul(&mut stack, inst, 4, 3)?,
             Opcode::M3x4 => push_matmul(&mut stack, inst, 3, 4)?,
@@ -351,6 +357,11 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 modifiers,
             })?,
             Opcode::Abs => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Abs {
+                dst,
+                src,
+                modifiers,
+            })?,
+            Opcode::Sgn => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Sgn {
                 dst,
                 src,
                 modifiers,
@@ -776,6 +787,11 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             src,
             modifiers,
         }
+        | IrOp::Sgn {
+            dst,
+            src,
+            modifiers,
+        }
         | IrOp::Exp {
             dst,
             src,
@@ -870,6 +886,12 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             modifiers,
         }
         | IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Crs {
             dst,
             src0,
             src1,
@@ -1070,6 +1092,11 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             src,
             modifiers,
         }
+        | IrOp::Sgn {
+            dst,
+            src,
+            modifiers,
+        }
         | IrOp::Abs {
             dst,
             src,
@@ -1169,6 +1196,12 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             modifiers,
         }
         | IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Crs {
             dst,
             src0,
             src1,

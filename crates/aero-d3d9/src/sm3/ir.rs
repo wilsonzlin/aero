@@ -205,6 +205,21 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    /// Cross product: `dst.xyz = cross(src0.xyz, src1.xyz)`.
+    ///
+    /// The W component is not well-specified; we set it to 1.0 for deterministic output.
+    Crs {
+        dst: Dst,
+        src0: Src,
+        src1: Src,
+        modifiers: InstModifiers,
+    },
+    /// Component-wise sign: `dst = sign(src)` (−1, 0, +1).
+    Sgn {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     Nrm {
         dst: Dst,
         src: Src,
@@ -765,6 +780,25 @@ fn format_op(op: &IrOp) -> String {
         } => format!(
             "{} {}",
             format_inst("abs", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Crs {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("crs", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
+        ),
+        IrOp::Sgn {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("sgn", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
         IrOp::Exp {

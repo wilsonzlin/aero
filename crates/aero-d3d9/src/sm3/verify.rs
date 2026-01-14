@@ -95,6 +95,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
         | IrOp::Rsq { dst: _, src, modifiers }
         | IrOp::Frc { dst: _, src, modifiers }
         | IrOp::Abs { dst: _, src, modifiers }
+        | IrOp::Sgn { dst: _, src, modifiers }
         | IrOp::Exp { dst: _, src, modifiers }
         | IrOp::Log { dst: _, src, modifiers }
         | IrOp::Ddx { dst: _, src, modifiers }
@@ -161,6 +162,12 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             modifiers,
         }
         | IrOp::Dp4 {
+            dst: _,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Crs {
             dst: _,
             src0,
             src1,

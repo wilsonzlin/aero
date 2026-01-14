@@ -576,11 +576,13 @@ fn exec_op(
         | IrOp::Dp2Add { dst, modifiers, .. }
         | IrOp::Dp3 { dst, modifiers, .. }
         | IrOp::Dp4 { dst, modifiers, .. }
+        | IrOp::Crs { dst, modifiers, .. }
         | IrOp::MatrixMul { dst, modifiers, .. }
         | IrOp::Rcp { dst, modifiers, .. }
         | IrOp::Rsq { dst, modifiers, .. }
         | IrOp::Frc { dst, modifiers, .. }
         | IrOp::Abs { dst, modifiers, .. }
+        | IrOp::Sgn { dst, modifiers, .. }
         | IrOp::Exp { dst, modifiers, .. }
         | IrOp::Log { dst, modifiers, .. }
         | IrOp::Ddx { dst, modifiers, .. }
@@ -660,6 +662,18 @@ fn exec_op(
             let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             Vec4::splat(a.dot4(b))
         }
+        IrOp::Crs { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            // D3D9 `crs`: cross product of the xyz components. The W component is not well-specified,
+            // but most shaders only consume `.xyz`. Set W to 1.0 for deterministic output.
+            Vec4::new(
+                a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x,
+                1.0,
+            )
+        }
         IrOp::MatrixMul {
             dst,
             src0,
@@ -737,6 +751,19 @@ fn exec_op(
         IrOp::Abs { src, .. } => {
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             a.abs()
+        }
+        IrOp::Sgn { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let sign = |v: f32| {
+                if v > 0.0 {
+                    1.0
+                } else if v < 0.0 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            };
+            Vec4::new(sign(a.x), sign(a.y), sign(a.z), sign(a.w))
         }
         IrOp::Exp { src, .. } => {
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
@@ -1149,6 +1176,7 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
         | IrOp::Rsq { src, modifiers, .. }
         | IrOp::Frc { src, modifiers, .. }
         | IrOp::Abs { src, modifiers, .. }
+        | IrOp::Sgn { src, modifiers, .. }
         | IrOp::Exp { src, modifiers, .. }
         | IrOp::Log { src, modifiers, .. }
         | IrOp::Ddx { src, modifiers, .. }
@@ -1217,6 +1245,12 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             ..
         }
         | IrOp::Dp4 {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Crs {
             src0,
             src1,
             modifiers,

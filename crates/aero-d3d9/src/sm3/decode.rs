@@ -79,6 +79,10 @@ pub enum Opcode {
     Min,
     Max,
     Abs,
+    /// Cross product (`dst.xyz = cross(src0.xyz, src1.xyz)`).
+    Crs,
+    /// Sign (`dst = sign(src)` component-wise).
+    Sgn,
     Nrm,
     Lit,
     SinCos,
@@ -150,6 +154,8 @@ impl Opcode {
             29 => Self::EndLoop,
             31 => Self::Dcl,
             32 => Self::Pow,
+            33 => Self::Crs, // 0x21
+            34 => Self::Sgn, // 0x22
             35 => Self::Abs,   // 0x23
             36 => Self::Nrm,    // 0x24
             37 => Self::SinCos, // 0x25
@@ -211,6 +217,8 @@ impl Opcode {
             Self::Min => "min",
             Self::Max => "max",
             Self::Abs => "abs",
+            Self::Crs => "crs",
+            Self::Sgn => "sgn",
             Self::Nrm => "nrm",
             Self::Lit => "lit",
             Self::SinCos => "sincos",
@@ -799,6 +807,7 @@ fn decode_operands_and_extras(
         | Opcode::Exp
         | Opcode::Log
         | Opcode::Abs
+        | Opcode::Sgn
         | Opcode::Nrm
         | Opcode::Lit => {
             parse_fixed_operands(
@@ -917,6 +926,7 @@ fn decode_operands_and_extras(
         | Opcode::Dp2
         | Opcode::Dp3
         | Opcode::Dp4
+        | Opcode::Crs
         | Opcode::Pow
         | Opcode::M4x4
         | Opcode::M4x3
