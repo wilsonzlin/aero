@@ -9,6 +9,7 @@ use tempfile::NamedTempFile;
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
 const VHD_DISK_TYPE_FIXED: u32 = 2;
+const VHD_DISK_TYPE_DYNAMIC: u32 = 3;
 
 fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
     buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
@@ -114,6 +115,17 @@ fn vhd_footer_checksum(raw: &[u8; SECTOR_SIZE]) -> u32 {
     !sum
 }
 
+fn vhd_dynamic_header_checksum(raw: &[u8; 1024]) -> u32 {
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (36..40).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
 fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE] {
     let mut footer = [0u8; SECTOR_SIZE];
     footer[0..8].copy_from_slice(b"conectix");
@@ -139,6 +151,81 @@ fn make_vhd_fixed_with_pattern(virtual_size: u64) -> MemBackend {
     let mut backend = MemBackend::default();
     backend.write_at(0, &data).unwrap();
     backend.write_at(virtual_size, &footer).unwrap();
+    backend
+}
+
+fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+    assert_eq!(block_size as usize % SECTOR_SIZE, 0);
+
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let table_offset = dyn_header_offset + 1024u64;
+    let blocks = virtual_size.div_ceil(block_size as u64);
+    let max_table_entries = blocks as u32;
+    let bat_bytes = max_table_entries as u64 * 4;
+    let bat_size = bat_bytes.div_ceil(SECTOR_SIZE as u64) * SECTOR_SIZE as u64;
+
+    let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_DYNAMIC, dyn_header_offset);
+    let file_len = (SECTOR_SIZE as u64) + 1024 + bat_size + (SECTOR_SIZE as u64);
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+
+    backend.write_at(0, &footer).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+
+    let mut dyn_header = [0u8; 1024];
+    dyn_header[0..8].copy_from_slice(b"cxsparse");
+    write_be_u64(&mut dyn_header, 8, u64::MAX);
+    write_be_u64(&mut dyn_header, 16, table_offset);
+    write_be_u32(&mut dyn_header, 24, 0x0001_0000);
+    write_be_u32(&mut dyn_header, 28, max_table_entries);
+    write_be_u32(&mut dyn_header, 32, block_size);
+    let checksum = vhd_dynamic_header_checksum(&dyn_header);
+    write_be_u32(&mut dyn_header, 36, checksum);
+    backend.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+    let bat = vec![0xFFu8; bat_size as usize];
+    backend.write_at(table_offset, &bat).unwrap();
+
+    backend
+}
+
+fn make_vhd_dynamic_with_pattern() -> MemBackend {
+    let virtual_size = 64 * 1024;
+    let block_size = 16 * 1024;
+    let mut backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let table_offset = dyn_header_offset + 1024u64;
+    let bat_size = SECTOR_SIZE as u64; // 4 entries padded to 512
+    let old_footer_offset = (SECTOR_SIZE as u64) + 1024 + bat_size;
+    let bitmap_size = SECTOR_SIZE as u64; // sectors_per_block=32 => bitmap_bytes=4 => 512 aligned
+    let block_total_size = bitmap_size + block_size as u64;
+    let new_footer_offset = old_footer_offset + block_total_size;
+
+    backend
+        .set_len(new_footer_offset + SECTOR_SIZE as u64)
+        .unwrap();
+
+    let bat_entry = (old_footer_offset / SECTOR_SIZE as u64) as u32;
+    backend
+        .write_at(table_offset, &bat_entry.to_be_bytes())
+        .unwrap();
+
+    let mut bitmap = [0u8; SECTOR_SIZE];
+    bitmap[0] = 0x80;
+    backend.write_at(old_footer_offset, &bitmap).unwrap();
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    sector[..12].copy_from_slice(b"hello vhd-d!");
+    let data_offset = old_footer_offset + bitmap_size;
+    backend.write_at(data_offset, &sector).unwrap();
+
+    let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_DYNAMIC, dyn_header_offset);
+    backend.write_at(0, &footer).unwrap();
+    backend.write_at(new_footer_offset, &footer).unwrap();
+
     backend
 }
 
@@ -258,5 +345,42 @@ fn chunking_vhd_uses_virtual_disk_bytes() {
             .as_deref()
             .expect("sha256 present");
         assert_eq!(actual, expected, "sha256 mismatch for vhd chunk {i}");
+    }
+}
+
+#[test]
+fn chunking_vhd_dynamic_uses_virtual_disk_bytes() {
+    let disk_size_bytes = 64 * 1024u64;
+    let chunk_size = 4096u64;
+
+    let backend = make_vhd_dynamic_with_pattern();
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+    assert_eq!(chunks.len() as u64, manifest.chunk_count);
+
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    expected[0..12].copy_from_slice(b"hello vhd-d!");
+
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
+    assert_eq!(actual, expected);
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let expected = sha256_hex(chunk);
+        let actual = manifest.chunks[i]
+            .sha256
+            .as_deref()
+            .expect("sha256 present");
+        assert_eq!(actual, expected, "sha256 mismatch for vhd-d chunk {i}");
     }
 }
