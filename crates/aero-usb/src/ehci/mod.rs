@@ -568,14 +568,20 @@ impl EhciController {
         self.hub.tick_1ms();
 
         if self.regs.usbcmd & USBCMD_RS != 0 {
-            if self.regs.usbcmd & (USBCMD_PSE | USBCMD_ASE) != 0 {
-                if let Err(err) = self.process_schedules(mem) {
-                    self.schedule_fault(err);
-                    return;
+            // When PCI Bus Master Enable is cleared, integrations typically provide a MemoryBus
+            // adapter that returns open-bus reads (0xFF) and ignores writes. Avoid interpreting that
+            // open-bus data as real schedule structures by skipping all schedule processing while
+            // DMA is disabled.
+            if mem.dma_enabled() {
+                if self.regs.usbcmd & (USBCMD_PSE | USBCMD_ASE) != 0 {
+                    if let Err(err) = self.process_schedules(mem) {
+                        self.schedule_fault(err);
+                        return;
+                    }
                 }
-            }
 
-            self.service_async_advance_doorbell();
+                self.service_async_advance_doorbell();
+            }
             self.regs.advance_1ms();
         }
 

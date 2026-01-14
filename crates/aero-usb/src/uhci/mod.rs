@@ -307,7 +307,10 @@ impl UhciController {
         self.regs.update_halted();
 
         let frame_index = self.regs.frnum & 0x03ff;
-        if self.regs.flbaseadd != 0 {
+        // Like other PCI devices, UHCI schedule DMA is gated by PCI Bus Master Enable. When DMA is
+        // disabled integrations typically return open-bus reads (`0xFF`); avoid interpreting that
+        // data as real schedule structures.
+        if self.regs.flbaseadd != 0 && mem.dma_enabled() {
             let mut ctx = ScheduleContext {
                 mem,
                 hub: &mut self.hub,
