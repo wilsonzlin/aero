@@ -114,6 +114,10 @@ The canonical publish ordering (important for Atomics-based consumers) is docume
 
 - Rust: `SharedFramebufferWriter::write_frame()` in `crates/aero-shared/src/shared_framebuffer.rs`
 
+Rust-side consumer (host/presenter utilities):
+
+- `crates/aero-gpu/src/frame_source.rs` (`FrameSource`) polls `frame_seq`, selects the active slot, and converts dirty tiles into rects for the presenter.
+
 ### Consumption in the GPU worker
 
 The GPU worker:
@@ -121,6 +125,7 @@ The GPU worker:
 1. Validates the header (`magic`, `version`).
 2. Reads `active_index` to select the active slot.
 3. Optionally derives dirty rects from the per-slot dirty bitset.
+   - If dirty tracking is enabled but the producer sets **no** dirty bits, the consumer treats the frame as **full-frame dirty** (mirrors `FrameSource` behavior to avoid interpreting `[]` as “nothing changed”).
 4. Uploads either:
    - a full frame (`present()`), or
    - rect updates (`presentDirtyRects()` when the selected backend supports it).
@@ -190,6 +195,10 @@ Important ABI notes:
 - When `enable_vga=true` (and PC platform is enabled), the machine exposes a transitional Bochs/QEMU-compatible “Standard VGA”-like PCI function for VBE LFB routing (see `VGA_PCI_BDF` in `crates/aero-machine/src/lib.rs`).
 
 ## Presenter backends and color/alpha policy
+
+Presentation policy is also centralized on the Rust side (useful for native tests and wgpu-backed paths):
+
+- `crates/aero-gpu/src/present.rs` (presentation policy enums + selection helpers, plus dirty-rect upload utilities)
 
 ### Source pixel format and conventions
 
