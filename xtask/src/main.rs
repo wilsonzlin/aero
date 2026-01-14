@@ -111,7 +111,7 @@ Usage:
   cargo xtask bios-rom [--check]
   cargo xtask fixtures [--check]
   cargo xtask conformance [options] [-- <test args>]
-  cargo xtask input [--e2e] [-- <extra playwright args>]
+  cargo xtask input [--e2e] [--rust-only] [-- <extra playwright args>]
   cargo xtask snapshot inspect <path>
   cargo xtask snapshot validate [--deep] <path>
   cargo xtask snapshot diff <path_a> <path_b> [--deep]
