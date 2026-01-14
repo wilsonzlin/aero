@@ -486,9 +486,9 @@ Where to start verifying:
 
 ## Appendix: Known duplicates / tech debt (pointers)
 
-- Two VGA implementations exist:
-  - canonical boot VGA/VBE: [`crates/aero-gpu-vga/`](../../crates/aero-gpu-vga/)
-  - legacy emulator VGA: [`crates/emulator/src/devices/vga.rs`](../../crates/emulator/src/devices/vga.rs)
+ - VGA device model wiring has two *integration* surfaces, but one shared implementation:
+   - canonical VGA/VBE device model: [`crates/aero-gpu-vga/`](../../crates/aero-gpu-vga/)
+   - legacy emulator module path: [`crates/emulator/src/devices/vga.rs`](../../crates/emulator/src/devices/vga.rs) (re-export of `aero-gpu-vga` for compatibility)
 - Multiple AeroGPU device models exist for the canonical versioned ABI (`A3A0:0001`):
   - canonical machine MVP: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) + display/VRAM glue in [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs)
   - shared device-side library: [`crates/aero-devices-gpu/src/pci.rs`](../../crates/aero-devices-gpu/src/pci.rs) (legacy sandbox integration: [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs))
