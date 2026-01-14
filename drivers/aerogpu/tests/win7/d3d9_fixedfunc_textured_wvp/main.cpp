@@ -184,27 +184,39 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
   dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
 
-  // Place a quad around NDC origin via a WORLD translation. Without WVP
-  // transforms, the quad would remain off-center and the sampled pixel would
-  // stay at the clear color.
+  // Place a quad around NDC origin via WORLD/VIEW/PROJECTION translations.
+  //
+  // The quad's vertex positions are initially on the left side of clip space.
+  // The chosen transforms shift it onto the center pixel *only* when the
+  // fixed-function fallback correctly applies the full WVP matrix. If any of
+  // WORLD/VIEW/PROJECTION is ignored, the center pixel stays at the clear color.
   D3DMATRIX world;
   ZeroMemory(&world, sizeof(world));
   world._11 = 1.0f;
   world._22 = 1.0f;
   world._33 = 1.0f;
   world._44 = 1.0f;
-  world._41 = 0.8f; // translate +X
+  world._41 = 0.3f; // +X
 
-  D3DMATRIX identity;
-  ZeroMemory(&identity, sizeof(identity));
-  identity._11 = 1.0f;
-  identity._22 = 1.0f;
-  identity._33 = 1.0f;
-  identity._44 = 1.0f;
+  D3DMATRIX view;
+  ZeroMemory(&view, sizeof(view));
+  view._11 = 1.0f;
+  view._22 = 1.0f;
+  view._33 = 1.0f;
+  view._44 = 1.0f;
+  view._41 = 0.3f; // +X
+
+  D3DMATRIX proj;
+  ZeroMemory(&proj, sizeof(proj));
+  proj._11 = 1.0f;
+  proj._22 = 1.0f;
+  proj._33 = 1.0f;
+  proj._44 = 1.0f;
+  proj._41 = 0.2f; // +X
 
   dev->SetTransform(D3DTS_WORLD, &world);
-  dev->SetTransform(D3DTS_VIEW, &identity);
-  dev->SetTransform(D3DTS_PROJECTION, &identity);
+  dev->SetTransform(D3DTS_VIEW, &view);
+  dev->SetTransform(D3DTS_PROJECTION, &proj);
 
   // Untransformed textured vertices: XYZ|DIFFUSE|TEX1.
   hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
@@ -321,4 +333,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-
