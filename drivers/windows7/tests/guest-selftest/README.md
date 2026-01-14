@@ -392,6 +392,10 @@ Notes:
   - `virtio-net-diag|INFO|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_rx_vector=...|msix_tx_vector=...|...`
   - `virtio-net-diag|WARN|reason=not_supported|...` (for example when the driver does not expose `\\.\AeroVirtioNetDiag`)
   - The host harness mirrors this into `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|...` for log scraping/CI.
+  - Newer virtio-net drivers also include best-effort TX checksum offload usage counters on this line:
+    - `tx_tcp_csum_offload_pkts`, `tx_tcp_csum_fallback_pkts`
+    - `tx_udp_csum_offload_pkts`, `tx_udp_csum_fallback_pkts`
+    - These counters reflect how many NET_BUFFERs used virtio-net checksum offload vs fell back to software checksum in the miniport.
 - The `virtio-blk` marker includes basic file I/O diagnostics:
   - `write_ok`, `write_bytes`, `write_mbps`
   - `flush_ok`

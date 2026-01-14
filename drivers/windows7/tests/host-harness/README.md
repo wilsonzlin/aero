@@ -1083,6 +1083,9 @@ the optional diagnostics device:
 
 - `virtio-net-diag|INFO|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_rx_vector=...|msix_tx_vector=...|...`
 - `virtio-net-diag|WARN|reason=not_supported|...` (when unavailable)
+- Newer virtio-net drivers may also append TX checksum offload usage counters:
+  - `tx_tcp_csum_offload_pkts`, `tx_tcp_csum_fallback_pkts`
+  - `tx_udp_csum_offload_pkts`, `tx_udp_csum_fallback_pkts`
 
 The host harness mirrors the last observed line into a stable host-side marker for log scraping:
 
