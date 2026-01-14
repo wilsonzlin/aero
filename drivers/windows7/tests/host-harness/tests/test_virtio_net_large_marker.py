@@ -60,6 +60,22 @@ class VirtioNetLargeMarkerTests(unittest.TestCase):
             "upload_ok=1|upload_bytes=1048576|upload_mbps=234.56",
         )
 
+    def test_emits_msi_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|large_ok=1|large_bytes=1048576|"
+            b"large_fnv1a64=0x8505ae4435522325|large_mbps=123.45|"
+            b"upload_ok=1|upload_bytes=1048576|upload_mbps=234.56|"
+            b"msi=1|msi_messages=4\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS|large_ok=1|large_bytes=1048576|"
+            "large_fnv1a64=0x8505ae4435522325|large_mbps=123.45|"
+            "upload_ok=1|upload_bytes=1048576|upload_mbps=234.56|"
+            "msi=1|msi_messages=4",
+        )
+
     def test_status_fail_when_upload_fails_even_if_large_ok(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL|large_ok=1|large_bytes=1048576|"

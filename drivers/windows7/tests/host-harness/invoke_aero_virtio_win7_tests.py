@@ -4019,13 +4019,19 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
         return
 
     fields = _parse_marker_kv_fields(marker_line)
-    if (
-        "large_bytes" not in fields
-        and "large_mbps" not in fields
-        and "large_fnv1a64" not in fields
-        and "upload_ok" not in fields
-        and "upload_bytes" not in fields
-        and "upload_mbps" not in fields
+    if not any(
+        k in fields
+        for k in (
+            "large_ok",
+            "large_bytes",
+            "large_mbps",
+            "large_fnv1a64",
+            "upload_ok",
+            "upload_bytes",
+            "upload_mbps",
+            "msi",
+            "msi_messages",
+        )
     ):
         return
 
@@ -4042,7 +4048,17 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
         status = "PASS"
 
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|{status}"]
-    for k in ("large_ok", "large_bytes", "large_fnv1a64", "large_mbps", "upload_ok", "upload_bytes", "upload_mbps"):
+    for k in (
+        "large_ok",
+        "large_bytes",
+        "large_fnv1a64",
+        "large_mbps",
+        "upload_ok",
+        "upload_bytes",
+        "upload_mbps",
+        "msi",
+        "msi_messages",
+    ):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
