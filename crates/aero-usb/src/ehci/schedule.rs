@@ -28,4 +28,15 @@ pub enum ScheduleError {
     QtdCycle,
     PeriodicBudgetExceeded,
     PeriodicCycle,
+    AddressOverflow,
+}
+
+/// Add a byte offset to a 32-bit schedule pointer, returning the resulting physical address.
+///
+/// EHCI schedule pointers are 32-bit physical addresses (AC64=0). Treat arithmetic overflow as a
+/// schedule fault rather than allowing wraparound to alias low memory.
+pub(crate) fn addr_add(base: u32, offset: u32) -> Result<u64, ScheduleError> {
+    base.checked_add(offset)
+        .map(u64::from)
+        .ok_or(ScheduleError::AddressOverflow)
 }

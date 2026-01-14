@@ -71,8 +71,14 @@ pub(crate) fn process_frame<M: MemoryBus + ?Sized>(
     flbaseadd: u32,
     frame_index: u16,
 ) {
-    let entry_addr = flbaseadd.wrapping_add(frame_index as u32 * 4) as u64;
-    let link = LinkPointer(ctx.mem.read_u32(entry_addr));
+    let entry_off = (frame_index as u32).saturating_mul(4);
+    let Some(entry_addr) = flbaseadd.checked_add(entry_off) else {
+        // Frame list indexing overflowed the 32-bit physical address space. Treat this as a host
+        // system error rather than allowing wraparound to alias low memory.
+        *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+        return;
+    };
+    let link = LinkPointer(ctx.mem.read_u32(u64::from(entry_addr)));
     walk_link(ctx, link);
 }
 
@@ -157,6 +163,18 @@ mod tests {
         }
     }
 
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected DMA read at {paddr:#x}");
+        }
+
+        fn write_physical(&mut self, paddr: u64, _buf: &[u8]) {
+            panic!("unexpected DMA write at {paddr:#x}");
+        }
+    }
+
     #[test]
     fn uhci_schedule_walk_terminates_on_self_referential_qh() {
         // Frame list entry points at a QH that links to itself (horizontal), with no element chain.
@@ -189,6 +207,29 @@ mod tests {
         assert_ne!(usbsts & USBSTS_USBERRINT, 0);
         assert_ne!(usbsts & USBSTS_HSE, 0);
     }
+
+    #[test]
+    fn uhci_frame_list_pointer_add_overflow_sets_hse_without_dma() {
+        // `process_frame` takes the (already-masked) FLBASEADD register value, but it is a
+        // guest-controlled pointer. Ensure we never allow 32-bit arithmetic to wrap and alias low
+        // memory.
+        let mut mem = PanicMem;
+        let mut hub = RootHub::new();
+        let mut usbsts = 0u16;
+        let mut usbint_causes = 0u16;
+        let mut ctx = ScheduleContext {
+            mem: &mut mem,
+            hub: &mut hub,
+            usbsts: &mut usbsts,
+            usbint_causes: &mut usbint_causes,
+        };
+
+        // Force an overflow in `flbaseadd + frame_index*4`.
+        process_frame(&mut ctx, 0xffff_fffc, 1);
+
+        assert_ne!(usbsts & USBSTS_USBERRINT, 0);
+        assert_ne!(usbsts & USBSTS_HSE, 0);
+    }
 }
 
 fn process_qh<M: MemoryBus + ?Sized>(
@@ -196,7 +237,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
     qh_addr: u32,
 ) -> LinkPointer {
     let horiz = LinkPointer(ctx.mem.read_u32(qh_addr as u64));
-    let mut elem = LinkPointer(ctx.mem.read_u32(qh_addr.wrapping_add(4) as u64));
+    let mut elem = LinkPointer(ctx.mem.read_u32(u64::from(qh_addr) + 4));
 
     let mut visited = VisitedSet::new(MAX_QH_ELEMENT_STEPS);
     let mut budget_exhausted = true;
@@ -224,7 +265,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
                 break;
             }
             TdProgress::Advanced { next_link, stop } => {
-                ctx.mem.write_u32(qh_addr.wrapping_add(4) as u64, next_link);
+                ctx.mem.write_u32(u64::from(qh_addr) + 4, next_link);
                 elem = LinkPointer(next_link);
                 if stop {
                     budget_exhausted = false;
@@ -319,9 +360,9 @@ fn process_single_td<M: MemoryBus + ?Sized>(
 ) -> TdProgress {
     let next_link = ctx.mem.read_u32(td_addr as u64);
 
-    let mut status = ctx.mem.read_u32(td_addr.wrapping_add(4) as u64);
-    let token = ctx.mem.read_u32(td_addr.wrapping_add(8) as u64);
-    let buffer = ctx.mem.read_u32(td_addr.wrapping_add(12) as u64);
+    let mut status = ctx.mem.read_u32(u64::from(td_addr) + 4);
+    let token = ctx.mem.read_u32(u64::from(td_addr) + 8);
+    let buffer = ctx.mem.read_u32(u64::from(td_addr) + 12);
 
     if status & TD_STATUS_ACTIVE == 0 {
         return TdProgress::NoProgress;
@@ -386,7 +427,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 UsbOutResult::Nak => {
                     status |= TD_STATUS_NAK;
                     ctx.mem
-                        .write_u32(td_addr.wrapping_add(4) as u64, status | TD_STATUS_ACTIVE);
+                        .write_u32(u64::from(td_addr) + 4, status | TD_STATUS_ACTIVE);
                     TdProgress::Nak
                 }
                 UsbOutResult::Stall => {
@@ -442,7 +483,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 UsbOutResult::Nak => {
                     status |= TD_STATUS_NAK;
                     ctx.mem
-                        .write_u32(td_addr.wrapping_add(4) as u64, status | TD_STATUS_ACTIVE);
+                        .write_u32(u64::from(td_addr) + 4, status | TD_STATUS_ACTIVE);
                     TdProgress::Nak
                 }
                 UsbOutResult::Stall => {
@@ -502,7 +543,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
             UsbInResult::Nak => {
                 status |= TD_STATUS_NAK;
                 ctx.mem
-                    .write_u32(td_addr.wrapping_add(4) as u64, status | TD_STATUS_ACTIVE);
+                    .write_u32(u64::from(td_addr) + 4, status | TD_STATUS_ACTIVE);
                 TdProgress::Nak
             }
             UsbInResult::Stall => {
@@ -560,7 +601,7 @@ fn complete_td<M: MemoryBus + ?Sized>(
         (actual_len as u32).saturating_sub(1) & 0x7ff
     };
     status = (status & !0x7ff) | al;
-    mem.write_u32(td_addr.wrapping_add(4) as u64, status);
+    mem.write_u32(u64::from(td_addr) + 4, status);
 
     if error {
         *usbsts |= USBSTS_USBERRINT;

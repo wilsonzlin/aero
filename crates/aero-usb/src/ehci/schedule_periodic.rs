@@ -6,7 +6,7 @@ use crate::visited_set::VisitedSet;
 use crate::SetupPacket;
 
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
-use super::schedule::{ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH};
+use super::schedule::{addr_add, ScheduleError, MAX_PERIODIC_LINKS_PER_FRAME, MAX_QTD_STEPS_PER_QH};
 use super::RootHub;
 
 // -----------------------------------
@@ -94,7 +94,10 @@ pub(crate) fn process_periodic_frame<M: MemoryBus + ?Sized>(
     let frame = (frindex >> 3) & 0x3ff;
     let microframe = (frindex & 0x7) as u8;
 
-    let entry_addr = periodiclistbase.wrapping_add(frame * 4) as u64;
+    let entry_off = frame
+        .checked_mul(4)
+        .ok_or(ScheduleError::AddressOverflow)?;
+    let entry_addr = addr_add(periodiclistbase, entry_off)?;
     let link = LinkPointer(ctx.mem.read_u32(entry_addr));
     walk_link(ctx, link, microframe)
 }
@@ -160,8 +163,8 @@ fn process_qh<M: MemoryBus + ?Sized>(
     // dword6..: qTD overlay area
 
     let horiz = LinkPointer(ctx.mem.read_u32(qh_addr as u64));
-    let ep_char = ctx.mem.read_u32(qh_addr.wrapping_add(0x04) as u64);
-    let ep_caps = ctx.mem.read_u32(qh_addr.wrapping_add(0x08) as u64);
+    let ep_char = ctx.mem.read_u32(addr_add(qh_addr, 0x04)?);
+    let ep_caps = ctx.mem.read_u32(addr_add(qh_addr, 0x08)?);
 
     let dev_addr = (ep_char & 0x7f) as u8;
     let endpoint = ((ep_char >> 8) & 0x0f) as u8;
@@ -172,7 +175,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
         return Ok(horiz);
     }
 
-    let mut next = QtdPointer(ctx.mem.read_u32(qh_addr.wrapping_add(0x10) as u64));
+    let mut next = QtdPointer(ctx.mem.read_u32(addr_add(qh_addr, 0x10)?));
     let mut visited_qtd = VisitedSet::new(MAX_QTD_STEPS_PER_QH);
     for _ in 0..MAX_QTD_STEPS_PER_QH {
         if next.terminated() {
@@ -195,7 +198,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             QtdProgress::Advanced { stop } => {
                 // Advance the QH overlay "Next qTD Pointer" so software sees forward progress.
                 ctx.mem
-                    .write_u32(qh_addr.wrapping_add(0x10) as u64, next_ptr);
+                    .write_u32(addr_add(qh_addr, 0x10)?, next_ptr);
                 next = QtdPointer(next_ptr);
                 if stop {
                     return Ok(horiz);
@@ -230,7 +233,7 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
     // dword1: Alternate Next qTD Pointer
     // dword2: Token
     // dword3-7: Buffer Page Pointers 0-4
-    let token_addr = qtd_addr.wrapping_add(0x08) as u64;
+    let token_addr = u64::from(qtd_addr) + 0x08;
     let mut token = ctx.mem.read_u32(token_addr);
 
     if (token & QTD_STATUS_ACTIVE) == 0 {
@@ -385,7 +388,7 @@ fn complete_qtd<M: MemoryBus + ?Sized>(
     remaining: usize,
     error: bool,
 ) {
-    let token_addr = qtd_addr.wrapping_add(0x08) as u64;
+    let token_addr = u64::from(qtd_addr) + 0x08;
     token &= !QTD_STATUS_ACTIVE;
     token &= !QTD_TOKEN_BYTES_MASK;
     token |= ((remaining as u32) & 0x7fff) << QTD_TOKEN_BYTES_SHIFT;
@@ -412,7 +415,8 @@ fn complete_qtd<M: MemoryBus + ?Sized>(
 fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut [u8]) {
     let mut ptrs = [0u32; 5];
     for (i, ptr) in ptrs.iter_mut().enumerate() {
-        *ptr = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
+        let off = 0x0c + (i as u32) * 4;
+        *ptr = mem.read_u32(u64::from(qtd_addr) + u64::from(off));
     }
 
     let start_off = (ptrs[0] & 0xfff) as usize;
@@ -434,7 +438,8 @@ fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut 
 fn write_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, data: &[u8]) {
     let mut ptrs = [0u32; 5];
     for (i, ptr) in ptrs.iter_mut().enumerate() {
-        *ptr = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
+        let off = 0x0c + (i as u32) * 4;
+        *ptr = mem.read_u32(u64::from(qtd_addr) + u64::from(off));
     }
 
     let start_off = (ptrs[0] & 0xfff) as usize;

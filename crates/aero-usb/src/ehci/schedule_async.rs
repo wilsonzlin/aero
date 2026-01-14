@@ -7,7 +7,7 @@ use crate::visited_set::VisitedSet;
 use crate::SetupPacket;
 
 use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
-use super::schedule::{ScheduleError, MAX_ASYNC_QH_VISITS, MAX_QTD_STEPS_PER_QH};
+use super::schedule::{addr_add, ScheduleError, MAX_ASYNC_QH_VISITS, MAX_QTD_STEPS_PER_QH};
 use super::RootHub;
 
 // -----------------------------------------------------------------------------
@@ -132,7 +132,8 @@ pub(crate) fn process_async_schedule<M: MemoryBus + ?Sized>(
 
         process_qh(ctx, qh_addr)?;
 
-        let horiz = HorizLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_HORIZ) as u64));
+        let horiz_addr = addr_add(qh_addr, QH_HORIZ)?;
+        let horiz = HorizLink(ctx.mem.read_u32(horiz_addr));
         if horiz.terminated() || !horiz.is_qh() {
             return Ok(());
         }
@@ -271,7 +272,8 @@ fn process_qh<M: MemoryBus + ?Sized>(
     ctx: &mut AsyncScheduleContext<'_, M>,
     qh_addr: u32,
 ) -> Result<(), ScheduleError> {
-    let ep_char = ctx.mem.read_u32(qh_addr.wrapping_add(QH_EPCHAR) as u64);
+    let ep_char_addr = addr_add(qh_addr, QH_EPCHAR)?;
+    let ep_char = ctx.mem.read_u32(ep_char_addr);
 
     let dev_addr = (ep_char & 0x7f) as u8;
     let endpoint = ((ep_char >> 8) & 0x0f) as u8;
@@ -283,13 +285,13 @@ fn process_qh<M: MemoryBus + ?Sized>(
     // speeds are treated as a controller-side failure: we complete the current qTD with HALT.
     const SPEED_HIGH: u8 = 2;
     if speed != SPEED_HIGH {
-        complete_current_qtd_with_error(ctx, qh_addr, QTD_STS_HALT | QTD_STS_XACTERR, true);
+        complete_current_qtd_with_error(ctx, qh_addr, QTD_STS_HALT | QTD_STS_XACTERR, true)?;
         return Ok(());
     }
 
     // Resolve the device once per QH iteration.
     let Some(mut dev) = ctx.hub.device_mut_for_address(dev_addr) else {
-        complete_current_qtd_with_error(ctx, qh_addr, QTD_STS_HALT | QTD_STS_XACTERR, true);
+        complete_current_qtd_with_error(ctx, qh_addr, QTD_STS_HALT | QTD_STS_XACTERR, true)?;
         return Ok(());
     };
 
@@ -301,9 +303,9 @@ fn process_qh<M: MemoryBus + ?Sized>(
         // corresponds to the number of qTDs observed (rather than counting an extra iteration just
         // to populate the QH overlay).
         let mut cur_qtd =
-            ctx.mem.read_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64) & LINK_ADDR_MASK;
+            ctx.mem.read_u32(addr_add(qh_addr, QH_CUR_QTD)?) & LINK_ADDR_MASK;
         if cur_qtd == 0 {
-            let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
+            let next = QtdLink(ctx.mem.read_u32(addr_add(qh_addr, QH_NEXT_QTD)?));
             if next.terminated() {
                 return Ok(());
             }
@@ -314,7 +316,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             if visited_qtd.contains(addr) {
                 return Err(ScheduleError::QtdCycle);
             }
-            load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
+            load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr)?;
             cur_qtd = addr;
         }
 
@@ -324,7 +326,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             return Err(ScheduleError::QtdCycle);
         }
 
-        let mut token = ctx.mem.read_u32(qh_addr.wrapping_add(QH_TOKEN) as u64);
+        let mut token = ctx.mem.read_u32(addr_add(qh_addr, QH_TOKEN)?);
 
         // If the current qTD is inactive, either it is complete (and we can advance) or it has
         // halted/error status and we must stop.
@@ -333,22 +335,20 @@ fn process_qh<M: MemoryBus + ?Sized>(
                 return Ok(());
             }
             // Advance to the next qTD if present; otherwise clear QH.CUR_QTD to indicate idle.
-            let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
+            let next = QtdLink(ctx.mem.read_u32(addr_add(qh_addr, QH_NEXT_QTD)?));
             if next.terminated() {
-                ctx.mem
-                    .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+                ctx.mem.write_u32(addr_add(qh_addr, QH_CUR_QTD)?, 0);
                 return Ok(());
             }
             let addr = next.addr();
             if addr == 0 {
-                ctx.mem
-                    .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+                ctx.mem.write_u32(addr_add(qh_addr, QH_CUR_QTD)?, 0);
                 return Ok(());
             }
             if visited_qtd.contains(addr) {
                 return Err(ScheduleError::QtdCycle);
             }
-            load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
+            load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr)?;
             continue;
         }
 
@@ -356,7 +356,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
         for (i, buf) in overlay_bufs.iter_mut().enumerate() {
             *buf = ctx
                 .mem
-                .read_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64);
+                .read_u32(addr_add(qh_addr, QH_BUF0 + i as u32 * 4)?);
         }
         let mut cursor = QtdCursor::from_token_and_bufs(token, overlay_bufs);
 
@@ -528,7 +528,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
         cursor.encode_into_overlay(&mut token, &mut new_bufs);
         for (i, buf) in new_bufs.iter().enumerate() {
             ctx.mem
-                .write_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64, *buf);
+                .write_u32(addr_add(qh_addr, QH_BUF0 + i as u32 * 4)?, *buf);
         }
 
         // Apply NAK / completion / error handling.
@@ -541,7 +541,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             if ioc {
                 *ctx.usbsts |= USBSTS_USBINT;
             }
-            write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token);
+            write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token)?;
             // Halted/error qTDs stop queue processing.
             return Ok(());
         }
@@ -549,25 +549,22 @@ fn process_qh<M: MemoryBus + ?Sized>(
         if nak {
             // Keep the qTD active (so the guest retries). The cursor and TotalBytes have already
             // been updated for any progress that occurred before the NAK.
-            write_back_qh_overlay_token(ctx.mem, qh_addr, token);
+            write_back_qh_overlay_token(ctx.mem, qh_addr, token)?;
             return Ok(());
         }
 
         // Completed (either because remaining==0 or because of a short packet).
         token &= !QTD_STS_ACTIVE;
-        write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token);
+        write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token)?;
         if ioc {
             *ctx.usbsts |= USBSTS_USBINT;
         }
 
         // Choose the next qTD: on short packet completion prefer the alternate next pointer if it
         // is present, matching the EHCI early-termination semantics.
-        let mut next_ptr = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
+        let mut next_ptr = QtdLink(ctx.mem.read_u32(addr_add(qh_addr, QH_NEXT_QTD)?));
         if short_packet {
-            let alt = QtdLink(
-                ctx.mem
-                    .read_u32(qh_addr.wrapping_add(QH_ALT_NEXT_QTD) as u64),
-            );
+            let alt = QtdLink(ctx.mem.read_u32(addr_add(qh_addr, QH_ALT_NEXT_QTD)?));
             if !alt.terminated() {
                 next_ptr = alt;
             }
@@ -575,42 +572,45 @@ fn process_qh<M: MemoryBus + ?Sized>(
 
         if next_ptr.terminated() {
             // Queue is now empty.
-            ctx.mem
-                .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+            ctx.mem.write_u32(addr_add(qh_addr, QH_CUR_QTD)?, 0);
             return Ok(());
         }
         let addr = next_ptr.addr();
         if addr == 0 {
-            ctx.mem
-                .write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
+            ctx.mem.write_u32(addr_add(qh_addr, QH_CUR_QTD)?, 0);
             return Ok(());
         }
         if visited_qtd.contains(addr) {
             return Err(ScheduleError::QtdCycle);
         }
-        load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
+        load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr)?;
         // Continue to process the next qTD in the same tick.
     }
 
     Err(ScheduleError::QtdBudgetExceeded)
 }
 
-fn load_qtd_into_qh_overlay<M: MemoryBus + ?Sized>(mem: &mut M, qh_addr: u32, qtd_addr: u32) {
+fn load_qtd_into_qh_overlay<M: MemoryBus + ?Sized>(
+    mem: &mut M,
+    qh_addr: u32,
+    qtd_addr: u32,
+) -> Result<(), ScheduleError> {
     let qtd_addr = qtd_addr & LINK_ADDR_MASK;
 
-    let next = mem.read_u32(qtd_addr.wrapping_add(QTD_NEXT) as u64);
-    let alt = mem.read_u32(qtd_addr.wrapping_add(QTD_ALT_NEXT) as u64);
-    let token = mem.read_u32(qtd_addr.wrapping_add(QTD_TOKEN) as u64);
+    let next = mem.read_u32(addr_add(qtd_addr, QTD_NEXT)?);
+    let alt = mem.read_u32(addr_add(qtd_addr, QTD_ALT_NEXT)?);
+    let token = mem.read_u32(addr_add(qtd_addr, QTD_TOKEN)?);
 
-    mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, qtd_addr);
-    mem.write_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64, next);
-    mem.write_u32(qh_addr.wrapping_add(QH_ALT_NEXT_QTD) as u64, alt);
-    mem.write_u32(qh_addr.wrapping_add(QH_TOKEN) as u64, token);
+    mem.write_u32(addr_add(qh_addr, QH_CUR_QTD)?, qtd_addr);
+    mem.write_u32(addr_add(qh_addr, QH_NEXT_QTD)?, next);
+    mem.write_u32(addr_add(qh_addr, QH_ALT_NEXT_QTD)?, alt);
+    mem.write_u32(addr_add(qh_addr, QH_TOKEN)?, token);
 
     for i in 0..5 {
-        let buf = mem.read_u32(qtd_addr.wrapping_add(QTD_BUF0 + i as u32 * 4) as u64);
-        mem.write_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64, buf);
+        let buf = mem.read_u32(addr_add(qtd_addr, QTD_BUF0 + i as u32 * 4)?);
+        mem.write_u32(addr_add(qh_addr, QH_BUF0 + i as u32 * 4)?, buf);
     }
+    Ok(())
 }
 
 fn write_back_current_qtd_token<M: MemoryBus + ?Sized>(
@@ -618,13 +618,19 @@ fn write_back_current_qtd_token<M: MemoryBus + ?Sized>(
     qh_addr: u32,
     cur_qtd: u32,
     token: u32,
-) {
-    mem.write_u32(cur_qtd.wrapping_add(QTD_TOKEN) as u64, token);
-    write_back_qh_overlay_token(mem, qh_addr, token);
+) -> Result<(), ScheduleError> {
+    let cur_qtd = cur_qtd & LINK_ADDR_MASK;
+    mem.write_u32(addr_add(cur_qtd, QTD_TOKEN)?, token);
+    write_back_qh_overlay_token(mem, qh_addr, token)
 }
 
-fn write_back_qh_overlay_token<M: MemoryBus + ?Sized>(mem: &mut M, qh_addr: u32, token: u32) {
-    mem.write_u32(qh_addr.wrapping_add(QH_TOKEN) as u64, token);
+fn write_back_qh_overlay_token<M: MemoryBus + ?Sized>(
+    mem: &mut M,
+    qh_addr: u32,
+    token: u32,
+) -> Result<(), ScheduleError> {
+    mem.write_u32(addr_add(qh_addr, QH_TOKEN)?, token);
+    Ok(())
 }
 
 fn complete_current_qtd_with_error<M: MemoryBus + ?Sized>(
@@ -632,28 +638,28 @@ fn complete_current_qtd_with_error<M: MemoryBus + ?Sized>(
     qh_addr: u32,
     error_bits: u32,
     force_usb_errint: bool,
-) {
+) -> Result<(), ScheduleError> {
     // If there's no current qTD loaded, try to load one so the guest sees a completion instead of
     // an indefinite hang.
-    let mut cur_qtd = ctx.mem.read_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64) & LINK_ADDR_MASK;
+    let mut cur_qtd = ctx.mem.read_u32(addr_add(qh_addr, QH_CUR_QTD)?) & LINK_ADDR_MASK;
     if cur_qtd == 0 {
-        let next = QtdLink(ctx.mem.read_u32(qh_addr.wrapping_add(QH_NEXT_QTD) as u64));
+        let next = QtdLink(ctx.mem.read_u32(addr_add(qh_addr, QH_NEXT_QTD)?));
         if next.terminated() {
-            return;
+            return Ok(());
         }
         let addr = next.addr();
         if addr == 0 {
-            return;
+            return Ok(());
         }
-        load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr);
+        load_qtd_into_qh_overlay(ctx.mem, qh_addr, addr)?;
         cur_qtd = addr;
     }
 
-    let mut token = ctx.mem.read_u32(qh_addr.wrapping_add(QH_TOKEN) as u64);
+    let mut token = ctx.mem.read_u32(addr_add(qh_addr, QH_TOKEN)?);
     let ioc = token & QTD_IOC != 0;
     token &= !QTD_STS_ACTIVE;
     token |= error_bits;
-    write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token);
+    write_back_current_qtd_token(ctx.mem, qh_addr, cur_qtd, token)?;
 
     if force_usb_errint {
         *ctx.usbsts |= USBSTS_USBERRINT;
@@ -661,4 +667,5 @@ fn complete_current_qtd_with_error<M: MemoryBus + ?Sized>(
     if ioc {
         *ctx.usbsts |= USBSTS_USBINT;
     }
+    Ok(())
 }
