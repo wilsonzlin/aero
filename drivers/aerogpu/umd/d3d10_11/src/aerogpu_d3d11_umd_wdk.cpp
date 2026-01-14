@@ -7216,14 +7216,40 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     if (dev->vs_srvs[slot]) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
     }
+    if (dev->vs_srvs[slot] == 0) {
+      if (slot < dev->current_vs_srvs.size()) {
+        dev->current_vs_srvs[slot] = nullptr;
+      }
+      if (slot == 0) {
+        dev->current_vs_srv0 = nullptr;
+      }
+    }
     if (dev->ps_srvs[slot]) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
+    }
+    if (dev->ps_srvs[slot] == 0) {
+      if (slot < dev->current_ps_srvs.size()) {
+        dev->current_ps_srvs[slot] = nullptr;
+      }
+      if (slot == 0) {
+        dev->current_ps_srv0 = nullptr;
+      }
     }
     if (dev->gs_srvs[slot]) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, 0);
     }
+    if (dev->gs_srvs[slot] == 0) {
+      if (slot < dev->current_gs_srvs.size()) {
+        dev->current_gs_srvs[slot] = nullptr;
+      }
+    }
     if (dev->cs_srvs[slot]) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_COMPUTE, slot, 0);
+    }
+    if (dev->cs_srvs[slot] == 0) {
+      if (slot < dev->current_cs_srvs.size()) {
+        dev->current_cs_srvs[slot] = nullptr;
+      }
     }
   }
 
@@ -7245,19 +7271,34 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     }
     return true;
   };
-  if (!emit_null_cbs(AEROGPU_SHADER_STAGE_VERTEX) ||
-      !emit_null_cbs(AEROGPU_SHADER_STAGE_PIXEL) ||
-      !emit_null_cbs(AEROGPU_SHADER_STAGE_GEOMETRY) ||
-      !emit_null_cbs(AEROGPU_SHADER_STAGE_COMPUTE)) {
+  if (!emit_null_cbs(AEROGPU_SHADER_STAGE_VERTEX)) {
     return;
   }
   std::memset(dev->vs_constant_buffers, 0, sizeof(dev->vs_constant_buffers));
-  std::memset(dev->ps_constant_buffers, 0, sizeof(dev->ps_constant_buffers));
-  std::memset(dev->gs_constant_buffers, 0, sizeof(dev->gs_constant_buffers));
-  std::memset(dev->cs_constant_buffers, 0, sizeof(dev->cs_constant_buffers));
   dev->current_vs_cbs.fill(nullptr);
+  dev->current_vs_cb0 = nullptr;
+  dev->current_vs_cb0_first_constant = 0;
+  dev->current_vs_cb0_num_constants = 0;
+
+  if (!emit_null_cbs(AEROGPU_SHADER_STAGE_PIXEL)) {
+    return;
+  }
+  std::memset(dev->ps_constant_buffers, 0, sizeof(dev->ps_constant_buffers));
   dev->current_ps_cbs.fill(nullptr);
+  dev->current_ps_cb0 = nullptr;
+  dev->current_ps_cb0_first_constant = 0;
+  dev->current_ps_cb0_num_constants = 0;
+
+  if (!emit_null_cbs(AEROGPU_SHADER_STAGE_GEOMETRY)) {
+    return;
+  }
+  std::memset(dev->gs_constant_buffers, 0, sizeof(dev->gs_constant_buffers));
   dev->current_gs_cbs.fill(nullptr);
+
+  if (!emit_null_cbs(AEROGPU_SHADER_STAGE_COMPUTE)) {
+    return;
+  }
+  std::memset(dev->cs_constant_buffers, 0, sizeof(dev->cs_constant_buffers));
   dev->current_cs_cbs.fill(nullptr);
 
   std::array<aerogpu_handle_t, kMaxSamplerSlots> null_samplers{};
@@ -7277,15 +7318,28 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     }
     return true;
   };
-  if (!emit_null_samplers(AEROGPU_SHADER_STAGE_VERTEX) ||
-      !emit_null_samplers(AEROGPU_SHADER_STAGE_PIXEL) ||
-      !emit_null_samplers(AEROGPU_SHADER_STAGE_GEOMETRY) ||
-      !emit_null_samplers(AEROGPU_SHADER_STAGE_COMPUTE)) {
+  if (!emit_null_samplers(AEROGPU_SHADER_STAGE_VERTEX)) {
     return;
   }
   std::memset(dev->vs_samplers, 0, sizeof(dev->vs_samplers));
+  dev->current_vs_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  dev->current_vs_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+
+  if (!emit_null_samplers(AEROGPU_SHADER_STAGE_PIXEL)) {
+    return;
+  }
   std::memset(dev->ps_samplers, 0, sizeof(dev->ps_samplers));
+  dev->current_ps_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  dev->current_ps_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+
+  if (!emit_null_samplers(AEROGPU_SHADER_STAGE_GEOMETRY)) {
+    return;
+  }
   std::memset(dev->current_gs_samplers, 0, sizeof(dev->current_gs_samplers));
+
+  if (!emit_null_samplers(AEROGPU_SHADER_STAGE_COMPUTE)) {
+    return;
+  }
   std::memset(dev->cs_samplers, 0, sizeof(dev->cs_samplers));
 
   std::array<aerogpu_shader_resource_buffer_binding, kMaxShaderResourceSlots> null_buf_srvs{};
@@ -7305,19 +7359,28 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     }
     return true;
   };
-  if (!emit_null_buf_srvs(AEROGPU_SHADER_STAGE_VERTEX) ||
-      !emit_null_buf_srvs(AEROGPU_SHADER_STAGE_PIXEL) ||
-      !emit_null_buf_srvs(AEROGPU_SHADER_STAGE_GEOMETRY) ||
-      !emit_null_buf_srvs(AEROGPU_SHADER_STAGE_COMPUTE)) {
+  if (!emit_null_buf_srvs(AEROGPU_SHADER_STAGE_VERTEX)) {
     return;
   }
   std::memset(dev->vs_srv_buffers, 0, sizeof(dev->vs_srv_buffers));
-  std::memset(dev->ps_srv_buffers, 0, sizeof(dev->ps_srv_buffers));
-  std::memset(dev->gs_srv_buffers, 0, sizeof(dev->gs_srv_buffers));
-  std::memset(dev->cs_srv_buffers, 0, sizeof(dev->cs_srv_buffers));
   dev->current_vs_srv_buffers.fill(nullptr);
+
+  if (!emit_null_buf_srvs(AEROGPU_SHADER_STAGE_PIXEL)) {
+    return;
+  }
+  std::memset(dev->ps_srv_buffers, 0, sizeof(dev->ps_srv_buffers));
   dev->current_ps_srv_buffers.fill(nullptr);
+
+  if (!emit_null_buf_srvs(AEROGPU_SHADER_STAGE_GEOMETRY)) {
+    return;
+  }
+  std::memset(dev->gs_srv_buffers, 0, sizeof(dev->gs_srv_buffers));
   dev->current_gs_srv_buffers.fill(nullptr);
+
+  if (!emit_null_buf_srvs(AEROGPU_SHADER_STAGE_COMPUTE)) {
+    return;
+  }
+  std::memset(dev->cs_srv_buffers, 0, sizeof(dev->cs_srv_buffers));
   dev->current_cs_srv_buffers.fill(nullptr);
 
   std::array<aerogpu_unordered_access_buffer_binding, kMaxUavSlots> null_uavs{};
@@ -7338,24 +7401,6 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     dev->cs_uavs[i] = null_uavs[i];
   }
   dev->current_cs_uavs.fill(nullptr);
-
-  // Resource binding pointer caches used for hazard tracking / software rasterizer.
-  dev->current_vs_srvs.fill(nullptr);
-  dev->current_ps_srvs.fill(nullptr);
-  dev->current_gs_srvs.fill(nullptr);
-  dev->current_cs_srvs.fill(nullptr);
-  dev->current_vs_cb0 = nullptr;
-  dev->current_vs_cb0_first_constant = 0;
-  dev->current_vs_cb0_num_constants = 0;
-  dev->current_ps_cb0 = nullptr;
-  dev->current_ps_cb0_first_constant = 0;
-  dev->current_ps_cb0_num_constants = 0;
-  dev->current_vs_srv0 = nullptr;
-  dev->current_ps_srv0 = nullptr;
-  dev->current_vs_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  dev->current_vs_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  dev->current_ps_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  dev->current_ps_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
 
   // Reset input-assembler state to D3D11 defaults.
   //
