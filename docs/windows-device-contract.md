@@ -242,14 +242,14 @@ Examples (illustrative) INF model entries:
  ; aero_virtio_snd.inf
    %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
   
-     ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-       %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-       %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-      %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
-  
-    ; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
-    ; exists only to provide the legacy INF filename. From `[Version]` onward it is byte-for-byte identical to
-    ; `aero_virtio_input.inf` (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+      ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
+        %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+        %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+       %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+   
+     ; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
+     ; exists only to provide the legacy INF filename. From `[Version]` onward it is byte-for-byte identical to
+     ; `aero_virtio_input.inf` (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)

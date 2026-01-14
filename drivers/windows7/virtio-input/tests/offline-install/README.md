@@ -9,11 +9,11 @@ test images where you want input working immediately).
 > `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
 >
 > - Keyboard/mouse (`aero_virtio_input.inf`):
->   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4`
->   - strict fallback (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (subsystem-qualified)
+>   - strict revision-gated generic fallback: `PCI\VEN_1AF4&DEV_1052&REV_01`
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 > - Legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable (disabled by default).
->   - This is a filename-only alias for workflows that reference `virtio-input.inf`.
+>   - This is a filename-only alias for workflows/tools that reference `virtio-input.inf`.
 >   - From the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `aero_virtio_input.inf`
 >     (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 >   - Do **not** stage both filenames at once (`aero_virtio_input.inf` and `virtio-input.inf`): they match the same HWIDs.
