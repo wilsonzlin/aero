@@ -26,6 +26,20 @@ fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
 }
 
 #[test]
+fn xhci_snapshot_save_state_is_parseable_and_has_unique_tags() {
+    let ctrl = XhciController::new();
+    let bytes = ctrl.save_state();
+
+    // Regression test for duplicate TLV field tags: `SnapshotReader::parse` rejects duplicates.
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
+    assert!(r.bytes(11).is_some(), "expected ports field under tag 11");
+    assert!(
+        r.bytes(12).is_some(),
+        "expected host_controller_error field under tag 12"
+    );
+}
+
+#[test]
 fn xhci_snapshot_roundtrip_preserves_ports_and_device_state() {
     let mut ctrl = XhciController::new();
     let mut mem = PanicMem;
