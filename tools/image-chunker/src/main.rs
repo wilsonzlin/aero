@@ -3214,6 +3214,69 @@ mod tests {
     }
 
     #[test]
+    fn resolve_publish_destination_rejects_explicit_image_version_mismatch_with_computed() {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: InputFormat::Raw,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/".to_string(),
+            image_id: None,
+            image_version: Some("sha256-wrong".to_string()),
+            compute_version: ComputeVersion::Sha256,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: DEFAULT_CHUNK_SIZE_BYTES,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: DEFAULT_CONCURRENCY,
+            retries: DEFAULT_RETRIES,
+            no_meta: false,
+        };
+        let prefix = normalize_prefix(&args.prefix);
+        let err = resolve_publish_destination(&args, &prefix, Some("sha256-abc"))
+            .expect_err("expected version mismatch error");
+        assert!(
+            err.to_string().contains("does not match computed version"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_publish_destination_accepts_explicit_image_version_match_with_computed() -> Result<()> {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: InputFormat::Raw,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/".to_string(),
+            image_id: None,
+            image_version: Some("sha256-abc".to_string()),
+            compute_version: ComputeVersion::Sha256,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: DEFAULT_CHUNK_SIZE_BYTES,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: DEFAULT_CONCURRENCY,
+            retries: DEFAULT_RETRIES,
+            no_meta: false,
+        };
+        let prefix = normalize_prefix(&args.prefix);
+        let dest = resolve_publish_destination(&args, &prefix, Some("sha256-abc"))?;
+        assert_eq!(dest.version, "sha256-abc");
+        assert_eq!(dest.image_id, "win7");
+        assert_eq!(dest.version_prefix, "images/win7/sha256-abc/");
+        Ok(())
+    }
+
+    #[test]
     fn sha256_version_matches_expected() {
         let mut hasher = Sha256::new();
         hasher.update(b"hello ");
