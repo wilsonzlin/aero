@@ -1466,28 +1466,20 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     }
 
     fn reset_all_aps(&mut self) {
-        self.ap_cpus.for_each_mut_excluding_current(|idx, cpu| {
-            let apic_id = (idx + 1) as u8;
+        self.ap_cpus.for_each_mut_excluding_current(|_idx, cpu| {
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             cpu.state.halted = true;
-            if let Some(interrupts) = &self.interrupts {
-                interrupts.borrow().reset_lapic(apic_id);
-            }
         });
     }
 
     fn reset_all_aps_excluding_sender(&mut self) {
         if let Some(sender_idx) = self.apic_id.checked_sub(1).map(|v| v as usize) {
             self.ap_cpus
-                .for_each_mut_excluding_index(sender_idx, |idx, cpu| {
-                    let apic_id = (idx + 1) as u8;
+                .for_each_mut_excluding_index(sender_idx, |_idx, cpu| {
                     vcpu_init::reset_ap_vcpu_to_init_state(cpu);
                     set_cpu_apic_base_bsp_bit(cpu, false);
                     cpu.state.halted = true;
-                    if let Some(interrupts) = &self.interrupts {
-                        interrupts.borrow().reset_lapic(apic_id);
-                    }
                 });
         } else {
             self.reset_all_aps();
@@ -2422,6 +2414,7 @@ impl PciDevice for XhciPciConfigDevice {
 // framebuffer (LFB) can be routed via the PCI MMIO window (stub BAR mirrors the configured LFB
 // base; legacy default `SVGA_LFB_BASE`). When AeroGPU is enabled, this transitional PCI stub is
 // intentionally not installed.
+
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
 

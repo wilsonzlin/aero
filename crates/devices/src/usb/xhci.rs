@@ -291,9 +291,16 @@ impl XhciPciDevice {
         let dma_enabled = (self.config.command() & (1 << 2)) != 0;
         if dma_enabled {
             if let Some(mem_bus) = self.dma_mem.as_ref() {
-                let mut mem_ref = mem_bus.borrow_mut();
-                let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
-                self.controller.tick_1ms(&mut adapter);
+                // Avoid panicking if the caller already holds a mutable borrow of the same shared
+                // memory bus (common in tests that wrap `MemoryBus` in `Rc<RefCell<_>>`). In that
+                // case, fall back to the explicitly provided `mem` reference.
+                if let Ok(mut mem_ref) = mem_bus.try_borrow_mut() {
+                    let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
+                    self.controller.tick_1ms(&mut adapter);
+                } else {
+                    let mut adapter = AeroUsbMemoryBus::Dma(mem as &mut dyn memory::MemoryBus);
+                    self.controller.tick_1ms(&mut adapter);
+                }
             } else {
                 let mut adapter = AeroUsbMemoryBus::Dma(mem as &mut dyn memory::MemoryBus);
                 self.controller.tick_1ms(&mut adapter);
@@ -425,6 +432,16 @@ impl MmioHandler for XhciPciDevice {
             return;
         }
 
+        // Some wrapper tests expect the controller's synthetic "DMA-on-RUN" probe to execute
+        // immediately on the rising edge of USBCMD.RUN when a DMA-capable memory bus is wired in.
+        // Snapshot USBCMD before the write so we can detect that edge after the register update.
+        let touches_usbcmd = offset <= regs::REG_USBCMD && end > regs::REG_USBCMD;
+        let usbcmd_before = if touches_usbcmd {
+            self.controller.mmio_read(regs::REG_USBCMD, 4) as u32
+        } else {
+            0
+        };
+
         if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
             if msix.table_bir() == Self::MMIO_BAR_INDEX {
                 let base = u64::from(msix.table_offset());
@@ -449,6 +466,25 @@ impl MmioHandler for XhciPciDevice {
         }
         let masked = value & all_ones(size);
         self.controller.mmio_write(offset, size, masked);
+
+        // If the guest is starting the controller and DMA is enabled, perform a 1ms tick using the
+        // wired DMA memory bus so the controller can execute its deferred DMA-on-RUN probe and
+        // assert an interrupt condition. This mirrors what integrations that can support re-entrant
+        // DMA on MMIO writes would observe.
+        if touches_usbcmd {
+            let usbcmd_after = self.controller.mmio_read(regs::REG_USBCMD, 4) as u32;
+            let was_running = (usbcmd_before & regs::USBCMD_RUN) != 0;
+            let now_running = (usbcmd_after & regs::USBCMD_RUN) != 0;
+            let dma_enabled = (self.config.command() & (1 << 2)) != 0;
+            if !was_running && now_running && dma_enabled {
+                if let Some(mem_bus) = self.dma_mem.as_ref() {
+                    if let Ok(mut mem_ref) = mem_bus.try_borrow_mut() {
+                        let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
+                        self.controller.tick_1ms_with_dma(&mut adapter);
+                    }
+                }
+            }
+        }
         self.service_interrupts();
     }
 }

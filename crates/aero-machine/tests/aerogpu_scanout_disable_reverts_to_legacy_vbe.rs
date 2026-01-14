@@ -180,8 +180,8 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
     m.process_aerogpu();
     assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_WDDM);
 
-    // Explicitly disable WDDM scanout. The machine should release WDDM ownership and return to the
-    // legacy VBE scanout descriptor (including panning/stride).
+    // Explicitly disable WDDM scanout. This should release WDDM ownership and return scanout state
+    // to the legacy VBE descriptor (including panning/stride).
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
         0,

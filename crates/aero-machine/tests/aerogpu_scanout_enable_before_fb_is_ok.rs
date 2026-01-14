@@ -165,6 +165,15 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert_eq!(m.display_resolution(), legacy_res);
     assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_LEGACY_TEXT);
 
+    // The guest driver enables bus mastering before attempting to scan out from guest memory.
+    {
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let command = bus.read_config(profile::AEROGPU.bdf, 0x04, 2) as u16;
+        bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
+    }
+
     // ---------------------------------------------------------------------
     // 2) Later: driver programs a real framebuffer address while enable stays 1.
     // ---------------------------------------------------------------------

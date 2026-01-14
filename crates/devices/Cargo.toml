@@ -7,6 +7,13 @@ license = "MIT OR Apache-2.0"
 [lib]
 name = "aero_devices"
 
+[features]
+# Legacy virtio implementation (`aero_devices::io::virtio`).
+#
+# The canonical virtio stack lives in the `aero_virtio` crate; this feature only exists for
+# backwards compatibility.
+legacy-virtio = []
+
 [dependencies]
 aero-platform = { path = "../platform" }
 aero-interrupts = { path = "../aero-interrupts" }

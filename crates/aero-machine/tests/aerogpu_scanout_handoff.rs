@@ -261,8 +261,12 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     let legacy_fb_before = m.display_framebuffer().to_vec();
 
     // Legacy text memory changes should become visible again once WDDM ownership is released.
+    m.write_physical(0xB8000, &vec![0u8; 0x8000]);
+    m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
+    m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
     m.write_physical_u8(0xB8000, b'Z');
     m.write_physical_u8(0xB8001, 0x1F);
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     assert_eq!(m.display_resolution(), legacy_text_res);
