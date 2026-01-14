@@ -307,7 +307,7 @@ fn never_returns_length_over_15() {
 #[test]
 fn mandatory_f2_f3_prefixes_are_byte_based_for_prefix_metadata() {
     // iced-x86 distinguishes between *explicit* REP/REPNE prefix bytes and mandatory
-    // PF2/PF3 prefixes (e.g. PAUSE / MOVSS / MOVSD). Our `Prefixes` metadata is
+    // PF2/PF3/P66 prefixes (e.g. PAUSE / MOVSS / MOVSD / some vector ops). Our `Prefixes` metadata is
     // byte-based, so it reports explicit F2/F3 bytes as REPNE/REP regardless of
     // whether the opcode treats them as "mandatory".
 
@@ -329,4 +329,20 @@ fn mandatory_f2_f3_prefixes_are_byte_based_for_prefix_metadata() {
     assert!(!decoded.prefixes.repne);
     assert_eq!(decoded.instruction.code(), Code::VEX_Vmovss_xmm_xmm_xmm);
     assert!(!decoded.instruction.has_rep_prefix());
+
+    // VEX VMOVSD: mandatory PF2 is also encoded in VEX.pp, and must not set
+    // `Prefixes::repne` (there is no legacy F2 byte).
+    let bytes = [0xC5, 0xFB, 0x10, 0xC0];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode_one");
+    assert!(!decoded.prefixes.rep);
+    assert!(!decoded.prefixes.repne);
+    assert_eq!(decoded.instruction.code(), Code::VEX_Vmovsd_xmm_xmm_xmm);
+    assert!(!decoded.instruction.has_repne_prefix());
+
+    // VEX VADDPD: mandatory P66 is encoded in VEX.pp and must not set
+    // `Prefixes::operand_size_override` (there is no legacy 66 byte).
+    let bytes = [0xC5, 0xF9, 0x58, 0xC0];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode_one");
+    assert!(!decoded.prefixes.operand_size_override);
+    assert_eq!(decoded.instruction.code(), Code::VEX_Vaddpd_xmm_xmm_xmmm128);
 }
