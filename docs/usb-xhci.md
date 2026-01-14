@@ -22,8 +22,8 @@ Status:
 - EHCI supports minimal async/periodic schedule walking (control/bulk + interrupt polling) and
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
 - The web runtime currently exposes an xHCI PCI function backed by `XhciControllerBridge`, but the
-  controller is still missing key guest-visible functionality (doorbells, guest event ring, etc), so
-  treat it as a placeholder for now.
+  controller is still missing key guest-visible functionality (doorbells, command ring processing,
+  transfer scheduling), so treat it as a placeholder for now.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -163,21 +163,21 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
     - Capability registers: CAPLENGTH/HCIVERSION, HCSPARAMS1 (port count), HCCPARAMS1 (xECP), DBOFF, RTSOFF.
     - A small Supported Protocol xECP list (USB 2.0 + speed IDs) sized to `port_count`.
     - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
-  - DBOFF/RTSOFF report realistic offsets, but the doorbell array + runtime register blocks are not
-    implemented yet.
+  - DBOFF/RTSOFF report realistic offsets. The doorbell array is not implemented yet, but the
+    runtime interrupter 0 registers + guest event ring producer are modeled.
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
   - Topology-only slot binding (`Address Device`/`Configure Endpoint`) via Slot Context `RootHubPortNumber` + `RouteString`.
-  - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change Event TRBs (events are buffered host-side until a guest event ring/interrupter is implemented).
+  - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change Event TRBs (queued host-side and delivered via interrupter 0 event ring when configured).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
   - Forwards MMIO reads/writes into the canonical Rust controller model (`aero_usb::xhci::XhciController`).
   - `step_frames()` / `tick()` counter only (no scheduling yet).
   - Deterministic snapshot/restore of the controller state + tick count.
   - IRQ level surfaced via `irq_asserted()` (level-triggered INTx semantics).
 
-These are **not** full xHCI implementations. In particular, the guest-visible doorbell array,
-runtime interrupter registers, and guest event ring model are not implemented yet.
+These are **not** full xHCI implementations. In particular, the guest-visible doorbell array and
+full command ring integration are not implemented yet.
 
 #### TRB + ring building blocks
 
@@ -237,8 +237,8 @@ MMIO controller stubs.
 ### Still MVP-relevant but not implemented yet
 
 - Full root hub model (USB3 ports, additional link states, full port register/event coverage).
-- Delivery of port-change events via a real guest event ring/interrupter (today events are buffered host-side via `pop_pending_event()`).
-- Doorbell array + runtime interrupter registers (ERST/ERDP, IMAN/IMOD, etc) and wiring them into the controller core.
+- Delivery of command/transfer events via the guest event ring/interrupter (beyond the current Port Status Change events).
+- Doorbell array and wiring it into the controller core.
 - Full command ring + event ring integration (today, command-ring processing exists as standalone helpers/tests, but the controller MMIO surface does not yet expose the full model).
 - Endpoint 0 control transfer engine wired into the controller (beyond the test harness).
 - Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
@@ -249,7 +249,7 @@ MMIO controller stubs.
 
 xHCI is a large spec. The MVP intentionally leaves out many features that guests and/or real hardware may use:
 
-- **Root hub / port model** beyond the current USB2-only PORTSC + reset timer scaffolding (no USB3 ports/link states yet, and no guest event ring/interrupter).
+- **Root hub / port model** beyond the current USB2-only PORTSC + reset timer scaffolding (no USB3 ports/link states yet).
 - **Full command ring/event ring integration** and the full xHCI slot/endpoint context state machines
   (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). Some command/endpoint-management
   helpers exist for tests, but they are not yet exposed as a guest-visible controller.
@@ -272,7 +272,7 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
-  - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`, `CRCR`, `PORT_COUNT`, `DCBAAP`) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
+  - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`, `CRCR`, `PORT_COUNT`, `DCBAAP`, and Interrupter 0 configuration/state) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
   - Current limitations: the `XHCI` snapshot does **not** yet capture per-port state, pending event
     TRBs, or slot/endpoint contexts; restores should be treated as “best-effort bring-up” rather
     than a bit-perfect resume of an in-flight xHCI driver.

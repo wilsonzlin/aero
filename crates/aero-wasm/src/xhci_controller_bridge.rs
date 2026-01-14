@@ -310,7 +310,20 @@ impl XhciControllerBridge {
     }
 
     /// Optional polling hook for JS wrappers that expect a `poll()` method.
-    pub fn poll(&mut self) {}
+    pub fn poll(&mut self) {
+        // Drain any queued event TRBs into the guest event ring. This performs DMA into guest memory
+        // and must therefore be gated on PCI Bus Master Enable (BME).
+        let dma_enabled = (self.pci_command & (1 << 2)) != 0;
+        if !dma_enabled {
+            return;
+        }
+
+        let mut mem = WasmGuestMemory {
+            guest_base: self.guest_base,
+            ram_bytes: self.guest_size,
+        };
+        self.ctrl.service_event_ring(&mut mem);
+    }
 
     /// Whether the xHCI interrupt line should be raised.
     pub fn irq_asserted(&self) -> bool {

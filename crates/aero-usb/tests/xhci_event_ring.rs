@@ -33,7 +33,7 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
-    xhci.service_event_ring(&mut mem);
+    xhci.tick_1ms_and_service_event_ring(&mut mem);
 
     let got = Trb::read_from(&mut mem, ring_base);
     assert!(got.cycle(), "controller should set the producer cycle bit");

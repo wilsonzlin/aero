@@ -13,6 +13,7 @@
 //! - a DMA read on the first transition of `USBCMD.RUN` (to validate PCI BME gating in the wrapper)
 //! - a level-triggered `irq_level()` surface (to validate PCI INTx disable gating)
 //! - DCBAAP register storage + controller-local slot allocation (Enable Slot scaffolding)
+//! - a minimal runtime interrupter 0 register block + guest event ring producer (ERST-based)
 //!
 //! Full xHCI semantics (doorbells, command/event rings, device contexts, interrupters, etc) remain
 //! future work.
@@ -859,6 +860,17 @@ impl XhciController {
         for port in ports_with_events {
             self.queue_port_status_change_event(port);
         }
+    }
+
+    /// Advances controller internal time by 1ms and drains any queued event TRBs into the
+    /// guest-configured event ring.
+    ///
+    /// This is a convenience wrapper for integrations that want "one call per millisecond frame"
+    /// behaviour. Note that event ring delivery performs DMA into guest memory and should therefore
+    /// be gated on PCI Bus Master Enable by the caller.
+    pub fn tick_1ms_and_service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
+        self.tick_1ms();
+        self.service_event_ring(mem);
     }
 
     /// Attach a device model to a root hub port (0-based).
