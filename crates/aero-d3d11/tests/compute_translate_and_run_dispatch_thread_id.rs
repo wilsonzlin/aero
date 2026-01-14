@@ -1,6 +1,5 @@
 mod common;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::binding_model::BINDING_BASE_UAV;
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_d3d11::{
@@ -8,6 +7,7 @@ use aero_d3d11::{
     RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, UavRef, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 // The Aero D3D11 translator emits compute-stage bindings in `@group(2)` (stage-scoped binding
 // model). Validate that the generated WGSL can be executed on wgpu with a pipeline layout that
@@ -91,7 +91,11 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             return;
         }
 
-        const ELEMENTS: u32 = 16;
+        // Use a workgroup size > 1 to ensure `SV_DispatchThreadID` is lowered to
+        // `@builtin(global_invocation_id)` (and not accidentally to `workgroup_id`).
+        const GROUP_SIZE_X: u32 = 4;
+        const WORKGROUPS_X: u32 = 4;
+        const ELEMENTS: u32 = GROUP_SIZE_X * WORKGROUPS_X;
         let size_bytes = (ELEMENTS as u64) * 4;
 
         // D3D10_SB_NAME_DISPATCH_THREAD_ID.
@@ -112,7 +116,11 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             stage: ShaderStage::Compute,
             model: ShaderModel { major: 5, minor: 0 },
             decls: vec![
-                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+                Sm4Decl::ThreadGroupSize {
+                    x: GROUP_SIZE_X,
+                    y: 1,
+                    z: 1,
+                },
                 Sm4Decl::InputSiv {
                     reg: 0,
                     mask: WriteMask::XYZW,
@@ -240,7 +248,7 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(2, &bind_group, &[]);
-            pass.dispatch_workgroups(ELEMENTS, 1, 1);
+            pass.dispatch_workgroups(WORKGROUPS_X, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
         queue.submit([encoder.finish()]);
