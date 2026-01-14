@@ -15065,8 +15065,19 @@ impl AerogpuD3d11Executor {
         let group_count_y = read_u32_le(cmd_bytes, 12)?;
         let group_count_z = read_u32_le(cmd_bytes, 16)?;
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
-        let pass_stage = ShaderStage::from_aerogpu_u32_with_stage_ex(2, stage_ex)
-            .ok_or_else(|| anyhow!("DISPATCH: unknown stage_ex={stage_ex} (expected 0/2/3/4/5)"))?;
+        // `DISPATCH.reserved0` is repurposed as a `stage_ex` selector for extended-stage compute
+        // passes (GS/HS/DS). Older command streams may not reliably zero reserved fields, so gate
+        // the interpretation by cmd-stream ABI minor.
+        let stage_ex = if self.cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR {
+            0
+        } else {
+            stage_ex
+        };
+        let pass_stage = ShaderStage::from_aerogpu_u32_with_stage_ex(
+            AerogpuShaderStage::Compute as u32,
+            stage_ex,
+        )
+        .ok_or_else(|| anyhow!("DISPATCH: unknown stage_ex={stage_ex} (expected 0/2/3/4/5)"))?;
 
         // D3D11 treats any zero group count as a no-op dispatch.
         if group_count_x == 0 || group_count_y == 0 || group_count_z == 0 {
@@ -20957,6 +20968,66 @@ mod tests {
                     .map(|t| t.texture),
                 Some(TEX_EX),
                 "ABI minor=3 must honor stage_ex and bind to Geometry"
+            );
+        });
+    }
+
+    #[test]
+    fn stage_ex_is_gated_by_cmd_stream_abi_minor_for_dispatch() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            if !exec.supports_compute() {
+                skip_or_panic(module_path!(), "compute unsupported");
+                return;
+            }
+
+            let mut guest_mem = VecGuestMemory::new(0);
+
+            // Use a stage_ex value that is valid for the executor's extended-stage compute model.
+            let stage_ex_geometry = AerogpuShaderStageEx::Geometry as u32;
+
+            // Legacy stream (ABI minor=2): ignore the reserved0/stage_ex field and treat DISPATCH as
+            // a regular compute dispatch. Since no CS is bound, we should fail with the CS error
+            // (not the GS error).
+            let mut legacy_writer = AerogpuCmdWriter::new();
+            legacy_writer.dispatch(1, 1, 1);
+            let mut legacy_stream = legacy_writer.finish();
+            // Patch cmd stream header ABI version from 1.3 (current) to 1.2.
+            legacy_stream[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes());
+            // Patch DISPATCH.reserved0 to contain a non-zero stage_ex tag.
+            let stage_ex_offset = AerogpuCmdStreamHeader::SIZE_BYTES + 20;
+            legacy_stream[stage_ex_offset..stage_ex_offset + 4]
+                .copy_from_slice(&stage_ex_geometry.to_le_bytes());
+
+            let err = exec
+                .execute_cmd_stream(&legacy_stream, None, &mut guest_mem)
+                .unwrap_err();
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("DISPATCH: no compute shader bound"),
+                "ABI minor=2 must ignore stage_ex and treat DISPATCH as a compute dispatch: {msg}"
+            );
+
+            // ABI 1.3+ stream: stage_ex must be honored, so we should fail with the GS error.
+            let mut ex_writer = AerogpuCmdWriter::new();
+            ex_writer.dispatch(1, 1, 1);
+            let mut ex_stream = ex_writer.finish();
+            ex_stream[stage_ex_offset..stage_ex_offset + 4]
+                .copy_from_slice(&stage_ex_geometry.to_le_bytes());
+
+            let err = exec
+                .execute_cmd_stream(&ex_stream, None, &mut guest_mem)
+                .unwrap_err();
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("DISPATCH: no geometry shader bound"),
+                "ABI minor=3 must honor stage_ex for DISPATCH: {msg}"
             );
         });
     }
