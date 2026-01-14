@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
-use crate::sm3::decode::{
-    ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType,
-};
+use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
     Stmt,
@@ -286,31 +284,126 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
     }
 
     match op {
-        IrOp::Mov { dst, src, modifiers }
-        | IrOp::Mova { dst, src, modifiers }
-        | IrOp::Rcp { dst, src, modifiers }
-        | IrOp::Rsq { dst, src, modifiers }
-        | IrOp::Frc { dst, src, modifiers }
-        | IrOp::Exp { dst, src, modifiers }
-        | IrOp::Log { dst, src, modifiers }
-        | IrOp::Ddx { dst, src, modifiers }
-        | IrOp::Ddy { dst, src, modifiers }
-        | IrOp::Nrm { dst, src, modifiers }
-        | IrOp::Lit { dst, src, modifiers } => {
+        IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Mova {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Rcp {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Rsq {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Frc {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Exp {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Log {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddx {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Ddy {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Nrm {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Lit {
+            dst,
+            src,
+            modifiers,
+        } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src, usage);
             collect_mods_usage(modifiers, usage);
         }
-        IrOp::Add { dst, src0, src1, modifiers }
-        | IrOp::Sub { dst, src0, src1, modifiers }
-        | IrOp::Mul { dst, src0, src1, modifiers }
-        | IrOp::Min { dst, src0, src1, modifiers }
-        | IrOp::Max { dst, src0, src1, modifiers }
-        | IrOp::Dp2 { dst, src0, src1, modifiers }
-        | IrOp::Dp3 { dst, src0, src1, modifiers }
-        | IrOp::Dp4 { dst, src0, src1, modifiers }
-        | IrOp::SetCmp { dst, src0, src1, modifiers, .. }
-        | IrOp::Pow { dst, src0, src1, modifiers } => {
+        IrOp::Add {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Sub {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Mul {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Min {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Max {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp2 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp3 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Dp4 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::SetCmp {
+            dst,
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Pow {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src0, usage);
             collect_src_usage(src1, usage);
@@ -816,9 +909,21 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "exp2"),
-        IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "log2"),
-        IrOp::Ddx { dst, src, modifiers } => {
+        IrOp::Exp {
+            dst,
+            src,
+            modifiers,
+        } => emit_float_func1(dst, src, modifiers, f32_defs, "exp2"),
+        IrOp::Log {
+            dst,
+            src,
+            modifiers,
+        } => emit_float_func1(dst, src, modifiers, f32_defs, "log2"),
+        IrOp::Ddx {
+            dst,
+            src,
+            modifiers,
+        } => {
             let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("dsx only supports float sources in WGSL lowering"));
@@ -830,7 +935,11 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Ddy { dst, src, modifiers } => {
+        IrOp::Ddy {
+            dst,
+            src,
+            modifiers,
+        } => {
             let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
                 return Err(err("dsy only supports float sources in WGSL lowering"));
@@ -885,13 +994,9 @@ fn emit_op_line(
             let sy = format!("({s}).y");
             let sw = format!("({s}).w");
             let y = format!("max({sx}, 0.0)");
-            let z = format!(
-                "select(0.0, pow(max({sy}, 0.0), {sw}), ({sx} > 0.0))"
-            );
-            let e = apply_float_result_modifiers(
-                format!("vec4<f32>(1.0, {y}, {z}, 1.0)"),
-                modifiers,
-            )?;
+            let z = format!("select(0.0, pow(max({sy}, 0.0), {sw}), ({sx} > 0.0))");
+            let e =
+                apply_float_result_modifiers(format!("vec4<f32>(1.0, {y}, {z}, 1.0)"), modifiers)?;
             emit_assign(dst, e)
         }
         IrOp::SinCos {
@@ -936,7 +1041,12 @@ fn emit_op_line(
             )?;
             emit_assign(dst, e)
         }
-        IrOp::Dp2 { dst, src0, src1, modifiers } => {
+        IrOp::Dp2 {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
             let (a, aty) = src_expr(src0, f32_defs)?;
             let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
@@ -1028,9 +1138,7 @@ fn emit_op_line(
                     if modifiers.saturate || modifiers.shift != ResultShift::None {
                         return Err(err("result modifiers not supported for predicate writes"));
                     }
-                    if aty == ScalarTy::Bool
-                        && !matches!(op, CompareOp::Eq | CompareOp::Ne)
-                    {
+                    if aty == ScalarTy::Bool && !matches!(op, CompareOp::Eq | CompareOp::Ne) {
                         return Err(err("ordered comparison on bool source"));
                     }
                     emit_assign(dst, cmp_expr)
@@ -1112,10 +1220,16 @@ fn emit_op_line(
                 }
                 crate::sm3::ir::TexSampleKind::Grad => {
                     if stage != ShaderStage::Pixel {
-                        return Err(err("texldd/Grad texture sampling is only supported in pixel shaders"));
+                        return Err(err(
+                            "texldd/Grad texture sampling is only supported in pixel shaders",
+                        ));
                     }
-                    let ddx = ddx.as_ref().ok_or_else(|| err("texldd missing ddx operand"))?;
-                    let ddy = ddy.as_ref().ok_or_else(|| err("texldd missing ddy operand"))?;
+                    let ddx = ddx
+                        .as_ref()
+                        .ok_or_else(|| err("texldd missing ddx operand"))?;
+                    let ddy = ddy
+                        .as_ref()
+                        .ok_or_else(|| err("texldd missing ddy operand"))?;
                     let (ddx_e, ddx_ty) = src_expr(ddx, f32_defs)?;
                     let (ddy_e, ddy_ty) = src_expr(ddy, f32_defs)?;
                     if ddx_ty != ScalarTy::F32 || ddy_ty != ScalarTy::F32 {
@@ -1327,7 +1441,10 @@ fn emit_stmt(
             let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = ({ctrl}).x;");
             let _ = writeln!(wgsl, "{pad1}loop {{");
 
-            let _ = writeln!(wgsl, "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}");
+            let _ = writeln!(
+                wgsl,
+                "{pad2}if (_aero_loop_iter >= {MAX_ITERS}u) {{ break; }}"
+            );
             let _ = writeln!(wgsl, "{pad2}if (_aero_loop_step == 0) {{ break; }}");
             let _ = writeln!(
                 wgsl,
@@ -1455,7 +1572,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
     let mut sampler_bindings = HashMap::new();
     for s in &usage.samplers {
-        let ty = sampler_type_map.get(s).copied().unwrap_or(TextureType::Texture2D);
+        let ty = sampler_type_map
+            .get(s)
+            .copied()
+            .unwrap_or(TextureType::Texture2D);
         if ty != TextureType::Texture2D {
             return Err(err(format!(
                 "unsupported texture type for sampler s{s}: {ty:?} (only Texture2D is supported)"
@@ -1566,7 +1686,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 }
             }
             for (file, index) in &usage.outputs {
-                if matches!(*file, RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output) {
+                if matches!(
+                    *file,
+                    RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output
+                ) {
                     vs_varyings.insert((*file, *index));
                 }
             }

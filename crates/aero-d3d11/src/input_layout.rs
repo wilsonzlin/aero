@@ -416,12 +416,12 @@ pub enum DxgiFormatComponentType {
     I32,
     U16,
     I16,
+    Unorm16,
+    Snorm16,
     U8,
     I8,
     Unorm8,
     Snorm8,
-    Unorm16,
-    Snorm16,
 }
 
 /// Metadata about a `DXGI_FORMAT` relevant for both WebGPU vertex input and compute-side vertex
