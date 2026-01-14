@@ -40,6 +40,8 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
   usbUhciControllerBridge: unknown | null;
   usbEhciControllerBridge: unknown | null;
   i8042?: unknown | null;
+  virtioInputKeyboard?: unknown | null;
+  virtioInputMouse?: unknown | null;
   audioHda?: unknown | null;
   audioVirtioSnd?: unknown | null;
   pciBus?: unknown | null;
@@ -57,6 +59,9 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
 // `DeviceId::PCI` payloads (e.g. Rust `PCIC` / `PCPT` blobs) as the JS PCI bus snapshot.
 const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
 const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
+// `aero_snapshot::DeviceId::VIRTIO_INPUT` (24): virtio-input (virtio-pci) multi-function device
+// wrapper (keyboard + mouse).
+const VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}24`;
 
 function isPciBusSnapshot(bytes: Uint8Array): boolean {
   // `web/src/io/bus/pci.ts` uses an `aero-io-snapshot`-shaped 16-byte header and sets
@@ -223,6 +228,154 @@ function mergeUsbSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Arra
   return encodeUsbSnapshotContainer(entries, { version, flags });
 }
 
+// -------------------------------------------------------------------------------------------------
+// virtio-input snapshot wrapper (VINP)
+// -------------------------------------------------------------------------------------------------
+
+// `aero_machine::MachineVirtioInputSnapshot` encodes virtio-input keyboard+mouse state as an
+// `aero-io-snapshot` TLV wrapper:
+// - magic: "AERO"
+// - device_id: "VINP"
+// - device_version: 1.0
+// - TAG 1: nested keyboard virtio-pci snapshot bytes
+// - TAG 2: nested mouse virtio-pci snapshot bytes
+const VIRTIO_INPUT_SNAPSHOT_TAG_KEYBOARD = 1;
+const VIRTIO_INPUT_SNAPSHOT_TAG_MOUSE = 2;
+
+type VirtioInputSnapshotContainer = {
+  version: number;
+  flags: number;
+  entries: Array<{ tag: number; bytes: Uint8Array }>;
+};
+
+function isVirtioInputSnapshotContainer(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x41 && // A
+    bytes[1] === 0x45 && // E
+    bytes[2] === 0x52 && // R
+    bytes[3] === 0x4f && // O
+    bytes[8] === 0x56 && // V
+    bytes[9] === 0x49 && // I
+    bytes[10] === 0x4e && // N
+    bytes[11] === 0x50 // P
+  );
+}
+
+function decodeVirtioInputSnapshotContainer(bytes: Uint8Array): VirtioInputSnapshotContainer | null {
+  if (!isVirtioInputSnapshotContainer(bytes)) return null;
+  if (bytes.byteLength < 16) return null;
+
+  const version = (bytes[12]! | (bytes[13]! << 8)) >>> 0;
+  const flags = (bytes[14]! | (bytes[15]! << 8)) >>> 0;
+
+  const entries: Array<{ tag: number; bytes: Uint8Array }> = [];
+  const seen = new Set<number>();
+  let off = 16;
+  while (off < bytes.byteLength) {
+    if (off + 6 > bytes.byteLength) return null;
+    const tag = (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
+    const len =
+      (bytes[off + 2]! | (bytes[off + 3]! << 8) | (bytes[off + 4]! << 16) | (bytes[off + 5]! << 24)) >>> 0;
+    off += 6;
+    const end = off + len;
+    if (!Number.isSafeInteger(end) || end < off || end > bytes.byteLength) return null;
+    if (seen.has(tag)) return null;
+    entries.push({ tag, bytes: bytes.subarray(off, end) });
+    seen.add(tag);
+    off = end;
+  }
+
+  return { version, flags, entries };
+}
+
+function encodeVirtioInputSnapshotContainer(
+  entries: Array<{ tag: number; bytes: Uint8Array }>,
+  opts?: { version?: number; flags?: number },
+): Uint8Array {
+  const version = opts?.version ?? 1;
+  const flags = opts?.flags ?? 0;
+
+  const sorted = [...entries].sort((a, b) => a.tag - b.tag);
+  let total = 16;
+  for (const e of sorted) total += 6 + e.bytes.byteLength;
+
+  const out = new Uint8Array(total);
+  // magic "AERO"
+  out[0] = 0x41;
+  out[1] = 0x45;
+  out[2] = 0x52;
+  out[3] = 0x4f;
+  // format version 1.0
+  out[4] = 0x01;
+  out[5] = 0x00;
+  out[6] = 0x00;
+  out[7] = 0x00;
+  // device id "VINP"
+  out[8] = 0x56;
+  out[9] = 0x49;
+  out[10] = 0x4e;
+  out[11] = 0x50;
+  // device version (major/minor)
+  out[12] = version & 0xff;
+  out[13] = (version >>> 8) & 0xff;
+  out[14] = flags & 0xff;
+  out[15] = (flags >>> 8) & 0xff;
+
+  let off = 16;
+  for (const e of sorted) {
+    const tag = e.tag >>> 0;
+    const len = e.bytes.byteLength >>> 0;
+    out[off] = tag & 0xff;
+    out[off + 1] = (tag >>> 8) & 0xff;
+    out[off + 2] = len & 0xff;
+    out[off + 3] = (len >>> 8) & 0xff;
+    out[off + 4] = (len >>> 16) & 0xff;
+    out[off + 5] = (len >>> 24) & 0xff;
+    off += 6;
+    out.set(e.bytes, off);
+    off += len;
+  }
+
+  return out;
+}
+
+function mergeVirtioInputSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Array {
+  const cachedDecoded = decodeVirtioInputSnapshotContainer(cached);
+  const freshDecoded = decodeVirtioInputSnapshotContainer(fresh);
+
+  const cachedLooksLikeContainer = !cachedDecoded && isVirtioInputSnapshotContainer(cached);
+  const freshLooksLikeContainer = !freshDecoded && isVirtioInputSnapshotContainer(fresh);
+  if (freshLooksLikeContainer) {
+    console.warn("[io.worker] virtio-input snapshot appears to be a VINP container but failed to decode; skipping merge.");
+    return fresh;
+  }
+  if (!freshDecoded) return fresh;
+
+  const cachedEntries = cachedDecoded
+    ? cachedDecoded.entries
+    : cachedLooksLikeContainer
+      ? []
+      : [];
+  const freshEntries = freshDecoded.entries;
+
+  // Preserve unknown tags from cached, then override with fresh tags so newly snapshotted
+  // virtio-input functions take precedence.
+  const merged = new Map<number, Uint8Array>();
+  for (const e of cachedEntries) {
+    if (!merged.has(e.tag)) merged.set(e.tag, e.bytes);
+  }
+  for (const e of freshEntries) {
+    merged.set(e.tag, e.bytes);
+  }
+  if (merged.size === 0) return fresh;
+
+  const version = freshDecoded.version ?? cachedDecoded?.version;
+  const flags = freshDecoded.flags ?? cachedDecoded?.flags;
+  const entries = Array.from(merged, ([tag, bytes]) => ({ tag, bytes }));
+  return encodeVirtioInputSnapshotContainer(entries, { version, flags });
+}
+
 export function snapshotUsbDeviceState(
   runtimes: Pick<
     IoWorkerSnapshotRuntimes,
@@ -295,6 +448,39 @@ export function snapshotI8042DeviceState(i8042: unknown | null): IoWorkerSnapsho
   return null;
 }
 
+export function snapshotVirtioInputDeviceState(
+  runtimes: Pick<IoWorkerSnapshotRuntimes, "virtioInputKeyboard" | "virtioInputMouse">,
+): IoWorkerSnapshotDeviceState | null {
+  let keyboardBytes: Uint8Array | null = null;
+  const keyboard = runtimes.virtioInputKeyboard ?? null;
+  if (keyboard) {
+    try {
+      const bytes = trySaveState(keyboard);
+      if (bytes) keyboardBytes = bytes;
+    } catch (err) {
+      console.warn("[io.worker] virtio-input keyboard save_state failed:", err);
+    }
+  }
+
+  let mouseBytes: Uint8Array | null = null;
+  const mouse = runtimes.virtioInputMouse ?? null;
+  if (mouse) {
+    try {
+      const bytes = trySaveState(mouse);
+      if (bytes) mouseBytes = bytes;
+    } catch (err) {
+      console.warn("[io.worker] virtio-input mouse save_state failed:", err);
+    }
+  }
+
+  if (!keyboardBytes && !mouseBytes) return null;
+
+  const entries: Array<{ tag: number; bytes: Uint8Array }> = [];
+  if (keyboardBytes) entries.push({ tag: VIRTIO_INPUT_SNAPSHOT_TAG_KEYBOARD, bytes: keyboardBytes });
+  if (mouseBytes) entries.push({ tag: VIRTIO_INPUT_SNAPSHOT_TAG_MOUSE, bytes: mouseBytes });
+  return { kind: VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND, bytes: encodeVirtioInputSnapshotContainer(entries) };
+}
+
 export function snapshotNetE1000DeviceState(netE1000: unknown | null): IoWorkerSnapshotDeviceState | null {
   if (!netE1000) return null;
   try {
@@ -358,6 +544,9 @@ export function collectIoWorkerSnapshotDeviceStates(runtimes: IoWorkerSnapshotRu
 
   const i8042 = snapshotI8042DeviceState(runtimes.i8042 ?? null);
   if (i8042) devices.push(i8042);
+
+  const virtioInput = snapshotVirtioInputDeviceState(runtimes);
+  if (virtioInput) devices.push(virtioInput);
 
   const hda = snapshotAudioHdaDeviceState(runtimes.audioHda ?? null);
   if (hda) devices.push(hda);
@@ -542,6 +731,64 @@ export function restoreI8042DeviceState(i8042: unknown | null, bytes: Uint8Array
   }
 }
 
+export function restoreVirtioInputKeyboardDeviceState(virtioInputKeyboard: unknown | null, bytes: Uint8Array): void {
+  if (!virtioInputKeyboard) {
+    console.warn("[io.worker] Snapshot contains input.virtio_keyboard state but virtio-input keyboard runtime is unavailable; ignoring blob.");
+    return;
+  }
+  try {
+    if (!tryLoadState(virtioInputKeyboard, bytes)) {
+      console.warn(
+        "[io.worker] Snapshot contains input.virtio_keyboard state but virtio-input keyboard runtime has no load_state/restore_state hook; ignoring blob.",
+      );
+    }
+  } catch (err) {
+    console.warn("[io.worker] input.virtio_keyboard load_state failed:", err);
+  }
+}
+
+export function restoreVirtioInputMouseDeviceState(virtioInputMouse: unknown | null, bytes: Uint8Array): void {
+  if (!virtioInputMouse) {
+    console.warn("[io.worker] Snapshot contains input.virtio_mouse state but virtio-input mouse runtime is unavailable; ignoring blob.");
+    return;
+  }
+  try {
+    if (!tryLoadState(virtioInputMouse, bytes)) {
+      console.warn(
+        "[io.worker] Snapshot contains input.virtio_mouse state but virtio-input mouse runtime has no load_state/restore_state hook; ignoring blob.",
+      );
+    }
+  } catch (err) {
+    console.warn("[io.worker] input.virtio_mouse load_state failed:", err);
+  }
+}
+
+export function restoreVirtioInputDeviceState(
+  runtimes: Pick<IoWorkerSnapshotRuntimes, "virtioInputKeyboard" | "virtioInputMouse">,
+  bytes: Uint8Array,
+): void {
+  const decoded = decodeVirtioInputSnapshotContainer(bytes);
+  if (!decoded) {
+    if (isVirtioInputSnapshotContainer(bytes)) {
+      console.warn("[io.worker] Snapshot virtio-input blob has VINP container magic but is corrupt; ignoring blob.");
+    } else {
+      console.warn("[io.worker] Snapshot contains virtio-input state but blob is not a VINP container; ignoring blob.");
+    }
+    return;
+  }
+
+  const keyboard =
+    decoded.entries.find((e) => e.tag === VIRTIO_INPUT_SNAPSHOT_TAG_KEYBOARD)?.bytes ?? null;
+  const mouse =
+    decoded.entries.find((e) => e.tag === VIRTIO_INPUT_SNAPSHOT_TAG_MOUSE)?.bytes ?? null;
+  if (keyboard) {
+    restoreVirtioInputKeyboardDeviceState(runtimes.virtioInputKeyboard ?? null, keyboard);
+  }
+  if (mouse) {
+    restoreVirtioInputMouseDeviceState(runtimes.virtioInputMouse ?? null, mouse);
+  }
+}
+
 export function restoreNetE1000DeviceState(netE1000: unknown | null, bytes: Uint8Array): void {
   if (!netE1000) {
     console.warn("[io.worker] Snapshot contains net.e1000 state but networking runtime is unavailable; ignoring blob.");
@@ -703,6 +950,23 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
     }
   }
 
+  // virtio-input snapshots are a multi-function wrapper (`VINP`) containing nested per-function
+  // virtio-pci snapshots. Preserve unknown/new wrapper tags across restore → save cycles by
+  // merging wrapper entries when both cached+fresh blobs are present.
+  const cachedVirtioInput = restoredDevices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND) ?? null;
+  const freshVirtioInputIndex = freshDevices.findIndex((d) => d.kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND);
+  if (cachedVirtioInput && freshVirtioInputIndex >= 0) {
+    const freshVirtioInput = freshDevices[freshVirtioInputIndex]!;
+    try {
+      freshDevices[freshVirtioInputIndex] = {
+        kind: VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
+        bytes: mergeVirtioInputSnapshotBytes(cachedVirtioInput.bytes, freshVirtioInput.bytes),
+      };
+    } catch (err) {
+      console.warn("[io.worker] Failed to merge cached virtio-input snapshot container entries; using fresh virtio-input snapshot only.", err);
+    }
+  }
+
   // Merge in any previously restored device blobs so unknown/unhandled device state survives a
   // restore → save cycle (forward compatibility).
   const freshKinds = new Set(freshDevices.map((d) => d.kind));
@@ -798,6 +1062,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     let usbBytes: Uint8Array | null = null;
     let usbPriority = -1;
     let i8042Bytes: Uint8Array | null = null;
+    let virtioInputBytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
     let virtioSndBytes: Uint8Array | null = null;
     let pciBytes: Uint8Array | null = null;
@@ -831,6 +1096,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
         }
       }
       if (kind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.bytes;
+      if (kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND) virtioInputBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.bytes;
       if (kind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.bytes;
@@ -841,6 +1107,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     // Apply device state locally (IO worker owns USB + networking).
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
     if (i8042Bytes) restoreI8042DeviceState(opts.runtimes.i8042 ?? null, i8042Bytes);
+    if (virtioInputBytes) restoreVirtioInputDeviceState(opts.runtimes, virtioInputBytes);
     if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
     if (virtioSndBytes) restoreAudioVirtioSndDeviceState(opts.runtimes.audioVirtioSnd ?? null, virtioSndBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
@@ -867,6 +1134,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
     let usbBytes: Uint8Array | null = null;
     let i8042Bytes: Uint8Array | null = null;
+    let virtioInputBytes: Uint8Array | null = null;
     let hdaBytes: Uint8Array | null = null;
     let virtioSndBytes: Uint8Array | null = null;
     let pciBytes: Uint8Array | null = null;
@@ -888,6 +1156,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
       if (canonicalKind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.data;
       if (canonicalKind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.data;
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND) virtioInputBytes = e.data;
       if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND) hdaBytes = e.data;
       if (canonicalKind === VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND) virtioSndBytes = e.data;
       if (canonicalKind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND) pciBytes = e.data;
@@ -900,6 +1169,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     if (usbBytes) restoreUsbDeviceState(opts.runtimes, usbBytes);
     if (i8042Bytes) restoreI8042DeviceState(opts.runtimes.i8042 ?? null, i8042Bytes);
+    if (virtioInputBytes) restoreVirtioInputDeviceState(opts.runtimes, virtioInputBytes);
     if (hdaBytes) restoreAudioHdaDeviceState(opts.runtimes.audioHda ?? null, hdaBytes);
     if (virtioSndBytes) restoreAudioVirtioSndDeviceState(opts.runtimes.audioVirtioSnd ?? null, virtioSndBytes);
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);

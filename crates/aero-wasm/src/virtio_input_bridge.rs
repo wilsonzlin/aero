@@ -6,7 +6,9 @@
 //! [`VirtioInputPciDevice::mmio_write`], and the wrapper reads/writes virtqueue structures directly
 //! from the shared guest RAM region inside the WASM linear memory.
 
+use aero_io_snapshot::io::state::IoSnapshot as _;
 use aero_platform::interrupts::msi::MsiMessage;
+use aero_virtio::devices::VirtioDevice;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::memory::GuestMemory;
 use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
@@ -279,6 +281,48 @@ impl VirtioInputPciDeviceCore {
         self.input_mut().inject_wheel2(wheel, hwheel);
         self.poll(mem);
     }
+
+    /// Snapshot the virtio-pci transport state as deterministic bytes (`aero-io-snapshot`).
+    ///
+    /// Note: virtio-input's inner `VirtioInput` model keeps runtime-only cached buffers/events
+    /// (e.g. guest-provided eventq descriptor chains). Those are intentionally not serialized by the
+    /// virtio-pci snapshot schema; restore uses a best-effort rewind to re-pop guest buffers.
+    pub fn save_state(&self) -> Vec<u8> {
+        self.pci.save_state()
+    }
+
+    /// Restore virtio-pci transport state from deterministic snapshot bytes produced by
+    /// [`save_state`].
+    pub fn load_state(&mut self, bytes: &[u8]) -> aero_io_snapshot::io::state::SnapshotResult<()> {
+        // The virtio-pci snapshot captures transport + PCI config state only. Clear any cached
+        // virtio-input event buffers/events from pre-restore execution so we don't mix runtime-only
+        // state with restored transport indices.
+        self.input_mut().reset();
+
+        self.pci.load_state(bytes)?;
+
+        // Mirror the restored PCI command register into the wrapper field so DMA gating stays
+        // consistent immediately after restore (even when the surrounding PCI bus is implemented
+        // outside of this wrapper).
+        let mut cmd_bytes = [0u8; 2];
+        self.pci.config_read(0x04, &mut cmd_bytes);
+        self.pci_command = u16::from_le_bytes(cmd_bytes);
+
+        // virtio-input's eventq (queue 0) can pop guest-published event buffers and cache them
+        // internally without producing used entries until an input event arrives. Those cached
+        // buffers are runtime-only and are not serialized; rewind queue progress so the transport
+        // will re-pop the guest buffers post-restore.
+        self.pci.rewind_queue_next_avail_to_next_used(0);
+
+        Ok(())
+    }
+
+    /// Debug helper returning the virtqueue progress state for the given queue.
+    ///
+    /// Intended for unit tests.
+    pub fn debug_queue_progress(&self, queue: u16) -> Option<(u16, u16, bool)> {
+        self.pci.debug_queue_progress(queue)
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -526,6 +570,7 @@ mod wasm_guest_memory {
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::*;
+    use js_sys::Uint8Array;
     use wasm_bindgen::prelude::*;
 
     use super::wasm_guest_memory::WasmGuestMemory;
@@ -725,6 +770,19 @@ mod wasm {
         /// Emits a single `SYN_REPORT` for both axes.
         pub fn inject_wheel2(&mut self, wheel: i32, hwheel: i32) {
             self.inner.inject_wheel2(wheel, hwheel, &mut self.mem);
+        }
+
+        /// Serialize virtio-pci device state into a deterministic `aero-io-snapshot` blob.
+        pub fn save_state(&mut self) -> Uint8Array {
+            Uint8Array::from(self.inner.save_state().as_slice())
+        }
+
+        /// Restore virtio-pci device state from snapshot bytes produced by [`save_state`].
+        pub fn load_state(&mut self, bytes: Uint8Array) -> Result<(), JsValue> {
+            self.inner
+                .load_state(&bytes.to_vec())
+                .map_err(|e| js_error(format!("Invalid virtio-input snapshot: {e}")))?;
+            Ok(())
         }
     }
 }

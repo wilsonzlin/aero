@@ -30,6 +30,11 @@ export type VirtioInputPciDeviceLike = {
   inject_wheel(delta: number): void;
   inject_hwheel?(delta: number): void;
   inject_wheel2?(wheel: number, hwheel: number): void;
+  // Optional snapshot hooks (aero-io-snapshot deterministic bytes).
+  save_state?: () => Uint8Array;
+  snapshot_state?: () => Uint8Array;
+  load_state?: (bytes: Uint8Array) => void;
+  restore_state?: (bytes: Uint8Array) => void;
   free(): void;
 };
 
@@ -777,6 +782,64 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
     this.#mouseButtons = next;
     this.#syncIrq();
+  }
+
+  canSaveState(): boolean {
+    const dev = this.#dev as unknown as Record<string, unknown>;
+    return typeof dev["save_state"] === "function" || typeof dev["snapshot_state"] === "function";
+  }
+
+  canLoadState(): boolean {
+    const dev = this.#dev as unknown as Record<string, unknown>;
+    return typeof dev["load_state"] === "function" || typeof dev["restore_state"] === "function";
+  }
+
+  saveState(): Uint8Array | null {
+    if (this.#destroyed) return null;
+    const devAny = this.#dev as unknown as {
+      save_state?: unknown;
+      snapshot_state?: unknown;
+    };
+    const save = typeof devAny.save_state === "function" ? devAny.save_state : typeof devAny.snapshot_state === "function" ? devAny.snapshot_state : null;
+    if (!save) return null;
+    try {
+      const bytes = (save as () => unknown).call(this.#dev) as unknown;
+      if (bytes instanceof Uint8Array) return bytes;
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  loadState(bytes: Uint8Array): boolean {
+    if (this.#destroyed) return false;
+    const devAny = this.#dev as unknown as {
+      load_state?: unknown;
+      restore_state?: unknown;
+    };
+    const load =
+      typeof devAny.load_state === "function" ? devAny.load_state : typeof devAny.restore_state === "function" ? devAny.restore_state : null;
+    if (!load) return false;
+    try {
+      (load as (bytes: Uint8Array) => unknown).call(this.#dev, bytes);
+      this.#syncIrq();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // `io_worker_vm_snapshot.ts` expects snake_case `save_state/load_state` hooks.
+  save_state(): Uint8Array {
+    const bytes = this.saveState();
+    if (!bytes) throw new Error("virtio-input snapshot exports unavailable");
+    return bytes;
+  }
+
+  load_state(bytes: Uint8Array): void {
+    if (!this.loadState(bytes)) {
+      throw new Error("virtio-input snapshot restore exports unavailable");
+    }
   }
 
   destroy(): void {

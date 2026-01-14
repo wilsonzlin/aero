@@ -3804,6 +3804,8 @@ async function handleVmSnapshotSaveToOpfs(
         usbUhciControllerBridge: uhciControllerBridge,
         usbEhciControllerBridge: ehciControllerBridge,
         i8042: i8042Wasm ?? i8042Ts,
+        virtioInputKeyboard,
+        virtioInputMouse,
         // Wrap audio devices so snapshot restore semantics (pending bytes + ring reattachment) stay
         // centralized in the IO worker.
         audioHda: {
@@ -3855,6 +3857,8 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         usbUhciControllerBridge: uhciControllerBridge,
         usbEhciControllerBridge: ehciControllerBridge,
         i8042: i8042Wasm ?? i8042Ts,
+        virtioInputKeyboard,
+        virtioInputMouse,
         audioHda: {
           load_state: (bytes: Uint8Array) => restoreAudioHdaDeviceState(bytes),
         },

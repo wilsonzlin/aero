@@ -29,6 +29,7 @@ import {
 
 const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
 const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
+const VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}24`;
 function makeAeroIoSnapshotHeader(tag: string): Uint8Array {
   const bytes = new Uint8Array(16);
   bytes[0] = 0x41;
@@ -48,6 +49,78 @@ function makeAeroIoSnapshotHeader(tag: string): Uint8Array {
   return bytes;
 }
 
+const VINP_TAG_KEYBOARD = 1;
+const VINP_TAG_MOUSE = 2;
+
+function encodeVinpSnapshot(entries: Array<{ tag: number; bytes: Uint8Array }>): Uint8Array {
+  const sorted = [...entries].sort((a, b) => a.tag - b.tag);
+  let total = 16;
+  for (const e of sorted) total += 6 + e.bytes.byteLength;
+  const out = new Uint8Array(total);
+  // magic "AERO"
+  out[0] = 0x41;
+  out[1] = 0x45;
+  out[2] = 0x52;
+  out[3] = 0x4f;
+  // format version 1.0
+  out[4] = 0x01;
+  out[5] = 0x00;
+  out[6] = 0x00;
+  out[7] = 0x00;
+  // device id "VINP"
+  out[8] = 0x56;
+  out[9] = 0x49;
+  out[10] = 0x4e;
+  out[11] = 0x50;
+  // device version 1.0
+  out[12] = 0x01;
+  out[13] = 0x00;
+  out[14] = 0x00;
+  out[15] = 0x00;
+
+  let off = 16;
+  for (const e of sorted) {
+    const tag = e.tag >>> 0;
+    const len = e.bytes.byteLength >>> 0;
+    out[off] = tag & 0xff;
+    out[off + 1] = (tag >>> 8) & 0xff;
+    out[off + 2] = len & 0xff;
+    out[off + 3] = (len >>> 8) & 0xff;
+    out[off + 4] = (len >>> 16) & 0xff;
+    out[off + 5] = (len >>> 24) & 0xff;
+    off += 6;
+    out.set(e.bytes, off);
+    off += len;
+  }
+  return out;
+}
+
+function decodeVinpSnapshot(bytes: Uint8Array): Map<number, Uint8Array> {
+  if (bytes.byteLength < 16) throw new Error("VINP snapshot too small");
+  if (!(bytes[0] === 0x41 && bytes[1] === 0x45 && bytes[2] === 0x52 && bytes[3] === 0x4f)) {
+    throw new Error("VINP snapshot missing AERO magic");
+  }
+  if (!(bytes[8] === 0x56 && bytes[9] === 0x49 && bytes[10] === 0x4e && bytes[11] === 0x50)) {
+    throw new Error("VINP snapshot missing VINP device id");
+  }
+
+  const out = new Map<number, Uint8Array>();
+  let off = 16;
+  while (off < bytes.byteLength) {
+    if (off + 6 > bytes.byteLength) throw new Error("VINP snapshot truncated");
+    const tag = (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
+    const len =
+      (bytes[off + 2]! | (bytes[off + 3]! << 8) | (bytes[off + 4]! << 16) | (bytes[off + 5]! << 24)) >>> 0;
+    off += 6;
+    const end = off + len;
+    if (!Number.isSafeInteger(end) || end < off || end > bytes.byteLength) throw new Error("VINP snapshot field out of bounds");
+    if (out.has(tag)) throw new Error("VINP snapshot duplicate tag");
+    out.set(tag, bytes.subarray(off, end));
+    off = end;
+  }
+  return out;
+}
+
 describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   it("forwards device blobs to vm_snapshot_save_to_opfs when save_state hooks exist", async () => {
     const calls: Array<{ path: string; cpu: Uint8Array; mmu: Uint8Array; devices: unknown }> = [];
@@ -59,6 +132,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
 
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
+    const virtioKeyboardState = new Uint8Array([0x03]);
+    const virtioMouseState = new Uint8Array([0x04]);
     const hdaState = new Uint8Array([0x02, 0x03]);
     const virtioSndState = new Uint8Array([0x03, 0x03, 0x03]);
     const pciState = new Uint8Array([0x80, 0x81]);
@@ -67,6 +142,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
 
     const usbUhciRuntime = { save_state: () => usbState };
     const i8042 = { save_state: () => i8042State };
+    const virtioInputKeyboard = { save_state: () => virtioKeyboardState };
+    const virtioInputMouse = { save_state: () => virtioMouseState };
     const audioHda = { save_state: () => hdaState };
     const audioVirtioSnd = { saveState: () => virtioSndState };
     const pciBus = { saveState: () => pciState };
@@ -90,6 +167,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
         i8042,
+        virtioInputKeyboard,
+        virtioInputMouse,
         audioHda,
         audioVirtioSnd,
         pciBus,
@@ -106,15 +185,31 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     // The IO worker should forward device blobs as an array of `{ kind, bytes: Uint8Array }`.
     // Note: for free-function wasm exports we use a `device.<id>` kind spelling so newer device
     // blobs can still roundtrip through older bindings.
-    expect(calls[0]!.devices).toEqual([
-      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
-      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
-      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
-      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`, bytes: virtioSndState },
-      { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes: pciState },
-      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
-      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
+    const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
+    expect(devices.map((d) => d.kind)).toEqual([
+      `device.${VM_SNAPSHOT_DEVICE_ID_USB}`,
+      `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`,
+      VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
+      `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`,
+      `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`,
+      VM_SNAPSHOT_DEVICE_PCI_CFG_KIND,
+      `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`,
+      `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`,
     ]);
+
+    expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_USB}`)?.bytes).toBe(usbState);
+    expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`)?.bytes).toBe(i8042State);
+    expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`)?.bytes).toBe(hdaState);
+    expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`)?.bytes).toBe(virtioSndState);
+    expect(devices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_PCI_CFG_KIND)?.bytes).toBe(pciState);
+    expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`)?.bytes).toBe(e1000State);
+    expect(devices.find((d) => d.kind === `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`)?.bytes).toBe(stackState);
+
+    const vinp = devices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND);
+    expect(vinp).not.toBeNull();
+    const fields = decodeVinpSnapshot(vinp!.bytes);
+    expect(fields.get(VINP_TAG_KEYBOARD)).toEqual(virtioKeyboardState);
+    expect(fields.get(VINP_TAG_MOUSE)).toEqual(virtioMouseState);
   });
 
   it("snapshots UHCI + xHCI as a single USB container (no duplicate USB entries)", async () => {
@@ -161,11 +256,17 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   it("normalizes device.<id> kinds on restore and applies net.stack TCP restore policy=drop", async () => {
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
+    const virtioKeyboardState = new Uint8Array([0x03]);
+    const virtioMouseState = new Uint8Array([0x04]);
     const hdaState = new Uint8Array([0x02, 0x03]);
     const virtioSndState = new Uint8Array([0x03, 0x03, 0x03]);
     const pciState = new Uint8Array([0x80, 0x81]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
+    const virtioInputState = encodeVinpSnapshot([
+      { tag: VINP_TAG_KEYBOARD, bytes: virtioKeyboardState },
+      { tag: VINP_TAG_MOUSE, bytes: virtioMouseState },
+    ]);
 
     const restore = vi.fn(() => ({
       cpu: new Uint8Array([0xaa]),
@@ -173,6 +274,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       devices: [
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
+        { kind: VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND, bytes: virtioInputState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`, bytes: virtioSndState },
         { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes: pciState },
@@ -185,6 +287,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
 
     const usbLoad = vi.fn();
     const i8042Load = vi.fn();
+    const virtioKeyboardLoad = vi.fn();
+    const virtioMouseLoad = vi.fn();
     const hdaLoad = vi.fn();
     const virtioSndLoad = vi.fn();
     const pciLoad = vi.fn();
@@ -203,6 +307,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbUhciControllerBridge: null,
         usbEhciControllerBridge: null,
         i8042: { load_state: i8042Load },
+        virtioInputKeyboard: { load_state: virtioKeyboardLoad },
+        virtioInputMouse: { load_state: virtioMouseLoad },
         audioHda: { load_state: hdaLoad },
         audioVirtioSnd: { loadState: virtioSndLoad },
         pciBus: { loadState: pciLoad },
@@ -214,6 +320,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(restore).toHaveBeenCalledWith("state/test.snap");
     expect(usbLoad).toHaveBeenCalledWith(usbState);
     expect(i8042Load).toHaveBeenCalledWith(i8042State);
+    expect(virtioKeyboardLoad).toHaveBeenCalledWith(virtioKeyboardState);
+    expect(virtioMouseLoad).toHaveBeenCalledWith(virtioMouseState);
     expect(hdaLoad).toHaveBeenCalledWith(hdaState);
     expect(virtioSndLoad).toHaveBeenCalledWith(virtioSndState);
     expect(pciLoad).toHaveBeenCalledWith(pciState);
@@ -225,6 +333,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(res.devices?.map((d) => d.kind)).toEqual([
       "usb",
       "input.i8042",
+      VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
       "audio.hda",
       "audio.virtio_snd",
       VM_SNAPSHOT_DEVICE_PCI_CFG_KIND,
