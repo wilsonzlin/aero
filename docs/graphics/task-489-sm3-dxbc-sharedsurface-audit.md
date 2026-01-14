@@ -214,6 +214,7 @@ Ops/features referenced by the scratchpad tasks:
 - `0516665f7` — `test(sm3): cover non-2D texldp/texldd swizzles`
 - `b10bb36f3` — `docs(graphics): mark SM3 TexSample/texkill tasks 401/402 done`
 - `6617e2bc5` — `docs(graphics): cross-link SM3 shader translation task notes`
+- `9f3c546f8` — `docs(graphics): link task-489 audit from SM3 translation notes`
 - `5fb505938` — `docs(graphics): shorten SM3 shader translation status table`
 - `e8523a8f9` — `test(sm3): assert default sampler texture types in bind layout`
 
