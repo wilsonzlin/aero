@@ -36,8 +36,8 @@ class QmpMsixParsingTests(unittest.TestCase):
                         "bus": 0,
                         "slot": 3,
                         "function": 0,
-                        "vendor_id": 0x1AF4,
-                        "device_id": 0x1041,
+                        # Some QEMU builds nest IDs under an `id` object.
+                        "id": {"vendor_id": 0x1AF4, "device_id": 0x1041},
                         "capabilities": [{"id": "msix", "msix": {"enabled": True}}],
                     },
                     {
