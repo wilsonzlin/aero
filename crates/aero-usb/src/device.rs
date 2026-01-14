@@ -664,8 +664,12 @@ impl IoSnapshot for AttachedUsbDevice {
         self.pending_address = None;
         self.control = None;
 
-        self.address = r.u8(ADEV_TAG_ADDRESS)?.unwrap_or(0);
-        self.pending_address = r.u8(ADEV_TAG_PENDING_ADDRESS)?;
+        let address = r.u8(ADEV_TAG_ADDRESS)?.unwrap_or(0);
+        self.address = if address <= 127 { address } else { 0 };
+        self.pending_address = match r.u8(ADEV_TAG_PENDING_ADDRESS)? {
+            Some(addr) if addr <= 127 => Some(addr),
+            _ => None,
+        };
         if let Some(buf) = r.bytes(ADEV_TAG_CONTROL) {
             self.control = Some(decode_control_state(buf)?);
         }
