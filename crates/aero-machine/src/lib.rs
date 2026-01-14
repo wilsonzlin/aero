@@ -6217,6 +6217,53 @@ impl Machine {
                 }
                 true
             }
+            16 => {
+                let expand_5 = |v: u16| -> u32 { u32::from((v << 3) | (v >> 2)) };
+                let expand_6 = |v: u16| -> u32 { u32::from((v << 2) | (v >> 4)) };
+
+                if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
+                    let dev = aerogpu.borrow();
+                    let vram = &dev.vram;
+                    for y in 0..height_usize {
+                        let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
+                        let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
+                        let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        for (x, dst) in dst_row.iter_mut().enumerate() {
+                            let i = x * 2;
+                            let lo = src_row.get(i).copied().unwrap_or(0) as u16;
+                            let hi = src_row.get(i + 1).copied().unwrap_or(0) as u16;
+                            let pix = lo | (hi << 8);
+                            let b5 = pix & 0x1F;
+                            let g6 = (pix >> 5) & 0x3F;
+                            let r5 = (pix >> 11) & 0x1F;
+                            let b = expand_5(b5);
+                            let g = expand_6(g6);
+                            let r = expand_5(r5);
+                            *dst = 0xFF00_0000 | (b << 16) | (g << 8) | r;
+                        }
+                    }
+                } else {
+                    for y in 0..height_usize {
+                        let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
+                        self.mem.read_physical(row_addr, &mut row);
+                        let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        for (x, dst) in dst_row.iter_mut().enumerate() {
+                            let i = x * 2;
+                            let lo = row.get(i).copied().unwrap_or(0) as u16;
+                            let hi = row.get(i + 1).copied().unwrap_or(0) as u16;
+                            let pix = lo | (hi << 8);
+                            let b5 = pix & 0x1F;
+                            let g6 = (pix >> 5) & 0x3F;
+                            let r5 = (pix >> 11) & 0x1F;
+                            let b = expand_5(b5);
+                            let g = expand_6(g6);
+                            let r = expand_5(r5);
+                            *dst = 0xFF00_0000 | (b << 16) | (g << 8) | r;
+                        }
+                    }
+                }
+                true
+            }
             8 => {
                 // In 8bpp VBE modes, the framebuffer is a stream of palette indices and guests
                 // commonly program colors via the VGA DAC ports (`0x3C8/0x3C9`).
