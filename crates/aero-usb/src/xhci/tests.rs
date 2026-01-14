@@ -1175,10 +1175,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     // bookkeeping.
     xhci.host_controller_error = true;
     xhci.cmd_kick = true;
-    xhci.active_endpoints.push_back(super::ActiveEndpoint {
-        slot_id: 1,
-        endpoint_id: 1,
-    });
+    xhci.ring_doorbell(1, 1);
     xhci.ep0_control_td[1].td_start = Some(RingCursor::new(0xa000, true));
     xhci.ep0_control_td[1].td_cursor = Some(RingCursor::new(0xa010, false));
     xhci.ep0_control_td[1].data_expected = 8;
@@ -1627,4 +1624,57 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     assert_eq!(port1 & PORTSC_PR, 0);
     assert_ne!(port1 & PORTSC_PED, 0);
     assert_ne!(port1 & PORTSC_PRC, 0);
+}
+
+#[test]
+fn endpoint_doorbell_ignores_endpoint_id_zero() {
+    use super::context::SlotContext;
+    use super::CommandCompletionCode;
+
+    let mut mem = TestMem::new(0x40_000);
+    let mut xhci = XhciController::new();
+    xhci.set_dcbaap(0x1000);
+    xhci.attach_device(0, Box::new(DummyUsbDevice));
+
+    let enable = xhci.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    let slot_id = enable.slot_id;
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = xhci.address_device(slot_id, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    xhci.ring_doorbell(slot_id, 0);
+    assert!(
+        xhci.active_endpoints.is_empty(),
+        "endpoint ID 0 is reserved and should not enqueue work"
+    );
+
+    xhci.ring_doorbell(slot_id, 1);
+    assert_eq!(xhci.active_endpoints.len(), 1);
+}
+
+#[test]
+fn endpoint_doorbell_dedupes_active_queue_entries() {
+    use super::context::SlotContext;
+    use super::CommandCompletionCode;
+
+    let mut mem = TestMem::new(0x40_000);
+    let mut xhci = XhciController::new();
+    xhci.set_dcbaap(0x1000);
+    xhci.attach_device(0, Box::new(DummyUsbDevice));
+
+    let enable = xhci.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    let slot_id = enable.slot_id;
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = xhci.address_device(slot_id, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    xhci.ring_doorbell(slot_id, 1);
+    xhci.ring_doorbell(slot_id, 1);
+    assert_eq!(xhci.active_endpoints.len(), 1);
 }

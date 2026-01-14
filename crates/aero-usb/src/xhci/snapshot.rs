@@ -256,6 +256,7 @@ fn decode_active_endpoints(
     }
 
     let mut out = VecDeque::new();
+    let mut seen = vec![0u32; slots_len];
     for _ in 0..count {
         let slot_id = d.u8()?;
         let endpoint_id = d.u8()?;
@@ -269,6 +270,14 @@ fn decode_active_endpoints(
                 "xhci active endpoint id",
             ));
         }
+        let slot_idx = usize::from(slot_id);
+        let bit = 1u32 << endpoint_id;
+        if (seen[slot_idx] & bit) != 0 {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "xhci active endpoint duplicate",
+            ));
+        }
+        seen[slot_idx] |= bit;
         out.push_back(ActiveEndpoint {
             slot_id,
             endpoint_id,
@@ -856,6 +865,41 @@ mod tests {
     use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter, SnapshotVersion};
 
     use super::XhciController;
+
+    #[test]
+    fn snapshot_rejects_duplicate_active_endpoints() {
+        let mut ctrl = XhciController::new();
+        ctrl.ring_doorbell(1, 1);
+
+        let bytes = ctrl.save_state();
+        let r =
+            SnapshotReader::parse(&bytes, XhciController::DEVICE_ID).expect("parse xHCI snapshot");
+
+        let mut w = SnapshotWriter::new(XhciController::DEVICE_ID, XhciController::DEVICE_VERSION);
+        for (tag, field) in r.iter_fields() {
+            if tag == super::TAG_ACTIVE_ENDPOINTS {
+                // Encode (slot 1, ep 1) twice.
+                let mut dupe = Vec::new();
+                dupe.extend_from_slice(&2u32.to_le_bytes());
+                dupe.extend_from_slice(&[1u8, 1u8, 1u8, 1u8]);
+                w.field_bytes(tag, dupe);
+            } else {
+                w.field_bytes(tag, field.to_vec());
+            }
+        }
+        let dupe_bytes = w.finish();
+
+        let mut restored = XhciController::new();
+        let err = restored
+            .load_state(&dupe_bytes)
+            .expect_err("duplicate active endpoints should be rejected");
+        assert_eq!(
+            err,
+            aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                "xhci active endpoint duplicate"
+            )
+        );
+    }
 
     #[test]
     fn snapshot_loads_legacy_tick_tag_without_time_ms() {

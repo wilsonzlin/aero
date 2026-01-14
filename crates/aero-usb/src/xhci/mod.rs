@@ -2119,13 +2119,16 @@ impl XhciController {
     ///
     /// This marks the endpoint as active. [`XhciController::tick`] will process pending work.
     pub fn ring_doorbell(&mut self, slot_id: u8, endpoint_id: u8) {
+        if slot_id == 0 {
+            return;
+        }
         let endpoint_id = endpoint_id & 0x1f;
         if endpoint_id == 0 {
             return;
         }
 
         let slot_idx = usize::from(slot_id);
-        if slot_id == 0 || slot_idx >= self.slots.len() {
+        if slot_idx >= self.slots.len() {
             return;
         }
 
