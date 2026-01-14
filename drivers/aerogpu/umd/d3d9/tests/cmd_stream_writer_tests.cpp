@@ -3116,7 +3116,7 @@ bool TestLockSizeZeroClampsToMipSubresourceFromInteriorOffset() {
   constexpr uint32_t kMip1Offset = kMip0SlicePitch;
 
   constexpr uint32_t kInteriorOffset = kMip1Offset + 4u;
-  constexpr uint32_t kExpectedSize = kMip1SlicePitch - 4u;
+  constexpr uint32_t kExpectedSize = kMip1SlicePitch;
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
@@ -3164,7 +3164,7 @@ bool TestLockSizeZeroClampsToMipSubresourceFromInteriorOffset() {
     return false;
   }
   const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kInteriorOffset), "UPLOAD_RESOURCE offset_bytes")) {
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kMip1Offset), "UPLOAD_RESOURCE offset_bytes")) {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(kExpectedSize), "UPLOAD_RESOURCE size_bytes");
@@ -3286,7 +3286,7 @@ bool TestLockSizeZeroClampsToBcMipSubresourceFromInteriorOffset() {
   constexpr uint32_t kMip1Offset = kMip0SlicePitch;
 
   constexpr uint32_t kInteriorOffset = kMip1Offset + 1u;
-  constexpr uint32_t kExpectedSize = kMip1SlicePitch - 1u;
+  constexpr uint32_t kExpectedSize = kMip1SlicePitch;
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
@@ -3334,7 +3334,7 @@ bool TestLockSizeZeroClampsToBcMipSubresourceFromInteriorOffset() {
     return false;
   }
   const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kInteriorOffset), "UPLOAD_RESOURCE offset_bytes")) {
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kMip1Offset), "UPLOAD_RESOURCE offset_bytes")) {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(kExpectedSize), "UPLOAD_RESOURCE size_bytes");
@@ -3456,7 +3456,7 @@ bool TestLockSizeZeroClampsToBc2MipSubresourceFromInteriorOffset() {
   constexpr uint32_t kMip1Offset = kMip0SlicePitch;
 
   constexpr uint32_t kInteriorOffset = kMip1Offset + 1u;
-  constexpr uint32_t kExpectedSize = kMip1SlicePitch - 1u;
+  constexpr uint32_t kExpectedSize = kMip1SlicePitch;
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
@@ -3504,7 +3504,7 @@ bool TestLockSizeZeroClampsToBc2MipSubresourceFromInteriorOffset() {
     return false;
   }
   const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kInteriorOffset), "UPLOAD_RESOURCE offset_bytes")) {
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kMip1Offset), "UPLOAD_RESOURCE offset_bytes")) {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(kExpectedSize), "UPLOAD_RESOURCE size_bytes");
@@ -3626,7 +3626,7 @@ bool TestLockSizeZeroClampsToBc3MipSubresourceFromInteriorOffset() {
   constexpr uint32_t kMip1Offset = kMip0SlicePitch;
 
   constexpr uint32_t kInteriorOffset = kMip1Offset + 1u;
-  constexpr uint32_t kExpectedSize = kMip1SlicePitch - 1u;
+  constexpr uint32_t kExpectedSize = kMip1SlicePitch;
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
@@ -3674,7 +3674,7 @@ bool TestLockSizeZeroClampsToBc3MipSubresourceFromInteriorOffset() {
     return false;
   }
   const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kInteriorOffset), "UPLOAD_RESOURCE offset_bytes")) {
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kMip1Offset), "UPLOAD_RESOURCE offset_bytes")) {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(kExpectedSize), "UPLOAD_RESOURCE size_bytes");
@@ -3796,7 +3796,7 @@ bool TestLockSizeZeroClampsTo16BitMipSubresourceFromInteriorOffset() {
   constexpr uint32_t kMip1Offset = kMip0SlicePitch;
 
   constexpr uint32_t kInteriorOffset = kMip1Offset + 2u;
-  constexpr uint32_t kExpectedSize = kMip1SlicePitch - 2u;
+  constexpr uint32_t kExpectedSize = kMip1SlicePitch;
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
@@ -3844,7 +3844,7 @@ bool TestLockSizeZeroClampsTo16BitMipSubresourceFromInteriorOffset() {
     return false;
   }
   const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kInteriorOffset), "UPLOAD_RESOURCE offset_bytes")) {
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kMip1Offset), "UPLOAD_RESOURCE offset_bytes")) {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(kExpectedSize), "UPLOAD_RESOURCE size_bytes");
@@ -4146,7 +4146,7 @@ bool TestLockSizeZeroClampsToArraySubresourceFromInteriorOffset() {
   constexpr uint32_t kLayer1Mip1Offset = kLayer1Base + kMip0SlicePitch;
 
   constexpr uint32_t kInteriorOffset = kLayer1Mip1Offset + 4u;
-  constexpr uint32_t kExpectedSize = kMip1SlicePitch - 4u;
+  constexpr uint32_t kExpectedSize = kMip1SlicePitch;
 
   D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
@@ -4194,7 +4194,7 @@ bool TestLockSizeZeroClampsToArraySubresourceFromInteriorOffset() {
     return false;
   }
   const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kInteriorOffset), "UPLOAD_RESOURCE offset_bytes")) {
+  if (!Check(upload_cmd->offset_bytes == static_cast<uint64_t>(kLayer1Mip1Offset), "UPLOAD_RESOURCE offset_bytes")) {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(kExpectedSize), "UPLOAD_RESOURCE size_bytes");
@@ -6048,39 +6048,55 @@ bool TestGenerateMipSubLevelsBoxFilter2d() {
   }
 
   // Host-allocated textures should embed updates via UPLOAD_RESOURCE.
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1, "GenerateMipSubLevels emits exactly one UPLOAD_RESOURCE")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "GenerateMipSubLevels emits UPLOAD_RESOURCE")) {
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
     return false;
   }
 
-  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
-  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
-    return false;
+  const uint64_t expected_start = mip1.offset_bytes;
+  const uint64_t expected_end = static_cast<uint64_t>(res->size_bytes);
+
+  std::vector<uint8_t> covered(res->size_bytes, 0);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (cmd->resource_handle == res->handle) {
+        const uint64_t start = cmd->offset_bytes;
+        const uint64_t end = start + cmd->size_bytes;
+        if (!Check(end <= expected_end, "UPLOAD_RESOURCE range within resource")) {
+          return false;
+        }
+        // Uploads must not touch mip0 bytes.
+        if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+          return false;
+        }
+
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
+        if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
+                   "UPLOAD_RESOURCE payload matches storage bytes")) {
+          return false;
+        }
+
+        for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+          covered[static_cast<size_t>(i)] = 1;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
   }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
-    return false;
-  }
-  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
-    return false;
-  }
-  const uint64_t expected_size = static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes;
-  if (!Check(upload_cmd->size_bytes == expected_size, "UPLOAD_RESOURCE size covers mips")) {
-    return false;
-  }
-  const uint8_t expected_payload[sizeof(expected_mip1) + sizeof(expected_mip2)] = {
-      // mip1 bytes (2x2)
-      0, 0, 3, 0xFF, 0, 0, 5, 0xFF,
-      0, 0, 11, 0xFF, 0, 0, 13, 0xFF,
-      // mip2 bytes (1x1)
-      0, 0, 8, 0xFF,
-  };
-  static_assert(sizeof(expected_payload) == 20, "unexpected test payload size");
-  const auto* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
-  if (!Check(std::memcmp(payload, expected_payload, sizeof(expected_payload)) == 0, "UPLOAD_RESOURCE payload matches mip bytes")) {
-    return false;
+
+  for (uint64_t i = expected_start; i < expected_end && i < static_cast<uint64_t>(covered.size()); ++i) {
+    if (!Check(covered[static_cast<size_t>(i)] != 0, "UPLOAD_RESOURCE covers full generated mip range")) {
+      return false;
+    }
   }
   return true;
 }
@@ -6522,18 +6538,49 @@ bool TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5() {
     return false;
   }
 
-  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
-  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
-    return false;
+  const uint64_t expected_start = mip1.offset_bytes;
+  const uint64_t expected_end = static_cast<uint64_t>(res->size_bytes);
+
+  std::vector<uint8_t> covered(res->size_bytes, 0);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (cmd->resource_handle == res->handle) {
+        const uint64_t start = cmd->offset_bytes;
+        const uint64_t end = start + cmd->size_bytes;
+        if (!Check(end <= expected_end, "UPLOAD_RESOURCE range within resource")) {
+          return false;
+        }
+        if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+          return false;
+        }
+
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
+        if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
+                   "UPLOAD_RESOURCE payload matches storage bytes")) {
+          return false;
+        }
+
+        for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+          covered[static_cast<size_t>(i)] = 1;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
   }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
-    return false;
+
+  for (uint64_t i = expected_start; i < expected_end && i < static_cast<uint64_t>(covered.size()); ++i) {
+    if (!Check(covered[static_cast<size_t>(i)] != 0, "UPLOAD_RESOURCE covers full generated mip range")) {
+      return false;
+    }
   }
-  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
-    return false;
-  }
-  return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+  return true;
 }
 
 bool TestGenerateMipSubLevelsBoxFilter2dR5G6B5() {
@@ -6717,18 +6764,49 @@ bool TestGenerateMipSubLevelsBoxFilter2dR5G6B5() {
     return false;
   }
 
-  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
-  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
-    return false;
+  const uint64_t expected_start = mip1.offset_bytes;
+  const uint64_t expected_end = static_cast<uint64_t>(res->size_bytes);
+
+  std::vector<uint8_t> covered(res->size_bytes, 0);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (cmd->resource_handle == res->handle) {
+        const uint64_t start = cmd->offset_bytes;
+        const uint64_t end = start + cmd->size_bytes;
+        if (!Check(end <= expected_end, "UPLOAD_RESOURCE range within resource")) {
+          return false;
+        }
+        if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+          return false;
+        }
+
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
+        if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
+                   "UPLOAD_RESOURCE payload matches storage bytes")) {
+          return false;
+        }
+
+        for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+          covered[static_cast<size_t>(i)] = 1;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
   }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
-    return false;
+
+  for (uint64_t i = expected_start; i < expected_end && i < static_cast<uint64_t>(covered.size()); ++i) {
+    if (!Check(covered[static_cast<size_t>(i)] != 0, "UPLOAD_RESOURCE covers full generated mip range")) {
+      return false;
+    }
   }
-  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
-    return false;
-  }
-  return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+  return true;
 }
 
 bool TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5() {
@@ -6915,18 +6993,49 @@ bool TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5() {
     return false;
   }
 
-  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
-  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
-    return false;
+  const uint64_t expected_start = mip1.offset_bytes;
+  const uint64_t expected_end = static_cast<uint64_t>(res->size_bytes);
+
+  std::vector<uint8_t> covered(res->size_bytes, 0);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (cmd->resource_handle == res->handle) {
+        const uint64_t start = cmd->offset_bytes;
+        const uint64_t end = start + cmd->size_bytes;
+        if (!Check(end <= expected_end, "UPLOAD_RESOURCE range within resource")) {
+          return false;
+        }
+        if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+          return false;
+        }
+
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
+        if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
+                   "UPLOAD_RESOURCE payload matches storage bytes")) {
+          return false;
+        }
+
+        for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+          covered[static_cast<size_t>(i)] = 1;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
   }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
-    return false;
+
+  for (uint64_t i = expected_start; i < expected_end && i < static_cast<uint64_t>(covered.size()); ++i) {
+    if (!Check(covered[static_cast<size_t>(i)] != 0, "UPLOAD_RESOURCE covers full generated mip range")) {
+      return false;
+    }
   }
-  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
-    return false;
-  }
-  return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+  return true;
 }
 
 bool TestGenerateMipSubLevelsBoxFilter2dBcUniform() {
@@ -7112,20 +7221,47 @@ bool TestGenerateMipSubLevelsBoxFilter2dBcUniform() {
       return false;
     }
 
-    const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
-    if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
-      return false;
+    const uint64_t expected_start = mip1.offset_bytes;
+    const uint64_t expected_end = static_cast<uint64_t>(res->size_bytes);
+
+    std::vector<uint8_t> covered(res->size_bytes, 0);
+    const size_t stream_len = StreamBytesUsed(buf, len);
+    size_t off = sizeof(aerogpu_cmd_stream_header);
+    while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+      const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+      if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+        const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+        if (cmd->resource_handle == res->handle) {
+          const uint64_t start = cmd->offset_bytes;
+          const uint64_t end = start + cmd->size_bytes;
+          if (!Check(end <= expected_end, "UPLOAD_RESOURCE range within resource")) {
+            return false;
+          }
+          if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+            return false;
+          }
+
+          const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
+          if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
+                     "UPLOAD_RESOURCE payload matches storage bytes")) {
+            return false;
+          }
+
+          for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+            covered[static_cast<size_t>(i)] = 1;
+          }
+        }
+      }
+      if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+        break;
+      }
+      off += hdr->size_bytes;
     }
-    const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-    if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
-      return false;
-    }
-    if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
-      return false;
-    }
-    if (!Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes,
-               "UPLOAD_RESOURCE size covers mips")) {
-      return false;
+
+    for (uint64_t i = expected_start; i < expected_end && i < static_cast<uint64_t>(covered.size()); ++i) {
+      if (!Check(covered[static_cast<size_t>(i)] != 0, "UPLOAD_RESOURCE covers full generated mip range")) {
+        return false;
+      }
     }
 
     hr = cleanup.device_funcs.pfnDestroyResource(create_dev.hDevice, create_res.hResource);
@@ -7782,14 +7918,17 @@ bool TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes() {
   if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle")) {
     return false;
   }
-  if (!Check(upload_cmd->offset_bytes == kOffset, "UPLOAD_RESOURCE offset")) {
+  const uint64_t expected_upload_off = 0;
+  const uint64_t expected_upload_size = res->row_pitch;
+  if (!Check(upload_cmd->offset_bytes == expected_upload_off, "UPLOAD_RESOURCE offset")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == kSize, "UPLOAD_RESOURCE size")) {
+  if (!Check(upload_cmd->size_bytes == expected_upload_size, "UPLOAD_RESOURCE size")) {
     return false;
   }
   const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
-  return Check(std::memcmp(payload, expected_fixed, sizeof(expected_fixed)) == 0, "UPLOAD_RESOURCE payload contains fixed bytes");
+  return Check(std::memcmp(payload, res->storage.data(), static_cast<size_t>(expected_upload_size)) == 0,
+               "UPLOAD_RESOURCE payload contains fixed bytes");
 #endif
 }
 
@@ -8102,8 +8241,8 @@ bool TestCopyRectsToHostBackedResourceEmitsUpload() {
   }
   std::fill(dst_res->storage.begin(), dst_res->storage.end(), 0x00);
 
-  // Copy a 2x2 rect from (0,0) into dst. Expect two row uploads (8 bytes each)
-  // at offsets 0 and row_pitch.
+  // Copy a 2x2 rect from (0,0) into dst. Upload packets must be row-aligned, so
+  // expect two full-row uploads (16 bytes each) at offsets 0 and row_pitch.
   RECT r{};
   r.left = 0;
   r.top = 0;
@@ -8129,7 +8268,7 @@ bool TestCopyRectsToHostBackedResourceEmitsUpload() {
     return false;
   }
 
-  // Validate both row uploads (offsets 0 and row_pitch, size 8 bytes each).
+  // Validate both row uploads (offsets 0 and row_pitch, size row_pitch bytes each).
   const size_t stream_len = StreamBytesUsed(dma.data(), dma.size());
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   uint32_t upload_idx = 0;
@@ -8138,7 +8277,7 @@ bool TestCopyRectsToHostBackedResourceEmitsUpload() {
     if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
       const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
       const uint32_t expected_off = (upload_idx == 0) ? 0u : src_res->row_pitch;
-      const uint32_t expected_size = 8u;
+      const uint32_t expected_size = src_res->row_pitch;
       if (!Check(cmd->resource_handle == dst_res->handle, "UPLOAD_RESOURCE dst handle")) {
         return false;
       }
@@ -8149,7 +8288,13 @@ bool TestCopyRectsToHostBackedResourceEmitsUpload() {
         return false;
       }
       const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
-      if (!Check(std::memcmp(payload, src_res->storage.data() + expected_off, expected_size) == 0, "UPLOAD_RESOURCE payload")) {
+      // The copy only touches the left half (8 bytes) of each row; the rest of
+      // the row should remain zero (dst was initialized to zeros).
+      if (!Check(std::memcmp(payload, src_res->storage.data() + expected_off, 8u) == 0, "UPLOAD_RESOURCE payload (copied bytes)")) {
+        return false;
+      }
+      const uint8_t zeros[8] = {};
+      if (!Check(std::memcmp(payload + 8u, zeros, sizeof(zeros)) == 0, "UPLOAD_RESOURCE payload (untouched bytes)")) {
         return false;
       }
       upload_idx++;
@@ -8307,8 +8452,8 @@ bool TestCopyRects16BitToHostBackedResourceEmitsUpload() {
   }
   std::fill(dst_res->storage.begin(), dst_res->storage.end(), 0x00);
 
-  // Copy a 2x2 rect from (0,0) into dst. Expect two row uploads (4 bytes each)
-  // at offsets 0 and row_pitch.
+  // Copy a 2x2 rect from (0,0) into dst. Upload packets must be row-aligned, so
+  // expect two full-row uploads (8 bytes each) at offsets 0 and row_pitch.
   RECT r{};
   r.left = 0;
   r.top = 0;
@@ -8335,7 +8480,7 @@ bool TestCopyRects16BitToHostBackedResourceEmitsUpload() {
     return false;
   }
 
-  // Validate both row uploads (offsets 0 and row_pitch, size 4 bytes each).
+  // Validate both row uploads (offsets 0 and row_pitch, size row_pitch bytes each).
   const size_t stream_len = StreamBytesUsed(dma.data(), dma.size());
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   uint32_t upload_idx = 0;
@@ -8344,7 +8489,7 @@ bool TestCopyRects16BitToHostBackedResourceEmitsUpload() {
     if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
       const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
       const uint32_t expected_off = (upload_idx == 0) ? 0u : src_res->row_pitch;
-      const uint32_t expected_size = 4u;
+      const uint32_t expected_size = src_res->row_pitch;
       if (!Check(cmd->resource_handle == dst_res->handle, "UPLOAD_RESOURCE dst handle")) {
         return false;
       }
@@ -8355,8 +8500,15 @@ bool TestCopyRects16BitToHostBackedResourceEmitsUpload() {
         return false;
       }
       const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
-      if (!Check(std::memcmp(payload, src_res->storage.data() + expected_off, expected_size) == 0,
-                 "UPLOAD_RESOURCE payload")) {
+      // The copy only touches the left half (4 bytes) of each row; the rest of
+      // the row should remain zero (dst was initialized to zeros).
+      if (!Check(std::memcmp(payload, src_res->storage.data() + expected_off, 4u) == 0,
+                 "UPLOAD_RESOURCE payload (copied bytes)")) {
+        return false;
+      }
+      const uint8_t zeros[4] = {};
+      if (!Check(std::memcmp(payload + 4u, zeros, sizeof(zeros)) == 0,
+                 "UPLOAD_RESOURCE payload (untouched bytes)")) {
         return false;
       }
       upload_idx++;
@@ -30040,6 +30192,7 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
   // Validate dst storage updated by the CPU copy.
   const uint32_t row_pitch = dst_res->row_pitch;
   const uint32_t row_bytes = static_cast<uint32_t>(src_rect.right - src_rect.left) * bpp;
+  const uint32_t upload_row_bytes = row_pitch;
   for (uint32_t row = 0; row < 2; ++row) {
     const size_t dst_off =
         static_cast<size_t>(dst_point.y + row) * row_pitch + static_cast<size_t>(dst_point.x) * bpp;
@@ -30064,7 +30217,7 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
   const size_t len = dev->cmd.bytes_used();
 
   const size_t expected_len =
-      sizeof(aerogpu_cmd_stream_header) + 2 * align_up(sizeof(aerogpu_cmd_upload_resource) + row_bytes, 4);
+      sizeof(aerogpu_cmd_stream_header) + 2 * align_up(sizeof(aerogpu_cmd_upload_resource) + upload_row_bytes, 4);
   if (!Check(len == expected_len, "UpdateSurface emits exactly 2 UPLOAD_RESOURCE packets")) {
     return false;
   }
@@ -30083,22 +30236,19 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
       const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      const uint64_t expected_off =
-          static_cast<uint64_t>(dst_point.y + upload_idx) * row_pitch + static_cast<uint64_t>(dst_point.x) * bpp;
-      const uint64_t expected_src_off = static_cast<uint64_t>(src_rect.top + upload_idx) * src_res->row_pitch +
-                                        static_cast<uint64_t>(src_rect.left) * bpp;
+      const uint64_t expected_off = static_cast<uint64_t>(dst_point.y + upload_idx) * row_pitch;
       if (!Check(cmd->resource_handle == dst_res->handle, "UPLOAD_RESOURCE dst handle")) {
         return false;
       }
       if (!Check(cmd->offset_bytes == expected_off, "UPLOAD_RESOURCE offset")) {
         return false;
       }
-      if (!Check(cmd->size_bytes == row_bytes, "UPLOAD_RESOURCE size")) {
+      if (!Check(cmd->size_bytes == upload_row_bytes, "UPLOAD_RESOURCE size")) {
         return false;
       }
       const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
-      if (!Check(std::memcmp(payload, src_res->storage.data() + expected_src_off, row_bytes) == 0,
-                 "UPLOAD_RESOURCE payload matches src bytes")) {
+      if (!Check(std::memcmp(payload, dst_res->storage.data() + static_cast<size_t>(expected_off), upload_row_bytes) == 0,
+                 "UPLOAD_RESOURCE payload matches dst row bytes")) {
         return false;
       }
       upload_idx++;
