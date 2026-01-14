@@ -55,6 +55,8 @@ Web runtime integration:
 - Guest-visible PCI wrapper: `web/src/io/devices/xhci.ts` (`XhciPciDevice`)
 - Worker wiring: `web/src/workers/io_xhci_init.ts` (`tryInitXhciDevice`)
 - WASM bridge export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`)
+- WebHID guest-topology manager (planned xHCI attachment path): `web/src/hid/xhci_hid_topology.ts`
+  (`XhciHidTopologyManager`)
 
 Native integration (not yet wired into the canonical `Machine` by default):
 
@@ -111,6 +113,10 @@ Notes:
 - WASM export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`). Today this
   is a **stub** register file (byte-addressed MMIO window) with a tick counter and snapshot helpers;
   `irq_asserted()` currently always returns `false`.
+- WebHID attachment behind xHCI is planned via `XhciHidTopologyManager` (`web/src/hid/xhci_hid_topology.ts`),
+  but `XhciControllerBridge` does not yet expose the required topology mutation APIs
+  (`attach_hub`, `attach_webhid_device`, etc). As a result, WebHID passthrough devices are still
+  expected to attach via UHCI in the current web runtime.
 - The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---
