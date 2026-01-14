@@ -181,8 +181,8 @@ fn sm4_gs_packed_varying_o2_translates_to_expanded_vertex_v0() {
     let wgsl =
         translate_gs_module_to_wgsl_compute_prepass_packed(&module, &[2]).expect("translate");
     assert!(
-        wgsl.contains("out_vertices.data[vtx_idx].v0 = o2;"),
-        "expected packed output register o2 to be written to ExpandedVertex.v0:\n{wgsl}"
+        wgsl.contains("out_vertices.data[vtx_idx].varyings[2u] = o2;"),
+        "expected packed output register o2 to be written to ExpandedVertex.varyings[2]:\n{wgsl}"
     );
     assert_wgsl_validates(&wgsl);
 }
@@ -231,8 +231,8 @@ fn sm4_gs_packed_varying_missing_output_register_defaults_to_zero() {
         "expected output register o5 to be declared/zero-initialized:\n{wgsl}"
     );
     assert!(
-        wgsl.contains("out_vertices.data[vtx_idx].v0 = o5;"),
-        "expected packed output register o5 to be written to ExpandedVertex.v0:\n{wgsl}"
+        wgsl.contains("out_vertices.data[vtx_idx].varyings[5u] = o5;"),
+        "expected packed output register o5 to be written to ExpandedVertex.varyings[5]:\n{wgsl}"
     );
     assert_wgsl_validates(&wgsl);
 }
