@@ -6932,10 +6932,25 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
+        // Patchlist topology without HS/DS cannot be expressed in WebGPU render pipelines. When a
+        // guest selects a patchlist topology but does not bind HS/DS, route the draw through the
+        // placeholder compute-prepass path so we can still rasterize *something* (helpful for bring-up
+        // and for apps that set patchlist topology speculatively).
+        //
+        // This "patchlist-only" mode ignores IA inputs and the GS stage, so avoid uploading/binding
+        // guest IA buffers and skip GS instance-count validation.
+        let patchlist_only_emulation = matches!(
+            self.state.primitive_topology,
+            CmdPrimitiveTopology::PatchList { .. }
+        ) && self.state.hs.is_none()
+            && self.state.ds.is_none();
+
         // Geometry shader instancing (`dcl_gsinstancecount` / `[instance(n)]`):
         // - Each input primitive is processed `gs_instance_count` times.
         // - The compute prepass treats `global_invocation_id.y` as `SV_GSInstanceID`.
-        let gs_instance_count: u32 = if let Some(gs_handle) = self.state.gs {
+        let gs_instance_count: u32 = if patchlist_only_emulation {
+            1
+        } else if let Some(gs_handle) = self.state.gs {
             match self.resources.gs_shaders.get(&gs_handle) {
                 Some(meta) => {
                     if meta.prepass.is_none() {
@@ -6957,20 +6972,6 @@ impl AerogpuD3d11Executor {
         } else {
             1
         };
-
-        // Patchlist topology without HS/DS cannot be expressed in WebGPU render pipelines. When a
-        // guest selects a patchlist topology but does not bind HS/DS, route the draw through the
-        // placeholder compute-prepass path so we can still rasterize *something* (helpful for bring-up
-        // and for apps that set patchlist topology speculatively).
-        //
-        // The placeholder shader ignores IA inputs, so avoid uploading/binding guest IA buffers in
-        // this mode.
-        let patchlist_only_emulation = matches!(
-            self.state.primitive_topology,
-            CmdPrimitiveTopology::PatchList { .. }
-        ) && self.state.gs.is_none()
-            && self.state.hs.is_none()
-            && self.state.ds.is_none();
 
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
@@ -21450,7 +21451,9 @@ mod tests {
 
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
             writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
-            writer.bind_shaders(VS, PS, 0);
+            // Bind a dummy GS handle (without creating it) to ensure patchlist-only emulation still
+            // caps work and runs the placeholder path even when GS state is non-empty.
+            writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
 
             writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
             writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
