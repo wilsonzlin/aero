@@ -965,7 +965,8 @@ struct Device {
 //
 // Notes:
 // - `num_rtvs` is clamped to AEROGPU_MAX_RENDER_TARGETS.
-// - Slots within `[0, current_rtv_count)` may be null (handle==0).
+// - Slots within `[0, current_rtv_count)` may be null (handle==0), matching D3D11's
+//   OMSetRenderTargets semantics (including "gaps").
 // - Slots >= current_rtv_count are cleared to 0/nullptr.
 
 inline void SetRenderTargetsStateLocked(Device* dev,

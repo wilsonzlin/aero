@@ -91,25 +91,16 @@ bool TestBindTwoRtvsEmitsTwoColorHandles() {
 bool TestGappedRtvBindingIsEncoded() {
   Device dev{};
 
-  Resource res0{};
-  res0.handle = 2001;
   Resource res1{};
   res1.handle = 2002;
 
-  RenderTargetView rtv0{};
-  rtv0.texture = res0.handle;
-  rtv0.resource = &res0;
   RenderTargetView rtv1{};
   rtv1.texture = res1.handle;
   rtv1.resource = &res1;
 
-  const RenderTargetView* rtvs[2] = {&rtv0, &rtv1};
+  // Bind a gap: slot 0 is null, slot 1 is populated.
+  const RenderTargetView* rtvs[2] = {nullptr, &rtv1};
   SetRenderTargetsStateLocked(&dev, /*num_rtvs=*/2, rtvs, /*dsv=*/nullptr);
-
-  // Simulate SRV aliasing unbinding slot 0 while slot 1 is still bound, which
-  // produces a gapped RTV binding (`[NULL, RT1]`).
-  dev.current_rtvs[0] = 0;
-  dev.current_rtv_resources[0] = nullptr;
 
   if (!Check(EmitSetRenderTargetsCmdFromStateLocked(&dev), "EmitSetRenderTargetsCmdFromStateLocked(gap)")) {
     return false;
