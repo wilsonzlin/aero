@@ -1,11 +1,14 @@
 import { VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID } from "./vm_snapshot_wasm";
 
 /**
- * Reserved `device.<id>` base for IO worker BAR1 VRAM snapshot chunks.
+ * Reserved `device.<id>` base for legacy IO worker BAR1 VRAM snapshot chunks.
  *
- * The web runtime snapshots the SharedArrayBuffer-backed BAR1 mapping (WDDM scanout surfaces +
- * AeroGPU allocations) as a series of opaque device blobs so the bytes can be streamed directly
+ * Older web builds snapshotted the SharedArrayBuffer-backed BAR1 mapping (WDDM scanout surfaces +
+ * AeroGPU allocations) as a series of opaque device blobs so the bytes could be streamed directly
  * to/from OPFS by the IO worker without transferring 64–128MiB through the coordinator.
+ *
+ * Newer builds snapshot BAR1 VRAM via the canonical `gpu.vram` device blobs instead; this reserved
+ * ID range is kept only for restore compatibility.
  *
  * Chunk `i` is stored under:
  *   `device.${IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE + i}`
@@ -18,11 +21,6 @@ export const IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE = 1_000_000_001;
  * Current max VRAM (128MiB) therefore requires up to 2 chunks.
  */
 export const IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES = 64 * 1024 * 1024;
-
-export function ioWorkerVramSnapshotDeviceKindForChunkIndex(chunkIndex: number): string {
-  const idx = chunkIndex >>> 0;
-  return `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}${(IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE + idx) >>> 0}`;
-}
 
 export function ioWorkerVramSnapshotChunkIndexFromDeviceId(id: number): number | null {
   const idU32 = id >>> 0;
@@ -48,46 +46,3 @@ export function ioWorkerVramSnapshotChunkIndexFromDeviceKind(kind: string): numb
   if (id === null) return null;
   return ioWorkerVramSnapshotChunkIndexFromDeviceId(id);
 }
-
-export function appendIoWorkerVramSnapshotDeviceBlobs(
-  devices: Array<{ kind: string; bytes: Uint8Array }>,
-  vramU8: Uint8Array,
-  opts?: {
-    /**
-     * Optional override used by unit tests to exercise chunking without allocating 64MiB arrays.
-     *
-     * Must be `>0` and `<= IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES`.
-     */
-    chunkBytes?: number;
-  },
-): void {
-  if (!devices) return;
-  if (!(vramU8 instanceof Uint8Array)) return;
-  const total = vramU8.byteLength >>> 0;
-  if (total === 0) return;
-
-  let chunkBytes = (opts?.chunkBytes ?? IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) >>> 0;
-  if (!Number.isFinite(chunkBytes) || chunkBytes <= 0) {
-    chunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
-  }
-  if (chunkBytes > IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) {
-    console.warn(
-      `[io.worker] VRAM snapshot chunkBytes=${chunkBytes} exceeds MAX_DEVICE_ENTRY_LEN; clamping to ${IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES}`,
-    );
-    chunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
-  }
-
-  let off = 0;
-  let chunkIndex = 0;
-  while (off < total) {
-    const end = Math.min(off + chunkBytes, total);
-    devices.push({
-      kind: ioWorkerVramSnapshotDeviceKindForChunkIndex(chunkIndex),
-      // Must be a view into the SharedArrayBuffer-backed VRAM mapping (no extra copy).
-      bytes: vramU8.subarray(off, end),
-    });
-    off = end;
-    chunkIndex++;
-  }
-}
-
