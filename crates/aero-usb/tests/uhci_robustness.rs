@@ -70,6 +70,30 @@ impl UsbDeviceModel for AlwaysAckDevice {
     }
 }
 
+#[derive(Debug)]
+struct AckThenNakDevice {
+    remaining_acks: usize,
+}
+
+impl UsbDeviceModel for AckThenNakDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_out_transfer(&mut self, _ep: u8, _data: &[u8]) -> UsbOutResult {
+        if self.remaining_acks > 0 {
+            self.remaining_acks -= 1;
+            UsbOutResult::Ack
+        } else {
+            UsbOutResult::Nak
+        }
+    }
+}
+
 #[test]
 fn uhci_zero_frame_list_entry_does_not_hang() {
     let mut ctrl = UhciController::new();
@@ -373,4 +397,51 @@ fn uhci_stop_td_skip_cycle_is_detected_without_spinning_budget() {
         "expected early cycle detection in TD skip loop, got {} reads",
         mem.read_ops()
     );
+}
+
+#[test]
+fn uhci_qh_element_list_exact_budget_limit_nak_does_not_fault() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x8000);
+
+    // This matches the internal `MAX_QH_ELEMENT_STEPS` constant in `uhci/schedule.rs`.
+    const QH_ELEM_BUDGET: usize = 1024;
+
+    ctrl.hub_mut().attach(
+        0,
+        Box::new(AckThenNakDevice {
+            remaining_acks: QH_ELEM_BUDGET.saturating_sub(1),
+        }),
+    );
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, QH_ADDR | LINK_PTR_Q);
+
+    // QH terminates horizontally and points at a long element list.
+    mem.write_u32(QH_ADDR, LINK_PTR_T);
+    mem.write_u32(QH_ADDR + 4, TD_ADDR);
+
+    let token = PID_OUT | (1u32 << 15) | (0x7ffu32 << 21); // OUT, ep1, ZLP
+    for i in 0..(QH_ELEM_BUDGET as u32) {
+        let td = TD_ADDR + i * 0x10;
+        let next = if i + 1 < QH_ELEM_BUDGET as u32 {
+            TD_ADDR + (i + 1) * 0x10
+        } else {
+            LINK_PTR_T
+        };
+        mem.write_u32(td, next);
+        mem.write_u32(td + 4, TD_STATUS_ACTIVE);
+        mem.write_u32(td + 8, token);
+        mem.write_u32(td + 12, 0);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_eq!(sts & (regs::USBSTS_USBERRINT | regs::USBSTS_HSE), 0);
+    assert!(!ctrl.irq_level());
 }

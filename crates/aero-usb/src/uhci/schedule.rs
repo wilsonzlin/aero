@@ -192,38 +192,46 @@ fn process_qh<M: MemoryBus + ?Sized>(
     let mut elem = LinkPointer(ctx.mem.read_u32(qh_addr.wrapping_add(4) as u64));
 
     let mut visited: Vec<u32> = Vec::with_capacity(16);
+    let mut budget_exhausted = true;
     for _ in 0..MAX_QH_ELEMENT_STEPS {
         if elem.terminated() || elem.is_qh() {
+            budget_exhausted = false;
             break;
         }
 
         let td_addr = elem.addr();
         if td_addr == 0 {
             // Treat null element pointers as terminated to avoid walking uninitialized schedules.
+            budget_exhausted = false;
             break;
         }
         if visited.iter().any(|&a| a == td_addr) {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+            budget_exhausted = false;
             break;
         }
         visited.push(td_addr);
 
         match process_single_td(ctx, td_addr) {
-            TdProgress::NoProgress => break,
+            TdProgress::NoProgress => {
+                budget_exhausted = false;
+                break;
+            }
             TdProgress::Advanced { next_link, stop } => {
                 ctx.mem.write_u32(qh_addr.wrapping_add(4) as u64, next_link);
                 elem = LinkPointer(next_link);
                 if stop {
+                    budget_exhausted = false;
                     break;
                 }
             }
-            TdProgress::Nak => break,
+            TdProgress::Nak => {
+                budget_exhausted = false;
+                break;
+            }
         }
     }
-    if !elem.terminated()
-        && !elem.is_qh()
-        && visited.len() >= MAX_QH_ELEMENT_STEPS
-    {
+    if budget_exhausted && !elem.terminated() && !elem.is_qh() {
         *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
     }
 
