@@ -80,23 +80,21 @@ messages are available (vector starvation), the harness can request a specific M
 
 Global (applies to all virtio devices created by the harness):
 
-- PowerShell (global): `-VirtioMsixVectors N`
-- PowerShell (per device): `-VirtioNetVectors N`, `-VirtioBlkVectors N`, `-VirtioInputVectors N`, `-VirtioSndVectors N`
-- Python (global): `--virtio-msix-vectors N`
-- Python (per device): `--virtio-net-vectors N`, `--virtio-blk-vectors N`, `--virtio-input-vectors N`, `--virtio-snd-vectors N`
+- PowerShell: `-VirtioMsixVectors N`
+- Python: `--virtio-msix-vectors N`
 
 Per-device overrides (take precedence over the global value):
 
 - PowerShell:
-  - `-VirtioNetMsixVectors N`
-  - `-VirtioBlkMsixVectors N`
-  - `-VirtioInputMsixVectors N`
-  - `-VirtioSndMsixVectors N` (only relevant when `-WithVirtioSnd` is enabled)
+  - `-VirtioNetVectors N`
+  - `-VirtioBlkVectors N`
+  - `-VirtioInputVectors N`
+  - `-VirtioSndVectors N` (only relevant when `-WithVirtioSnd` is enabled)
 - Python:
-  - `--virtio-net-msix-vectors N`
-  - `--virtio-blk-msix-vectors N`
-  - `--virtio-input-msix-vectors N`
-  - `--virtio-snd-msix-vectors N` (only relevant when `--with-virtio-snd` is enabled)
+  - `--virtio-net-vectors N`
+  - `--virtio-blk-vectors N`
+  - `--virtio-input-vectors N`
+  - `--virtio-snd-vectors N` (only relevant when `--with-virtio-snd` is enabled)
 
 Notes:
 
@@ -125,9 +123,9 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
   -Snapshot `
-  -VirtioNetMsixVectors 1 `
-  -VirtioBlkMsixVectors 1 `
-  -VirtioInputMsixVectors 1 `
+  -VirtioNetVectors 1 `
+  -VirtioBlkVectors 1 `
+  -VirtioInputVectors 1 `
   -TimeoutSeconds 600
 ```
 
@@ -138,8 +136,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
   --snapshot \
-  --virtio-net-msix-vectors 4 \
-  --virtio-blk-msix-vectors 2 \
+  --virtio-net-vectors 4 \
+  --virtio-blk-vectors 2 \
   --timeout-seconds 600
 ```
 
