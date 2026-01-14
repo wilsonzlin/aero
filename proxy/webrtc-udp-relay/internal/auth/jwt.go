@@ -15,13 +15,13 @@ import (
 
 var ErrUnsupportedJWT = errors.New("unsupported jwt")
 
-type JWTVerifier struct {
+type jwtVerifier struct {
 	secret []byte
 	now    func() time.Time
 }
 
-func NewJWTVerifier(secret string) JWTVerifier {
-	return JWTVerifier{
+func newJWTVerifier(secret string) jwtVerifier {
+	return jwtVerifier{
 		secret: []byte(secret),
 		now:    time.Now,
 	}
@@ -36,7 +36,7 @@ type JWTClaims struct {
 	Iss    *string
 }
 
-func (v JWTVerifier) VerifyAndExtractClaims(token string) (JWTClaims, error) {
+func (v jwtVerifier) VerifyAndExtractClaims(token string) (JWTClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return JWTClaims{}, ErrInvalidCredentials
@@ -173,7 +173,7 @@ func (v JWTVerifier) VerifyAndExtractClaims(token string) (JWTClaims, error) {
 	return JWTClaims{SID: sid, Exp: expUnix, Iat: iatUnix, Origin: origin, Aud: aud, Iss: iss}, nil
 }
 
-func (v JWTVerifier) Verify(token string) error {
+func (v jwtVerifier) Verify(token string) error {
 	_, err := v.VerifyAndExtractClaims(token)
 	return err
 }

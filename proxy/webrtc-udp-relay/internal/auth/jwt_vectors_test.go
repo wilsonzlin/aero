@@ -105,7 +105,7 @@ func TestJWTVerifierVectors(t *testing.T) {
 		t.Fatalf("unexpected vectors version: %d", vectors.Version)
 	}
 
-	verifier := NewJWTVerifier(vectors.RelayJWT.Secret)
+	verifier := newJWTVerifier(vectors.RelayJWT.Secret)
 	verifier.now = func() time.Time {
 		return time.Unix(vectors.RelayJWT.NowUnix, 0)
 	}
@@ -143,7 +143,7 @@ func TestJWTVerifierProtocolVectors(t *testing.T) {
 
 	for _, v := range vectors.JWTTokens.Vectors {
 		t.Run(v.Name, func(t *testing.T) {
-			verifier := NewJWTVerifier(v.Secret)
+			verifier := newJWTVerifier(v.Secret)
 			verifier.now = func() time.Time {
 				return time.Unix(v.NowSec, 0)
 			}

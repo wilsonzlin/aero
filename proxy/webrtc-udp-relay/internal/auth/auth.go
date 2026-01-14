@@ -14,16 +14,6 @@ type Verifier interface {
 	Verify(credential string) error
 }
 
-// ClaimsVerifier is an optional extension interface implemented by verifiers
-// that can return structured claims on successful authentication.
-//
-// Today this is only implemented by the JWT verifier, which returns the JWT
-// `sid` claim used as a stable quota/rate-limit key.
-type ClaimsVerifier interface {
-	Verifier
-	VerifyAndExtractClaims(credential string) (JWTClaims, error)
-}
-
 type noopVerifier struct{}
 
 func (noopVerifier) Verify(string) error { return nil }
@@ -33,9 +23,9 @@ func NewVerifier(cfg config.Config) (Verifier, error) {
 	case config.AuthModeNone:
 		return noopVerifier{}, nil
 	case config.AuthModeAPIKey:
-		return APIKeyVerifier{Expected: cfg.APIKey}, nil
+		return apiKeyVerifier{Expected: cfg.APIKey}, nil
 	case config.AuthModeJWT:
-		return NewJWTVerifier(cfg.JWTSecret), nil
+		return newJWTVerifier(cfg.JWTSecret), nil
 	default:
 		return nil, fmt.Errorf("unsupported auth mode %q", cfg.AuthMode)
 	}

@@ -51,6 +51,10 @@ type UDPWebSocketServer struct {
 	upgrader websocket.Upgrader
 }
 
+type claimsVerifier interface {
+	VerifyAndExtractClaims(credential string) (auth.JWTClaims, error)
+}
+
 func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg Config, pol *policy.DestinationPolicy, logger *slog.Logger) (*UDPWebSocketServer, error) {
 	verifier, err := auth.NewVerifier(cfg)
 	if err != nil {
@@ -200,7 +204,7 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
 			var verifyErr error
 			if s.cfg.AuthMode == config.AuthModeJWT {
-				cv, ok := s.verifier.(auth.ClaimsVerifier)
+				cv, ok := s.verifier.(claimsVerifier)
 				if !ok {
 					sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
 					return
@@ -280,7 +284,7 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		var verifyErr error
 		if s.cfg.AuthMode == config.AuthModeJWT {
-			cv, ok := s.verifier.(auth.ClaimsVerifier)
+			cv, ok := s.verifier.(claimsVerifier)
 			if !ok {
 				sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
 				return

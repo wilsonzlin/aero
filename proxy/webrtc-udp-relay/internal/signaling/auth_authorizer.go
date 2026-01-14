@@ -21,6 +21,10 @@ type authAuthorizer struct {
 	verifier auth.Verifier
 }
 
+type claimsVerifier interface {
+	VerifyAndExtractClaims(credential string) (auth.JWTClaims, error)
+}
+
 func NewAuthAuthorizer(cfg config.Config) (authorizer, error) {
 	v, err := auth.NewVerifier(cfg)
 	if err != nil {
@@ -51,7 +55,7 @@ func (a authAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (authR
 	// clients cannot bypass per-session rate limits by opening many parallel
 	// connections using different JWT strings that share the same `sid`.
 	if a.mode == config.AuthModeJWT {
-		cv, ok := a.verifier.(auth.ClaimsVerifier)
+		cv, ok := a.verifier.(claimsVerifier)
 		if !ok {
 			return authResult{}, errors.New("jwt verifier does not support claims extraction")
 		}

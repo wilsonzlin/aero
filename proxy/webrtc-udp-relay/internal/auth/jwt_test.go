@@ -36,7 +36,7 @@ func mustJWT(t *testing.T, secret string, header, claims map[string]any) string 
 
 func TestJWTVerifier_Verify_AcceptsValidHS256(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
-	v := JWTVerifier{
+	v := jwtVerifier{
 		secret: []byte("secret"),
 		now:    func() time.Time { return now },
 	}
@@ -54,7 +54,7 @@ func TestJWTVerifier_Verify_AcceptsValidHS256(t *testing.T) {
 
 func TestJWTVerifier_Verify_RejectsExpiredToken(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
-	v := JWTVerifier{
+	v := jwtVerifier{
 		secret: []byte("secret"),
 		now:    func() time.Time { return now },
 	}
@@ -73,7 +73,7 @@ func TestJWTVerifier_Verify_RejectsExpiredToken(t *testing.T) {
 
 func TestJWTVerifier_Verify_RejectsTokenNotYetValid(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
-	v := JWTVerifier{
+	v := jwtVerifier{
 		secret: []byte("secret"),
 		now:    func() time.Time { return now },
 	}
@@ -93,7 +93,7 @@ func TestJWTVerifier_Verify_RejectsTokenNotYetValid(t *testing.T) {
 
 func TestJWTVerifier_Verify_RejectsUnsupportedAlg(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
-	v := JWTVerifier{
+	v := jwtVerifier{
 		secret: []byte("secret"),
 		now:    func() time.Time { return now },
 	}
@@ -108,7 +108,7 @@ func TestJWTVerifier_Verify_RejectsUnsupportedAlg(t *testing.T) {
 
 func TestJWTVerifier_Verify_RejectsBadSignature(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
-	v := JWTVerifier{
+	v := jwtVerifier{
 		secret: []byte("secret"),
 		now:    func() time.Time { return now },
 	}
@@ -127,7 +127,7 @@ func TestJWTVerifier_Verify_RejectsBadSignature(t *testing.T) {
 }
 
 func TestJWTVerifier_Verify_RejectsMalformedToken(t *testing.T) {
-	v := JWTVerifier{
+	v := jwtVerifier{
 		secret: []byte("secret"),
 		now:    time.Now,
 	}

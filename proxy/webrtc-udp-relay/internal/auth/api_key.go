@@ -7,11 +7,11 @@ import (
 
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
-type APIKeyVerifier struct {
+type apiKeyVerifier struct {
 	Expected string
 }
 
-func (v APIKeyVerifier) Verify(apiKey string) error {
+func (v apiKeyVerifier) Verify(apiKey string) error {
 	if apiKey == "" || v.Expected == "" {
 		return ErrInvalidCredentials
 	}
