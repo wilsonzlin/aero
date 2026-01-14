@@ -1333,6 +1333,97 @@ pub fn decode_cmd_stream_listing(
                         }
                     }
 
+                    AerogpuCmdOpcode::SetTexture => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let shader_stage = u32_le_at(pkt.payload, 0).unwrap();
+                        let slot = u32_le_at(pkt.payload, 4).unwrap();
+                        let texture = u32_le_at(pkt.payload, 8).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
+                        let _ = write!(
+                            line,
+                            " shader_stage={shader_stage} slot={slot} texture={texture}"
+                        );
+                        if shader_stage == 2 && stage_ex != 0 {
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
+                    }
+                    AerogpuCmdOpcode::SetSamplers => {
+                        let (cmd, handles) = pkt.decode_set_samplers_payload_le().map_err(|err| {
+                            CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            }
+                        })?;
+                        // Avoid taking references to packed fields.
+                        let shader_stage = cmd.shader_stage;
+                        let start_slot = cmd.start_slot;
+                        let sampler_count = cmd.sampler_count;
+                        let stage_ex = cmd.reserved0;
+                        let _ = write!(
+                            line,
+                            " shader_stage={shader_stage} start_slot={start_slot} sampler_count={sampler_count}"
+                        );
+                        if shader_stage == 2 && stage_ex != 0 {
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
+                        if let Some(first) = handles.first() {
+                            let sampler0 = *first;
+                            let _ = write!(line, " sampler0={sampler0}");
+                        }
+                    }
+                    AerogpuCmdOpcode::SetShaderConstantsF => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let stage = u32_le_at(pkt.payload, 0).unwrap();
+                        let start_register = u32_le_at(pkt.payload, 4).unwrap();
+                        let vec4_count = u32_le_at(pkt.payload, 8).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
+                        let float_count = vec4_count.checked_mul(4).ok_or(
+                            CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "vec4_count overflow",
+                            },
+                        )? as usize;
+                        let payload_len = 16usize.checked_add(float_count.checked_mul(4).ok_or(
+                            CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "vec4_count overflow",
+                            },
+                        )?)
+                        .ok_or(CmdStreamDecodeError::MalformedPayload {
+                            offset,
+                            opcode,
+                            msg: "vec4_count overflow",
+                        })?;
+                        if pkt.payload.len() < payload_len {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "payload truncated for vec4_count",
+                            });
+                        }
+                        let _ = write!(
+                            line,
+                            " stage={stage} start_register={start_register} vec4_count={vec4_count}"
+                        );
+                        if stage == 2 && stage_ex != 0 {
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
+                    }
                     AerogpuCmdOpcode::SetConstantBuffers => {
                         let (cmd, bindings) = pkt
                             .decode_set_constant_buffers_payload_le()
@@ -1452,7 +1543,6 @@ pub fn decode_cmd_stream_listing(
 
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
-                    | AerogpuCmdOpcode::SetShaderConstantsF
                     | AerogpuCmdOpcode::DestroyInputLayout
                     | AerogpuCmdOpcode::SetInputLayout
                     | AerogpuCmdOpcode::SetBlendState
@@ -1461,12 +1551,10 @@ pub fn decode_cmd_stream_listing(
                     | AerogpuCmdOpcode::SetVertexBuffers
                     | AerogpuCmdOpcode::SetIndexBuffer
                     | AerogpuCmdOpcode::SetPrimitiveTopology
-                    | AerogpuCmdOpcode::SetTexture
                     | AerogpuCmdOpcode::SetSamplerState
                     | AerogpuCmdOpcode::SetRenderState
                     | AerogpuCmdOpcode::CreateSampler
                     | AerogpuCmdOpcode::DestroySampler
-                    | AerogpuCmdOpcode::SetSamplers
                     | AerogpuCmdOpcode::ExportSharedSurface
                     | AerogpuCmdOpcode::ImportSharedSurface
                     | AerogpuCmdOpcode::ReleaseSharedSurface => {

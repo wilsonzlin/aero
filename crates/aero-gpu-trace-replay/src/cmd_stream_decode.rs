@@ -459,6 +459,70 @@ fn decode_known_fields(
                 out.insert("topology".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::SetTexture => {
+            if let (Some(shader_stage), Some(slot), Some(texture), Some(stage_ex)) = (
+                read_u32_le(pkt.payload, 0),
+                read_u32_le(pkt.payload, 4),
+                read_u32_le(pkt.payload, 8),
+                read_u32_le(pkt.payload, 12),
+            ) {
+                out.insert("shader_stage".into(), json!(shader_stage));
+                out.insert("slot".into(), json!(slot));
+                out.insert("texture".into(), json!(texture));
+                if shader_stage == 2 && stage_ex != 0 {
+                    out.insert("stage_ex".into(), json!(stage_ex));
+                }
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
+        AerogpuCmdOpcode::SetSamplers => match pkt.decode_set_samplers_payload_le() {
+            Ok((cmd, handles)) => {
+                let shader_stage = cmd.shader_stage;
+                let start_slot = cmd.start_slot;
+                let sampler_count = cmd.sampler_count;
+                let stage_ex = cmd.reserved0;
+                out.insert("shader_stage".into(), json!(shader_stage));
+                out.insert("start_slot".into(), json!(start_slot));
+                out.insert("sampler_count".into(), json!(sampler_count));
+                if shader_stage == 2 && stage_ex != 0 {
+                    out.insert("stage_ex".into(), json!(stage_ex));
+                }
+                if let Some(first) = handles.first() {
+                    out.insert("sampler0".into(), json!(*first));
+                }
+            }
+            Err(err) => {
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
+            }
+        },
+        AerogpuCmdOpcode::SetShaderConstantsF => {
+            let Some(stage) = read_u32_le(pkt.payload, 0) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(start_register) = read_u32_le(pkt.payload, 4) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(vec4_count) = read_u32_le(pkt.payload, 8) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            let Some(stage_ex) = read_u32_le(pkt.payload, 12) else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            };
+            out.insert("stage".into(), json!(stage));
+            out.insert("start_register".into(), json!(start_register));
+            out.insert("vec4_count".into(), json!(vec4_count));
+            if stage == 2 && stage_ex != 0 {
+                out.insert("stage_ex".into(), json!(stage_ex));
+            }
+            if let Some(float_count) = vec4_count.checked_mul(4) {
+                out.insert("float_count".into(), json!(float_count));
+            }
+        }
         AerogpuCmdOpcode::SetConstantBuffers => match pkt.decode_set_constant_buffers_payload_le() {
             Ok((cmd, bindings)) => {
                 let shader_stage = cmd.shader_stage;

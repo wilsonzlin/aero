@@ -160,6 +160,37 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     }
     push_packet(&mut out, AerogpuCmdOpcode::CreateShaderDxbc as u32, &payload);
 
+    // SET_TEXTURE(shader_stage=Compute, slot=0, texture=0x2222, stage_ex=Geometry (2)).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // shader_stage=Compute
+    push_u32_le(&mut payload, 0); // slot
+    push_u32_le(&mut payload, 0x2222); // texture handle
+    push_u32_le(&mut payload, 2); // reserved0 / stage_ex = Geometry
+    assert_eq!(payload.len(), 16);
+    push_packet(&mut out, AerogpuCmdOpcode::SetTexture as u32, &payload);
+
+    // SET_SAMPLERS(shader_stage=Compute, start_slot=0, sampler_count=1, stage_ex=Hull (3), handles=[0x3333]).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // shader_stage=Compute
+    push_u32_le(&mut payload, 0); // start_slot
+    push_u32_le(&mut payload, 1); // sampler_count
+    push_u32_le(&mut payload, 3); // reserved0 / stage_ex = Hull
+    push_u32_le(&mut payload, 0x3333); // sampler0
+    assert_eq!(payload.len(), 20);
+    push_packet(&mut out, AerogpuCmdOpcode::SetSamplers as u32, &payload);
+
+    // SET_SHADER_CONSTANTS_F(stage=Compute, start_register=0, vec4_count=1, stage_ex=Domain (4), values=[1,2,3,4]).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // stage=Compute
+    push_u32_le(&mut payload, 0); // start_register
+    push_u32_le(&mut payload, 1); // vec4_count
+    push_u32_le(&mut payload, 4); // reserved0 / stage_ex = Domain
+    for f in [1.0f32, 2.0, 3.0, 4.0] {
+        push_u32_le(&mut payload, f.to_bits());
+    }
+    assert_eq!(payload.len(), 32);
+    push_packet(&mut out, AerogpuCmdOpcode::SetShaderConstantsF as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -221,6 +252,19 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     // CREATE_SHADER_DXBC should surface its `stage_ex` tag when present.
     assert!(listing.contains("CreateShaderDxbc"));
     assert!(listing.contains("stage_ex=3"));
+
+    // stage_ex-capable binding packets should also surface stage_ex tags.
+    assert!(listing.contains("SetTexture"));
+    assert!(listing.contains("texture=8738")); // 0x2222
+    assert!(listing.contains("stage_ex=2")); // Geometry
+
+    assert!(listing.contains("SetSamplers"));
+    assert!(listing.contains("sampler0=13107")); // 0x3333
+    assert!(listing.contains("stage_ex=3")); // Hull
+
+    assert!(listing.contains("SetShaderConstantsF"));
+    assert!(listing.contains("vec4_count=1"));
+    assert!(listing.contains("stage_ex=4")); // Domain
 }
 
 #[test]
@@ -295,4 +339,20 @@ fn json_listing_decodes_new_opcodes() {
     let create_shader = find_packet("CreateShaderDxbc");
     assert_eq!(create_shader["decoded"]["stage"], 2);
     assert_eq!(create_shader["decoded"]["stage_ex"], 3);
+
+    let set_texture = find_packet("SetTexture");
+    assert_eq!(set_texture["decoded"]["shader_stage"], 2);
+    assert_eq!(set_texture["decoded"]["texture"], 0x2222);
+    assert_eq!(set_texture["decoded"]["stage_ex"], 2);
+
+    let set_samplers = find_packet("SetSamplers");
+    assert_eq!(set_samplers["decoded"]["shader_stage"], 2);
+    assert_eq!(set_samplers["decoded"]["sampler_count"], 1);
+    assert_eq!(set_samplers["decoded"]["sampler0"], 0x3333);
+    assert_eq!(set_samplers["decoded"]["stage_ex"], 3);
+
+    let set_consts = find_packet("SetShaderConstantsF");
+    assert_eq!(set_consts["decoded"]["stage"], 2);
+    assert_eq!(set_consts["decoded"]["vec4_count"], 1);
+    assert_eq!(set_consts["decoded"]["stage_ex"], 4);
 }
