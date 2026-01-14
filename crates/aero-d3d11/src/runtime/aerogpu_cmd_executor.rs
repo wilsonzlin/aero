@@ -9132,36 +9132,11 @@ impl AerogpuD3d11Executor {
         let shader_handle = cmd.shader_handle;
         let stage_raw = cmd.stage;
         let stage_ex = cmd.reserved0;
-
-        // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension on the
-        // WebGPU-backed executor. Keep the persistent cache focused on VS/PS/CS translation; GS/HS/DS
-        // are currently accepted-but-not-translated and compile as placeholder compute shaders.
-        //
-        // Also accept the legacy `stage=Geometry` encoding for robustness, but ignore it (it cannot
-        // be executed by the WebGPU backend).
-        if stage_raw
-            == aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage::Geometry as u32
-        {
-            let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
-            let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
-            validate_sm5_gs_streams(&program)?;
-            let parsed_stage = match program.stage {
-                crate::ShaderStage::Geometry => ShaderStage::Geometry,
-                crate::ShaderStage::Vertex => ShaderStage::Vertex,
-                crate::ShaderStage::Pixel => ShaderStage::Pixel,
-                crate::ShaderStage::Compute => ShaderStage::Compute,
-                crate::ShaderStage::Hull => ShaderStage::Hull,
-                crate::ShaderStage::Domain => ShaderStage::Domain,
-                other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
-            };
-            if parsed_stage != ShaderStage::Geometry {
-                bail!(
-                    "CREATE_SHADER_DXBC: stage mismatch (cmd=Geometry, dxbc={parsed_stage:?})"
-                );
-            }
-            return Ok(());
-        }
-
+        // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension (or the
+        // legacy `stage=Geometry` encoding) on the WebGPU-backed executor. Keep the persistent cache
+        // focused on VS/PS/CS translation; GS/HS/DS are accepted-but-not-translated and compile as
+        // placeholder compute shaders, but they must still be retained in `resources.shaders` for
+        // state tracking.
         let stage =
             ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
                 anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
