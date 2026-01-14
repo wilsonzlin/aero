@@ -16,7 +16,7 @@ mod native {
     use std::time::{Duration, Instant};
 
     use aero_machine::{Machine, MachineConfig, RunExit};
-    use aero_storage::{AeroCowDisk, RawDisk, StdFileBackend, VirtualDisk, SECTOR_SIZE};
+    use aero_storage::{AeroCowDisk, DiskImage, StdFileBackend, VirtualDisk, SECTOR_SIZE};
     use anyhow::{anyhow, bail, Context, Result};
     use clap::{ArgGroup, Parser};
 
@@ -32,7 +32,9 @@ mod native {
         )
     )]
     pub struct Args {
-        /// Raw disk image to attach (must be a multiple of 512 bytes).
+        /// Disk image to attach (raw/qcow2/vhd/aerospar; auto-detected).
+        ///
+        /// The virtual capacity must be a multiple of 512 bytes.
         #[arg(long)]
         disk: PathBuf,
 
@@ -272,33 +274,34 @@ mod native {
         Ok(())
     }
 
-    fn open_raw_disk(path: &Path, read_only: bool) -> Result<RawDisk<StdFileBackend>> {
-        let meta = std::fs::metadata(path)
-            .with_context(|| format!("failed to stat disk image: {}", path.display()))?;
-        let len = meta.len();
-        if len == 0 {
-            bail!("disk image is empty (expected at least one 512-byte sector)");
-        }
-        if len % SECTOR_SIZE as u64 != 0 {
-            bail!(
-                "disk image length {} is not a multiple of {} bytes",
-                len,
-                SECTOR_SIZE
-            );
-        }
+    fn open_disk_image(path: &Path, read_only: bool) -> Result<DiskImage<StdFileBackend>> {
         let backend = if read_only {
             StdFileBackend::open_read_only(path)
         } else {
             StdFileBackend::open_rw(path)
         }
         .map_err(|e| anyhow!("failed to open disk image {}: {e}", path.display()))?;
-        let disk = RawDisk::open(backend)
-            .map_err(|e| anyhow!("failed to open raw disk backend {}: {e}", path.display()))?;
+
+        let disk = DiskImage::open_auto(backend)
+            .map_err(|e| anyhow!("failed to open disk image {}: {e}", path.display()))?;
+
+        let capacity = disk.capacity_bytes();
+        if capacity == 0 {
+            bail!("disk image is empty (expected at least one 512-byte sector)");
+        }
+        if capacity % SECTOR_SIZE as u64 != 0 {
+            bail!(
+                "disk image capacity {} is not a multiple of {} bytes",
+                capacity,
+                SECTOR_SIZE
+            );
+        }
+
         Ok(disk)
     }
 
     fn open_disk_backend(path: &Path, read_only: bool) -> Result<Box<dyn VirtualDisk + Send>> {
-        let disk = open_raw_disk(path, read_only)?;
+        let disk = open_disk_image(path, read_only)?;
         Ok(Box::new(disk))
     }
 
@@ -307,7 +310,7 @@ mod native {
         overlay_path: &Path,
         create_block_size: u32,
     ) -> Result<Box<dyn VirtualDisk + Send>> {
-        let base = open_raw_disk(base_path, true)?;
+        let base = open_disk_image(base_path, true)?;
 
         let overlay_exists = overlay_path.exists();
         let overlay_backend = if overlay_exists {
