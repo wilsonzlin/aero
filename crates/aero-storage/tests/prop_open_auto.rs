@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{DiskImage, MemBackend, VirtualDisk};
+use aero_storage::{DiskImage, MemBackend, VirtualDisk, SECTOR_SIZE};
 use proptest::prelude::*;
 
 const MAX_IMAGE_BYTES: usize = 64 * 1024;
@@ -39,7 +39,7 @@ fn aerosparse_truncated_header_strategy() -> impl Strategy<Value = Vec<u8>> {
 
 fn vhd_truncated_footer_strategy() -> impl Strategy<Value = Vec<u8>> {
     // VHD footers are 512 bytes. Generate truncated buffers that still include the cookie.
-    (8usize..512).prop_flat_map(|len| {
+    (8usize..SECTOR_SIZE).prop_flat_map(|len| {
         let tail_len = len - 8;
         prop::collection::vec(any::<u8>(), tail_len).prop_map(move |tail| {
             let mut out = Vec::with_capacity(len);
@@ -58,8 +58,8 @@ fn qcow2_magic_invalid_size() -> Vec<u8> {
     header[4..8].copy_from_slice(&2u32.to_be_bytes()); // version 2
 
     // l1_table_offset / refcount_table_offset must not overlap the header. Use aligned offsets.
-    header[40..48].copy_from_slice(&512u64.to_be_bytes());
-    header[48..56].copy_from_slice(&1024u64.to_be_bytes());
+    header[40..48].copy_from_slice(&(SECTOR_SIZE as u64).to_be_bytes());
+    header[48..56].copy_from_slice(&((2 * SECTOR_SIZE) as u64).to_be_bytes());
 
     // size is big-endian at offset 24..32 and must be non-zero + 512-byte aligned.
     header[24..32].copy_from_slice(&1u64.to_be_bytes());
@@ -84,17 +84,17 @@ fn vhd_magic_invalid_sizes() -> Vec<u8> {
     //
     // This should be detected as VHD and then fail in `VhdDisk::open` with a structured error.
     let file_len = 1025usize; // intentionally misaligned
-    let footer_offset = file_len - 512;
+    let footer_offset = file_len - SECTOR_SIZE;
     let mut buf = vec![0u8; file_len];
 
-    let footer = &mut buf[footer_offset..footer_offset + 512];
+    let footer = &mut buf[footer_offset..footer_offset + SECTOR_SIZE];
     footer[0..8].copy_from_slice(b"conectix");
     // file_format_version at 12..16
     footer[12..16].copy_from_slice(&0x0001_0000u32.to_be_bytes());
     // data_offset at 16..24 (fixed disks use u64::MAX)
     footer[16..24].copy_from_slice(&u64::MAX.to_be_bytes());
     // current_size at 48..56 (must be non-zero + sector aligned)
-    footer[48..56].copy_from_slice(&512u64.to_be_bytes());
+    footer[48..56].copy_from_slice(&(SECTOR_SIZE as u64).to_be_bytes());
     // disk_type at 60..64 (2=fixed)
     footer[60..64].copy_from_slice(&2u32.to_be_bytes());
 
