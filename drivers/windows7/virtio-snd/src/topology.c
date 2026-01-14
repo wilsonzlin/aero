@@ -298,6 +298,12 @@ VOID VirtIoSndTopology_ResetJackState(VOID)
 _Use_decl_annotations_
 VOID VirtIoSndTopology_UpdateJackState(ULONG JackId, BOOLEAN IsConnected)
 {
+    VirtIoSndTopology_UpdateJackStateEx(JackId, IsConnected, FALSE);
+}
+
+_Use_decl_annotations_
+VOID VirtIoSndTopology_UpdateJackStateEx(ULONG JackId, BOOLEAN IsConnected, BOOLEAN NotifyEvenIfUnchanged)
+{
     LONG v;
     LONG old;
 
@@ -307,7 +313,7 @@ VOID VirtIoSndTopology_UpdateJackState(ULONG JackId, BOOLEAN IsConnected)
 
     v = IsConnected ? 1 : 0;
     old = InterlockedExchange(&g_VirtIoSndTopoJackConnected[JackId], v);
-    if (old != v) {
+    if (old != v || NotifyEvenIfUnchanged) {
         VirtIoSndTopoNotifyJackInfoChange(JackId);
     }
 }

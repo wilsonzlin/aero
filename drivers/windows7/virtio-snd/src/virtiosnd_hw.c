@@ -739,13 +739,17 @@ VirtIoSndHwDrainEventqUsed(
             switch (evt.Kind) {
             case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
                 InterlockedIncrement(&dx->EventqStats.JackConnected);
-                (VOID)VirtIoSndJackStateUpdate(&dx->JackState, evt.Data, TRUE);
-                VirtIoSndTopology_UpdateJackState(evt.Data, TRUE);
+                {
+                    BOOLEAN changed = VirtIoSndJackStateUpdate(&dx->JackState, evt.Data, TRUE);
+                    VirtIoSndTopology_UpdateJackStateEx(evt.Data, TRUE, changed);
+                }
                 break;
             case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
                 InterlockedIncrement(&dx->EventqStats.JackDisconnected);
-                (VOID)VirtIoSndJackStateUpdate(&dx->JackState, evt.Data, FALSE);
-                VirtIoSndTopology_UpdateJackState(evt.Data, FALSE);
+                {
+                    BOOLEAN changed = VirtIoSndJackStateUpdate(&dx->JackState, evt.Data, FALSE);
+                    VirtIoSndTopology_UpdateJackStateEx(evt.Data, FALSE, changed);
+                }
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
                 InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);

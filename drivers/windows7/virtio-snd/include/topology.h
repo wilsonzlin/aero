@@ -31,6 +31,17 @@ VOID VirtIoSndTopology_ResetJackState(VOID);
 _IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtIoSndTopology_UpdateJackState(_In_ ULONG JackId, _In_ BOOLEAN IsConnected);
 
+/*
+ * Update the global topology jack state and optionally generate a jack-info-change
+ * event even if the global state does not change.
+ *
+ * This is useful when multiple virtio-snd devices are present: per-device jack
+ * state may change even if the shared fallback model already reflects the new
+ * value due to another device.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID VirtIoSndTopology_UpdateJackStateEx(_In_ ULONG JackId, _In_ BOOLEAN IsConnected, _In_ BOOLEAN NotifyEvenIfUnchanged);
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 BOOLEAN VirtIoSndTopology_IsJackConnected(_In_ ULONG JackId);
 
