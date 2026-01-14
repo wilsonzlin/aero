@@ -2,7 +2,7 @@
 
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx::{self, JitContext};
-use aero_jit_x86::tier2::ir::{Instr, Operand, TraceIr, TraceKind, ValueId};
+use aero_jit_x86::tier2::ir::{BinOp, Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::wasm_codegen::{
     Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
@@ -16,7 +16,7 @@ use aero_jit_x86::{
     JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_SHIFT, PAGE_SIZE,
     TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
 };
-use aero_types::{Gpr, Width};
+use aero_types::{FlagSet, Gpr, Width};
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 use wasmparser::Validator;
 
@@ -26,6 +26,9 @@ struct HostState {
     slow_mem_reads: u64,
     slow_mem_writes: u64,
     ram_size: u64,
+    /// Optional test-only safety valve: panic if `mmu_translate` is called more than this many times
+    /// (useful to prevent accidental infinite loops in `TraceKind::Loop` tests).
+    max_mmu_translate_calls: Option<u64>,
     /// When set, the first `mmu_translate` call will return a translation without `TLB_FLAG_WRITE`
     /// set. This forces the inline-TLB permission check path to re-translate.
     drop_write_flag_on_first_call: bool,
@@ -431,6 +434,12 @@ fn define_mmu_translate(
                         data.mmu_translate_calls += 1;
                         data.mmu_translate_calls
                     };
+                    if let Some(max) = caller.data().max_mmu_translate_calls {
+                        assert!(
+                            call_idx <= max,
+                            "mmu_translate called too many times: {call_idx} > {max}"
+                        );
+                    }
 
                     let vaddr_u = vaddr as u64;
                     let vpn = vaddr_u >> PAGE_SHIFT;
@@ -875,6 +884,88 @@ fn tier2_inline_tlb_same_page_access_hits_and_caches() {
     assert_eq!(read_u32_le(&got_ram, 0x1004), 0x1234_5678);
 
     assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_loop_trace_guard_exits_and_preserves_inline_fast_path() {
+    // Execute an inline-TLB store trace compiled as a `TraceKind::Loop`, and use a guard to exit
+    // after a few iterations. This exercises the depth accounting for `br` targets in loop traces.
+    //
+    // The trace uses RAX as an in-trace loop counter/address, incrementing it by one page each
+    // iteration so `mmu_translate` is called repeatedly. A test-only `max_mmu_translate_calls`
+    // safety valve ensures we fail fast (without hanging) if the guard doesn't exit the loop.
+    const ITERATIONS: u64 = 3;
+    let exit_rip = 0x2222u64;
+    let exit_at: u64 = ITERATIONS * PAGE_SIZE;
+
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            // v0 = rax
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: Gpr::Rax,
+            },
+            // [v0] = 0xab
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(0)),
+                src: Operand::Const(0xAB),
+                width: Width::W8,
+            },
+            // v1 = v0 + PAGE_SIZE
+            Instr::BinOp {
+                dst: ValueId(1),
+                op: BinOp::Add,
+                lhs: Operand::Value(ValueId(0)),
+                rhs: Operand::Const(PAGE_SIZE),
+                flags: FlagSet::EMPTY,
+            },
+            // rax = v1
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(1)),
+            },
+            // v2 = (v1 == exit_at)
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Eq,
+                lhs: Operand::Value(ValueId(1)),
+                rhs: Operand::Const(exit_at),
+                flags: FlagSet::EMPTY,
+            },
+            // Exit when v2 becomes true.
+            Instr::Guard {
+                cond: Operand::Value(ValueId(2)),
+                expected: false,
+                exit_rip,
+            },
+        ],
+        kind: TraceKind::Loop,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+    let (ret, got_ram, gpr, host) = run_trace_with_host_state(
+        &trace,
+        ram,
+        cpu_ptr,
+        HostState {
+            ram_size: 0x20_000,
+            max_mmu_translate_calls: Some(10),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(ret, exit_rip);
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize], exit_at);
+
+    assert_eq!(got_ram[0], 0xAB);
+    assert_eq!(got_ram[PAGE_SIZE as usize], 0xAB);
+    assert_eq!(got_ram[(2 * PAGE_SIZE) as usize], 0xAB);
+
+    assert_eq!(host.mmu_translate_calls, ITERATIONS);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
 }
