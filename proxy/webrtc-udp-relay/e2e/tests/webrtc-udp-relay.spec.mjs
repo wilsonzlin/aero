@@ -281,19 +281,47 @@ async function startWebServer() {
   };
 }
 
-async function spawnGoReadyServer({ name, pkg, env }) {
-  const moduleDir = path.join(__dirname, "..", "..");
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aero-webrtc-udp-relay-e2e-"));
-  const binPath = path.join(tmpDir, name);
+const goReadyBinPromises = new Map();
 
-  const build = spawnSync("go", ["build", "-o", binPath, pkg], {
-    cwd: moduleDir,
-    stdio: "inherit",
-  });
-  if (build.status !== 0) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-    throw new Error(`failed to build Go server ${pkg} (exit ${build.status ?? "unknown"})`);
+async function getGoReadyBinaryPath({ name, pkg }) {
+  const key = `${name}:${pkg}`;
+  let promise = goReadyBinPromises.get(key);
+  if (!promise) {
+    promise = (async () => {
+      const moduleDir = path.join(__dirname, "..", "..");
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aero-webrtc-udp-relay-e2e-"));
+      const binName = process.platform === "win32" ? `${name}.exe` : name;
+      const binPath = path.join(tmpDir, binName);
+
+      const build = spawnSync("go", ["build", "-o", binPath, pkg], {
+        cwd: moduleDir,
+        stdio: "inherit",
+      });
+      if (build.status !== 0) {
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        throw new Error(`failed to build Go server ${pkg} (exit ${build.status ?? "unknown"})`);
+      }
+
+      process.once("exit", () => {
+        try {
+          fsSync.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          // ignore
+        }
+      });
+
+      return binPath;
+    })().catch((err) => {
+      goReadyBinPromises.delete(key);
+      throw err;
+    });
+    goReadyBinPromises.set(key, promise);
   }
+  return promise;
+}
+
+async function spawnGoReadyServer({ name, pkg, env }) {
+  const binPath = await getGoReadyBinaryPath({ name, pkg });
 
   const child = spawn(binPath, [], {
     env: {
@@ -329,13 +357,11 @@ async function spawnGoReadyServer({ name, pkg, env }) {
 
     child.on("error", (err) => {
       clearTimeout(timeout);
-      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       reject(err);
     });
 
     child.on("close", (code) => {
       clearTimeout(timeout);
-      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       reject(new Error(`${name} exited early (${code ?? "unknown"})`));
     });
   });
@@ -344,7 +370,6 @@ async function spawnGoReadyServer({ name, pkg, env }) {
     port,
     kill: async () => {
       await stopChildProcess(child);
-      await fs.rm(tmpDir, { recursive: true, force: true });
     },
   };
 }
