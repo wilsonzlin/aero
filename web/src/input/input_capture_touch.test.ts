@@ -167,4 +167,52 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
       expect((capture as any).mouseButtons).toBe(0);
     });
   });
+
+  it("does not track touch pointers with non-finite pointerId", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        touchTapToClick: true,
+      });
+
+      (capture as any).handlePointerDown({
+        pointerId: Number.NaN,
+        pointerType: "touch",
+        clientX: 0,
+        clientY: 0,
+        timeStamp: 0,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } satisfies Partial<PointerEvent>);
+
+      (capture as any).handlePointerUp({
+        pointerId: Number.NaN,
+        pointerType: "touch",
+        clientX: 0,
+        clientY: 0,
+        timeStamp: 1,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } satisfies Partial<PointerEvent>);
+
+      capture.flushNow();
+
+      expect(posted).toHaveLength(0);
+      expect((capture as any).mouseButtons).toBe(0);
+    });
+  });
 });

@@ -595,6 +595,13 @@ export class InputCapture {
       return;
     }
 
+    const id = touch.identifier;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 0) {
+      // Defensive: invalid touch identifiers can break `touchListFind` (NaN !== NaN), leading to
+      // stuck sessions or synthesized taps. Ignore these events entirely.
+      return;
+    }
+
     const startX = touch.clientX;
     const startY = touch.clientY;
     if (!Number.isFinite(startX) || !Number.isFinite(startY)) {
@@ -606,7 +613,7 @@ export class InputCapture {
     // it cannot leak into a later session and cause a spurious pixel or wheel tick.
     this.resetAccumulatedMotion();
 
-    this.touchActiveId = touch.identifier;
+    this.touchActiveId = id;
     this.touchLastX = startX;
     this.touchLastY = startY;
     this.touchStartX = startX;
@@ -632,6 +639,11 @@ export class InputCapture {
 
     const id = this.touchActiveId;
     if (id === null) {
+      return;
+    }
+    if (!Number.isSafeInteger(id) || id < 0) {
+      this.clearTouchState();
+      this.resetAccumulatedMotion();
       return;
     }
 
@@ -695,6 +707,11 @@ export class InputCapture {
 
     const id = this.touchActiveId;
     if (id === null) {
+      return;
+    }
+    if (!Number.isSafeInteger(id) || id < 0) {
+      this.clearTouchState();
+      this.resetAccumulatedMotion();
       return;
     }
 
@@ -763,6 +780,9 @@ export class InputCapture {
     this.canvas.focus();
 
     const id = event.pointerId;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 0) {
+      return;
+    }
     const x = event.clientX;
     const y = event.clientY;
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
