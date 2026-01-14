@@ -107,7 +107,8 @@ The in-tree INFs intentionally match only **Aero contract v1** hardware IDs:
 The subsystem-gated IDs use distinct `DeviceDesc` strings, so keyboard/mouse/tablet appear as separate named devices in
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**).
 
-If your environment does not expose the Aero subsystem IDs, the legacy alias INF `inf/virtio-input.inf.disabled`
+If your environment does not expose the Aero subsystem IDs (or exposes different subsystem IDs, like stock QEMU), the
+legacy alias INF `inf/virtio-input.inf.disabled`
 includes a fallback `PCI\VEN_1AF4&DEV_1052&REV_01` match (rename it to `virtio-input.inf` to enable it). Keep in mind
 that shipping multiple overlapping INFs that match the same device can lead to confusing install behavior.
 
@@ -471,7 +472,8 @@ reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
 ```
 
 Then reboot (or disable/enable the device). In compat mode the driver accepts QEMU `ID_NAME` strings, relaxes strict
-`ID_DEVIDS` validation, and can infer device kind from `EV_BITS`.
+`ID_DEVIDS` validation, and can infer device kind from `EV_BITS`. Compat mode does **not** relax the underlying Aero
+transport checks (PCI IDs/revision, fixed BAR0 layout, queue sizing, etc).
 
 Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). It is supported by this driver, but binds via
 the separate tablet INF (`inf/aero_virtio_tablet.inf`) and requires the device to advertise `ABS_X`/`ABS_Y` (and ideally
@@ -570,11 +572,17 @@ reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
   /v CompatIdName /t REG_DWORD /d 1 /f
 ```
 
-Then reboot (or disable/enable the device).
+Then reboot (or disable/enable the device). Compat mode accepts QEMU `ID_NAME` strings, relaxes strict `ID_DEVIDS`
+validation, and may infer device kind from `EV_BITS`. It does **not** relax the underlying transport checks that the
+driver enforces at runtime (PCI IDs + `REV_01`, fixed BAR0 layout, and 2×64 virtqueues).
 
 Under QEMU, you typically also need `disable-legacy=on,x-pci-revision=0x01` for the device to bind and start (INF gates
-the Aero contract major version via `REV_01`). Stock QEMU devices often do not expose the Aero subsystem IDs; unknown
-subsystem IDs are allowed by the driver.
+the Aero contract major version via `REV_01`).
+
+Also note that the canonical INFs match only Aero subsystem IDs; stock QEMU devices typically use different subsystem
+IDs. If you want the driver to bind in QEMU without modifying the canonical INFs, use the legacy alias INF with the
+`PCI\VEN_1AF4&DEV_1052&REV_01` fallback match (rename `inf/virtio-input.inf.disabled` to `virtio-input.inf`).
+Unknown subsystem IDs are allowed by the driver.
 
 For authoritative PCI-ID and contract rules, see:
 

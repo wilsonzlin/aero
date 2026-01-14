@@ -101,7 +101,9 @@ When enabled, the driver will:
   - Tablet: `EV_ABS` with `ABS_X`/`ABS_Y`
 - Relax strict `ID_DEVIDS` validation.
 
-Strict Aero contract-v1 behavior is unchanged when compat mode is disabled.
+Compat mode does **not** relax Aero transport/PCI contract checks (modern virtio-pci + `DEV_1052`, `REV_01`, fixed BAR0
+layout expectations, queue sizing, etc); it only affects device identification/config validation. Strict Aero contract
+v1 behavior is unchanged when compat mode is disabled.
 
 ## Specification pointers
 
