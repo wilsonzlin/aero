@@ -203,7 +203,7 @@ Pipeline state
   * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
   * note: the **GS stage exists in D3D10**, but many “first triangle” tests never create/bind a GS (it is valid to have no GS bound).
   * AeroGPU note: WebGPU has no geometry shader stage. The command stream can encode a GS handle (e.g. via `aerogpu_cmd_bind_shaders::reserved0` or the extended GS/HS/DS fields).
-    GS DXBC is forwarded to the host. The host has compute-prepass plumbing for GS/HS/DS emulation, but executing guest GS DXBC in that prepass is still bring-up work.
+    GS DXBC is forwarded to the host. The host has compute-prepass plumbing for GS/HS/DS emulation; a minimal translator-backed GS prepass is executed for non-indexed `PointList` draws when supported, but broader GS DXBC execution is still bring-up work.
     See [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
 * Stream-output state / SO buffers (`pfnSoSetTargets`, etc)
 * Queries/predication:
@@ -385,11 +385,11 @@ Geometry shader note:
     * The guest UMD treats GS like VS/PS: it forwards the DXBC blob to the host and participates in normal shader lifetime + binding.
     * Since WebGPU has **no GS stage**, AeroGPU emulates GS by inserting a **compute prepass** when a GS is bound:
       - The executor already routes draws with a bound GS through a compute-prepass + indirect-draw path.
-      - The in-tree GS DXBC→WGSL compute translator exists, but is not yet integrated into that executor path; today the prepass uses a synthetic expansion shader for bring-up/coverage.
+      - The in-tree GS DXBC→WGSL compute translator exists and is partially integrated: translation is attempted at `CREATE_SHADER_DXBC`, and non-indexed `PointList` draws can execute the translated compute prepass; other cases use a synthetic expansion shader for bring-up/coverage.
       - The intended end state is: VS-as-compute (vertex pulling) → GS-as-compute (primitive expansion) → render expanded buffers with a passthrough VS + the original PS.
     * This is **internal** WebGPU compute; it does *not* require exposing the D3D11 compute shader stage (you can still keep D3D11 CS as `NOT_SUPPORTED` initially).
     * Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
-    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path currently uses synthetic expansion geometry and does **not** execute guest GS DXBC yet; treat the above as the intended design until the prepass is wired to real GS execution. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
+    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path uses synthetic expansion geometry for most draws, but non-indexed `PointList` draws can execute a minimal translated SM4 GS subset; treat the above as the intended design until GS DXBC execution is expanded to more cases. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
 * Win7 regression tests that define the minimum semantics to target:
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke` — basic GS create/bind/execute path.
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip` — validates `TriangleStream::RestartStrip` / DXBC `cut` handling.

@@ -131,8 +131,8 @@ Current limitation (important):
 Test pointers:
 
 - Compute prepass plumbing (synthetic expansion): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs` (and `*_primitive_id.rs`, `*_vertex_pulling.rs`, etc)
-- GS translator unit tests (not yet integrated into the executor): `crates/aero-d3d11/tests/gs_translate.rs`
-- End-to-end GS target semantics tests (expected once GS DXBC execution is integrated): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`, `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- GS translator unit tests (standalone): `crates/aero-d3d11/tests/gs_translate.rs`
+- End-to-end point-list GS execution tests: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`, `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 - DXBC tooling (opcode discovery / token shapes): `cargo run -p aero-d3d11 --bin dxbc_dump -- <gs_*.dxbc>`
 
 ---
