@@ -19,7 +19,7 @@ on:
         default: ""
         type: string
       dry_run:
-        description: Print the computed QEMU argv and exit 0 without starting QEMU/HTTP/QMP (debugging helper)
+        description: Print the computed QEMU argv and exit 0 without starting QEMU/HTTP/QMP (debug helper; disk image/QEMU not required)
         required: false
         default: false
         type: boolean
