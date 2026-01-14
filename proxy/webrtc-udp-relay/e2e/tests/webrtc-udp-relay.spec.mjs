@@ -1978,6 +1978,151 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
   }
 });
 
+test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+
+  const queryToken = mintHS256JWT({
+    sid: "sess_e2e_udp_query",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const authMsgToken = mintHS256JWT({
+    sid: "sess_e2e_udp_auth_msg",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, queryToken, authMsgToken }) => {
+        const waitForOpen = (ws) =>
+          new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => resolve(), { once: true });
+            ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+          });
+
+        const waitForReady = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for ready")), 10_000);
+            const onMessage = (event) => {
+              if (typeof event.data !== "string") return;
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`unexpected websocket text message: ${event.data}`));
+                return;
+              }
+              if (msg?.type === "ready") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                resolve(msg);
+                return;
+              }
+              if (msg?.type === "error") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+                return;
+              }
+            };
+            ws.addEventListener("message", onMessage);
+          });
+
+        const waitForErrorAndClose = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for error + close")), 10_000);
+            let errMsg;
+            let closed;
+            const maybeDone = () => {
+              if (!errMsg || !closed) return;
+              cleanup();
+              resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
+            };
+            const onMessage = (event) => {
+              if (typeof event.data !== "string") return;
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                return;
+              }
+              if (msg?.type === "error") {
+                errMsg = msg;
+                maybeDone();
+              }
+            };
+            const onClose = (event) => {
+              closed = event;
+              maybeDone();
+            };
+            const cleanup = () => {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              ws.removeEventListener("close", onClose);
+            };
+            ws.addEventListener("message", onMessage);
+            ws.addEventListener("close", onClose);
+          });
+
+        // Query-string auth path.
+        const ws1 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
+        const ready1Promise = waitForReady(ws1);
+        await waitForOpen(ws1);
+        await ready1Promise;
+
+        const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
+        const err2Promise = waitForErrorAndClose(ws2);
+        await waitForOpen(ws2);
+        const err2 = await err2Promise;
+
+        ws1.close();
+
+        // First-message auth path.
+        const ws3 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        const ready3Promise = waitForReady(ws3);
+        await waitForOpen(ws3);
+        ws3.send(JSON.stringify({ type: "auth", token: authMsgToken }));
+        await ready3Promise;
+
+        const ws4 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        const err4Promise = waitForErrorAndClose(ws4);
+        await waitForOpen(ws4);
+        ws4.send(JSON.stringify({ type: "auth", token: authMsgToken }));
+        const err4 = await err4Promise;
+
+        ws3.close();
+
+        return { err2, err4 };
+      },
+      { relayPort: relay.port, queryToken, authMsgToken },
+    );
+
+    expect(res.err2.errMsg?.code).toBe("session_already_active");
+    expect(res.err2.closeCode).toBe(1013);
+    expect(res.err2.closeReason).toBe("session already active");
+
+    expect(res.err4.errMsg?.code).toBe("session_already_active");
+    expect(res.err4.closeCode).toBe(1013);
+    expect(res.err4.closeReason).toBe("session already active");
+  } finally {
+    await Promise.all([web.close(), relay.kill()]);
+  }
+});
+
 test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page }) => {
   const origin = "https://example.com";
   const token = "e2e-token";
