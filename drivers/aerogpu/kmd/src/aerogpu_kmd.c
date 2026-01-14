@@ -1272,16 +1272,25 @@ static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _
  */
 static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ volatile ULONGLONG* Value)
 {
+#if DBG
+    ASSERT(((ULONG_PTR)Value & 7u) == 0);
+#endif
     return (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)Value, 0, 0);
 }
 
 static __forceinline VOID AeroGpuAtomicWriteU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue)
 {
+#if DBG
+    ASSERT(((ULONG_PTR)Value & 7u) == 0);
+#endif
     InterlockedExchange64((volatile LONGLONG*)Value, (LONGLONG)NewValue);
 }
 
 static __forceinline ULONGLONG AeroGpuAtomicExchangeU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue)
 {
+#if DBG
+    ASSERT(((ULONG_PTR)Value & 7u) == 0);
+#endif
     return (ULONGLONG)InterlockedExchange64((volatile LONGLONG*)Value, (LONGLONG)NewValue);
 }
 
