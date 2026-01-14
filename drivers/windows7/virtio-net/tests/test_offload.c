@@ -261,6 +261,63 @@ static void test_ipv4_udp_checksum_only(void)
     assert(info.L4Protocol == 17);
 }
 
+static void test_ipv4_tcp_udp_checksum_intent_invalid(void)
+{
+    uint8_t pkt[14 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_INVAL);
+}
+
+static void test_ipv4_tcp_udp_checksum_only_rejected(void)
+{
+    uint8_t pkt[14 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL);
+}
+
+static void test_udp_intent_with_tso_invalid(void)
+{
+    uint8_t pkt[14 + 20 + 8];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_udp(pkt + 14, 0);
+    build_udp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+    intent.WantTso = 1;
+    intent.TsoMss = 1200;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_INVAL);
+}
+
 static void test_no_offload(void)
 {
     uint8_t pkt[14 + 20 + 20];
@@ -636,6 +693,9 @@ int main(void)
 {
     test_ipv4_tcp_checksum_only();
     test_ipv4_udp_checksum_only();
+    test_ipv4_tcp_udp_checksum_intent_invalid();
+    test_ipv4_tcp_udp_checksum_only_rejected();
+    test_udp_intent_with_tso_invalid();
     test_no_offload();
     test_ipv6_tcp_checksum_only();
     test_ipv6_udp_checksum_only();
