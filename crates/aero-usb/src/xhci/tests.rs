@@ -76,6 +76,61 @@ fn read_u32(mem: &mut TestMem, addr: u64) -> u32 {
 }
 
 #[test]
+fn controller_endpoint_commands_update_device_context_and_ring_state() {
+    let mut mem = TestMem::new(0x20_000);
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+
+    let slot_id = 1u8;
+    let endpoint_id = 2u8; // EP1 OUT
+    let ep_ctx = dev_ctx + u64::from(endpoint_id) * 32;
+
+    let mut ctrl = super::XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+
+    // Enable slot 1, then populate its DCBAA entry with a device context pointer.
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(completion.slot_id, slot_id);
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    // Seed endpoint context state + dequeue pointer.
+    mem.write_u32(ep_ctx + 0, 1); // Running
+    mem.write_u32(ep_ctx + 8, 0x1110 | 1); // TR Dequeue Pointer low (DCS=1)
+    mem.write_u32(ep_ctx + 12, 0);
+
+    // Stop Endpoint -> Stopped (3).
+    let completion = ctrl.stop_endpoint(&mut mem, slot_id, endpoint_id);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
+
+    // Set TR Dequeue Pointer updates the context + internal ring cursor state.
+    let new_trdp = 0x6000u64;
+    let completion = ctrl.set_tr_dequeue_pointer(&mut mem, slot_id, endpoint_id, new_trdp, false);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    let dw2 = read_u32(&mut mem, ep_ctx + 8);
+    let dw3 = read_u32(&mut mem, ep_ctx + 12);
+    let raw = (u64::from(dw3) << 32) | u64::from(dw2);
+    assert_eq!(raw & !0x0f, new_trdp);
+    assert_eq!(raw & 0x01, 0);
+
+    let ring = ctrl
+        .slot_state(slot_id)
+        .unwrap()
+        .transfer_ring(endpoint_id)
+        .expect("transfer ring cursor should have been created");
+    assert_eq!(ring.dequeue_ptr(), new_trdp);
+    assert!(!ring.cycle_state());
+
+    // Simulate a transfer error halting the endpoint, then Reset Endpoint -> Running (1).
+    let halted_dw0 = (read_u32(&mut mem, ep_ctx + 0) & !0x7) | 2;
+    mem.write_u32(ep_ctx + 0, halted_dw0);
+    let completion = ctrl.reset_endpoint(&mut mem, slot_id, endpoint_id);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+}
+
+#[test]
 fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     let mut mem = TestMem::new(0x20_000);
     let mem_size = mem.len() as u64;

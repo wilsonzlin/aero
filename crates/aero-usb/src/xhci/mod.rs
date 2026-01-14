@@ -70,7 +70,7 @@ const COMPLETION_CODE_SUCCESS: u8 = 1;
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
 
-use self::context::{EndpointContext, SlotContext};
+use self::context::{Dcbaa, DeviceContext32, EndpointContext, SlotContext};
 use self::ring::RingCursor;
 
 /// xHCI command completion codes (subset).
@@ -425,6 +425,177 @@ impl XhciController {
     /// resolves to a reachable device.
     pub fn configure_endpoint(&mut self, slot_id: u8, slot_ctx: SlotContext) -> CommandCompletion {
         self.address_device(slot_id, slot_ctx)
+    }
+
+    fn read_device_context_ptr(
+        &self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+    ) -> Result<u64, CommandCompletionCode> {
+        let dcbaap = self
+            .dcbaap()
+            .ok_or(CommandCompletionCode::ContextStateError)?;
+        let dcbaa = Dcbaa::new(dcbaap);
+        let dev_ctx_ptr = dcbaa
+            .read_device_context_ptr(mem, slot_id)
+            .map_err(|_| CommandCompletionCode::ParameterError)?
+            & !0x3f;
+        if dev_ctx_ptr == 0 {
+            return Err(CommandCompletionCode::ContextStateError);
+        }
+        Ok(dev_ctx_ptr)
+    }
+
+    /// Stop an endpoint (MVP semantics).
+    ///
+    /// Updates the Endpoint Context Endpoint State field to `Stopped (3)` and preserves all other
+    /// fields. If the device context pointer is missing, returns `ContextStateError`.
+    pub fn stop_endpoint(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> CommandCompletion {
+        const EP_STATE_STOPPED: u8 = 3;
+
+        if !(1..=31).contains(&endpoint_id) {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        // Validate slot before mutating guest memory.
+        let slot_idx = usize::from(slot_id);
+        if slot_id == 0 || slot_idx >= self.slots.len() {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+        if !self.slots[slot_idx].enabled {
+            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(code) => return CommandCompletion::failure(code),
+        };
+        let dev_ctx = DeviceContext32::new(dev_ctx_ptr);
+
+        let mut ep_ctx = match dev_ctx.endpoint_context(mem, endpoint_id) {
+            Ok(ctx) => ctx,
+            Err(_) => return CommandCompletion::failure(CommandCompletionCode::ParameterError),
+        };
+        ep_ctx.set_endpoint_state(EP_STATE_STOPPED);
+        if dev_ctx
+            .write_endpoint_context(mem, endpoint_id, &ep_ctx)
+            .is_err()
+        {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        // Keep controller-local shadow context in sync for future work.
+        let slot = &mut self.slots[slot_idx];
+        slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+        slot.device_context_ptr = dev_ctx_ptr;
+
+        CommandCompletion::success(slot_id)
+    }
+
+    /// Reset an endpoint (MVP semantics).
+    ///
+    /// Clears a halted/stopped endpoint and allows transfers again by setting the Endpoint State to
+    /// `Running (1)`.
+    pub fn reset_endpoint(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> CommandCompletion {
+        const EP_STATE_RUNNING: u8 = 1;
+
+        if !(1..=31).contains(&endpoint_id) {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        let slot_idx = usize::from(slot_id);
+        if slot_id == 0 || slot_idx >= self.slots.len() {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+        if !self.slots[slot_idx].enabled {
+            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(code) => return CommandCompletion::failure(code),
+        };
+        let dev_ctx = DeviceContext32::new(dev_ctx_ptr);
+
+        let mut ep_ctx = match dev_ctx.endpoint_context(mem, endpoint_id) {
+            Ok(ctx) => ctx,
+            Err(_) => return CommandCompletion::failure(CommandCompletionCode::ParameterError),
+        };
+        ep_ctx.set_endpoint_state(EP_STATE_RUNNING);
+        if dev_ctx
+            .write_endpoint_context(mem, endpoint_id, &ep_ctx)
+            .is_err()
+        {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        let slot = &mut self.slots[slot_idx];
+        slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+        slot.device_context_ptr = dev_ctx_ptr;
+
+        CommandCompletion::success(slot_id)
+    }
+
+    /// Set Transfer Ring Dequeue Pointer (MVP semantics).
+    ///
+    /// Updates the Endpoint Context TR Dequeue Pointer and internal transfer ring cursor state.
+    pub fn set_tr_dequeue_pointer(
+        &mut self,
+        mem: &mut impl MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+        tr_dequeue_ptr: u64,
+        dcs: bool,
+    ) -> CommandCompletion {
+        if !(1..=31).contains(&endpoint_id) {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+        if tr_dequeue_ptr == 0 || (tr_dequeue_ptr & 0x0f) != 0 {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        let slot_idx = usize::from(slot_id);
+        if slot_id == 0 || slot_idx >= self.slots.len() {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+        if !self.slots[slot_idx].enabled {
+            return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
+        }
+
+        let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
+            Ok(ptr) => ptr,
+            Err(code) => return CommandCompletion::failure(code),
+        };
+        let dev_ctx = DeviceContext32::new(dev_ctx_ptr);
+
+        let mut ep_ctx = match dev_ctx.endpoint_context(mem, endpoint_id) {
+            Ok(ctx) => ctx,
+            Err(_) => return CommandCompletion::failure(CommandCompletionCode::ParameterError),
+        };
+        ep_ctx.set_tr_dequeue_pointer(tr_dequeue_ptr, dcs);
+        if dev_ctx
+            .write_endpoint_context(mem, endpoint_id, &ep_ctx)
+            .is_err()
+        {
+            return CommandCompletion::failure(CommandCompletionCode::ParameterError);
+        }
+
+        let slot = &mut self.slots[slot_idx];
+        slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+        slot.transfer_rings[usize::from(endpoint_id - 1)] = Some(RingCursor::new(tr_dequeue_ptr, dcs));
+        slot.device_context_ptr = dev_ctx_ptr;
+
+        CommandCompletion::success(slot_id)
     }
 
     /// Return the USB device currently bound to a slot, if any.
