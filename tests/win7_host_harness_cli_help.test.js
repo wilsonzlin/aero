@@ -54,6 +54,11 @@ test(
       /does not attach\s+virtio-input/i,
       `--help contains stale wording suggesting virtio-input is never attached in transitional mode\n\n${help}`,
     );
+
+    // Ensure recently added gating knobs remain discoverable via --help (prevents accidental removal).
+    assert.ok(
+      help.includes("--with-snd-buffer-limits"),
+      `expected --help to mention --with-snd-buffer-limits\n\n${help}`,
+    );
   },
 );
-

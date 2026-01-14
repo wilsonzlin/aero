@@ -51,6 +51,27 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
         finally:
             sys.argv = old_argv
 
+    def test_snd_buffer_limits_requires_with_virtio_snd(self) -> None:
+        h = self.harness
+
+        old_argv = sys.argv
+        try:
+            sys.argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--with-snd-buffer-limits",
+            ]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                h.main()
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--with-snd-buffer-limits requires --with-virtio-snd", stderr.getvalue())
+        finally:
+            sys.argv = old_argv
+
     def test_rejects_non_positive_vectors_flags(self) -> None:
         h = self.harness
 
