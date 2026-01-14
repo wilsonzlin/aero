@@ -53,9 +53,9 @@ This is the **coordination hub**. You wire together the work from all other work
   The canonical integration loops (`aero_machine::Machine` / `aero_machine::pc::PcMachine`) still
   execute only the BSP, and the underlying PC platform wiring (`aero_pc_platform::PcPlatform`) is
   still BSP-centric (no AP bring-up/scheduling), so “enable SMP” is more than a config change.
-  `cpu_count` is **not** forced to 1 anymore: the BIOS will publish SMBIOS/ACPI topology (e.g. MADT)
-  for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology validation
-  even before multi-vCPU execution lands.
+  `cpu_count` is **not** forced to 1 anymore: the BIOS will publish CPU topology via **ACPI MADT +
+  SMBIOS** for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology
+  validation even before AP bring-up (INIT/SIPI/IPIs) + multi-vCPU execution land.
 - **Virtio MSI-X is implemented but not wired in the canonical machine/platform**:
   `aero-virtio` implements MSI-X in the virtio-pci transport (`crates/aero-virtio/src/pci.rs`), but
   the canonical integration layers currently use a `NoopVirtioInterruptSink` and only support
@@ -178,7 +178,7 @@ relevant crates/tests.
 
 | ID | Task | Priority | Complexity | Notes / entry points |
 |----|------|----------|------------|----------------------|
-| MP-001 | SMP: run multiple vCPUs (scheduler + AP bring-up) | P0 | Very High | `cpu_count > 1` is already accepted and published via SMBIOS/ACPI, but the canonical machine loops still execute only the BSP. Remaining work is multi-vCPU scheduling/execution + per-vCPU interrupt delivery/IPI plumbing and snapshot/time integration. |
+| MP-001 | SMP: run multiple vCPUs (scheduler + AP bring-up) | P0 | Very High | `cpu_count > 1` is already accepted and published for guest enumeration via **ACPI MADT + SMBIOS**, but the canonical machine loops still execute only the BSP. Remaining work is AP startup (INIT/SIPI), multi-vCPU scheduling/execution, per-vCPU interrupt delivery/IPI plumbing, and snapshot/time integration. |
 | MP-002 | MSI/MSI-X plumbing in canonical PCI integration | P1 | High | `aero_platform::interrupts::msi::MsiMessage` exists; the missing piece is routing PCI MSI/MSI-X config + message delivery through the canonical `PlatformInterrupts` used by `Machine`/`PcPlatform`. |
 | MP-003 | NVMe MSI/MSI-X (if/when desired) | P2 | High | Intentionally omitted today (see `crates/aero-devices-nvme/README.md`). Do not start without agreement on scope. |
 

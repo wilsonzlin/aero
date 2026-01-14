@@ -159,10 +159,11 @@ cargo run -p firmware --bin gen_dsdt --locked
 
 ## Current limitations / known gaps
 
-- **SMP / multi-vCPU execution:** `MachineConfig::cpu_count` may be set to values `>= 1`, and the BIOS
-  will publish the configured CPU topology via SMBIOS/ACPI (e.g. MADT). However, the canonical
-  `aero_machine::Machine` execution loop is still BSP-only today (no multi-vCPU scheduler / AP bring-up
-  yet), so INIT+SIPI, APIC IPI delivery, and per-vCPU execution are not wired end-to-end.
+- **SMP / multi-vCPU execution:** `MachineConfig::cpu_count` accepts values `>= 1`. When
+  `cpu_count > 1`, firmware will publish the configured CPU topology for **guest enumeration** via
+  **ACPI MADT + SMBIOS**. However, the canonical `aero_machine::Machine` execution loop is still
+  BSP-only today: AP bring-up (INIT/SIPI/IPIs), APIC IPI delivery, and the scheduler/vCPU threading
+  needed for true SMP are not wired end-to-end yet.
 
 ---
 
