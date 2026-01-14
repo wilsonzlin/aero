@@ -67,9 +67,10 @@ rather than `if (p0) { ... }` to satisfy naga uniformity validation.
 
 **Binding contract (AeroGPU + translators):**
 - `@group(0)` — constants shared by VS/PS (packed for stable bindings across stages)
-  - `@binding(0)` — float4 constants (`c#`)
-  - `@binding(1)` — int4 constants (`i#`)
-  - `@binding(2)` — bool constants (`b#`, stored as `vec4<u32>` per register)
+  - `@binding(0)` — `Constants` UBO:
+    - `c: array<vec4<f32>, 512>` — float4 constants (`c#`)
+    - `i: array<vec4<i32>, 512>` — int4 constants (`i#`)
+    - `b: array<vec4<u32>, 128>` — bool constants (`b#`, packed 4 per element; `b0` is `b[0].x`, etc)
 - `@group(1)` — VS samplers/textures
 - `@group(2)` — PS samplers/textures
 - For sampler `sN`, bindings are `(2*N, 2*N+1)` for `(texture, sampler)`

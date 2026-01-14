@@ -417,7 +417,7 @@ The D3D9 implementation is split into:
   - Details + tests: [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md)
 - [x] Shader constant updates include int/bool registers (`SetShaderConstantsI` / `SetShaderConstantsB`)
   - Protocol: new D3D9 command stream opcodes in `drivers/aerogpu/protocol/aerogpu_cmd.h` (mirrored by `aero-protocol`).
-  - Translation: shaders use stable `@group(0)` bindings for float/int/bool constant registers (bool regs are represented as `vec4<u32>` with `0/1` replicated across all lanes).
+  - Translation: shaders use a stable `@group(0) @binding(0)` `Constants` UBO with packed float/int/bool register banks; the bool bank is stored as `array<vec4<u32>, 128>` (4 scalar bool regs per element) to satisfy WGSL uniform layout rules while staying compact.
   - Execution: the D3D9 executor uploads float/int/bool constant data alongside other state.
   - Tests: `crates/aero-gpu/tests/aerogpu_d3d9_int_bool_constants.rs`, `aerogpu_d3d9_bool_constants.rs`, `aerogpu_d3d9_int_constants_dynamic.rs`, `aerogpu_d3d9_bool_constants_stage_isolation.rs`.
 - [x] SM3 pixel shader `MISCTYPE` builtins: `misc0` (vPos) + `misc1` (vFace) (✅ Task 439 closed)
