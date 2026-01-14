@@ -138,6 +138,8 @@ python3 tools/disk-streaming-conformance/conformance.py \
 
 Chunked mode will verify `chunks[i].sha256` for the sampled chunks when present.
 
+Note: The tool will decode common `Content-Encoding` values for the **manifest** (e.g. `gzip`), matching browser `fetch()` behavior. Chunk objects are still required to be served as identity (no compression transforms).
+
 ### Private chunked image (Authorization header)
 
 If you provide `--token` / `TOKEN` in chunked mode, the tool treats the image as private and will additionally check:

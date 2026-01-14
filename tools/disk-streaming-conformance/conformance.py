@@ -12,7 +12,9 @@ No third-party dependencies; Python stdlib only.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import os
 import random
@@ -22,6 +24,7 @@ import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
@@ -1783,17 +1786,70 @@ def _test_chunked_manifest_fetch(
                 "Increase --max-body-bytes to debug."
             )
 
+        def _decompress_manifest(body: bytes, content_encoding: str | None) -> bytes:
+            if content_encoding is None:
+                return body
+            tokens = _csv_tokens(content_encoding)
+            if not tokens or tokens == {"identity"}:
+                return body
+
+            # `urllib` does not automatically decode `Content-Encoding`. Browsers do, so to match
+            # fetch() semantics we decode common encodings for the *manifest only*.
+            #
+            # Chunks must be served as identity (checked elsewhere) because their bytes are
+            # byte-addressed disk sectors.
+            if tokens in ({"gzip"}, {"x-gzip"}):
+                with gzip.GzipFile(fileobj=io.BytesIO(body)) as f:
+                    decoded = f.read(max_body_bytes + 1)
+                    if len(decoded) > max_body_bytes:
+                        raise TestFailure(
+                            "decoded manifest exceeds safety cap; "
+                            f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                            "Increase --max-body-bytes to debug."
+                        )
+                    return decoded
+
+            if tokens == {"deflate"}:
+                decomp = zlib.decompressobj()
+                decoded = decomp.decompress(body, max_body_bytes + 1)
+                if len(decoded) > max_body_bytes:
+                    raise TestFailure(
+                        "decoded manifest exceeds safety cap; "
+                        f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                        "Increase --max-body-bytes to debug."
+                    )
+                decoded += decomp.flush(max_body_bytes + 1 - len(decoded))
+                if len(decoded) > max_body_bytes:
+                    raise TestFailure(
+                        "decoded manifest exceeds safety cap; "
+                        f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                        "Increase --max-body-bytes to debug."
+                    )
+                if not decomp.eof:
+                    raise TestFailure(f"deflate manifest did not reach end-of-stream (Content-Encoding={content_encoding!r})")
+                return decoded
+
+            raise TestFailure(
+                f"unsupported manifest Content-Encoding {content_encoding!r} "
+                "(supported: identity/absent, gzip, deflate)"
+            )
+
+        decoded_body = _decompress_manifest(resp.body, _header(resp, "Content-Encoding"))
+
         try:
-            text = resp.body.decode("utf-8")
+            text = decoded_body.decode("utf-8")
         except UnicodeDecodeError:
-            raise TestFailure("manifest body is not valid UTF-8") from None
+            raise TestFailure("manifest body is not valid UTF-8 (after decoding Content-Encoding)") from None
 
         try:
             raw = json.loads(text)
         except json.JSONDecodeError as e:
             raise TestFailure(f"manifest body is not valid JSON: {e}") from None
 
-        return TestResult(name=name, status="PASS", details=f"bytes={len(resp.body)}"), resp, raw
+        details = f"bytes={len(resp.body)}"
+        if decoded_body is not resp.body:
+            details += f"; decoded_bytes={len(decoded_body)}"
+        return TestResult(name=name, status="PASS", details=details), resp, raw
     except TestFailure as e:
         return TestResult(name=name, status="FAIL", details=str(e)), None, None
 
