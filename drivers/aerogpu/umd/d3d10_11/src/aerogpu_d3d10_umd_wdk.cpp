@@ -73,6 +73,25 @@ using aerogpu::d3d10_11::kD3D10CpuAccessWrite;
 using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D310u;
 
+template <typename T>
+static void ResetObject(T* obj) {
+  if (!obj) {
+    return;
+  }
+  obj->~T();
+  new (obj) T();
+}
+
+static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
+  void* device_mem = hDevice.pDrvPrivate;
+  if (!device_mem) {
+    return false;
+  }
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, device_mem, sizeof(cookie));
+  return cookie == kAeroGpuDeviceLiveCookie;
+}
+
 // -----------------------------------------------------------------------------
 // Logging (opt-in)
 // -----------------------------------------------------------------------------
@@ -2301,12 +2320,21 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                 const D3D10DDIARG_CREATERESOURCE* pDesc,
                                 D3D10DDI_HRESOURCE hResource,
                                 D3D10DDI_HRTRESOURCE hRTResource) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
+  if (!hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the resource object so DestroyResource is safe even if the
+  // runtime calls it after a failed CreateResource.
+  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(res);
     return E_FAIL;
   }
 
@@ -2321,7 +2349,6 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     return E_FAIL;
   }
 
-  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
   res->handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
   res->bind_flags = pDesc->BindFlags;
   res->misc_flags = pDesc->MiscFlags;
@@ -2629,7 +2656,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0, nullptr);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
-      res->~AeroGpuResource();
+      ResetObject(res);
       return hr;
     }
 
@@ -2669,7 +2696,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
     if (FAILED(init_hr)) {
       deallocate_if_needed();
-      res->~AeroGpuResource();
+      ResetObject(res);
       return init_hr;
     }
 
@@ -2703,7 +2730,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (res->share_token == 0) {
         SetError(hDevice, E_FAIL);
         deallocate_if_needed();
-        res->~AeroGpuResource();
+        ResetObject(res);
         return E_FAIL;
       }
 
@@ -2715,7 +2742,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
         deallocate_if_needed();
-        res->~AeroGpuResource();
+        ResetObject(res);
         return E_OUTOFMEMORY;
       }
       export_cmd->resource_handle = res->handle;
@@ -2727,7 +2754,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (FAILED(submit_hr)) {
         SetError(hDevice, submit_hr);
         deallocate_if_needed();
-        res->~AeroGpuResource();
+        ResetObject(res);
         return submit_hr;
       }
     }
@@ -2738,11 +2765,11 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     const uint32_t aer_fmt =
         aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(pDesc->Format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
     if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
 
@@ -2762,14 +2789,14 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(res->width),
                            static_cast<unsigned>(res->height),
                            static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
 
     if (res->array_size == 0) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid ArraySize=0 (handle=%u)",
                            static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
 
@@ -2779,7 +2806,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(res->mip_levels),
                            static_cast<unsigned>(max_mips),
                            static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
 
@@ -2789,7 +2816,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           "D3D10 CreateResource: rejecting depth Texture2D with BIND_RENDER_TARGET (bind=0x%08X handle=%u)",
           static_cast<unsigned>(res->bind_flags),
           static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     if (!AerogpuFormatIsDepth(aer_fmt) && (res->bind_flags & kD3D10BindDepthStencil) != 0) {
@@ -2797,14 +2824,14 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           "D3D10 CreateResource: rejecting color Texture2D with BIND_DEPTH_STENCIL (bind=0x%08X handle=%u)",
           static_cast<unsigned>(res->bind_flags),
           static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
 
     if (res->sample_count == 0) {
       AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid SampleDesc.Count=0 (handle=%u)",
                            static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     if (res->sample_count != 1 || res->sample_quality != 0) {
@@ -2814,7 +2841,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(res->sample_count),
                            static_cast<unsigned>(res->sample_quality),
                            static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
 
@@ -2827,13 +2854,13 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                            static_cast<unsigned>(res->mip_levels),
                            static_cast<unsigned>(res->bind_flags),
                            static_cast<unsigned>(res->handle));
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
 
     const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     if (row_bytes == 0) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     res->row_pitch_bytes = AlignUpU32(row_bytes, 256);
@@ -2847,11 +2874,11 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                              res->row_pitch_bytes,
                                              &res->tex2d_subresources,
                                              &total_bytes)) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     if (total_bytes == 0 || total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     bool cpu_visible = false;
@@ -2873,7 +2900,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->is_shared = is_shared;
     if (is_shared && (res->mip_levels != 1 || res->array_size != 1)) {
       // Keep shared surface interop conservative: only support the legacy single-subresource layout.
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
@@ -2894,7 +2921,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes, &alloc_priv);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
-      res->~AeroGpuResource();
+      ResetObject(res);
       return hr;
     }
 
@@ -2922,7 +2949,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
         if (alloc_pitch < row_bytes) {
           deallocate_if_needed();
-          res->~AeroGpuResource();
+          ResetObject(res);
           return E_INVALIDARG;
         }
 
@@ -2937,7 +2964,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                                  &updated_layouts,
                                                  &updated_total_bytes)) {
           deallocate_if_needed();
-          res->~AeroGpuResource();
+          ResetObject(res);
           return E_FAIL;
         }
 
@@ -2946,7 +2973,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
             updated_total_bytes > backing_size ||
             updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
           deallocate_if_needed();
-          res->~AeroGpuResource();
+          ResetObject(res);
           return E_INVALIDARG;
         }
 
@@ -2970,7 +2997,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         if (alloc_pitch < row_bytes) {
           SetError(hDevice, E_INVALIDARG);
           deallocate_if_needed();
-          res->~AeroGpuResource();
+          ResetObject(res);
           return E_INVALIDARG;
         }
 
@@ -2986,14 +3013,14 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                                  &updated_total_bytes)) {
           SetError(hDevice, E_FAIL);
           deallocate_if_needed();
-          res->~AeroGpuResource();
+          ResetObject(res);
           return E_FAIL;
         }
         if (updated_total_bytes == 0 || updated_total_bytes > backing_size ||
             updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
           SetError(hDevice, E_INVALIDARG);
           deallocate_if_needed();
-          res->~AeroGpuResource();
+          ResetObject(res);
           return E_INVALIDARG;
         }
         res->row_pitch_bytes = alloc_pitch;
@@ -3033,7 +3060,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
                 SetError(hDevice, E_INVALIDARG);
                 deallocate_if_needed();
-                res->~AeroGpuResource();
+                ResetObject(res);
                 return E_INVALIDARG;
               }
 
@@ -3055,7 +3082,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
                 SetError(hDevice, E_FAIL);
                 deallocate_if_needed();
-                res->~AeroGpuResource();
+                ResetObject(res);
                 return E_FAIL;
               }
               if (updated_total_bytes == 0 || updated_total_bytes > backing_size ||
@@ -3068,7 +3095,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
                 SetError(hDevice, E_INVALIDARG);
                 deallocate_if_needed();
-                res->~AeroGpuResource();
+                ResetObject(res);
                 return E_INVALIDARG;
               }
               res->row_pitch_bytes = lock_pitch;
@@ -3165,7 +3192,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
     if (FAILED(init_hr)) {
       deallocate_if_needed();
-      res->~AeroGpuResource();
+      ResetObject(res);
       return init_hr;
     }
 
@@ -3207,14 +3234,14 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (res->share_token == 0) {
         SetError(hDevice, E_FAIL);
         deallocate_if_needed();
-        res->~AeroGpuResource();
+        ResetObject(res);
         return E_FAIL;
       }
       auto* export_cmd =
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
         deallocate_if_needed();
-        res->~AeroGpuResource();
+        ResetObject(res);
         return E_OUTOFMEMORY;
       }
       export_cmd->resource_handle = res->handle;
@@ -3226,7 +3253,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (FAILED(submit_hr)) {
         SetError(hDevice, submit_hr);
         deallocate_if_needed();
-        res->~AeroGpuResource();
+        ResetObject(res);
         return submit_hr;
       }
     }
@@ -3234,7 +3261,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   }
 
   deallocate_if_needed();
-  res->~AeroGpuResource();
+  ResetObject(res);
   return E_NOTIMPL;
 }
 
@@ -3242,11 +3269,20 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
                               const D3D10DDIARG_OPENRESOURCE* pOpenResource,
                               D3D10DDI_HRESOURCE hResource,
                               D3D10DDI_HRTRESOURCE) {
-  if (!hDevice.pDrvPrivate || !pOpenResource || !hResource.pDrvPrivate) {
+  if (!hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the resource so DestroyResource is safe even if OpenResource
+  // fails early.
+  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+
+  if (!hDevice.pDrvPrivate || !pOpenResource) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(res);
     return E_FAIL;
   }
 
@@ -3306,7 +3342,6 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
   res->handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
   res->backing_alloc_id = static_cast<uint32_t>(priv.alloc_id);
   res->backing_offset_bytes = 0;
@@ -3409,11 +3444,11 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
     const uint32_t aer_fmt =
         aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(priv.format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     res->kind = ResourceKind::Texture2D;
@@ -3426,7 +3461,7 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
     if (res->row_pitch_bytes == 0 && res->width != 0) {
       const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
       if (row_bytes == 0) {
-        res->~AeroGpuResource();
+        ResetObject(res);
         return E_INVALIDARG;
       }
       res->row_pitch_bytes = AlignUpU32(row_bytes, 256);
@@ -3441,18 +3476,18 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
                                              res->row_pitch_bytes,
                                              &res->tex2d_subresources,
                                              &total_bytes)) {
-      res->~AeroGpuResource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
   } else {
-    res->~AeroGpuResource();
+    ResetObject(res);
     return E_INVALIDARG;
   }
 
   auto* import_cmd =
       dev->cmd.append_fixed<aerogpu_cmd_import_shared_surface>(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
   if (!import_cmd) {
-    res->~AeroGpuResource();
+    ResetObject(res);
     return E_OUTOFMEMORY;
   }
   import_cmd->out_resource_handle = res->handle;
@@ -3462,13 +3497,19 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
 }
 
 void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
-  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!res) {
+    return;
+  }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(res);
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
-  if (!dev || !res) {
+  if (!dev) {
+    ResetObject(res);
     return;
   }
 
@@ -3663,7 +3704,7 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     res->wddm.km_resource_handle = 0;
   }
 
-  res->~AeroGpuResource();
+  ResetObject(res);
 }
 
 // D3D10_DDI_MAP subset (numeric values from d3d10umddi.h / d3d10.h).
@@ -6195,18 +6236,26 @@ HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
                            size_t code_size,
                            D3D10DDI_HSHADER hShader,
                            uint32_t stage) {
-  if (!hDevice.pDrvPrivate || !pCode || !code_size || !hShader.pDrvPrivate) {
+  if (!hShader.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the shader so Destroy*Shader is safe even if CreateShader
+  // fails early.
+  auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
+
+  if (!hDevice.pDrvPrivate || !pCode || !code_size) {
     return E_INVALIDARG;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(sh);
     return E_FAIL;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
   sh->handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
   if (sh->handle == kInvalidHandle) {
     // Leave the object alive in pDrvPrivate memory. Some runtimes may still call
@@ -6218,11 +6267,7 @@ HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   try {
     sh->dxbc.resize(code_size);
   } catch (...) {
-    // Avoid leaving a stale non-zero handle in the pDrvPrivate memory. Some
-    // runtimes may call Destroy* after a failed Create* probe. Keep the private
-    // object alive but mark it invalid and release any partially allocated data.
-    sh->handle = kInvalidHandle;
-    std::vector<uint8_t>().swap(sh->dxbc);
+    ResetObject(sh);
     return E_OUTOFMEMORY;
   }
   std::memcpy(sh->dxbc.data(), pCode, code_size);
@@ -6230,11 +6275,8 @@ HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, sh->dxbc.data(), sh->dxbc.size());
   if (!cmd) {
-    // Avoid leaving a partially-created shader. Some runtimes may still call
-    // Destroy* on failure; keep the private object alive but mark it invalid and
-    // release the DXBC blob to avoid leaking memory.
-    sh->handle = kInvalidHandle;
-    std::vector<uint8_t>().swap(sh->dxbc);
+    ResetObject(sh);
+    SetError(hDevice, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
   cmd->shader_handle = sh->handle;
@@ -6301,9 +6343,6 @@ struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)>
     };
     (capture(args), ...);
 
-    if (!shader_code || shader_code_size == 0) {
-      return E_INVALIDARG;
-    }
     return static_cast<Ret>(CreateShaderCommon(hDevice, shader_code, shader_code_size, hShader, AEROGPU_SHADER_STAGE_GEOMETRY));
   }
 };
@@ -6312,12 +6351,12 @@ HRESULT APIENTRY CreateVertexShader(D3D10DDI_HDEVICE hDevice,
                                     const D3D10DDIARG_CREATEVERTEXSHADER* pDesc,
                                     D3D10DDI_HSHADER hShader,
                                     D3D10DDI_HRTSHADER) {
-  if (!pDesc) {
-    return E_INVALIDARG;
-  }
   const void* code = nullptr;
-  std::memcpy(&code, pDesc, sizeof(code));
-  const size_t size = dxbc_size_from_header(code);
+  size_t size = 0;
+  if (pDesc) {
+    std::memcpy(&code, pDesc, sizeof(code));
+    size = dxbc_size_from_header(code);
+  }
   return CreateShaderCommon(hDevice, code, size, hShader, AEROGPU_SHADER_STAGE_VERTEX);
 }
 
@@ -6325,12 +6364,12 @@ HRESULT APIENTRY CreatePixelShader(D3D10DDI_HDEVICE hDevice,
                                    const D3D10DDIARG_CREATEPIXELSHADER* pDesc,
                                    D3D10DDI_HSHADER hShader,
                                    D3D10DDI_HRTSHADER) {
-  if (!pDesc) {
-    return E_INVALIDARG;
-  }
   const void* code = nullptr;
-  std::memcpy(&code, pDesc, sizeof(code));
-  const size_t size = dxbc_size_from_header(code);
+  size_t size = 0;
+  if (pDesc) {
+    std::memcpy(&code, pDesc, sizeof(code));
+    size = dxbc_size_from_header(code);
+  }
   return CreateShaderCommon(hDevice, code, size, hShader, AEROGPU_SHADER_STAGE_PIXEL);
 }
 
@@ -6338,22 +6377,29 @@ HRESULT APIENTRY CreateGeometryShader(D3D10DDI_HDEVICE hDevice,
                                       const D3D10DDIARG_CREATEGEOMETRYSHADER* pDesc,
                                       D3D10DDI_HSHADER hShader,
                                       D3D10DDI_HRTSHADER) {
-  if (!pDesc) {
-    return E_INVALIDARG;
-  }
   const void* code = nullptr;
-  std::memcpy(&code, pDesc, sizeof(code));
-  const size_t size = dxbc_size_from_header(code);
+  size_t size = 0;
+  if (pDesc) {
+    std::memcpy(&code, pDesc, sizeof(code));
+    size = dxbc_size_from_header(code);
+  }
   return CreateShaderCommon(hDevice, code, size, hShader, AEROGPU_SHADER_STAGE_GEOMETRY);
 }
 
 void DestroyShaderCommon(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
-  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+  auto* sh = FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hShader);
+  if (!sh) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sh);
+    return;
+  }
+
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* sh = FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hShader);
-  if (!dev || !sh) {
+  if (!dev) {
+    ResetObject(sh);
     return;
   }
 
@@ -6368,7 +6414,7 @@ void DestroyShaderCommon(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
       SetError(hDevice, E_OUTOFMEMORY);
     }
   }
-  sh->~AeroGpuShader();
+  ResetObject(sh);
 }
 
 void APIENTRY DestroyVertexShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
@@ -6389,41 +6435,48 @@ HRESULT APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
                                      const D3D10DDIARG_CREATEELEMENTLAYOUT* pDesc,
                                      D3D10DDI_HELEMENTLAYOUT hLayout,
                                      D3D10DDI_HRTELEMENTLAYOUT) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hLayout.pDrvPrivate) {
+  if (!hLayout.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  if (pDesc->NumElements && !pDesc->pVertexElements) {
+  auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
+
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(layout);
     return E_FAIL;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* layout = new (hLayout.pDrvPrivate) AeroGpuInputLayout();
   layout->handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
   if (!layout->handle) {
     // Leave the object alive in pDrvPrivate memory. Some runtimes may still call
     // Destroy* after a failed Create* probe.
+    ResetObject(layout);
     return E_FAIL;
+  }
+
+  if (pDesc->NumElements && !pDesc->pVertexElements) {
+    ResetObject(layout);
+    return E_INVALIDARG;
   }
 
   const size_t header_size = sizeof(aerogpu_input_layout_blob_header);
   const size_t elem_size = sizeof(aerogpu_input_layout_element_dxgi);
   if (pDesc->NumElements > (SIZE_MAX - header_size) / elem_size) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
     return E_OUTOFMEMORY;
   }
+
   const size_t blob_size = header_size + static_cast<size_t>(pDesc->NumElements) * elem_size;
   try {
     layout->blob.resize(blob_size);
   } catch (...) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
     return E_OUTOFMEMORY;
   }
 
@@ -6448,8 +6501,8 @@ HRESULT APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
   if (!cmd) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
+    SetError(hDevice, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
   cmd->input_layout_handle = layout->handle;
@@ -6459,12 +6512,19 @@ HRESULT APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
 }
 
 void APIENTRY DestroyElementLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT hLayout) {
-  if (!hLayout.pDrvPrivate) {
+  auto* layout = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout);
+  if (!layout) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(layout);
+    return;
+  }
+
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* layout = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout);
-  if (!dev || !layout) {
+  if (!dev) {
+    ResetObject(layout);
     return;
   }
 
@@ -6479,7 +6539,7 @@ void APIENTRY DestroyElementLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLA
       SetError(hDevice, E_OUTOFMEMORY);
     }
   }
-  layout->~AeroGpuInputLayout();
+  ResetObject(layout);
 }
 
 SIZE_T APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEBLENDSTATE*) {
@@ -6708,20 +6768,29 @@ HRESULT APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
                                const D3D10DDIARG_CREATESAMPLER* pDesc,
                                D3D10DDI_HSAMPLER hSampler,
                                D3D10DDI_HRTSAMPLER) {
-  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+  if (!hSampler.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the sampler so DestroySampler is safe even if CreateSampler
+  // fails early.
+  auto* sampler = new (hSampler.pDrvPrivate) AeroGpuSampler();
+
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(sampler);
     return E_FAIL;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* sampler = new (hSampler.pDrvPrivate) AeroGpuSampler();
   sampler->handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
   if (!sampler->handle) {
     // Leave the object alive in pDrvPrivate memory. Some runtimes may still call
     // Destroy* after a failed Create* probe.
+    ResetObject(sampler);
     return E_FAIL;
   }
 
@@ -6735,7 +6804,8 @@ HRESULT APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {
-    sampler->handle = 0;
+    ResetObject(sampler);
+    SetError(hDevice, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
   cmd->sampler_handle = sampler->handle;
@@ -6747,12 +6817,17 @@ HRESULT APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 }
 
 void APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER hSampler) {
-  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+  auto* sampler = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
+  if (!sampler) {
+    return;
+  }
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sampler);
     return;
   }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* sampler = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
-  if (!dev || !sampler) {
+  if (!dev) {
+    ResetObject(sampler);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -6765,7 +6840,7 @@ void APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER hSample
       SetError(hDevice, E_OUTOFMEMORY);
     }
   }
-  sampler->~AeroGpuSampler();
+  ResetObject(sampler);
 }
 
 void APIENTRY IaSetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT hLayout) {

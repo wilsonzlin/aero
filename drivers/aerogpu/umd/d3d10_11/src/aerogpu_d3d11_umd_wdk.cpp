@@ -42,6 +42,25 @@ namespace {
 
 using namespace aerogpu::d3d10_11;
 
+template <typename T>
+static void ResetObject(T* obj) {
+  if (!obj) {
+    return;
+  }
+  obj->~T();
+  new (obj) T();
+}
+
+static bool IsDeviceLive(D3D11DDI_HDEVICE hDevice) {
+  void* device_mem = hDevice.pDrvPrivate;
+  if (!device_mem) {
+    return false;
+  }
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, device_mem, sizeof(cookie));
+  return cookie == kDeviceDestroyLiveCookie;
+}
+
 // Compile-time sanity: keep local checks to "member exists" only.
 //
 // ABI-critical size/offset conformance checks (struct layout + x86 export
@@ -2419,12 +2438,21 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                                           const D3D11DDIARG_CREATERESOURCE* pDesc,
                                           D3D11DDI_HRESOURCE hResource,
                                           D3D11DDI_HRTRESOURCE hRTResource) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
+  if (!hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the resource object so DestroyResource11 is safe even when
+  // CreateResource11 fails early.
+  auto* res = new (hResource.pDrvPrivate) Resource();
+
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
 
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(res);
     return E_FAIL;
   }
 
@@ -2519,7 +2547,6 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
   }
 
-  auto* res = new (hResource.pDrvPrivate) Resource();
   res->handle = AllocateGlobalHandle(dev->adapter);
   res->bind_flags = static_cast<uint32_t>(pDesc->BindFlags);
   res->misc_flags = static_cast<uint32_t>(pDesc->MiscFlags);
@@ -2946,7 +2973,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
     const uint64_t padded_size_bytes = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 4);
     if (padded_size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     const uint64_t alloc_size = AlignUpU64(res->size_bytes ? res->size_bytes : 1, 256);
@@ -2967,14 +2994,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0, nullptr);
     if (FAILED(hr)) {
       SetError(dev, hr);
-      res->~Resource();
+      ResetObject(res);
       return hr;
     }
     try {
       res->storage.resize(static_cast<size_t>(padded_size_bytes));
     } catch (...) {
       deallocate_if_needed();
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
 
@@ -3001,7 +3028,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
     if (FAILED(init_hr)) {
       deallocate_if_needed();
-      res->~Resource();
+      ResetObject(res);
       return init_hr;
     }
 
@@ -3029,7 +3056,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       if (res->share_token == 0) {
         SetError(dev, E_FAIL);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_FAIL;
       }
 
@@ -3041,7 +3068,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_OUTOFMEMORY;
       }
       export_cmd->resource_handle = res->handle;
@@ -3052,7 +3079,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       if (FAILED(submit_hr)) {
         SetError(dev, submit_hr);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return submit_hr;
       }
     }
@@ -3069,19 +3096,19 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      res->~Resource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
 
     if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
-      res->~Resource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
 
     const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
     if (row_bytes == 0 || rows == 0) {
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     res->row_pitch_bytes = AlignUpU32(row_bytes, 256);
@@ -3092,14 +3119,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                                              res->height,
                                              res->mip_levels,
                                              res->array_size,
-                                             res->row_pitch_bytes,
-                                             &res->tex2d_subresources,
-                                             &total_bytes)) {
-      res->~Resource();
+                                              res->row_pitch_bytes,
+                                              &res->tex2d_subresources,
+                                              &total_bytes)) {
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
     if (total_bytes == 0 || total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
 
@@ -3115,7 +3142,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       is_shared = true;
     }
     if (is_shared && (res->mip_levels != 1 || res->array_size != 1)) {
-      res->~Resource();
+      ResetObject(res);
       return E_NOTIMPL;
     }
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
@@ -3126,7 +3153,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
         allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes, &alloc_priv);
     if (FAILED(hr)) {
       SetError(dev, hr);
-      res->~Resource();
+      ResetObject(res);
       return hr;
     }
 
@@ -3149,7 +3176,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       if (alloc_pitch < row_bytes) {
         SetError(dev, E_INVALIDARG);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_INVALIDARG;
       }
 
@@ -3165,7 +3192,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                                                &updated_total_bytes)) {
         SetError(dev, E_FAIL);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_FAIL;
       }
 
@@ -3182,7 +3209,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       if (updated_total_bytes == 0 || updated_total_bytes > backing_size || updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
         SetError(dev, E_INVALIDARG);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_INVALIDARG;
       }
 
@@ -3278,7 +3305,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
               (void)unlock_query(&unlock_args);
               SetError(dev, E_INVALIDARG);
               deallocate_if_needed();
-              res->~Resource();
+              ResetObject(res);
               return E_INVALIDARG;
             }
 
@@ -3303,7 +3330,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
               (void)unlock_query(&unlock_args);
               SetError(dev, E_FAIL);
               deallocate_if_needed();
-              res->~Resource();
+              ResetObject(res);
               return E_FAIL;
             }
 
@@ -3325,7 +3352,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
               (void)unlock_query(&unlock_args);
               SetError(dev, E_INVALIDARG);
               deallocate_if_needed();
-              res->~Resource();
+              ResetObject(res);
               return E_INVALIDARG;
             }
 
@@ -3354,7 +3381,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       res->storage.resize(static_cast<size_t>(total_bytes));
     } catch (...) {
       deallocate_if_needed();
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
 
@@ -3383,7 +3410,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
     if (FAILED(init_hr)) {
       deallocate_if_needed();
-      res->~Resource();
+      ResetObject(res);
       return init_hr;
     }
 
@@ -3416,14 +3443,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       if (res->share_token == 0) {
         SetError(dev, E_FAIL);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_FAIL;
       }
       auto* export_cmd =
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return E_OUTOFMEMORY;
       }
       export_cmd->resource_handle = res->handle;
@@ -3434,7 +3461,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       if (FAILED(submit_hr)) {
         SetError(dev, submit_hr);
         deallocate_if_needed();
-        res->~Resource();
+        ResetObject(res);
         return submit_hr;
       }
     }
@@ -3442,7 +3469,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
   }
 
   deallocate_if_needed();
-  res->~Resource();
+  ResetObject(res);
   return E_NOTIMPL;
 }
 
@@ -3450,11 +3477,19 @@ HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
                                          const D3D11DDIARG_OPENRESOURCE* pOpenResource,
                                          D3D11DDI_HRESOURCE hResource,
                                          D3D11DDI_HRTRESOURCE) {
-  if (!hDevice.pDrvPrivate || !pOpenResource || !hResource.pDrvPrivate) {
+  if (!hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the resource so DestroyResource11 is safe even if OpenResource11 fails.
+  auto* res = new (hResource.pDrvPrivate) Resource();
+
+  if (!hDevice.pDrvPrivate || !pOpenResource) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(res);
     return E_FAIL;
   }
 
@@ -3514,7 +3549,6 @@ HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* res = new (hResource.pDrvPrivate) Resource();
   res->handle = AllocateGlobalHandle(dev->adapter);
   res->backing_alloc_id = static_cast<uint32_t>(priv.alloc_id);
   res->backing_offset_bytes = 0;
@@ -3603,11 +3637,11 @@ HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
   } else if (priv.kind == AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D) {
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(priv.format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      res->~Resource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
-      res->~Resource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     res->kind = ResourceKind::Texture2D;
@@ -3620,7 +3654,7 @@ HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
     if (res->row_pitch_bytes == 0 && res->width != 0) {
       const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
       if (row_bytes == 0) {
-        res->~Resource();
+        ResetObject(res);
         return E_INVALIDARG;
       }
       res->row_pitch_bytes = AlignUpU32(row_bytes, 256);
@@ -3632,31 +3666,31 @@ HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
                                              res->height,
                                              res->mip_levels,
                                              res->array_size,
-                                             res->row_pitch_bytes,
-                                             &res->tex2d_subresources,
-                                             &total_bytes)) {
-      res->~Resource();
+                                              res->row_pitch_bytes,
+                                              &res->tex2d_subresources,
+                                              &total_bytes)) {
+      ResetObject(res);
       return E_INVALIDARG;
     }
     if (total_bytes == 0 || total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-      res->~Resource();
+      ResetObject(res);
       return E_INVALIDARG;
     }
     try {
       res->storage.resize(static_cast<size_t>(total_bytes));
     } catch (...) {
-      res->~Resource();
+      ResetObject(res);
       return E_OUTOFMEMORY;
     }
   } else {
-    res->~Resource();
+    ResetObject(res);
     return E_INVALIDARG;
   }
 
   auto* import_cmd =
       dev->cmd.append_fixed<aerogpu_cmd_import_shared_surface>(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
   if (!import_cmd) {
-    res->~Resource();
+    ResetObject(res);
     return E_OUTOFMEMORY;
   }
   import_cmd->out_resource_handle = res->handle;
@@ -3666,13 +3700,19 @@ HRESULT AEROGPU_APIENTRY OpenResource11(D3D11DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESOURCE hResource) {
-  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    return;
+  }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(res);
     return;
   }
 
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
-  if (!dev || !res) {
+  if (!dev) {
+    ResetObject(res);
     return;
   }
 
@@ -3804,7 +3844,7 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
   dev->pending_staging_writes.erase(
       std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
       dev->pending_staging_writes.end());
-  res->~Resource();
+  ResetObject(res);
 }
 
 // Views
@@ -4800,20 +4840,29 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
                                          const D3D11DDIARG_CREATESAMPLER* pDesc,
                                          D3D11DDI_HSAMPLER hSampler,
                                          D3D11DDI_HRTSAMPLER) {
-  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+  if (!hSampler.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the sampler so DestroySampler11 is safe even if we reject
+  // the descriptor early.
+  auto* sampler = new (hSampler.pDrvPrivate) Sampler();
+
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(sampler);
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* sampler = new (hSampler.pDrvPrivate) Sampler();
   sampler->handle = AllocateGlobalHandle(dev->adapter);
   if (!sampler->handle) {
     // Leave the object alive in pDrvPrivate memory. Some runtimes may still
     // probe Destroy* after a failed Create*.
+    ResetObject(sampler);
     return E_FAIL;
   }
 
@@ -4829,7 +4878,7 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
   if (!cmd) {
     // Avoid leaving a stale non-zero handle in pDrvPrivate memory if the runtime
     // probes Destroy after a failed Create.
-    sampler->handle = 0;
+    ResetObject(sampler);
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
@@ -4842,12 +4891,19 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroySampler11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HSAMPLER hSampler) {
-  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+  auto* sampler = FromHandle<D3D11DDI_HSAMPLER, Sampler>(hSampler);
+  if (!sampler) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sampler);
+    return;
+  }
+
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* sampler = FromHandle<D3D11DDI_HSAMPLER, Sampler>(hSampler);
-  if (!dev || !sampler) {
+  if (!dev) {
+    ResetObject(sampler);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -4860,7 +4916,7 @@ void AEROGPU_APIENTRY DestroySampler11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HSAMPL
       SetError(dev, E_OUTOFMEMORY);
     }
   }
-  sampler->~Sampler();
+  ResetObject(sampler);
 }
 
 // Shaders
@@ -4884,6 +4940,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
     // Leave the object alive in pDrvPrivate memory. Some runtimes may still
     // probe Destroy* after a failed Create*, and double-destruction would be
     // unsafe.
+    ResetObject(out);
     return E_FAIL;
   }
   out->stage = stage;
@@ -4893,8 +4950,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
     // Ensure teardown paths do not emit DESTROY_SHADER for a handle that never
     // made it into the command stream (some runtimes may probe Destroy after a
     // failed Create).
-    out->handle = 0;
-    std::vector<uint8_t>().swap(out->dxbc);
+    ResetObject(out);
     return E_OUTOFMEMORY;
   }
   std::memcpy(out->dxbc.data(), pCode, static_cast<size_t>(code_size));
@@ -4917,8 +4973,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, out->dxbc.data(), out->dxbc.size());
   if (!cmd) {
-    out->handle = 0;
-    std::vector<uint8_t>().swap(out->dxbc);
+    ResetObject(out);
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
@@ -4942,7 +4997,7 @@ static void DestroyShaderCommon(Device* dev, Shader* sh) {
       SetError(dev, E_OUTOFMEMORY);
     }
   }
-  sh->~Shader();
+  ResetObject(sh);
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateVertexShaderSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATEVERTEXSHADER*) {
@@ -4953,30 +5008,36 @@ HRESULT AEROGPU_APIENTRY CreateVertexShader11(D3D11DDI_HDEVICE hDevice,
                                               const D3D11DDIARG_CREATEVERTEXSHADER* pDesc,
                                               D3D11DDI_HVERTEXSHADER hShader,
                                               D3D11DDI_HRTVERTEXSHADER) {
-  if (!pDesc || !hShader.pDrvPrivate) {
+  if (!hShader.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* sh = new (hShader.pDrvPrivate) Shader();
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev) {
+    ResetObject(sh);
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* sh = new (hShader.pDrvPrivate) Shader();
-  const HRESULT hr =
-      CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_VERTEX);
-  if (FAILED(hr)) {
-    return hr;
-  }
-  return S_OK;
+  return CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_VERTEX);
 }
 
 void AEROGPU_APIENTRY DestroyVertexShader11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HVERTEXSHADER hShader) {
-  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+  auto* sh = FromHandle<D3D11DDI_HVERTEXSHADER, Shader>(hShader);
+  if (!sh) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sh);
+    return;
+  }
+
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* sh = FromHandle<D3D11DDI_HVERTEXSHADER, Shader>(hShader);
-  if (!dev || !sh) {
+  if (!dev) {
+    ResetObject(sh);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -4991,30 +5052,36 @@ HRESULT AEROGPU_APIENTRY CreatePixelShader11(D3D11DDI_HDEVICE hDevice,
                                              const D3D11DDIARG_CREATEPIXELSHADER* pDesc,
                                              D3D11DDI_HPIXELSHADER hShader,
                                              D3D11DDI_HRTPIXELSHADER) {
-  if (!pDesc || !hShader.pDrvPrivate) {
+  if (!hShader.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* sh = new (hShader.pDrvPrivate) Shader();
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev) {
+    ResetObject(sh);
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* sh = new (hShader.pDrvPrivate) Shader();
-  const HRESULT hr =
-      CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_PIXEL);
-  if (FAILED(hr)) {
-    return hr;
-  }
-  return S_OK;
+  return CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_PIXEL);
 }
 
 void AEROGPU_APIENTRY DestroyPixelShader11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HPIXELSHADER hShader) {
-  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+  auto* sh = FromHandle<D3D11DDI_HPIXELSHADER, Shader>(hShader);
+  if (!sh) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sh);
+    return;
+  }
+
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* sh = FromHandle<D3D11DDI_HPIXELSHADER, Shader>(hShader);
-  if (!dev || !sh) {
+  if (!dev) {
+    ResetObject(sh);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -5064,20 +5131,23 @@ struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)>
     };
     (capture(args), ...);
 
-    if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate || !shader_code || shader_code_size == 0) {
+    if (!hShader.pDrvPrivate) {
+      return E_INVALIDARG;
+    }
+    auto* sh = new (hShader.pDrvPrivate) Shader();
+    if (!hDevice.pDrvPrivate || !shader_code || shader_code_size == 0) {
       return E_INVALIDARG;
     }
 
     auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
     if (!dev) {
+      ResetObject(sh);
       return E_FAIL;
     }
 
     std::lock_guard<std::mutex> lock(dev->mutex);
 
-    auto* sh = new (hShader.pDrvPrivate) Shader();
-    const HRESULT hr = CreateShaderCommon(hDevice, shader_code, shader_code_size, sh, AEROGPU_SHADER_STAGE_GEOMETRY);
-    return hr;
+    return CreateShaderCommon(hDevice, shader_code, shader_code_size, sh, AEROGPU_SHADER_STAGE_GEOMETRY);
   }
 };
 
@@ -5085,30 +5155,36 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
                                                 const D3D11DDIARG_CREATEGEOMETRYSHADER* pDesc,
                                                 D3D11DDI_HGEOMETRYSHADER hShader,
                                                 D3D11DDI_HRTGEOMETRYSHADER) {
-  if (!pDesc || !hShader.pDrvPrivate || !pDesc->pShaderCode || pDesc->ShaderCodeSize == 0) {
+  if (!hShader.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* sh = new (hShader.pDrvPrivate) Shader();
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev) {
+    ResetObject(sh);
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* sh = new (hShader.pDrvPrivate) Shader();
-  const HRESULT hr =
-      CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_GEOMETRY);
-  if (FAILED(hr)) {
-    return hr;
-  }
-  return S_OK;
+  return CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_GEOMETRY);
 }
 
 void AEROGPU_APIENTRY DestroyGeometryShader11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HGEOMETRYSHADER hShader) {
-  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+  auto* sh = FromHandle<D3D11DDI_HGEOMETRYSHADER, Shader>(hShader);
+  if (!sh) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sh);
+    return;
+  }
+
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* sh = FromHandle<D3D11DDI_HGEOMETRYSHADER, Shader>(hShader);
-  if (!dev || !sh) {
+  if (!dev) {
+    ResetObject(sh);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -5123,30 +5199,36 @@ HRESULT AEROGPU_APIENTRY CreateComputeShader11(D3D11DDI_HDEVICE hDevice,
                                                const D3D11DDIARG_CREATECOMPUTESHADER* pDesc,
                                                D3D11DDI_HCOMPUTESHADER hShader,
                                                D3D11DDI_HRTCOMPUTESHADER) {
-  if (!pDesc || !hShader.pDrvPrivate) {
+  if (!hShader.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* sh = new (hShader.pDrvPrivate) Shader();
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev) {
+    ResetObject(sh);
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* sh = new (hShader.pDrvPrivate) Shader();
-  const HRESULT hr =
-      CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_COMPUTE);
-  if (FAILED(hr)) {
-    return hr;
-  }
-  return S_OK;
+  return CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_COMPUTE);
 }
 
 void AEROGPU_APIENTRY DestroyComputeShader11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HCOMPUTESHADER hShader) {
-  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+  auto* sh = FromHandle<D3D11DDI_HCOMPUTESHADER, Shader>(hShader);
+  if (!sh) {
     return;
   }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(sh);
+    return;
+  }
+
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* sh = FromHandle<D3D11DDI_HCOMPUTESHADER, Shader>(hShader);
-  if (!dev || !sh) {
+  if (!dev) {
+    ResetObject(sh);
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -5163,36 +5245,43 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
                                                const D3D11DDIARG_CREATEELEMENTLAYOUT* pDesc,
                                                D3D11DDI_HELEMENTLAYOUT hLayout,
                                                D3D11DDI_HRTELEMENTLAYOUT) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hLayout.pDrvPrivate) {
+  if (!hLayout.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the layout object so DestroyElementLayout11 is safe even if
+  // CreateElementLayout11 fails early.
+  auto* layout = new (hLayout.pDrvPrivate) InputLayout();
+
+  if (!hDevice.pDrvPrivate || !pDesc) {
     return E_INVALIDARG;
   }
 
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
   if (!dev || !dev->adapter) {
+    ResetObject(layout);
     return E_FAIL;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  auto* layout = new (hLayout.pDrvPrivate) InputLayout();
   layout->handle = AllocateGlobalHandle(dev->adapter);
   if (!layout->handle) {
     // Leave the object alive in pDrvPrivate memory. Some runtimes may still
     // probe Destroy* after a failed Create*.
+    ResetObject(layout);
     return E_FAIL;
   }
 
   const UINT elem_count = pDesc->NumElements;
   if (!pDesc->pVertexElements || elem_count == 0) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
     return E_INVALIDARG;
   }
 
   const size_t header_size = sizeof(aerogpu_input_layout_blob_header);
   const size_t elem_size = sizeof(aerogpu_input_layout_element_dxgi);
   if (elem_count > (SIZE_MAX - header_size) / elem_size) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
     return E_OUTOFMEMORY;
   }
 
@@ -5200,8 +5289,7 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
   try {
     layout->blob.resize(blob_size);
   } catch (...) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
     return E_OUTOFMEMORY;
   }
 
@@ -5226,8 +5314,7 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
   if (!cmd) {
-    layout->handle = 0;
-    std::vector<uint8_t>().swap(layout->blob);
+    ResetObject(layout);
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
@@ -5239,13 +5326,19 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyElementLayout11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HELEMENTLAYOUT hLayout) {
-  if (!hDevice.pDrvPrivate || !hLayout.pDrvPrivate) {
+  auto* layout = FromHandle<D3D11DDI_HELEMENTLAYOUT, InputLayout>(hLayout);
+  if (!layout) {
+    return;
+  }
+
+  if (!IsDeviceLive(hDevice)) {
+    ResetObject(layout);
     return;
   }
 
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  auto* layout = FromHandle<D3D11DDI_HELEMENTLAYOUT, InputLayout>(hLayout);
-  if (!dev || !layout) {
+  if (!dev) {
+    ResetObject(layout);
     return;
   }
 
@@ -5259,7 +5352,7 @@ void AEROGPU_APIENTRY DestroyElementLayout11(D3D11DDI_HDEVICE hDevice, D3D11DDI_
       SetError(dev, E_OUTOFMEMORY);
     }
   }
-  layout->~InputLayout();
+  ResetObject(layout);
 }
 
 // Fixed-function state objects (accepted and bindable; conservative encoding).
