@@ -1,9 +1,35 @@
 mod tier1_common;
 
+use std::collections::HashMap;
+
 use aero_jit_x86::tier2::interp::{run_function, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
+use aero_jit_x86::Tier1Bus;
 use aero_types::Gpr;
 use tier1_common::{pick_invalid_opcode, SimpleBus};
+
+#[derive(Default)]
+struct MapBus {
+    mem: HashMap<u64, u8>,
+}
+
+impl MapBus {
+    fn load(&mut self, addr: u64, data: &[u8]) {
+        for (i, b) in data.iter().copied().enumerate() {
+            self.write_u8(addr + i as u64, b);
+        }
+    }
+}
+
+impl Tier1Bus for MapBus {
+    fn read_u8(&self, addr: u64) -> u8 {
+        *self.mem.get(&addr).unwrap_or(&0)
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.mem.insert(addr, value);
+    }
+}
 
 #[test]
 fn tier2_masks_32bit_effective_addresses_for_memory_operands() {
@@ -146,4 +172,71 @@ fn tier2_masks_32bit_stack_pointer_for_push() {
     );
     assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 0);
     assert_eq!(&bus.mem()[0..4], &0x1122_3344u32.to_le_bytes());
+}
+
+#[test]
+fn tier2_masks_32bit_stack_pointer_wraps_on_push() {
+    // push eax
+    // <invalid>
+    //
+    // If ESP is 0, a 32-bit PUSH should wrap to ESP=0xFFFF_FFFC.
+    let entry = 0x3000u64;
+    let invalid = pick_invalid_opcode(32);
+    let code = [0x50, invalid];
+
+    let mut bus = MapBus::default();
+    bus.load(entry, &code);
+
+    let func = build_function_from_x86(&bus, entry, 32, CfgBuildConfig::default());
+    assert!(
+        !func.block(func.entry).instrs.is_empty(),
+        "unexpected deopt-at-entry when lowering 32-bit push"
+    );
+
+    let env = RuntimeEnv::default();
+    let mut state = T2State::default();
+    state.cpu.rip = entry;
+    state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1122_3344u64;
+    state.cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_0000_0000; // masked to 0
+
+    let exit = run_function(&func, &env, &mut bus, &mut state, 8);
+    assert_eq!(exit, RunExit::SideExit { next_rip: entry + 1 });
+    assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 0xffff_fffc);
+
+    let mut got = [0u8; 4];
+    for i in 0..4u64 {
+        got[i as usize] = bus.read_u8(0xffff_fffc + i);
+    }
+    assert_eq!(got, 0x1122_3344u32.to_le_bytes());
+}
+
+#[test]
+fn tier2_masks_32bit_stack_pointer_wraps_on_pop() {
+    // pop eax
+    // <invalid>
+    //
+    // If ESP is 0xFFFF_FFFC, a 32-bit POP should wrap to ESP=0.
+    let entry = 0x3800u64;
+    let invalid = pick_invalid_opcode(32);
+    let code = [0x58, invalid];
+
+    let mut bus = MapBus::default();
+    bus.load(entry, &code);
+    bus.load(0xffff_fffc, &0x5566_7788u32.to_le_bytes());
+
+    let func = build_function_from_x86(&bus, entry, 32, CfgBuildConfig::default());
+    assert!(
+        !func.block(func.entry).instrs.is_empty(),
+        "unexpected deopt-at-entry when lowering 32-bit pop"
+    );
+
+    let env = RuntimeEnv::default();
+    let mut state = T2State::default();
+    state.cpu.rip = entry;
+    state.cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_ffff_fffc; // masked to 0xffff_fffc
+
+    let exit = run_function(&func, &env, &mut bus, &mut state, 8);
+    assert_eq!(exit, RunExit::SideExit { next_rip: entry + 1 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x5566_7788);
+    assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 0);
 }

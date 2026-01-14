@@ -71,6 +71,40 @@ fn tier1_masks_32bit_effective_addresses_for_memory_operands() {
 }
 
 #[test]
+fn tier1_masks_32bit_effective_addresses_for_memory_stores() {
+    // mov [edi], eax
+    let entry_rip = 0x1800u64;
+    let bytes = [0x89, 0x07];
+    let inst = decode_one_mode(entry_rip, &bytes, 32);
+    let block = BasicBlock {
+        entry_rip,
+        bitness: 32,
+        insts: vec![inst],
+        end_kind: BlockEndKind::Limit {
+            next_rip: entry_rip + bytes.len() as u64,
+        },
+    };
+    let ir = translate_block(&block);
+
+    let mut bus = MapBus::default();
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.rip = entry_rip;
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0xdead_beefu64;
+    cpu.gpr[Gpr::Rdi.as_u8() as usize] = 0x1_0000_0000;
+
+    let mut cpu_bytes = vec![0u8; aero_jit_x86::abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    let _ = execute_block(&ir, &mut cpu_bytes, &mut bus);
+
+    let mut got = [0u8; 4];
+    for i in 0..4u64 {
+        got[i as usize] = bus.read_u8(i);
+    }
+    assert_eq!(got, 0xdead_beefu32.to_le_bytes());
+}
+
+#[test]
 fn tier1_masks_32bit_stack_pointer_for_pop() {
     // pop eax
     let entry_rip = 0x2000u64;
@@ -102,6 +136,113 @@ fn tier1_masks_32bit_stack_pointer_for_pop() {
     let out = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
     assert_eq!(out.gpr[Gpr::Rax.as_u8() as usize], 0x5566_7788);
     assert_eq!(out.gpr[Gpr::Rsp.as_u8() as usize], 4);
+}
+
+#[test]
+fn tier1_masks_32bit_stack_pointer_for_push() {
+    // push eax
+    let entry_rip = 0x2800u64;
+    let bytes = [0x50];
+    let inst = decode_one_mode(entry_rip, &bytes, 32);
+    let block = BasicBlock {
+        entry_rip,
+        bitness: 32,
+        insts: vec![inst],
+        end_kind: BlockEndKind::Limit {
+            next_rip: entry_rip + bytes.len() as u64,
+        },
+    };
+    let ir = translate_block(&block);
+
+    let mut bus = MapBus::default();
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.rip = entry_rip;
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1122_3344u64;
+    cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_0000_0004;
+
+    let mut cpu_bytes = vec![0u8; aero_jit_x86::abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    let _ = execute_block(&ir, &mut cpu_bytes, &mut bus);
+
+    let out = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
+    assert_eq!(out.gpr[Gpr::Rsp.as_u8() as usize], 0);
+
+    let mut got = [0u8; 4];
+    for i in 0..4u64 {
+        got[i as usize] = bus.read_u8(i);
+    }
+    assert_eq!(got, 0x1122_3344u32.to_le_bytes());
+}
+
+#[test]
+fn tier1_masks_32bit_stack_pointer_wraps_on_push() {
+    // push eax
+    let entry_rip = 0x3000u64;
+    let bytes = [0x50];
+    let inst = decode_one_mode(entry_rip, &bytes, 32);
+    let block = BasicBlock {
+        entry_rip,
+        bitness: 32,
+        insts: vec![inst],
+        end_kind: BlockEndKind::Limit {
+            next_rip: entry_rip + bytes.len() as u64,
+        },
+    };
+    let ir = translate_block(&block);
+
+    let mut bus = MapBus::default();
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.rip = entry_rip;
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1122_3344u64;
+    cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_0000_0000;
+
+    let mut cpu_bytes = vec![0u8; aero_jit_x86::abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    let _ = execute_block(&ir, &mut cpu_bytes, &mut bus);
+
+    let out = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
+    assert_eq!(out.gpr[Gpr::Rsp.as_u8() as usize], 0xffff_fffc);
+
+    let base = 0xffff_fffc;
+    let mut got = [0u8; 4];
+    for i in 0..4u64 {
+        got[i as usize] = bus.read_u8(base + i);
+    }
+    assert_eq!(got, 0x1122_3344u32.to_le_bytes());
+}
+
+#[test]
+fn tier1_masks_32bit_stack_pointer_wraps_on_pop() {
+    // pop eax
+    let entry_rip = 0x3800u64;
+    let bytes = [0x58];
+    let inst = decode_one_mode(entry_rip, &bytes, 32);
+    let block = BasicBlock {
+        entry_rip,
+        bitness: 32,
+        insts: vec![inst],
+        end_kind: BlockEndKind::Limit {
+            next_rip: entry_rip + bytes.len() as u64,
+        },
+    };
+    let ir = translate_block(&block);
+
+    let mut bus = MapBus::default();
+    bus.write_le(0xffff_fffc, 0x5566_7788);
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.rip = entry_rip;
+    cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_ffff_fffc;
+
+    let mut cpu_bytes = vec![0u8; aero_jit_x86::abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    let _ = execute_block(&ir, &mut cpu_bytes, &mut bus);
+
+    let out = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
+    assert_eq!(out.gpr[Gpr::Rax.as_u8() as usize], 0x5566_7788);
+    assert_eq!(out.gpr[Gpr::Rsp.as_u8() as usize], 0);
 }
 
 #[test]
