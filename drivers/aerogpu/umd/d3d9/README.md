@@ -358,6 +358,8 @@ The current implementation targets:
   - When the device exposes `AEROGPU_UMDPRIV_FEATURE_TRANSFER` (ABI minor `>= 1`), the UMD emits `AEROGPU_CMD_COPY_TEXTURE2D`
     with `AEROGPU_COPY_FLAG_WRITEBACK_DST` so the host writes pixels into the destination surface's backing allocation.
     This requires allocation-backed systemmem surfaces (`backing_alloc_id != 0`).
+    - In Win7/WDDM builds, the UMD backs `D3DPOOL_SYSTEMMEM` surfaces with a guest allocation (creating a system-memory
+      allocation when needed) so writeback lands in guest memory and `LockRect` can read the final pixels.
     (The same transfer/writeback path is also used for full-surface `CopyRects` into allocation-backed systemmem surfaces.)
   - Otherwise, the UMD falls back to a submit+wait and a CPU-side copy.
 - `WaitForVBlank` and `GetRasterStatus` (scanline/vblank) are implemented for pacing/diagnostics (validated by `d3d9ex_dwm_ddi_sanity` and `d3d9_raster_status_sanity`).
