@@ -29,7 +29,9 @@ const LATEST_SCHEMA: &str = "aero.chunked-disk-image.latest.v1";
 const DEFAULT_CACHE_CONTROL_CHUNKS: &str = "public, max-age=31536000, immutable, no-transform";
 const DEFAULT_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable";
 const DEFAULT_CACHE_CONTROL_LATEST: &str = "public, max-age=60";
-const CHUNK_CONTENT_ENCODING: &str = "identity";
+// For compatibility with Aero's clients and tooling (and to prevent CDNs from applying transparent
+// compression), publish all chunked artifacts with `Content-Encoding: identity`.
+const IDENTITY_CONTENT_ENCODING: &str = "identity";
 const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 // Defensive bounds to avoid producing or verifying manifests that the reference clients will
 // reject. Keep aligned with:
@@ -2939,7 +2941,7 @@ async fn worker_loop(
             job.bytes,
             CHUNK_MIME_TYPE,
             &cache_control_chunks,
-            Some(CHUNK_CONTENT_ENCODING),
+            Some(IDENTITY_CONTENT_ENCODING),
             retries,
         )
         .await?;
@@ -3101,7 +3103,7 @@ async fn upload_json_object<T: Serialize>(
         Bytes::from(json),
         JSON_MIME_TYPE,
         cache_control,
-        None,
+        Some(IDENTITY_CONTENT_ENCODING),
         retries,
     )
     .await

@@ -80,8 +80,9 @@ this tool because it currently opens a single input file. Flatten/merge to a sta
   - `Content-Type: application/octet-stream`
   - `Content-Encoding: identity`
   - `Cache-Control: public, max-age=31536000, immutable, no-transform`
-- JSON (`manifest.json`, `meta.json`):
+- JSON (`manifest.json`, `meta.json`, `latest.json`):
   - `Content-Type: application/json`
+  - `Content-Encoding: identity` (recommended for compatibility; avoid transparent compression)
   - `Cache-Control: public, max-age=31536000, immutable`
 
 These defaults match [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md) and can be overridden with:
@@ -354,7 +355,8 @@ curl -fSsI http://localhost:9000/my-bucket/images/<imageId>/<version>/chunks/000
 In the `-I` output, check that the uploaded objects have the expected CDN-friendly metadata:
 
 - `Cache-Control: ...immutable...`
-- for chunks, `Content-Encoding: identity` and `Cache-Control: ...no-transform`
+- `Content-Encoding: identity` (recommended for compatibility; especially important for chunks)
+- for chunks, `Cache-Control: ...no-transform`
 
 If your objects are private, generate a presigned URL and `curl` that instead:
 
