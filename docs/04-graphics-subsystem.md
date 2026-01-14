@@ -69,6 +69,13 @@ It exists so the GPU worker can be ticked/woken even when the legacy shared fram
   - `web/src/main/frameScheduler.ts` (decides when to tick the GPU worker)
   - `web/src/workers/gpu-worker.ts` (chooses between legacy framebuffer and other output sources)
 
+Developer-facing scanout validation harnesses (served under `/web/` when running the repo-root harness via
+`npm run dev` / `npm run dev:harness`):
+
+- `web/wddm-scanout-debug.html` — interactive scanoutState validation (guest RAM vs BAR1/VRAM backing, pitch, alpha policy)
+- `web/wddm-scanout-smoke.html` — non-interactive smoke harness (Playwright: `tests/e2e/wddm_scanout_smoke.spec.ts`)
+- `web/wddm-scanout-vram-smoke.html` — BAR1/VRAM-backed scanout smoke harness (Playwright: `tests/e2e/wddm_scanout_vram_smoke.spec.ts`)
+
 Related shared-memory descriptor: **hardware cursor state** uses the same seqlock pattern:
 
 - CursorState layout + publish protocol (Rust): `crates/aero-shared/src/cursor_state.rs`
