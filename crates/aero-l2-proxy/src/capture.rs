@@ -118,6 +118,7 @@ impl CaptureManager {
             max_bytes: self.max_bytes,
             flush_interval: self.flush_interval,
             last_flush: tokio::time::Instant::now(),
+            last_flushed_bytes: header_bytes,
             metrics: self.metrics.clone(),
             capped: false,
             disabled: false,
@@ -133,6 +134,7 @@ pub struct SessionCapture {
     max_bytes: u64,
     flush_interval: Option<Duration>,
     last_flush: tokio::time::Instant,
+    last_flushed_bytes: u64,
     metrics: Metrics,
     capped: bool,
     disabled: bool,
@@ -199,6 +201,13 @@ impl SessionCapture {
         let Some(interval) = self.flush_interval else {
             return;
         };
+        if self.disabled {
+            return;
+        }
+        let current_bytes = self.bytes_written.load(Ordering::Relaxed);
+        if current_bytes == self.last_flushed_bytes {
+            return;
+        }
         let now = tokio::time::Instant::now();
         if now.duration_since(self.last_flush) < interval {
             return;
@@ -209,6 +218,7 @@ impl SessionCapture {
             return;
         }
         self.last_flush = now;
+        self.last_flushed_bytes = self.bytes_written.load(Ordering::Relaxed);
     }
 
     fn on_error(&mut self, err: std::io::Error) {
@@ -230,6 +240,26 @@ impl SessionCapture {
                 Err(err)
             }
         }
+    }
+
+    /// Returns the next time at which the capture writer should be flushed.
+    ///
+    /// This is only used when periodic flushing is enabled and the writer has buffered new data
+    /// since the last flush.
+    pub(crate) fn next_flush_deadline(&self) -> Option<tokio::time::Instant> {
+        if self.disabled {
+            return None;
+        }
+        let interval = self.flush_interval?;
+        let current_bytes = self.bytes_written.load(Ordering::Relaxed);
+        if current_bytes == self.last_flushed_bytes {
+            return None;
+        }
+        self.last_flush.checked_add(interval)
+    }
+
+    pub(crate) async fn flush_if_due(&mut self) {
+        self.maybe_flush().await;
     }
 }
 

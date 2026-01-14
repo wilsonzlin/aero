@@ -616,6 +616,55 @@ async fn capture_creates_non_empty_file() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_flush_interval_flushes_while_session_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = TestServer::start_with_capture(
+        Some(dir.path().to_path_buf()),
+        0,
+        Some(Duration::from_millis(1000)),
+        None,
+    )
+    .await;
+
+    let mut req = server.ws_url().into_client_request().unwrap();
+    req.headers_mut().insert(
+        "sec-websocket-protocol",
+        tokio_tungstenite::tungstenite::http::HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_sender, _ws_receiver) = ws.split();
+
+    let frame = vec![0u8; 60];
+    let wire = aero_l2_protocol::encode_frame(&frame).unwrap();
+    ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Binary(wire.into()))
+        .await
+        .unwrap();
+
+    // Ensure the capture flush timer is serviced even if no further packets are recorded.
+    // Without periodic flushing, the capture would only contain the initial headers until the
+    // session closes.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some((_path, len)) = find_capture_file(dir.path()) {
+                if len > 128 {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let _ = ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+        .await;
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn capture_max_bytes_caps_file_and_reports_drops() {
     let dir = tempfile::tempdir().unwrap();
     let max_bytes = 250u64;

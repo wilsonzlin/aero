@@ -420,11 +420,27 @@ async fn run_session_inner(
             break;
         }
 
+        let (capture_flush_deadline, capture_flush_enabled) =
+            match capture.as_ref().and_then(|c| c.next_flush_deadline()) {
+                Some(deadline) => (deadline, true),
+                None => (
+                    tokio::time::Instant::now()
+                        .checked_add(Duration::from_secs(3600))
+                        .unwrap_or_else(tokio::time::Instant::now),
+                    false,
+                ),
+            };
+
         tokio::select! {
             biased;
             _ = shutdown_rx.changed() => {
                 request_close_shutting_down(&ws_close_tx);
                 break;
+            }
+            _ = tokio::time::sleep_until(capture_flush_deadline), if capture_flush_enabled => {
+                if let Some(capture) = capture.as_mut() {
+                    capture.flush_if_due().await;
+                }
             }
             msg = ws_receiver.next() => {
                 let Some(msg) = msg else {
