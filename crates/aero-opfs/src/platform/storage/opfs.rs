@@ -4,9 +4,75 @@ use crate::DiskError;
 mod wasm {
     use super::*;
     use js_sys::{Function, Object, Promise, Reflect};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
+
+    thread_local! {
+        /// Best-effort tracker for OPFS `FileSystemSyncAccessHandle` exclusivity within the current
+        /// JS agent (web worker).
+        ///
+        /// Browsers enforce exclusive access per file: attempting to open a second sync access
+        /// handle to the same file returns `InvalidStateError`, which `aero-opfs` maps to
+        /// [`DiskError::InUse`].
+        ///
+        /// Higher layers sometimes need to distinguish:
+        /// - "in use by *this* worker" (we already have the handle open and should reuse the
+        ///   existing backend), vs
+        /// - "in use by another context" (another tab/worker holds the file).
+        ///
+        /// This map is keyed by a normalized OPFS path (leading/trailing slashes removed; duplicate
+        /// slashes collapsed) and is only updated for handles opened via `aero-opfs` APIs.
+        static OPEN_SYNC_ACCESS_HANDLES: RefCell<HashMap<String, usize>> =
+            RefCell::new(HashMap::new());
+    }
+
+    fn normalize_opfs_path(path: &str) -> Option<String> {
+        let mut parts = path.split('/').filter(|p| !p.is_empty());
+        let first = parts.next()?;
+        let mut normalized = String::from(first);
+        for part in parts {
+            normalized.push('/');
+            normalized.push_str(part);
+        }
+        Some(normalized)
+    }
+
+    pub(crate) fn register_open_sync_access_handle(path: &str) {
+        let Some(path) = normalize_opfs_path(path) else {
+            return;
+        };
+        OPEN_SYNC_ACCESS_HANDLES.with(|map| {
+            let mut map = map.borrow_mut();
+            *map.entry(path).or_insert(0) += 1;
+        });
+    }
+
+    pub(crate) fn unregister_open_sync_access_handle(path: &str) {
+        let Some(path) = normalize_opfs_path(path) else {
+            return;
+        };
+        OPEN_SYNC_ACCESS_HANDLES.with(|map| {
+            let mut map = map.borrow_mut();
+            let Some(count) = map.get_mut(&path) else {
+                return;
+            };
+            if *count <= 1 {
+                map.remove(&path);
+            } else {
+                *count -= 1;
+            }
+        });
+    }
+
+    pub(crate) fn sync_access_handle_is_open(path: &str) -> bool {
+        let Some(path) = normalize_opfs_path(path) else {
+            return false;
+        };
+        OPEN_SYNC_ACCESS_HANDLES.with(|map| map.borrow().contains_key(&path))
+    }
 
     #[wasm_bindgen]
     extern "C" {
@@ -642,6 +708,16 @@ mod native {
 
     pub async fn get_root_dir() -> Result<(), DiskError> {
         Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn register_open_sync_access_handle(_path: &str) {}
+
+    #[allow(dead_code)]
+    pub(crate) fn unregister_open_sync_access_handle(_path: &str) {}
+
+    pub(crate) fn sync_access_handle_is_open(_path: &str) -> bool {
+        false
     }
 }
 

@@ -88,6 +88,7 @@ mod wasm {
     }
 
     pub struct OpfsByteStorage {
+        path: String,
         // Keep the `FileHandle` alive for the lifetime of the sync access handle.
         // (The handle itself is the only thing we actively use for IO.)
         _file: opfs_platform::FileHandle,
@@ -113,6 +114,7 @@ mod wasm {
             let _ = self.handle.flush();
             let _ = self.handle.close();
             self.closed = true;
+            opfs_platform::unregister_open_sync_access_handle(&self.path);
         }
     }
 
@@ -152,8 +154,10 @@ mod wasm {
                 .map_err(opfs_platform::disk_error_from_js)?;
 
             let handle = opfs_platform::create_sync_handle(&file).await?;
+            opfs_platform::register_open_sync_access_handle(path);
 
             Ok(Self {
+                path: path.to_string(),
                 _file: file,
                 handle,
                 at_key,
@@ -175,6 +179,7 @@ mod wasm {
                 .close()
                 .map_err(opfs_platform::disk_error_from_js)?;
             self.closed = true;
+            opfs_platform::unregister_open_sync_access_handle(&self.path);
             Ok(())
         }
 
@@ -337,6 +342,7 @@ mod wasm {
     }
 
     pub struct OpfsBackend {
+        path: String,
         file: opfs_platform::FileHandle,
         handle: opfs_platform::SyncAccessHandle,
         sector_size: u32,
@@ -378,6 +384,7 @@ mod wasm {
             let _ = self.handle.flush();
             let _ = self.handle.close();
             self.closed = true;
+            opfs_platform::unregister_open_sync_access_handle(&self.path);
         }
     }
 
@@ -428,6 +435,7 @@ mod wasm {
 
             let handle = opfs_platform::create_sync_handle(&file).await?;
             let mut backend = Self {
+                path: path.to_string(),
                 file,
                 handle,
                 sector_size: DEFAULT_SECTOR_SIZE,
@@ -453,6 +461,7 @@ mod wasm {
             backend.size_bytes = current_size;
             backend.total_sectors = current_size / DEFAULT_SECTOR_SIZE as u64;
 
+            opfs_platform::register_open_sync_access_handle(path);
             Ok(backend)
         }
 
@@ -469,6 +478,7 @@ mod wasm {
                 .close()
                 .map_err(opfs_platform::disk_error_from_js)?;
             self.closed = true;
+            opfs_platform::unregister_open_sync_access_handle(&self.path);
             Ok(())
         }
 
@@ -553,6 +563,7 @@ mod wasm {
 
             let handle = opfs_platform::create_sync_handle(&file).await?;
             let mut backend = Self {
+                path: path.to_string(),
                 file,
                 handle,
                 sector_size: DEFAULT_SECTOR_SIZE,
@@ -581,6 +592,7 @@ mod wasm {
                 let _ = cb.call1(&JsValue::NULL, &JsValue::from_f64(1.0));
             }
 
+            opfs_platform::register_open_sync_access_handle(path);
             Ok(backend)
         }
 

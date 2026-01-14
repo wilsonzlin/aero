@@ -6573,15 +6573,7 @@ impl Machine {
                             // primary HDD base/overlay. In that case, re-opening from OPFS will
                             // fail with `InUse`, but the bytes are already available; we only need
                             // to re-attach the `AtaDrive` to AHCI (snapshot restore clears it).
-                            //
-                            // Only treat this as "already open" when the machine has a non-trivial
-                            // shared disk backend attached (not the default 512-byte empty disk);
-                            // otherwise propagate the `InUse` error so callers know another
-                            // context is holding the file.
-                            let shared_disk = self.inner.shared_disk();
-                            if aero_storage::VirtualDisk::capacity_bytes(&shared_disk)
-                                > aero_storage::SECTOR_SIZE as u64
-                            {
+                            if aero_opfs::opfs_sync_handle_is_open(&base_image) {
                                 self.inner.attach_shared_disk_to_ahci_port0().map_err(|e| {
                                     js_error(format!(
                                         "reattach_restored_disks_from_opfs: disk_id=0 base_image={base_image:?} already open; failed to reattach shared disk to AHCI: {e}"
@@ -7533,7 +7525,9 @@ mod reattach_restored_disks_from_opfs_tests {
         // Creating OPFS sync access handles is worker-only and not universally available in all
         // wasm-bindgen-test runtimes. Skip gracefully when unsupported.
         let base0 = unique_path("reattach-base0-already-open", "img");
-        let disk_size = 4096u64;
+        // Use a 1-sector disk to ensure the "already open" path does not depend on heuristics based
+        // on disk capacity (the default shared disk is also 1 sector, but it is not OPFS-backed).
+        let disk_size = 512u64;
         match create_raw_file(&base0, disk_size).await {
             Ok(()) => {}
             Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,

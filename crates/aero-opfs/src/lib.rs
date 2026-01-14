@@ -64,6 +64,20 @@ pub fn opfs_sync_access_supported() -> bool {
     crate::platform::storage::opfs::opfs_sync_access_supported()
 }
 
+/// Returns `true` if the current JS agent (web worker) already holds an open OPFS
+/// `FileSystemSyncAccessHandle` for `path`.
+///
+/// This is a best-effort helper used by higher layers to avoid re-opening disks/ISOs when OPFS
+/// exclusivity would otherwise surface as [`DiskError::InUse`].
+///
+/// Notes:
+/// - This only tracks handles opened via `aero-opfs` APIs in the current JS agent.
+/// - Other workers/tabs may still hold the file even if this returns `false`.
+/// - On non-wasm targets, this always returns `false`.
+pub fn opfs_sync_handle_is_open(path: &str) -> bool {
+    crate::platform::storage::opfs::sync_access_handle_is_open(path)
+}
+
 // wasm-bindgen-test defaults to running under Node. OPFS requires a browser environment,
 // so configure wasm-only tests to run in a browser once per crate.
 #[cfg(all(test, target_arch = "wasm32"))]
