@@ -406,7 +406,9 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
     Q->PendingValid = FALSE;
 
     VirtqSplitPublish(Q->Vq, head);
-    VirtioPciNotifyQueue(Q->PciDevice, Q->QueueIndex);
+    if (VirtqSplitKickPrepare(Q->Vq)) {
+        VirtioPciNotifyQueue(Q->PciDevice, Q->QueueIndex);
+    }
     VirtqSplitKickCommit(Q->Vq);
 
     if (devCtx != NULL) {
