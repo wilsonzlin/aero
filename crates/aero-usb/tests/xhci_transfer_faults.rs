@@ -140,3 +140,36 @@ fn xhci_transfer_executor_halts_on_dequeue_ptr_overflow() {
     assert!(exec.endpoint_state(0x81).unwrap().halted);
     assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, trb_addr);
 }
+
+#[test]
+fn xhci_transfer_executor_halts_on_unexpected_trb_inside_td_chain() {
+    let keyboard = UsbHidKeyboardHandle::new();
+    let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));
+
+    let mut mem = SparseMem::default();
+
+    // Start a TD with a chained Normal TRB.
+    write_trb(&mut mem, RING_BASE, make_normal_trb(0x2000, 8, true, true));
+
+    // Follow it with an invalid/unknown TRB type (0), which should fault the TD gather and halt the
+    // endpoint. This is distinct from encountering an unsupported TRB when *not* inside a TD chain,
+    // which the executor treats as a recoverable error (advance by one TRB without halting).
+    let mut bad = Trb::new(0, 0, 0);
+    bad.set_cycle(true);
+    bad.set_trb_type_raw(0);
+    write_trb(&mut mem, RING_BASE + 0x10, bad);
+
+    exec.add_endpoint(0x81, RING_BASE);
+    exec.tick_1ms(&mut mem);
+
+    let events = exec.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].completion_code, CompletionCode::TrbError);
+    assert_eq!(events[0].trb_ptr, RING_BASE + 0x10);
+    assert!(exec.endpoint_state(0x81).unwrap().halted);
+    assert_eq!(exec.endpoint_state(0x81).unwrap().ring.dequeue_ptr, RING_BASE);
+
+    // Further ticks must not process additional TRBs while halted.
+    exec.tick_1ms(&mut mem);
+    assert!(exec.take_events().is_empty());
+}
