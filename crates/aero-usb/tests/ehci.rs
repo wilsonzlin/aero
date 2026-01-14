@@ -1305,3 +1305,35 @@ fn ehci_async_qtd_packet_budget_yields_without_faulting() {
         0
     );
 }
+
+#[test]
+fn ehci_schedule_fault_raises_irq_when_enabled_and_clears_on_w1c() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+
+    let fl_base: u32 = 0x7000;
+    let qh: u32 = 0x1800;
+
+    // Frame list entry 0 points at a QH with a self-referential horizontal link.
+    mem.write_u32(fl_base, qh_link_ptr_qh(qh));
+    mem.write_u32(qh + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(qh + 0x10, LINK_TERMINATE);
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBERRINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
+    assert_eq!(sts & regs::USBSTS_USBINT, 0);
+    assert!(c.irq_level(), "expected IRQ to assert when USBERRINT is enabled");
+
+    // USBSTS is write-1-to-clear; acknowledging the error should also drop the IRQ.
+    c.mmio_write(regs::REG_USBSTS, 4, regs::USBSTS_HSE | regs::USBSTS_USBERRINT);
+    let sts2 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts2 & (regs::USBSTS_HSE | regs::USBSTS_USBERRINT), 0);
+    assert!(!c.irq_level(), "expected IRQ to deassert after W1C ack");
+}
