@@ -4507,6 +4507,19 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     // other paths to quickly stop issuing virtio BAR MMIO (e.g. queue notify).
     Adapter->SurpriseRemoved = TRUE;
 
+    // Best-effort: immediately invalidate BAR-backed virtio pointers so any
+    // concurrent notify/config path becomes a no-op even if it already passed a
+    // SurpriseRemoved check before this flag was set.
+    //
+    // These are one-way transitions (non-NULL -> NULL) and are safe to perform
+    // without holding Adapter->Lock.
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.QueueNotifyAddrCache, NULL);
+    Adapter->Vdev.QueueNotifyAddrCacheCount = 0;
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.NotifyBase, NULL);
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.CommonCfg, NULL);
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.IsrStatus, NULL);
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.DeviceCfg, NULL);
+
     NdisAcquireSpinLock(&Adapter->Lock);
     Adapter->State = AerovNetAdapterStopped;
     InterruptHandle = NULL;
