@@ -821,8 +821,6 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
         AerogpuCmdOpcode::UploadResource => "UploadResource",
         AerogpuCmdOpcode::CopyBuffer => "CopyBuffer",
         AerogpuCmdOpcode::CopyTexture2d => "CopyTexture2d",
-        AerogpuCmdOpcode::CreateTextureView => "CreateTextureView",
-        AerogpuCmdOpcode::DestroyTextureView => "DestroyTextureView",
         AerogpuCmdOpcode::CreateShaderDxbc => "CreateShaderDxbc",
         AerogpuCmdOpcode::DestroyShader => "DestroyShader",
         AerogpuCmdOpcode::BindShaders => "BindShaders",
@@ -1588,8 +1586,6 @@ pub fn decode_cmd_stream_listing(
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
                     | AerogpuCmdOpcode::DestroyInputLayout
-                    | AerogpuCmdOpcode::CreateTextureView
-                    | AerogpuCmdOpcode::DestroyTextureView
                     | AerogpuCmdOpcode::SetInputLayout
                     | AerogpuCmdOpcode::SetBlendState
                     | AerogpuCmdOpcode::SetDepthStencilState
