@@ -36,12 +36,22 @@ function isValidDevicePath(path: GuestUsbPath): boolean {
  *
  * The full WASM export also includes xHCI register access + frame stepping; this
  * interface is intentionally narrow so it can be faked in unit tests.
+ *
+ * Note: these methods are optional because older/alternate WASM builds may expose an xHCI MMIO
+ * bridge without any topology helpers. Callers may still pass such a bridge; the topology manager
+ * will feature-detect methods and treat missing exports as a no-op (best-effort).
  */
 export type XhciTopologyBridge = {
-  attach_hub(rootPort: number, portCount: number): void;
-  detach_at_path(path: number[]): void;
-  attach_webhid_device(path: number[], device: unknown): void;
-  attach_usb_hid_passthrough_device(path: number[], device: unknown): void;
+  /**
+   * wasm-bindgen handles always expose `free()`. Keep this required so that concrete WASM bridge
+   * instances are assignable to this (otherwise all-optional object types are treated as "weak" by
+   * TypeScript and require casts).
+   */
+  free: () => void;
+  attach_hub?: (rootPort: number, portCount: number) => void;
+  detach_at_path?: (path: number[]) => void;
+  attach_webhid_device?: (path: number[], device: unknown) => void;
+  attach_usb_hid_passthrough_device?: (path: number[], device: unknown) => void;
 };
 
 type DeviceRecord = {
@@ -144,6 +154,8 @@ export class XhciHidTopologyManager {
   #maybeAttachHub(rootPort: number, options: { minPortCount?: number } = {}): boolean {
     const xhci = this.#xhci;
     if (!xhci) return false;
+    const attachHub = xhci.attach_hub;
+    if (typeof attachHub !== "function") return false;
 
     let portCount = this.#requiredHubPortCount(rootPort);
     const minPortCount = options.minPortCount;
@@ -154,14 +166,17 @@ export class XhciHidTopologyManager {
     if (existing !== undefined && existing >= portCount) return false;
     if (existing !== undefined) {
       // Detach first so the guest observes a disconnect event and reloads the hub descriptor.
-      try {
-        xhci.detach_at_path([rootPort]);
-      } catch {
-        // ignore
+      const detach = xhci.detach_at_path;
+      if (typeof detach === "function") {
+        try {
+          detach.call(xhci, [rootPort]);
+        } catch {
+          // ignore
+        }
       }
     }
     try {
-      xhci.attach_hub(rootPort >>> 0, portCount >>> 0);
+      attachHub.call(xhci, rootPort >>> 0, portCount >>> 0);
       this.#hubAttachedPortCountByRoot.set(rootPort, portCount);
     } catch {
       // Best-effort: hub attachment failures should not crash the worker.
@@ -173,8 +188,10 @@ export class XhciHidTopologyManager {
   #maybeDetachPath(path: GuestUsbPath): void {
     const xhci = this.#xhci;
     if (!xhci) return;
+    const detach = xhci.detach_at_path;
+    if (typeof detach !== "function") return;
     try {
-      xhci.detach_at_path(path);
+      detach.call(xhci, path);
     } catch {
       // ignore
     }
@@ -202,9 +219,13 @@ export class XhciHidTopologyManager {
 
     try {
       if (rec.kind === "webhid") {
-        xhci.attach_webhid_device(rec.path, rec.device);
+        const attach = xhci.attach_webhid_device;
+        if (typeof attach !== "function") return;
+        attach.call(xhci, rec.path, rec.device);
       } else {
-        xhci.attach_usb_hid_passthrough_device(rec.path, rec.device);
+        const attach = xhci.attach_usb_hid_passthrough_device;
+        if (typeof attach !== "function") return;
+        attach.call(xhci, rec.path, rec.device);
       }
     } catch {
       // ignore

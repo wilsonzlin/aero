@@ -1877,7 +1877,7 @@ function maybeInitXhciDevice(): void {
 
   xhciControllerBridge = res.bridge;
   xhciDevice = res.device;
-  xhciHidTopology.setXhciBridge(res.bridge as unknown as any);
+  xhciHidTopology.setXhciBridge(res.bridge);
 
   // Synthetic USB HID devices (keyboard/mouse/gamepad) may be attached behind xHCI in WASM builds
   // that omit UHCI.

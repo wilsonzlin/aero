@@ -9,6 +9,7 @@ function createFakeXhci(): XhciTopologyBridge & {
   attach_usb_hid_passthrough_device: ReturnType<typeof vi.fn>;
 } {
   return {
+    free: vi.fn(),
     attach_hub: vi.fn(),
     detach_at_path: vi.fn(),
     attach_webhid_device: vi.fn(),
