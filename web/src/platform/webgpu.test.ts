@@ -76,8 +76,8 @@ describe("requestWebGpuDevice()", () => {
     const onUncapturedError = vi.fn();
     await requestWebGpuDevice({ onUncapturedError });
 
-    expect(device.onuncapturederror).toBeTypeOf("function");
-    device.onuncapturederror({ error: "boom2" });
+    expect(typeof device.onuncapturederror).toBe("function");
+    (device.onuncapturederror as (ev: any) => void)({ error: "boom2" });
     expect(onUncapturedError).toHaveBeenCalledWith("boom2");
   });
 
@@ -99,7 +99,7 @@ describe("requestWebGpuDevice()", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     await requestWebGpuDevice();
 
-    expect(uncapturedHandler).toBeTypeOf("function");
+    expect(typeof uncapturedHandler).toBe("function");
     (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
     (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
     expect(spy).toHaveBeenCalledTimes(1);
@@ -125,7 +125,7 @@ describe("requestWebGpuDevice()", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await requestWebGpuDevice({ onUncapturedError: 123 as any });
 
-    expect(uncapturedHandler).toBeTypeOf("function");
+    expect(typeof uncapturedHandler).toBe("function");
     (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
     (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
     expect(spy).toHaveBeenCalledTimes(1);
