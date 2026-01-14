@@ -611,6 +611,10 @@ fn wgsl_has_expected_entry_point(wgsl: &str, stage: shader::ShaderStage) -> bool
                 next += 1;
                 continue;
             }
+            if next_trimmed.starts_with("//") {
+                next += 1;
+                continue;
+            }
             // Allow additional attribute lines between the stage attribute and entry point.
             // Attributes in WGSL apply to the immediately following item, regardless of newline
             // placement.

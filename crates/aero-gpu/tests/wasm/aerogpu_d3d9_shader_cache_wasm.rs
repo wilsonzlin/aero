@@ -1391,6 +1391,81 @@ async fn d3d9_executor_accepts_persisted_wgsl_entry_point_one_line_formatting() 
 }
 
 #[wasm_bindgen_test(async)]
+async fn d3d9_executor_accepts_persisted_wgsl_entry_point_with_comment_line() {
+    // Comments are whitespace in WGSL and may appear between the stage attribute and `fn` line. The
+    // persistent cache hit validator should accept this formatting and avoid invalidating a valid
+    // cached module.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let vs_bytes = assemble_vs_pos_only();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &vs_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    let wgsl_before = Reflect::get(&cached, &JsValue::from_str("wgsl"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert!(
+        wgsl_before.contains("@vertex\nfn vs_main"),
+        "expected cached WGSL to contain @vertex vs_main entry point"
+    );
+
+    let wgsl_comment = wgsl_before.replace(
+        "@vertex\nfn vs_main",
+        "@vertex\n// entry point comment\nfn vs_main",
+    );
+    let cached_obj: Object = cached
+        .clone()
+        .dyn_into()
+        .expect("cached entry should be an object");
+    Reflect::set(
+        &cached_obj,
+        &JsValue::from_str("wgsl"),
+        &JsValue::from_str(&wgsl_comment),
+    )
+    .expect("set cached.wgsl");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 2, "expected persistent cache hit");
+    assert_eq!(put_calls, 1, "expected no retranslation/persist");
+    assert_eq!(delete_calls, 0, "expected no invalidation");
+}
+
+#[wasm_bindgen_test(async)]
 async fn d3d9_executor_accepts_persisted_wgsl_multiline_binding_attributes() {
     // WGSL allows attributes to be split across multiple lines. Ensure our persistent-hit validator
     // accepts this formatting and does not thrash by invalidating every persistent hit.
