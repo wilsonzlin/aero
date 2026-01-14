@@ -945,8 +945,13 @@ Endpoint meanings:
 When `udpRelay.authMode` is:
 
 - `none`: connect directly.
-- `api_key`: append `?apiKey=<token>` to relay URLs (dev-only mode).
-- `jwt`: append `?token=<token>` to relay URLs (production mode).
+- `api_key` / `jwt`: clients must authenticate to the relay service. Credential delivery options:
+  - **Query string** (simple but less preferred; can leak into logs/history):
+    - `api_key`: `?apiKey=<token>` (or `?token=<token>` for compatibility)
+    - `jwt`: `?token=<token>` (or `?apiKey=<token>` for compatibility)
+  - **First WebSocket message** (recommended for browser clients): send a JSON text auth message, then proceed:
+    - `{ "type":"auth", "apiKey":"<token>" }` or `{ "type":"auth", "token":"<token>" }`
+  - **Upgrade request headers** (best for non-browser clients): use standard header carriers (`Authorization` / `X-API-Key`), per [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
 
 Some deployments additionally expose `POST /udp-relay/token` on the gateway to refresh the short-lived relay token without re-running the full session bootstrap.
 
