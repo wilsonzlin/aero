@@ -436,6 +436,9 @@ jobs:
           toolchain: stable
           locked: always
 
+      - name: Verify deterministic fixtures are up-to-date
+        run: cargo xtask fixtures --check
+
       - name: Install QEMU + tooling
         run: |
           sudo apt-get update
@@ -480,9 +483,6 @@ jobs:
 
       - name: Prepare open-source test images
         run: bash scripts/prepare-freedos.sh
-
-      - name: Verify test fixtures are up-to-date
-        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- fixtures --check
 
       - name: Run QEMU boot tests
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p emulator --test boot_sector --test freedos_boot
