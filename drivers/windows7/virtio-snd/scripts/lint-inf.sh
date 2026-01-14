@@ -444,6 +444,87 @@ section_contains_norm \
 
 if [ -f "$INF_TRANSITIONAL" ]; then
   require_ascii_only "$INF_TRANSITIONAL" "inf/aero-virtio-snd-legacy.inf"
+  note "checking transitional INF HWID binding..."
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacyModels.NTx86' \
+    'pci\ven_1af4&dev_1018' \
+    "inf/aero-virtio-snd-legacy.inf must bind PCI\\VEN_1AF4&DEV_1018 in [AeroVirtioSndLegacyModels.NTx86]"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacyModels.NTamd64' \
+    'pci\ven_1af4&dev_1018' \
+    "inf/aero-virtio-snd-legacy.inf must bind PCI\\VEN_1AF4&DEV_1018 in [AeroVirtioSndLegacyModels.NTamd64]"
+
+  note "checking transitional INF WDMAudio/PortCls wiring..."
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT' \
+    'include=ks.inf,wdmaudio.inf' \
+    "inf/aero-virtio-snd-legacy.inf must declare: Include = ks.inf, wdmaudio.inf"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT' \
+    'needs=ks.registration,wdmaudio.registration' \
+    "inf/aero-virtio-snd-legacy.inf must declare: Needs = KS.Registration, WDMAUDIO.Registration"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT' \
+    'copyfiles=aerovirtiosndlegacy.copyfiles' \
+    "inf/aero-virtio-snd-legacy.inf must stage files via: CopyFiles = AeroVirtioSndLegacy.CopyFiles"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT' \
+    'addreg=aerovirtiosndlegacy.addreg' \
+    "inf/aero-virtio-snd-legacy.inf must apply registry settings via: AddReg = AeroVirtioSndLegacy.AddReg"
+
+  note "checking transitional INF SYS/service consistency..."
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'DestinationDirs' \
+    'aerovirtiosndlegacy.copyfiles=12' \
+    "inf/aero-virtio-snd-legacy.inf must install SYS to %12% via: [DestinationDirs] AeroVirtioSndLegacy.CopyFiles = 12"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy.AddReg' \
+    'ntmpdriver,,virtiosnd_legacy.sys' \
+    "inf/aero-virtio-snd-legacy.inf must reference virtiosnd_legacy.sys via NTMPDriver"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT.Services' \
+    'addservice=aeroviosnd_legacy' \
+    "inf/aero-virtio-snd-legacy.inf must install the aeroviosnd_legacy service (AddService)"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Service_Inst' \
+    'servicebinary=%12%\virtiosnd_legacy.sys' \
+    "inf/aero-virtio-snd-legacy.inf must reference virtiosnd_legacy.sys via ServiceBinary"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy.CopyFiles' \
+    'virtiosnd_legacy.sys' \
+    "inf/aero-virtio-snd-legacy.inf must copy virtiosnd_legacy.sys (AeroVirtioSndLegacy.CopyFiles)"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'SourceDisksFiles' \
+    'virtiosnd_legacy.sys=1' \
+    "inf/aero-virtio-snd-legacy.inf must list virtiosnd_legacy.sys under [SourceDisksFiles]"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'Version' \
+    'catalogfile=aero-virtio-snd-legacy.cat' \
+    "inf/aero-virtio-snd-legacy.inf must declare: CatalogFile = aero-virtio-snd-legacy.cat"
+
   note "checking transitional INF bring-up toggle defaults..."
   section_contains_norm \
     "$INF_TRANSITIONAL" \
