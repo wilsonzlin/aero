@@ -3883,10 +3883,17 @@ impl Machine {
     }
 
     pub fn new(mut cfg: MachineConfig) -> Result<Self, MachineError> {
-        // Keep the high-level `boot_device` field consistent with the raw BIOS boot drive number.
+        // Normalize boot selection:
         //
-        // `boot_drive` remains the canonical input for backward compatibility, but `boot_device` is
-        // exposed for runtimes that want a simple HDD-vs-CD query without dealing with drive numbers.
+        // - `boot_drive` is the canonical, backwards-compatible selector (used directly by BIOS).
+        // - `boot_device` is a convenience/high-level selector.
+        //
+        // If callers set `boot_device=Cdrom` but leave the default HDD boot drive (`0x80`), treat
+        // that as a request to boot from CD and upgrade the boot drive to the canonical CD0 drive
+        // number (`0xE0`).
+        if cfg.boot_device == BootDevice::Cdrom && cfg.boot_drive == 0x80 {
+            cfg.boot_drive = 0xE0;
+        }
         cfg.boot_device = if (0xE0..=0xEF).contains(&cfg.boot_drive) {
             BootDevice::Cdrom
         } else {
@@ -3913,6 +3920,9 @@ impl Machine {
         backing: Box<dyn memory::GuestMemory>,
     ) -> Result<Self, MachineError> {
         cfg.ram_size_bytes = backing.size();
+        if cfg.boot_device == BootDevice::Cdrom && cfg.boot_drive == 0x80 {
+            cfg.boot_drive = 0xE0;
+        }
         cfg.boot_device = if (0xE0..=0xEF).contains(&cfg.boot_drive) {
             BootDevice::Cdrom
         } else {

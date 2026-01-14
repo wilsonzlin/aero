@@ -184,3 +184,36 @@ fn bios_boots_from_install_media_when_configured() {
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), b"CD\n");
 }
+
+#[test]
+fn machine_config_boot_device_cdrom_implies_cd_boot_drive() {
+    let mut cfg = MachineConfig::win7_storage_defaults(16 * 1024 * 1024);
+    // Only set the high-level selection knob; leave `boot_drive` at its default (0x80).
+    cfg.boot_device = BootDevice::Cdrom;
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Primary HDD boot sector.
+    let hdd_boot = build_serial_boot_sector(b"HDD\n");
+    m.set_disk_image(hdd_boot.to_vec()).unwrap();
+
+    // Install media: minimal El Torito no-emulation ISO whose boot image prints "CD\n".
+    let boot_catalog_lba = 20;
+    let boot_image_lba = 21;
+    let boot_image = build_serial_boot_image(b"CD\n");
+    let iso = build_minimal_iso_no_emulation(
+        boot_catalog_lba,
+        boot_image_lba,
+        &boot_image,
+        /* load_segment */ 0x07C0,
+        /* sector_count */ 4, // 4 * 512 = 2048 bytes
+    );
+    m.attach_install_media_iso_bytes(iso)
+        .expect("failed to attach install media ISO");
+
+    // Reset into the newly-attached media. (The machine booted once during construction without an ISO.)
+    m.reset();
+
+    run_until_halt(&mut m);
+    assert_eq!(m.take_serial_output(), b"CD\n");
+}
