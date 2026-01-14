@@ -736,7 +736,7 @@ For non-patch topologies, the number of *input primitives* (`input_prim_count`) 
 | `TRIANGLELIST` | 3 / prim | `input_vertex_invocations / 3` |
 | `TRIANGLESTRIP` | N | `max(0, input_vertex_invocations - 2)` |
 | `LINELIST_ADJ` | 4 / prim | `input_vertex_invocations / 4` |
-| `LINESTRIP_ADJ` | `2*prim + 2` | `max(0, (input_vertex_invocations.saturating_sub(2)) / 2)` |
+| `LINESTRIP_ADJ` | `prim + 3` | `max(0, input_vertex_invocations.saturating_sub(3))` |
 | `TRIANGLELIST_ADJ` | 6 / prim | `input_vertex_invocations / 6` |
 | `TRIANGLESTRIP_ADJ` | `2*prim + 4` | `max(0, (input_vertex_invocations.saturating_sub(4)) / 2)` |
 
