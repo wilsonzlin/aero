@@ -1,4 +1,4 @@
-package turnrest
+package httpserver
 
 import (
 	"crypto/hmac"
@@ -17,7 +17,7 @@ func TestGenerate_DeterministicWithFixedTime(t *testing.T) {
 		SessionIDSource: func() (string, error) { return "unused", nil },
 	})
 	if err != nil {
-		t.Fatalf("NewGenerator: %v", err)
+		t.Fatalf("newGenerator: %v", err)
 	}
 
 	creds, err := g.Generate("session123")
@@ -50,7 +50,7 @@ func TestGenerate_TTLBehavior(t *testing.T) {
 		SessionIDSource: func() (string, error) { return "unused", nil },
 	})
 	if err != nil {
-		t.Fatalf("NewGenerator: %v", err)
+		t.Fatalf("newGenerator: %v", err)
 	}
 
 	creds, err := g.Generate("abc")
@@ -71,7 +71,7 @@ func TestGenerate_CredentialBase64AndHMACSHA1(t *testing.T) {
 		SessionIDSource: func() (string, error) { return "unused", nil },
 	})
 	if err != nil {
-		t.Fatalf("NewGenerator: %v", err)
+		t.Fatalf("newGenerator: %v", err)
 	}
 
 	creds, err := g.Generate("sid")

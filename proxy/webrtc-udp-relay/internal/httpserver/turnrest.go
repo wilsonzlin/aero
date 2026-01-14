@@ -1,4 +1,4 @@
-package turnrest
+package httpserver
 
 import (
 	"crypto/hmac"
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// This package implements coturn-compatible TURN REST credentials.
+// This file implements coturn-compatible TURN REST credentials.
 //
 // See:
 // - https://github.com/coturn/coturn/wiki/turnserver
@@ -42,7 +42,7 @@ type generatorConfig struct {
 	SessionIDSource func() (string, error)
 }
 
-func NewGenerator(sharedSecret string, ttlSeconds int64, usernamePrefix string) (*generator, error) {
+func newTURNRESTGenerator(sharedSecret string, ttlSeconds int64, usernamePrefix string) (*generator, error) {
 	return newGenerator(generatorConfig{
 		SharedSecret:   sharedSecret,
 		TTLSeconds:     ttlSeconds,

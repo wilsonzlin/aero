@@ -19,7 +19,6 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/turnrest"
 )
 
 type buildInfo struct {
@@ -180,7 +179,7 @@ func (s *server) registerRoutes() {
 			iceServers = []webrtc.ICEServer{}
 		}
 		if s.cfg.TURNREST.Enabled() {
-			gen, err := turnrest.NewGenerator(
+			gen, err := newTURNRESTGenerator(
 				s.cfg.TURNREST.SharedSecret,
 				s.cfg.TURNREST.TTLSeconds,
 				s.cfg.TURNREST.UsernamePrefix,
