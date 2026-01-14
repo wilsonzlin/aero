@@ -1065,10 +1065,13 @@ Note: When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the host harness e
 - virtio-snd capture endpoint checks (`...|virtio-snd-capture|PASS`)
 - virtio-snd full-duplex regression (`...|virtio-snd-duplex|PASS`)
 
-The duplex test runs only when the guest selftest is provisioned with `--test-snd-capture`
-(or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`).
-If your image was provisioned without capture smoke testing enabled, the guest will emit
-`virtio-snd-duplex|SKIP|flag_not_set` and the host harness will fail with a `...DUPLEX_SKIPPED` reason.
+The duplex test runs whenever the guest selftest runs the virtio-snd capture smoke test:
+  - by default when a virtio-snd device is present (newer selftest binaries), or
+  - when forced via `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`).
+
+If your guest selftest is older (or otherwise not configured to run capture smoke testing), it may emit
+`virtio-snd-duplex|SKIP|flag_not_set`; in that case the host harness fails with a `...DUPLEX_SKIPPED` reason.
+Provision the guest with `--test-snd-capture` / env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`.
 
 #### virtio-snd buffer limits stress test
 

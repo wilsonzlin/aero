@@ -394,10 +394,11 @@ The selftest logs to:
       `disable-legacy=on,x-pci-revision=0x01` so the strict INF can bind.
     - If your device enumerates as transitional, install the opt-in legacy driver package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`)
       and pass `--allow-virtio-snd-transitional` so the selftest accepts it (intended for QEMU bring-up/regression).
-    - When `--test-snd` is enabled, the selftest also checks for a virtio-snd capture endpoint and emits
+    - When a virtio-snd device is present (or when `--test-snd` / `--require-snd` is set), the selftest also checks for a virtio-snd capture endpoint and emits
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present` when present.
       If the capture endpoint is missing, the capture test is reported as `SKIP|endpoint_missing` unless `--require-snd-capture` is set.
-    - `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`) runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
+    - `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`) forces a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval
+      (older selftest binaries required this; newer ones run capture/duplex automatically when virtio-snd is present).
       This passes even on silence by default; use `--require-non-silence` to require a non-silent buffer.
     - `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) runs a WASAPI buffer sizing stress test and emits:
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL|...`
