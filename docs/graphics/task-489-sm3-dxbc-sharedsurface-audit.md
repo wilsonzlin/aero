@@ -155,6 +155,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 - `crates/aero-gpu/tests/shared_surface_aliasing.rs`
 - `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`
 - `crates/aero-gpu/tests/aerogpu_d3d9_cmd_stream_shared_surface.rs` (end-to-end cmd-stream coverage)
+- `crates/aero-d3d11/tests/aerogpu_cmd_shared_surface.rs` (D3D11 executor integration coverage; may skip if wgpu/WebGPU is unavailable)
 
 **Notes:**
 - The D3D11 executor reuses the canonical `aero-gpu` shared-surface bookkeeping:
@@ -170,6 +171,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-gpu --lib shared_surface::tests --
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test shared_surface_aliasing --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_shared_surface --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_cmd_stream_shared_surface --locked
+
+# D3D11 executor shared-surface behavior (wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1):
+bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_shared_surface --locked
 ```
 
 ---
