@@ -23,6 +23,7 @@ use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, Sm4Program,
 };
+use crate::sm4::opcode as sm4_opcode;
 
 use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
@@ -475,6 +476,15 @@ impl AerogpuCmdRuntime {
     pub fn create_shader_dxbc(&mut self, handle: AerogpuHandle, dxbc_bytes: &[u8]) -> Result<()> {
         let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse DXBC shader chunk")?;
+
+        // SM5 geometry shaders can emit to multiple output streams via `emit_stream` / `cut_stream`.
+        // Aero's initial GS bring-up only targets stream 0, so reject any shaders that use a
+        // non-zero stream index with a clear diagnostic.
+        //
+        // Validate before stage dispatch so the policy is enforced even for GS/HS/DS shaders that
+        // are currently accepted-but-ignored by the WebGPU backend.
+        validate_sm5_gs_streams(&program)?;
+
         let stage = match program.stage {
             crate::ShaderStage::Vertex => ShaderStage::Vertex,
             crate::ShaderStage::Pixel => ShaderStage::Fragment,
@@ -1823,6 +1833,126 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
     fn default_sampler(&self) -> &aero_gpu::bindings::samplers::CachedSampler {
         self.default_sampler
     }
+}
+
+fn validate_sm5_gs_streams(program: &Sm4Program) -> Result<()> {
+    // DXBC encodes SM4/SM5 shaders as a stream of DWORD tokens. We only need to recognize the
+    // `emit_stream` / `cut_stream` instruction forms, which carry the stream index as an
+    // immediate32 operand.
+    //
+    // Keep this scan token-level (rather than using the full decoder) so we can detect unsupported
+    // multi-stream usage even when other parts of the shader are not yet decodable/translateable.
+    let declared_len = program.tokens.get(1).copied().unwrap_or(0) as usize;
+    if declared_len < 2 || declared_len > program.tokens.len() {
+        // Malformed token stream; the real decoder will report a better error later.
+        return Ok(());
+    }
+
+    let toks = &program.tokens[..declared_len];
+    let mut i = 2usize;
+    while i < toks.len() {
+        let opcode_token = toks[i];
+        let opcode = opcode_token & sm4_opcode::OPCODE_MASK;
+        let len = ((opcode_token >> sm4_opcode::OPCODE_LEN_SHIFT) & sm4_opcode::OPCODE_LEN_MASK)
+            as usize;
+        if len == 0 || i + len > toks.len() {
+            // Malformed instruction; let downstream decode/translation surface the issue.
+            return Ok(());
+        }
+
+        let stream_opcode_name = if opcode == sm4_opcode::OPCODE_EMIT_STREAM {
+            Some("emit_stream")
+        } else if opcode == sm4_opcode::OPCODE_CUT_STREAM {
+            Some("cut_stream")
+        } else {
+            None
+        };
+
+        if let Some(op_name) = stream_opcode_name {
+            // `emit_stream` / `cut_stream` take exactly one operand: an immediate32 scalar
+            // (replicated lanes) indicating the stream index.
+            //
+            // Skip any extended opcode tokens to find the operand token.
+            let inst_end = i + len;
+            let mut operand_pos = i + 1;
+            let mut extended = (opcode_token & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
+            while extended {
+                if operand_pos >= inst_end {
+                    return Ok(());
+                }
+                let Some(ext) = toks.get(operand_pos).copied() else {
+                    return Ok(());
+                };
+                operand_pos += 1;
+                extended = (ext & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
+            }
+
+            if operand_pos >= inst_end {
+                return Ok(());
+            }
+            let Some(operand_token) = toks.get(operand_pos).copied() else {
+                return Ok(());
+            };
+            operand_pos += 1;
+
+            let ty =
+                (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT) & sm4_opcode::OPERAND_TYPE_MASK;
+            if ty != sm4_opcode::OPERAND_TYPE_IMMEDIATE32 {
+                // Malformed stream operand; the decoder will surface a better error later.
+                return Ok(());
+            }
+
+            // Skip extended operand tokens (modifiers).
+            let mut operand_ext = (operand_token & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
+            while operand_ext {
+                if operand_pos >= inst_end {
+                    return Ok(());
+                }
+                let Some(ext) = toks.get(operand_pos).copied() else {
+                    return Ok(());
+                };
+                operand_pos += 1;
+                operand_ext = (ext & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
+            }
+
+            // Immediate operands should have no indices, but if they do, bail out and let the real
+            // decoder handle it.
+            let index_dim = (operand_token >> sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT)
+                & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK;
+            if index_dim != sm4_opcode::OPERAND_INDEX_DIMENSION_0D {
+                return Ok(());
+            }
+
+            let num_components = operand_token & sm4_opcode::OPERAND_NUM_COMPONENTS_MASK;
+            let stream = match num_components {
+                // Scalar immediate (1 DWORD payload).
+                1 => {
+                    if operand_pos >= inst_end {
+                        return Ok(());
+                    }
+                    toks[operand_pos]
+                }
+                // 4-component immediate (4 DWORD payload); `decode_stream_index` uses lane 0.
+                2 => {
+                    if operand_pos + 3 >= inst_end {
+                        return Ok(());
+                    }
+                    toks[operand_pos]
+                }
+                _ => return Ok(()),
+            };
+
+            if stream != 0 {
+                bail!(
+                    "create_shader_dxbc: unsupported {op_name} stream index {stream} (only stream 0 is supported)"
+                );
+            }
+        }
+
+        i += len;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
