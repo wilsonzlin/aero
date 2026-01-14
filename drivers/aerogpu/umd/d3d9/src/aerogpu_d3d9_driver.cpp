@@ -22887,6 +22887,39 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     upload_size = static_cast<uint32_t>(converted.size());
   }
 
+  // Validate instancing configuration up-front so invalid-call failures do not
+  // emit UP uploads or temporary stream bindings.
+  if (any_stream_source_freq_non_default_locked(dev)) {
+    std::bitset<16> used_streams{};
+    if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
+    bool any_used_non_default = false;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
+        any_used_non_default = true;
+        break;
+      }
+    }
+    if (any_used_non_default) {
+      InstancingConfig cfg{};
+      hr = parse_instancing_config_locked(dev, used_streams, &cfg);
+      if (FAILED(hr)) {
+        return trace.ret(hr);
+      }
+      bool has_instanced_stream = false;
+      for (uint32_t s = 0; s < 16; ++s) {
+        if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
+          has_instanced_stream = true;
+          break;
+        }
+      }
+      if (!(cfg.instance_count == 1 && !has_instanced_stream) && !dev->user_vs) {
+        return trace.ret(kD3DErrInvalidCall);
+      }
+    }
+  }
+
   hr = ensure_up_vertex_buffer_locked(dev, upload_size);
   if (FAILED(hr)) {
     return trace.ret(hr);
@@ -22898,6 +22931,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, upload_stride)) {
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
+  }
+
+  const HRESULT inst_hr = try_draw_instanced_primitive_locked(dev, type, /*start_vertex=*/0, primitive_count);
+  if (inst_hr != S_FALSE) {
+    if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
+      return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
+    }
+    return trace.ret(inst_hr);
   }
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
@@ -23049,6 +23090,39 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     upload_size = static_cast<uint32_t>(converted.size());
   }
 
+  // Validate instancing configuration up-front so invalid-call failures do not
+  // emit UP uploads or temporary stream bindings.
+  if (any_stream_source_freq_non_default_locked(dev)) {
+    std::bitset<16> used_streams{};
+    if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
+      return kD3DErrInvalidCall;
+    }
+    bool any_used_non_default = false;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
+        any_used_non_default = true;
+        break;
+      }
+    }
+    if (any_used_non_default) {
+      InstancingConfig cfg{};
+      hr = parse_instancing_config_locked(dev, used_streams, &cfg);
+      if (FAILED(hr)) {
+        return hr;
+      }
+      bool has_instanced_stream = false;
+      for (uint32_t s = 0; s < 16; ++s) {
+        if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
+          has_instanced_stream = true;
+          break;
+        }
+      }
+      if (!(cfg.instance_count == 1 && !has_instanced_stream) && !dev->user_vs) {
+        return kD3DErrInvalidCall;
+      }
+    }
+  }
+
   hr = ensure_up_vertex_buffer_locked(dev, upload_size);
   if (FAILED(hr)) {
     return hr;
@@ -23060,6 +23134,15 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, upload_stride)) {
     return device_lost_override(dev, E_OUTOFMEMORY);
+  }
+
+  const HRESULT inst_hr =
+      try_draw_instanced_primitive_locked(dev, pDraw->PrimitiveType, /*start_vertex=*/0, pDraw->PrimitiveCount);
+  if (inst_hr != S_FALSE) {
+    if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    return inst_hr;
   }
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
@@ -23187,6 +23270,39 @@ static HRESULT device_draw_indexed_primitive2_locked(
     vb_upload_size = static_cast<uint32_t>(converted.size());
   }
 
+  // Validate instancing configuration up-front so invalid-call failures do not
+  // emit UP uploads or temporary stream/index bindings.
+  if (any_stream_source_freq_non_default_locked(dev)) {
+    std::bitset<16> used_streams{};
+    if (!vertex_decl_used_streams(dev->vertex_decl, &used_streams)) {
+      return kD3DErrInvalidCall;
+    }
+    bool any_used_non_default = false;
+    for (uint32_t s = 0; s < 16; ++s) {
+      if (used_streams.test(s) && dev->stream_source_freq[s] != 1u) {
+        any_used_non_default = true;
+        break;
+      }
+    }
+    if (any_used_non_default) {
+      InstancingConfig cfg{};
+      hr = parse_instancing_config_locked(dev, used_streams, &cfg);
+      if (FAILED(hr)) {
+        return hr;
+      }
+      bool has_instanced_stream = false;
+      for (uint32_t s = 0; s < 16; ++s) {
+        if (used_streams.test(s) && cfg.instanced_divisor[s] != 0u) {
+          has_instanced_stream = true;
+          break;
+        }
+      }
+      if (!(cfg.instance_count == 1 && !has_instanced_stream) && !dev->user_vs) {
+        return kD3DErrInvalidCall;
+      }
+    }
+  }
+
   hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);
   if (FAILED(hr)) {
     return hr;
@@ -23225,6 +23341,39 @@ static HRESULT device_draw_indexed_primitive2_locked(
   ib_cmd->format = d3d9_index_format_to_aerogpu(pDraw->IndexDataFormat);
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
+
+  const HRESULT inst_hr = try_draw_instanced_indexed_primitive_locked(
+      dev,
+      pDraw->PrimitiveType,
+      /*base_vertex=*/0,
+      pDraw->MinIndex,
+      pDraw->NumVertices,
+      /*start_index=*/0,
+      pDraw->PrimitiveCount);
+  if (inst_hr != S_FALSE) {
+    // Restore stream source 0.
+    if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
+      // Restore IB state (best-effort) before returning.
+      dev->index_buffer = saved_ib;
+      dev->index_format = saved_fmt;
+      dev->index_offset_bytes = saved_offset;
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+
+    // Restore index buffer binding.
+    dev->index_buffer = saved_ib;
+    dev->index_format = saved_fmt;
+    dev->index_offset_bytes = saved_offset;
+    auto* restore_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!restore_cmd) {
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    restore_cmd->buffer = saved_ib ? saved_ib->handle : 0;
+    restore_cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
+    restore_cmd->offset_bytes = saved_offset;
+    restore_cmd->reserved0 = 0;
+    return inst_hr;
+  }
 
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
