@@ -719,7 +719,6 @@ describe("io/bus/pci", () => {
       mmioRead: () => 0x1234_5678,
       mmioWrite: () => {},
     };
-
     const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
     const cfg = makeCfgIo(portBus);
 
@@ -730,6 +729,32 @@ describe("io/bus/pci", () => {
     expect(mmioBus.read(base, 4)).toBe(0xffff_ffff);
     cfg.writeU16(addr.device, addr.function, 0x04, 0x0002); // Memory Space Enable
     expect(mmioBus.read(base, 4)).toBe(0x1234_5678);
+  });
+
+  it("skips a reserved MMIO range at the start of the PCI MMIO window when allocating BARs", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    const vramSize = 0x12_3456;
+    pciBus.reserveMmio(vramSize);
+
+    const dev: PciDevice = {
+      name: "reserved_mmio_dev",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x4000 }, null, null, null, null, null],
+    };
+    const addr = pciBus.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus);
+
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    const base = BigInt(bar0) & 0xffff_fff0n;
+    expect(base).toBeGreaterThanOrEqual(BigInt(PCI_MMIO_BASE) + BigInt(vramSize));
+    // BAR alignment rule: max(size, 0x1000) => 0x4000.
+    expect(base % 0x4000n).toBe(0n);
   });
 
   it("prevents initPciConfig() from changing the header type (BAR writes must still remap)", () => {

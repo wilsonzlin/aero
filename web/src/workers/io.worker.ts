@@ -61,6 +61,7 @@ import {
   type WorkerInitMessage,
 } from "../runtime/protocol";
 import { DeviceManager, type IrqSink } from "../io/device_manager";
+import { MmioRamHandler } from "../io/bus/mmio_ram";
 import {
   IRQ_REFCOUNT_ASSERT,
   IRQ_REFCOUNT_DEASSERT,
@@ -4415,41 +4416,23 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       };
 
       const hasVram = !!vramU8 && vramSizeBytes > 0;
-      const pciMmioBase = hasVram ? BigInt(vramBasePaddr >>> 0) + BigInt(vramSizeBytes >>> 0) : undefined;
+      const pciMmioBase = hasVram
+        ? (() => {
+            const base = BigInt(vramBasePaddr >>> 0);
+            const size = BigInt(vramSizeBytes >>> 0);
+            const align = 0x1000n;
+            const alignedSize = (size + (align - 1n)) & ~(align - 1n);
+            return base + alignedSize;
+          })()
+        : undefined;
       const mgr = new DeviceManager(irqSink, { pciMmioBase });
       deviceManager = mgr;
 
       if (hasVram) {
-        // Reserve a dedicated VRAM aperture at the front of the PCI MMIO BAR window. This lives
-        // outside guest RAM (which is clamped below PCI_MMIO_BASE) and is shared between the I/O
-        // worker (MMIO writes) and the GPU worker (scanout readback) via SharedArrayBuffer.
         const base = BigInt(vramBasePaddr >>> 0);
         const sizeBytes = BigInt(vramSizeBytes >>> 0);
-        const vram = vramU8!;
-        mgr.registerMmio(base, sizeBytes, {
-          mmioRead: (offset, size) => {
-            if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
-            const off = Number(offset);
-            if (!Number.isFinite(off) || off < 0 || off + size > vramSizeBytes) return defaultReadValue(size);
-            if (size === 1) return vram[off]! & 0xff;
-            if (size === 2) return (vram[off]! | (vram[off + 1]! << 8)) >>> 0;
-            return (
-              (vram[off]! | (vram[off + 1]! << 8) | (vram[off + 2]! << 16) | (vram[off + 3]! << 24)) >>> 0
-            );
-          },
-          mmioWrite: (offset, size, value) => {
-            if (size !== 1 && size !== 2 && size !== 4) return;
-            const off = Number(offset);
-            if (!Number.isFinite(off) || off < 0 || off + size > vramSizeBytes) return;
-            const v = value >>> 0;
-            vram[off] = v & 0xff;
-            if (size >= 2) vram[off + 1] = (v >>> 8) & 0xff;
-            if (size >= 4) {
-              vram[off + 2] = (v >>> 16) & 0xff;
-              vram[off + 3] = (v >>> 24) & 0xff;
-            }
-          },
-        });
+        const vram = vramU8!.subarray(0, vramSizeBytes);
+        mgr.registerMmio(base, sizeBytes, new MmioRamHandler(vram));
       }
 
       // Prefer the canonical Rust i8042 model when the WASM export is available; fall back to

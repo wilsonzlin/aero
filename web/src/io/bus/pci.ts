@@ -384,14 +384,72 @@ export class PciBus implements PortIoHandler {
   #addrReg = 0;
 
   // Simple allocators for auto-assigned BARs (legacy 32-bit).
+  readonly #mmioBase: bigint;
+  // Reservation end (exclusive) at the start of the MMIO window. Used to reserve a deterministic
+  // aperture for memory-backed MMIO regions like BAR1 VRAM before allocating any PCI MMIO BARs.
+  #mmioReservedEnd: bigint;
   #nextMmioBase: bigint;
   #nextIoBase: number;
 
   constructor(portBus: PortIoBus, mmioBus: MmioBus, opts: { mmioBase?: bigint; ioBase?: number } = {}) {
     this.#portBus = portBus;
     this.#mmioBus = mmioBus;
-    this.#nextMmioBase = opts.mmioBase ?? BigInt(GUEST_PCI_MMIO_BASE);
+    const mmioBase = opts.mmioBase ?? BigInt(GUEST_PCI_MMIO_BASE);
+    this.#mmioBase = mmioBase;
+    this.#mmioReservedEnd = mmioBase;
+    this.#nextMmioBase = mmioBase;
     this.#nextIoBase = opts.ioBase ?? 0xc000;
+  }
+
+  /**
+   * Reserve a range at the start of the PCI MMIO window and advance the MMIO BAR allocator past it.
+   *
+   * This is used to carve out deterministic apertures (e.g. BAR1-style VRAM) that are mapped
+   * directly into the MMIO bus but are *not* allocated as PCI BARs by {@link PciBus}.
+   *
+   * The reservation:
+   * - is rounded up to 4KiB (minimum BAR alignment)
+   * - must be performed before any MMIO BAR allocations extend beyond the current reservation
+   * - must not exceed the 32-bit address space end (4GiB)
+   */
+  reserveMmio(sizeBytes: bigint | number): void {
+    let size: bigint;
+    if (typeof sizeBytes === "bigint") {
+      size = sizeBytes;
+    } else {
+      const n = Math.floor(sizeBytes);
+      if (!Number.isFinite(n) || n < 0) throw new RangeError(`PCI MMIO reservation must be >= 0, got ${String(sizeBytes)}`);
+      if (!Number.isSafeInteger(n)) throw new RangeError(`PCI MMIO reservation size is not a safe integer: ${String(sizeBytes)}`);
+      size = BigInt(n);
+    }
+    if (size < 0n) throw new RangeError(`PCI MMIO reservation must be >= 0, got ${String(sizeBytes)}`);
+
+    // MMIO BAR allocator enforces a minimum 4KiB alignment; keep reservations deterministic by
+    // rounding up to the same granularity.
+    const align = 0x1000n;
+    const alignedSize = (size + (align - 1n)) & ~(align - 1n);
+
+    const base = this.#mmioBase;
+    const endExclusive = base + alignedSize;
+    // 32-bit end address (exclusive).
+    const maxEnd = 0x1_0000_0000n;
+    if (endExclusive > maxEnd) {
+      throw new Error(
+        `PCI MMIO reservation overflows 32-bit address space: base=0x${base.toString(16)} size=0x${size.toString(16)} aligned=0x${alignedSize.toString(16)}`,
+      );
+    }
+
+    if (endExclusive <= this.#mmioReservedEnd) return;
+
+    // Only allow extending the reservation before any allocations beyond the current reservation.
+    if (this.#nextMmioBase !== this.#mmioReservedEnd) {
+      throw new Error(
+        `PCI MMIO reservation must occur before MMIO BAR allocation (next=0x${this.#nextMmioBase.toString(16)} reserved_end=0x${this.#mmioReservedEnd.toString(16)})`,
+      );
+    }
+
+    this.#mmioReservedEnd = endExclusive;
+    this.#nextMmioBase = endExclusive;
   }
 
   /**
@@ -1227,7 +1285,9 @@ export class PciBus implements PortIoHandler {
     // Apply core bus state (config-address register + allocators).
     // PCI config mechanism #1: bits 1:0 are reserved and always read back as 0.
     this.#addrReg = (addrReg & 0xffff_fffc) >>> 0;
-    this.#nextMmioBase = nextMmioBase;
+    // Preserve any startup MMIO reservation (e.g. BAR1 VRAM) by clamping the restored allocator
+    // base to at least the reserved window end.
+    this.#nextMmioBase = nextMmioBase < this.#mmioReservedEnd ? this.#mmioReservedEnd : nextMmioBase;
     this.#nextIoBase = nextIoBase & 0xffff;
 
     // Clear existing BAR mappings and disable decoding before replaying guest-visible config dwords.
