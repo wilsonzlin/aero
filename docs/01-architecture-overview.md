@@ -166,6 +166,13 @@ To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 | **Audio** | Guest audio device models (HDA/virtio-snd) + Web Audio bridging (AC'97 is legacy-only) | PCI/MMIO + virtio queues, `SharedArrayBuffer` rings ↔ `AudioWorklet` |
 | **USB** | USB host controller emulation (UHCI/EHCI/xHCI) + USB device models (optional WebHID/WebUSB passthrough) | `crates/aero-usb` (`uhci::UhciController`, `ehci::EhciController`, `xhci::XhciController`), `UsbHostAction` bridge (see [ADR 0015](./adr/0015-canonical-usb-stack.md); controller docs: [`usb-ehci.md`](./usb-ehci.md), [`usb-xhci.md`](./usb-xhci.md)) |
 
+> Runtime note: the table above describes the **legacy** browser runtime architecture (`vmRuntime=legacy`), where guest-visible
+> device models live in the I/O worker.
+>
+> In the canonical machine runtime (`vmRuntime=machine`), the CPU worker runs `api.Machine` (backed by `aero_machine::Machine`)
+> and owns guest devices (storage/network/input/etc). In that mode, the I/O worker runs in a **host-only stub** configuration and
+> does not initialize guest device models.
+
 ### JIT Compilation Worker
 
 | Component | Responsibility | Key Interfaces |

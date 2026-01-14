@@ -54,6 +54,10 @@ At a high level, audio flows like:
 
 This section describes the *canonical* browser runtime integration.
 
+> Runtime note: the details below describe the legacy device-stack integration (`vmRuntime=legacy`), where guest audio devices
+> live in the I/O worker. The canonical machine runtime (`vmRuntime=machine`) runs `api.Machine` in the CPU worker and does not
+> currently expose guest audio devices via the I/O worker host stack.
+
 ### Ownership model
 
 - The **IO worker** owns the guest-visible device layer (PCI/MMIO/virtio) and is the intended home for guest audio devices (**HDA** and **virtio-snd**).
