@@ -4883,9 +4883,13 @@ HRESULT ensure_shader_bindings_locked(Device* dev, bool strict_draw_validation) 
 
 } // namespace
 
-// Validates that a draw call would execute with a usable shader pipeline and, if
-// the app is using the fixed-function path (no user shaders bound), ensures the
-// supported fixed-function fallback shaders are bound.
+// Validates that a draw call would execute with a usable shader pipeline and
+// ensures the AeroGPU command stream will observe a non-null VS+PS pair.
+//
+// This covers:
+// - Fixed-function draws (no user shaders bound; FVF-limited).
+// - Shader-stage interop (VS-only / PS-only): inject a fixed-function fallback
+//   shader for the missing stage at draw time.
 //
 // This is primarily a robustness guard: when an app uses an unsupported
 // fixed-function/FVF configuration, the UMD previously could emit draw packets
