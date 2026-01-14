@@ -25,7 +25,7 @@ pub struct TranslatedShader {
     /// Bind group index used for texture/sampler bindings in this shader stage.
     ///
     /// Contract:
-    /// - group(0): constants shared by VS/PS (bindings 0/1/2 for float/int/bool constants)
+    /// - group(0): constants shared by VS/PS (binding 0, see `Constants` in WGSL output)
     /// - group(1): VS texture/sampler bindings
     /// - group(2): PS texture/sampler bindings
     /// - group(3): optional half-pixel-center uniform buffer (VS only)
@@ -139,10 +139,7 @@ pub enum TranslateError {
 /// - a raw D3D9 DWORD token stream (starts with a version token like `0xFFFE0200`).
 ///
 /// Returned WGSL uses the fixed bind group layout expected by the AeroGPU D3D9 executor:
-/// - group(0): shader constants shared by VS/PS (packed to keep bindings stable across stages)
-///   - `@binding(0)`: float4 constants (`c#`) as `array<vec4<f32>, 512>`
-///   - `@binding(1)`: int4 constants (`i#`) as `array<vec4<i32>, 512>`
-///   - `@binding(2)`: bool constants (`b#`) as `array<vec4<u32>, 512>`
+/// - group(0): shader constants shared by VS/PS (binding 0, see `Constants` in WGSL output)
 /// - group(1): vertex shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 /// - group(2): pixel shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 /// - group(3): optional half-pixel-center uniform buffer (VS only)
