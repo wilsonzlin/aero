@@ -404,8 +404,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_usb2_port_mux_and_
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the hub itself (not required for downstream remote-wake
-    // propagation; included for coverage).
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can propagate downstream remote wake
+    // requests upstream while suspended.
     control_no_data(
         &mut ctrl,
         1,
@@ -531,7 +531,7 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_usb2_port_mux_and_
 }
 
 #[test]
-fn hid_keyboard_remote_wakeup_propagates_through_usb2_port_mux_and_external_hub_without_hub_remote_wakeup(
+fn hid_keyboard_remote_wakeup_does_not_propagate_through_usb2_port_mux_and_external_hub_without_hub_remote_wakeup(
 ) {
     let mut ctrl = UhciController::new();
 
@@ -660,31 +660,32 @@ fn hid_keyboard_remote_wakeup_propagates_through_usb2_port_mux_and_external_hub_
         "resume-detect must not be asserted before remote wake triggers"
     );
 
-    // Inject a keypress while suspended. Remote wakeup is driven by the downstream device's
-    // DEVICE_REMOTE_WAKEUP feature; intermediate hubs do not need DEVICE_REMOTE_WAKEUP enabled for
-    // the resume signal to propagate upstream.
+    // Inject a keypress while suspended. Since the hub does not have DEVICE_REMOTE_WAKEUP enabled,
+    // it must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
     assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
-    ctrl.tick_1ms(&mut mem);
+    for _ in 0..5 {
+        ctrl.tick_1ms(&mut mem);
+    }
 
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
     assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
-    assert_ne!(
+    assert_eq!(
         portsc & PORTSC_RD,
         0,
-        "expected Resume Detect after remote wake via muxed external hub (hub remote wake need not be enabled)"
+        "unexpected Resume Detect even though hub remote wake is disabled"
     );
 
     let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
-    assert_ne!(
+    assert_eq!(
         usbsts & USBSTS_RESUMEDETECT,
         0,
-        "expected UHCI USBSTS.RESUMEDETECT to latch from root hub Resume Detect"
+        "unexpected UHCI USBSTS.RESUMEDETECT even though hub remote wake is disabled"
     );
     assert!(
-        ctrl.irq_level(),
-        "expected IRQ level high when USBINTR.RESUME is enabled and USBSTS.RESUMEDETECT is set"
+        !ctrl.irq_level(),
+        "unexpected IRQ even though hub remote wake is disabled"
     );
 }
 
@@ -722,8 +723,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_external_hub() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the hub itself (not required for downstream remote-wake
-    // propagation; included for coverage).
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can propagate downstream remote wake
+    // requests upstream while suspended.
     control_no_data(
         &mut ctrl,
         1,
@@ -1036,8 +1037,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_nested_hubs() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the outer hub (not required for downstream remote-wake
-    // propagation; included for coverage).
+    // Enable DEVICE_REMOTE_WAKEUP on the outer hub so it can propagate downstream remote wake
+    // requests upstream while suspended.
     control_no_data(
         &mut ctrl,
         1,
@@ -1107,8 +1108,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_nested_hubs() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the inner hub too (not required for downstream remote-wake
-    // propagation; included for coverage).
+    // Enable DEVICE_REMOTE_WAKEUP on the inner hub too so it can propagate downstream remote wake
+    // requests upstream while suspended.
     control_no_data(
         &mut ctrl,
         2,
@@ -1266,8 +1267,8 @@ fn hid_keyboard_remote_wakeup_does_not_propagate_through_nested_hubs_without_inn
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the outer hub only (not required for downstream remote-wake
-    // propagation; included for coverage).
+    // Enable DEVICE_REMOTE_WAKEUP on the outer hub only. The inner hub still has remote wake
+    // disabled, so it will block downstream wake requests from reaching the root.
     control_no_data(
         &mut ctrl,
         1,
