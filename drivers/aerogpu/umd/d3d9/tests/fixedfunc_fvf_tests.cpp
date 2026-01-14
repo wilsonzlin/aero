@@ -2123,6 +2123,197 @@ bool TestSetShaderConstFStateBlockCapturesRedundantSet() {
   return Check(saw_a, "ApplyStateBlock re-uploads recorded constants");
 }
 
+bool TestApplyStateBlockUploadsTextureFactorConstantWhenUsed() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: select TFACTOR for both color and alpha so the fixed-function PS
+  // references c255.
+  if (!SetTextureStageState(/*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0, kD3dTssColorArg1, kD3dTaTFactor, "SetTextureStageState(COLORARG1=TFACTOR)")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaArg1, kD3dTaTFactor, "SetTextureStageState(ALPHAARG1=TFACTOR)")) {
+    return false;
+  }
+  // Ensure the stage chain terminates at stage0.
+  if (!SetTextureStageState(/*stage=*/1, kD3dTssColorOp, kD3dTopDisable, "SetTextureStageState(stage1 COLOROP=DISABLE)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(baseline tfactor draw)")) {
+    return false;
+  }
+
+  const uint32_t tf_a = 0xFF010203u;
+  const uint32_t tf_b = 0xFF3366CCu;
+
+  // Seed a known texture factor constant (A) so ApplyStateBlock must re-upload
+  // the value when switching to B.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, tf_a);
+  if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR=A)")) {
+    return false;
+  }
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, tf_b);
+  if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR=B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  // Restore A before applying the state block.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, tf_a);
+  if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR=A) restore")) {
+    DeleteSb();
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(TEXTUREFACTOR=B)")) {
+    DeleteSb();
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock texturefactor)")) {
+    DeleteSb();
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    DeleteSb();
+    return false;
+  }
+
+  bool saw_set_render_state = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_STATE)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_state)) {
+      continue;
+    }
+    const auto* rs = reinterpret_cast<const aerogpu_cmd_set_render_state*>(hdr);
+    if (rs->state == kD3dRsTextureFactor && rs->value == tf_b) {
+      saw_set_render_state = true;
+      break;
+    }
+  }
+  if (!Check(saw_set_render_state, "ApplyStateBlock emits SET_RENDER_STATE(TEXTUREFACTOR=B)")) {
+    DeleteSb();
+    return false;
+  }
+
+  const float expected_a = static_cast<float>((tf_b >> 24) & 0xFFu) * (1.0f / 255.0f);
+  const float expected_r = static_cast<float>((tf_b >> 16) & 0xFFu) * (1.0f / 255.0f);
+  const float expected_g = static_cast<float>((tf_b >> 8) & 0xFFu) * (1.0f / 255.0f);
+  const float expected_bf = static_cast<float>((tf_b >> 0) & 0xFFu) * (1.0f / 255.0f);
+  const float expected_vec[4] = {expected_r, expected_g, expected_bf, expected_a};
+
+  size_t uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 255 || sc->vec4_count != 1) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(expected_vec);
+    if (!Check(hdr->size_bytes >= need, "SET_SHADER_CONSTANTS_F contains payload (tfactor ApplyStateBlock)")) {
+      DeleteSb();
+      return false;
+    }
+    const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (!Check(std::fabs(payload[0] - expected_vec[0]) < 1e-6f &&
+                   std::fabs(payload[1] - expected_vec[1]) < 1e-6f &&
+                   std::fabs(payload[2] - expected_vec[2]) < 1e-6f &&
+                   std::fabs(payload[3] - expected_vec[3]) < 1e-6f,
+               "TFACTOR constant payload matches expected RGBA (ApplyStateBlock)")) {
+      DeleteSb();
+      return false;
+    }
+    ++uploads;
+  }
+  if (!Check(uploads == 1, "ApplyStateBlock uploads TFACTOR constant exactly once")) {
+    DeleteSb();
+    return false;
+  }
+
+  DeleteSb();
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -14309,6 +14500,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestSetShaderConstFStateBlockCapturesRedundantSet()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockUploadsTextureFactorConstantWhenUsed()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
