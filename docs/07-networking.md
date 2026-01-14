@@ -110,8 +110,9 @@ contributors.
 - TCP egress is implemented via the gateway’s WebSocket endpoints (`/tcp` or `/tcp-mux`,
   subprotocol `aero-tcp-mux-v1`).
 - DNS resolution uses DoH endpoints (`/dns-query`, optional `/dns-json`).
-  - Production deployments expose these via `backend/aero-gateway`.
-  - Local dev can use `net-proxy` which implements the same DoH paths; see [`net-proxy/README.md`](../net-proxy/README.md).
+   - Production deployments expose these via `backend/aero-gateway`.
+   - Local dev can use `net-proxy` which implements the same DoH paths; see [`net-proxy/README.md`](../net-proxy/README.md)
+     (including notes on same-origin fetch/CORS and the optional `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` allowlist).
 - UDP egress is implemented via `proxy/webrtc-udp-relay` (WebRTC DataChannel `udp`, with `/udp`
   WebSocket fallback; see `proxy/webrtc-udp-relay/PROTOCOL.md`).
   - Inbound UDP filtering: by default, the relay only forwards inbound UDP from remote address+port
