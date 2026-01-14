@@ -429,7 +429,10 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     // Row 1: green at offset + pitchBytes.
     views.vramU8.set([0x00, 0xff, 0x00, 0x00], cursorVramOffset + cursorPitchBytes);
 
-    const cursorBasePaddr = (VRAM_BASE_PADDR + cursorVramOffset) >>> 0;
+    // Override the VRAM base paddr passed to the worker to ensure cursor readback honors it
+    // (instead of assuming the arch default `VRAM_BASE_PADDR`).
+    const vramBasePaddr = (VRAM_BASE_PADDR + 0x10000) >>> 0;
+    const cursorBasePaddr = (vramBasePaddr + cursorVramOffset) >>> 0;
     publishCursorState(views.cursorStateI32!, {
       enable: 1,
       x: 0,
@@ -458,7 +461,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
         vram: segments.vram,
-        vramBasePaddr: VRAM_BASE_PADDR,
+        vramBasePaddr,
         vramSizeBytes: segments.vram.byteLength,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
