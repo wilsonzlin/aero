@@ -535,6 +535,12 @@ static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err)
   if (IsUncShareRootPathW(dir)) {
     // `\\server\share` is not creatable via CreateDirectory; it must already exist.
     DWORD attr = GetFileAttributesW(dir.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+      // Best-effort: some APIs want a trailing separator on UNC share roots.
+      std::wstring root = dir;
+      root.push_back(L'\\');
+      attr = GetFileAttributesW(root.c_str());
+    }
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
       return true;
     }
