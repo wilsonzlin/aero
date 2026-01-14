@@ -162,6 +162,18 @@ const postToMain = (msg: OutboundGpuRuntimeMessage, transfer?: Transferable[]) =
   ctx.postMessage({ ...msg, ...GPU_MESSAGE_BASE }, transfer ?? []);
 };
 
+const toTransferableArrayBuffer = (view: Uint8Array): ArrayBuffer => {
+  // `postMessage(..., [buf])` only accepts transferable `ArrayBuffer`s (not `SharedArrayBuffer`),
+  // and screenshot responses must return a tight-packed buffer (byteLength === width*height*4).
+  const bufLike = view.buffer;
+  if (bufLike instanceof ArrayBuffer && view.byteOffset === 0 && view.byteLength === bufLike.byteLength) {
+    return bufLike;
+  }
+  const buf = new ArrayBuffer(view.byteLength);
+  new Uint8Array(buf).set(view);
+  return buf;
+};
+
 const postRuntimeError = (message: string) => {
   if (!status) return;
   pushRuntimeEvent({ kind: 'log', level: 'error', message });
@@ -4325,10 +4337,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
               }
 
-              // `Uint8Array.buffer` is typed as `ArrayBufferLike` (it may be a `SharedArrayBuffer`),
-              // but screenshot payloads must be transferable. `out` is always a freshly allocated
-              // copy (`.slice()` / `new Uint8Array(...)`), so the backing store is an `ArrayBuffer`.
-              const rgba8 = out.buffer as ArrayBuffer;
+              const rgba8 = toTransferableArrayBuffer(out);
               postToMain(
                 {
                   type: "screenshot",
@@ -4435,17 +4444,18 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               }
             }
 
+            const rgba8 = toTransferableArrayBuffer(out);
             postToMain(
               {
                 type: "screenshot",
                 requestId: req.requestId,
                 width,
                 height,
-                rgba8: out.buffer as ArrayBuffer,
+                rgba8,
                 origin: "top-left",
                 ...(typeof frameSeq === "number" ? { frameSeq } : {}),
               },
-              [out.buffer as ArrayBuffer],
+              [rgba8],
             );
             return true;
           };
@@ -4680,17 +4690,18 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       // Ignore; screenshot cursor compositing is best-effort.
                     }
                   }
+                  const rgba8 = toTransferableArrayBuffer(outView);
                   postToMain(
                     {
                       type: "screenshot",
                       requestId: req.requestId,
                       width: shot.width,
                       height: shot.height,
-                      rgba8: outView.buffer as ArrayBuffer,
+                      rgba8,
                       origin: "top-left",
                       ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                     },
-                    [outView.buffer as ArrayBuffer],
+                    [rgba8],
                   );
                   return;
                 }
@@ -4731,17 +4742,18 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               }
             }
 
+            const rgba8 = toTransferableArrayBuffer(out);
             postToMain(
               {
                 type: "screenshot",
                 requestId: req.requestId,
                 width: frame.width,
                 height: frame.height,
-                rgba8: out.buffer as ArrayBuffer,
+                rgba8,
                 origin: "top-left",
                 frameSeq: frame.frameSeq,
               },
-              [out.buffer as ArrayBuffer],
+              [rgba8],
             );
             return;
           }
