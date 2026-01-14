@@ -260,6 +260,11 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_UBFE => Some("ubfe"),
         OPCODE_IBFE => Some("ibfe"),
         OPCODE_CUSTOMDATA => Some("customdata"),
+        OPCODE_BREAK => Some("break"),
+        OPCODE_SWITCH => Some("switch"),
+        OPCODE_CASE => Some("case"),
+        OPCODE_DEFAULT => Some("default"),
+        OPCODE_ENDSWITCH => Some("endswitch"),
         OPCODE_IF => Some("if"),
         OPCODE_ELSE => Some("else"),
         OPCODE_ENDIF => Some("endif"),
@@ -291,5 +296,19 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         75 => Some("resinfo"),
 
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opcode_name_includes_switch_ops() {
+        assert_eq!(opcode_name(OPCODE_BREAK), Some("break"));
+        assert_eq!(opcode_name(OPCODE_SWITCH), Some("switch"));
+        assert_eq!(opcode_name(OPCODE_CASE), Some("case"));
+        assert_eq!(opcode_name(OPCODE_DEFAULT), Some("default"));
+        assert_eq!(opcode_name(OPCODE_ENDSWITCH), Some("endswitch"));
     }
 }
