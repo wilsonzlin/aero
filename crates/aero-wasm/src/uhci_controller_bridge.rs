@@ -425,6 +425,11 @@ impl UhciControllerBridge {
             dev.reset_host_state_for_restore();
         }
 
+        // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
+        // snapshot. Clear any restored host-side bookkeeping throughout the USB topology so guest
+        // retries re-emit host actions instead of deadlocking.
+        self.ctrl.reset_host_state_for_restore();
+
         Ok(())
     }
 
