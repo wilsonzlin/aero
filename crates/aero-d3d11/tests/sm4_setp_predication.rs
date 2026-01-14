@@ -1544,3 +1544,73 @@ fn decodes_and_translates_predicated_break_in_switch_case() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_predicated_resinfo() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_resource_texture2d t0
+    //
+    // `resinfo` translation requires a matching `dcl_resource` declaration so the backend can
+    // distinguish `Texture2D` from other resource dimensions.
+    let tex_t0 = resource_operand(0);
+    let dcl_len = 1 + tex_t0.len() as u32 + 1;
+    body.push(opcode_token(OPCODE_DCL_RESOURCE, dcl_len));
+    body.extend_from_slice(&tex_t0);
+    body.push(2); // dimensionality = Texture2D
+
+    // (+p0.x) resinfo r0.xyzw, l(0), t0
+    //
+    // This specifically exercises predication lowering for instructions that depend on module
+    // declarations. The predication wrapper must preserve `module.decls` when emitting the inner
+    // instruction.
+    let pred_p0x = pred_operand(0, 0);
+    let dst_r0 = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let mip = imm32_scalar(0);
+    let resinfo_len =
+        1 + pred_p0x.len() as u32 + dst_r0.len() as u32 + mip.len() as u32 + tex_t0.len() as u32;
+    body.push(opcode_token(OPCODE_RESINFO, resinfo_len));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&dst_r0);
+    body.extend_from_slice(&mip);
+    body.extend_from_slice(&tex_t0);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(
+        &module.instructions[0],
+        Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::ResInfo { .. })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("if (p0.x) {"),
+        "expected predicated resinfo to emit an if guard:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("textureDimensions(t0")
+            && translated.wgsl.contains("textureNumLevels(t0"),
+        "expected resinfo to query dimensions/levels:\n{}",
+        translated.wgsl
+    );
+}

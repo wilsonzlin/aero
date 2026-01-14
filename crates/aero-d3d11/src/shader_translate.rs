@@ -5291,7 +5291,10 @@ fn emit_instructions(
                 let inner_module = Sm4Module {
                     stage: module.stage,
                     model: module.model,
-                    decls: Vec::new(),
+                    // Instruction predication does not alter the surrounding module's
+                    // declarations. Preserve them here so predicating an instruction that depends
+                    // on declarations (e.g. `resinfo`, structured buffer ops) still emits correctly.
+                    decls: module.decls.clone(),
                     instructions: vec![inner.as_ref().clone()],
                 };
                 emit_instructions(w, &inner_module, ctx)?;
