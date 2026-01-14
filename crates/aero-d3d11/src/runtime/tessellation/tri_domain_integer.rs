@@ -141,17 +141,18 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     let vert_in_tri: u32 = local_index % 3u;
     let tri_id: u32 = local_index / 3u;
-    let local_verts: vec3<u32> = tri_index_to_vertex_indices(patch.tess_level, tri_id);
 
-    var v0: u32 = local_verts.x + patch.vertex_base;
-    var v1: u32 = local_verts.y + patch.vertex_base;
-    var v2: u32 = local_verts.z + patch.vertex_base;
+    // Index generation is parameterized by winding so we can share the same per-triangle
+    // tessellator math for both CCW and CW topologies.
+    let local_verts: vec3<u32> = select(
+        tri_index_to_vertex_indices(patch.tess_level, tri_id),
+        tri_index_to_vertex_indices_cw(patch.tess_level, tri_id),
+        params.winding != 0u,
+    );
 
-    if (params.winding != 0u) {{
-        let tmp: u32 = v1;
-        v1 = v2;
-        v2 = tmp;
-    }}
+    let v0: u32 = local_verts.x + patch.vertex_base;
+    let v1: u32 = local_verts.y + patch.vertex_base;
+    let v2: u32 = local_verts.z + patch.vertex_base;
 
     var out_val: u32 = v0;
     if (vert_in_tri == 1u) {{
