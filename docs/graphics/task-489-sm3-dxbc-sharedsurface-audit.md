@@ -33,7 +33,10 @@ All file paths are repository-relative.
 
 **How to run:**
 ```bash
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+# CPU-only WGSL + naga validation coverage:
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_math --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_loop_wgsl --locked
 ```
 
 ---
@@ -87,7 +90,8 @@ bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_semantic_l
 **How to run:**
 ```bash
 bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+# `sm3_ir` uses `aero_dxbc::test_utils::build_container`.
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_ir --locked
 ```
 
 ---
@@ -180,7 +184,9 @@ Ops/features referenced by the scratchpad tasks:
 
 **How to run:**
 ```bash
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+# CPU-only WGSL + naga validation coverage:
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_math --locked
 ```
 
 ---
