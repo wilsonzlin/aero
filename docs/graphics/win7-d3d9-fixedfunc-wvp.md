@@ -19,6 +19,10 @@ For `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}`, the draw paths apply the comb
 - CPU conversion helper: `convert_xyz_to_clipspace_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
 - Used by: `DrawPrimitive*`, `DrawPrimitiveUP`, `DrawIndexedPrimitive*`, `DrawIndexedPrimitiveUP` fixed-function branches.
 - The converted vertex data is drawn using a passthrough VS (so the GPU sees clip-space positions directly).
+- Scratch vertex layout (per-vertex): `float4 clip_xyzw` + `D3DCOLOR diffuse` + optional `float2 texcoord0` (20 or 28 bytes).
+  - The scratch upload binds an internal vertex declaration via `ensure_fixedfunc_fvf_vertex_decl_locked()`. Although the
+    decl uses `POSITIONT` for the `float4` position, the fallback path always binds a VS so it is treated as a semantic
+    rather than invoking true pre-transformed behavior.
 
 ### VS WVP constants (XYZ|TEX1, no diffuse)
 
@@ -84,6 +88,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 - Draw-time fixed-function CPU conversions:
   - `convert_xyz_to_clipspace_locked()` (`XYZ` → clip-space for fixed-function `D3DFVF_XYZ | DIFFUSE{,TEX1}` draws)
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
+- Draw-time fixed-function scratch vertex decl:
+  - `ensure_fixedfunc_fvf_vertex_decl_locked()` (`POSITIONT=float4` + `COLOR0` + optional `TEXCOORD0`)
 - Draw-time fixed-function constant upload (only for `D3DFVF_XYZ | D3DFVF_TEX1` fixed-function path):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)
 - Existing CPU vertex processing:
