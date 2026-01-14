@@ -802,6 +802,18 @@ struct AeroGpuResource {
   uint32_t mapped_wddm_slice_pitch = 0;
 };
 
+static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
+  if (!res || res->kind != ResourceKind::Texture2D) {
+    return true;
+  }
+  // Some WDK/runtime combinations omit Pitch or return 0 for non-surface allocations.
+  // Only validate when the runtime provides a non-zero pitch.
+  if (wddm_pitch == 0) {
+    return true;
+  }
+  return res->row_pitch_bytes != 0 && wddm_pitch == res->row_pitch_bytes;
+}
+
 static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
   if (out) {
     std::memset(out, 0, sizeof(*out));
