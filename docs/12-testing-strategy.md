@@ -1034,6 +1034,7 @@ CI enforcement:
 
 - CI runs `npm run generate:goldens` and fails if anything under `tests/golden/` changes afterwards.
 - If your change intentionally affects golden output, rerun `npm run generate:goldens` locally and commit the updated PNGs.
+  - Tip: `npm run check:goldens` runs the same “regenerate + fail on drift” check CI uses.
 
 ---
 

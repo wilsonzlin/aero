@@ -424,6 +424,13 @@ npm ci
 npm run generate:goldens
 ```
 
+Or run the same “regenerate + fail on drift” check that CI uses:
+
+```bash
+npm ci
+npm run check:goldens
+```
+
 Run the GPU golden tests (Playwright):
 
 ```bash
