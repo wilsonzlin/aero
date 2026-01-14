@@ -77,14 +77,14 @@ class VirtioSndMarkerTests(unittest.TestCase):
 
     def test_emits_format_marker(self) -> None:
         tail = (
-            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=tag=0x0001 type=pcm rate=48000 ch=2 bits=16 align=4|"
-            b"capture=tag=0xfffe type=pcm rate=44100 ch=1 bits=32 align=4\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=tag=0x0001 type=pcm rate=48000 ch=2 bits=16 valid=16 align=4|"
+            b"capture=tag=0xfffe type=pcm rate=44100 ch=1 bits=32 valid=24 align=4\n"
         )
         out = self._emit("_emit_virtio_snd_format_host_marker", tail)
         self.assertEqual(
             out,
-            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=tag=0x0001 type=pcm rate=48000 ch=2 bits=16 align=4|"
-            "capture=tag=0xfffe type=pcm rate=44100 ch=1 bits=32 align=4",
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=tag=0x0001 type=pcm rate=48000 ch=2 bits=16 valid=16 align=4|"
+            "capture=tag=0xfffe type=pcm rate=44100 ch=1 bits=32 valid=24 align=4",
         )
 
     def test_emits_eventq_marker_info(self) -> None:
