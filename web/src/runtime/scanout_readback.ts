@@ -199,7 +199,11 @@ export function readScanoutRgba8FromGuestRam(
   //
   // In this case we can translate `basePaddr` once and swizzle the full buffer without
   // per-row address translation overhead.
-  const requiredSrcBytesBig = pitchBig * BigInt(height);
+  //
+  // Note: the scanout surface occupies `rowBytes` bytes on the last row, not the full `pitchBytes`.
+  // This matches typical linear framebuffer semantics and avoids requiring unused pitch padding bytes
+  // after the final row.
+  const requiredSrcBytesBig = pitchBig * (BigInt(height) - 1n) + BigInt(rowBytes);
   if (requiredSrcBytesBig > MAX_SAFE_U64_BIGINT) {
     throw new RangeError(`scanout buffer size exceeds JS safe integer range: pitchBytes=${pitchBytes} height=${height}`);
   }
