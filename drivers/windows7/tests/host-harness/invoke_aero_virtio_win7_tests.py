@@ -4599,6 +4599,10 @@ def main() -> int:
             virtio_net_diag_marker_carry = b""
             virtio_snd_msix_marker_line: Optional[str] = None
             virtio_snd_msix_marker_carry = b""
+            virtio_input_marker_line: Optional[str] = None
+            virtio_input_marker_carry = b""
+            virtio_input_bind_marker_line: Optional[str] = None
+            virtio_input_bind_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             virtio_input_binding_marker_line: Optional[str] = None
             virtio_input_binding_marker_carry = b""
@@ -4786,6 +4790,18 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
                         carry=virtio_snd_msix_marker_carry,
+                    )
+                    virtio_input_marker_line, virtio_input_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|",
+                        carry=virtio_input_marker_carry,
+                    )
+                    virtio_input_bind_marker_line, virtio_input_bind_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_bind_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|",
+                        carry=virtio_input_bind_marker_carry,
                     )
                     virtio_input_binding_marker_line, virtio_input_binding_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_input_binding_marker_line,
@@ -4981,6 +4997,19 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+
+                    # Prefer the incrementally captured virtio-input marker line so we don't miss PASS/FAIL
+                    # when the rolling tail buffer truncates earlier output.
+                    if virtio_input_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_marker_line)
+                        if not saw_virtio_input_pass and status_tok == "PASS":
+                            saw_virtio_input_pass = True
+                            if virtio_input_marker_time is None:
+                                virtio_input_marker_time = time.monotonic()
+                        if not saw_virtio_input_fail and status_tok == "FAIL":
+                            saw_virtio_input_fail = True
+                            if virtio_input_marker_time is None:
+                                virtio_input_marker_time = time.monotonic()
                     if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                         saw_virtio_input_pass = True
                         if virtio_input_marker_time is None:
@@ -4989,6 +5018,15 @@ def main() -> int:
                         saw_virtio_input_fail = True
                         if virtio_input_marker_time is None:
                             virtio_input_marker_time = time.monotonic()
+
+                    # Prefer the incrementally captured virtio-input-bind marker line so we don't miss
+                    # PASS/FAIL when the rolling tail buffer truncates earlier output.
+                    if virtio_input_bind_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_bind_marker_line)
+                        if not saw_virtio_input_bind_pass and status_tok == "PASS":
+                            saw_virtio_input_bind_pass = True
+                        if not saw_virtio_input_bind_fail and status_tok == "FAIL":
+                            saw_virtio_input_bind_fail = True
                     if (
                         not saw_virtio_input_bind_pass
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS" in tail
@@ -7006,6 +7044,18 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
                             carry=virtio_snd_msix_marker_carry,
                         )
+                        virtio_input_marker_line, virtio_input_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|",
+                            carry=virtio_input_marker_carry,
+                        )
+                        virtio_input_bind_marker_line, virtio_input_bind_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_bind_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|",
+                            carry=virtio_input_bind_marker_carry,
+                        )
                         virtio_input_binding_marker_line, virtio_input_binding_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_input_binding_marker_line,
                             chunk2,
@@ -7153,10 +7203,30 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL" in tail
                         ):
                             saw_virtio_blk_reset_fail = True
+                        if virtio_input_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_marker_line)
+                            if not saw_virtio_input_pass and status_tok == "PASS":
+                                saw_virtio_input_pass = True
+                                if virtio_input_marker_time is None:
+                                    virtio_input_marker_time = time.monotonic()
+                            if not saw_virtio_input_fail and status_tok == "FAIL":
+                                saw_virtio_input_fail = True
+                                if virtio_input_marker_time is None:
+                                    virtio_input_marker_time = time.monotonic()
                         if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                             saw_virtio_input_pass = True
+                            if virtio_input_marker_time is None:
+                                virtio_input_marker_time = time.monotonic()
                         if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
                             saw_virtio_input_fail = True
+                            if virtio_input_marker_time is None:
+                                virtio_input_marker_time = time.monotonic()
+                        if virtio_input_bind_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_bind_marker_line)
+                            if not saw_virtio_input_bind_pass and status_tok == "PASS":
+                                saw_virtio_input_bind_pass = True
+                            if not saw_virtio_input_bind_fail and status_tok == "FAIL":
+                                saw_virtio_input_bind_fail = True
                         if (
                             not saw_virtio_input_bind_pass
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS" in tail
@@ -8482,6 +8552,22 @@ def main() -> int:
                     virtio_snd_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_input_marker_carry:
+            raw = virtio_input_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|"):
+                try:
+                    virtio_input_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_bind_marker_carry:
+            raw = virtio_input_bind_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|"):
+                try:
+                    virtio_input_bind_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_input_binding_marker_carry:
             raw = virtio_input_binding_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -8546,7 +8632,12 @@ def main() -> int:
         )
         _emit_virtio_snd_msix_host_marker(snd_msix_tail)
         _emit_virtio_input_irq_host_marker(tail)
-        _emit_virtio_input_bind_host_marker(tail)
+        input_bind_tail = (
+            virtio_input_bind_marker_line.encode("utf-8")
+            if virtio_input_bind_marker_line is not None
+            else tail
+        )
+        _emit_virtio_input_bind_host_marker(input_bind_tail)
         input_msix_tail = (
             virtio_input_msix_marker.line.encode("utf-8") if virtio_input_msix_marker is not None else tail
         )
