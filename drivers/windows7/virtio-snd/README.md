@@ -98,6 +98,9 @@ Driver behavior:
 - The driver still initializes `eventq` and posts a small bounded pool of writable buffers.
 - If the device completes `eventq` buffers, the driver drains/reposts them and (best-effort) parses/logs known event
   types (jack connect/disconnect, period elapsed, XRUN, control notify).
+- The driver maintains per-boot `eventq` counters (completions/parsed/period/xrun/etc) and exposes them via:
+  - a structured teardown log marker: `AERO_VIRTIO_SND_EVENTQ|...`
+  - the guest selftest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|...`
 - Audio streaming (render/capture) must remain correct even if `eventq` is absent, silent, or noisy.
 
 How to validate (in-tree harness):
