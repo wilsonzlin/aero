@@ -696,22 +696,6 @@ mod tests {
         };
         let update = bgra_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
-        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8);
-
-        // sRGB discriminants should be preserved.
-        let bgrx_srgb = AeroGpuScanoutConfig {
-            format: AeroGpuFormat::B8G8R8X8UnormSrgb,
-            ..cfg
-        };
-        let update = bgrx_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
-        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8_SRGB);
-
-        let bgra_srgb = AeroGpuScanoutConfig {
-            format: AeroGpuFormat::B8G8R8A8UnormSrgb,
-            ..cfg
-        };
-        let update = bgra_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
-        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
 
         // RGBA is representable and preserved.
         let rgba = AeroGpuScanoutConfig {
