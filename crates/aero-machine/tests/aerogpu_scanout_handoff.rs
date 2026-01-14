@@ -4,7 +4,7 @@ use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use pretty_assertions::assert_eq;
 
-const VBE_LFB_OFFSET: u64 = 0x20000;
+const VBE_LFB_OFFSET: u64 = aero_machine::VBE_LFB_OFFSET as u64;
 const WAIT_FLAG_PADDR: u64 = 0x0500;
 
 fn enable_a20(m: &mut Machine) {

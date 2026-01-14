@@ -3,7 +3,7 @@ use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
-const VBE_LFB_OFFSET: u64 = 0x20000;
+const VBE_LFB_OFFSET: u64 = aero_machine::VBE_LFB_OFFSET as u64;
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
@@ -88,4 +88,3 @@ fn aerogpu_boot_sector_int10_vbe_mode_shows_vram_lfb() {
     assert_eq!(m.display_resolution(), (1024, 768));
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }
-
