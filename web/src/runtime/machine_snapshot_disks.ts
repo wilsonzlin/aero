@@ -237,7 +237,7 @@ export async function reattachMachineSnapshotDisks(opts: {
               : setDiskExisting;
         if (typeof attachExisting !== "function") {
           throw new Error(
-            "Snapshot restore requires Machine.set_primary_hdd_opfs_existing(path) or Machine.set_disk_opfs_existing(path) to reattach a base-only primary disk, but none are available in this WASM build.",
+            "Snapshot restore requires Machine.set_primary_hdd_opfs_existing(path) or Machine.set_disk_opfs_existing*(path) to reattach a base-only primary disk, but none are available in this WASM build.",
           );
         }
         await callMaybeAsync(attachExisting as (...args: unknown[]) => unknown, machine, [base]);

@@ -116,7 +116,9 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan): Pro
     machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
     return;
   }
-  throw new Error("WASM build missing Machine.set_disk_opfs_existing* exports");
+  throw new Error(
+    "WASM build missing raw HDD OPFS attach exports (expected Machine.set_primary_hdd_opfs_existing or Machine.set_disk_opfs_existing*).",
+  );
 }
 
 async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Promise<void> {
