@@ -9277,6 +9277,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (!adapter->Bar0) {
             return STATUS_DEVICE_NOT_READY;
         }
+        if (!poweredOn) {
+            return STATUS_DEVICE_NOT_READY;
+        }
 
         aerogpu_escape_query_vblank_out* out = (aerogpu_escape_query_vblank_out*)pEscape->pPrivateDriverData;
 
@@ -9363,6 +9366,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (!adapter->Bar0) {
             return STATUS_SUCCESS;
         }
+        if (!poweredOn) {
+            /* Avoid touching MMIO while powered down; cached fields are still valid. */
+            return STATUS_SUCCESS;
+        }
 
         if ((adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
@@ -9415,6 +9422,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->reserved1 = 0;
 
         if (!adapter->Bar0) {
+            return STATUS_SUCCESS;
+        }
+        if (!poweredOn) {
+            /* Avoid touching MMIO while powered down. */
+            if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) {
+                out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
+            }
             return STATUS_SUCCESS;
         }
 
