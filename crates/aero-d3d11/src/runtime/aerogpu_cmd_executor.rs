@@ -23729,6 +23729,7 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view: &exec.dummy_texture_view,
                 default_sampler: &exec.default_sampler,
+                internal_buffers: &[],
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
                 internal_buffers: &[],
