@@ -5173,36 +5173,30 @@ static bool DxgiViewFormatTriviallyCompatible(const AeroGpuDevice* dev,
 
 static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
   bool ok = false;
-  bool have_enum = false;
   // Prefer DDI-specific enumerators when available.
   __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
   }
   __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
   }
   __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
   }
   __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
   }
   __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
   }
   __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
   }
 
   // Conservative fallback: the AeroGPU portable ABI models Texture2D as 3. If
-  // none of the enumerators above exist in this WDK, assume the same encoding.
-  if (!have_enum) {
+  // the above enumerators are not available (or the field uses a different enum
+  // type, e.g. D3D10DDIRESOURCE_TYPE), assume the same encoding.
+  if (!ok) {
     ok = (view_dimension == 3u);
   }
   return ok;
