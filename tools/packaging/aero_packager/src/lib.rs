@@ -163,6 +163,16 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let devices_cmd_path = config.guest_tools_dir.join("config").join("devices.cmd");
     let mut devices_cmd_vars = if devices_cmd_path.is_file() {
+        // Treat symlinks as fatal to avoid accidentally sourcing variables from outside the
+        // Guest Tools tree.
+        let meta = fs::symlink_metadata(&devices_cmd_path)
+            .with_context(|| format!("stat {}", devices_cmd_path.display()))?;
+        if meta.file_type().is_symlink() {
+            bail!(
+                "refusing to read guest-tools/config/devices.cmd because it is a symlink: {}",
+                devices_cmd_path.display()
+            );
+        }
         read_devices_cmd_vars(&devices_cmd_path)
             .with_context(|| "read guest-tools/config/devices.cmd")?
     } else {
@@ -363,6 +373,14 @@ fn collect_files(
                 format!("{src:?}")
             );
         }
+        let meta =
+            fs::symlink_metadata(&src).with_context(|| format!("stat {}", src.display()))?;
+        if meta.file_type().is_symlink() {
+            bail!(
+                "refusing to package guest tools file because it is a symlink: {}",
+                src.display()
+            );
+        }
         out.push(FileToPackage {
             rel_path: file_name.to_string(),
             bytes: fs::read(&src).with_context(|| format!("read {}", src.display()))?,
@@ -510,7 +528,7 @@ fn collect_files(
                 if !config.signing_policy.certs_required() {
                     bail!(
                         "refusing to package certificate file for signing_policy={}: certs/{}.\n\
-                         Guest Tools media built with signing_policy=production/none must not ship trust anchors.\n\
+                         Guest Tools media built with signing_policy=production/none must not ship test certificates or other trust anchors.\n\
                          Remediation: remove all *.cer/*.crt/*.p7b files from {} (keep certs/README.md if needed), \
                          or re-run with --signing-policy test.",
                         config.signing_policy,
@@ -544,6 +562,14 @@ fn collect_files(
     // (Driver binaries themselves come from `drivers_dir`.)
     let drivers_readme = config.guest_tools_dir.join("drivers").join("README.md");
     if drivers_readme.is_file() {
+        let meta = fs::symlink_metadata(&drivers_readme)
+            .with_context(|| format!("stat {}", drivers_readme.display()))?;
+        if meta.file_type().is_symlink() {
+            bail!(
+                "refusing to package guest tools file because it is a symlink: {}",
+                drivers_readme.display()
+            );
+        }
         out.push(FileToPackage {
             rel_path: "drivers/README.md".to_string(),
             bytes: fs::read(&drivers_readme)
@@ -786,11 +812,26 @@ fn validate_drivers(
         let mut matches: Vec<(&'static str, PathBuf)> = Vec::new();
         let primary = arch_dir.join(name);
         if primary.is_dir() {
+            let meta =
+                fs::symlink_metadata(&primary).with_context(|| format!("stat {}", primary.display()))?;
+            if meta.file_type().is_symlink() {
+                bail!(
+                    "refusing to package guest tools because a symlink was found in drivers/: {}",
+                    primary.display()
+                );
+            }
             matches.push(("", primary));
         }
         for alias in legacy_driver_dir_aliases(name) {
             let p = arch_dir.join(alias);
             if p.is_dir() {
+                let meta = fs::symlink_metadata(&p).with_context(|| format!("stat {}", p.display()))?;
+                if meta.file_type().is_symlink() {
+                    bail!(
+                        "refusing to package guest tools because a symlink was found in drivers/: {}",
+                        p.display()
+                    );
+                }
                 matches.push((alias, p));
             }
         }
@@ -1480,6 +1521,8 @@ fn is_private_key_extension(ext: &str) -> bool {
         | "p8" | "pk8"
         // Certificate signing requests may include key-related material and should never ship.
         | "csr"
+        // Keystores / SSH private key formats.
+        | "jks" | "keystore" | "ppk"
     )
 }
 
@@ -1489,10 +1532,19 @@ fn is_default_excluded_driver_extension(ext: &str) -> bool {
         // Debug symbols.
         "pdb" | "ipdb" | "iobj" | "dbg" | "map" | "cod"
         // Build metadata.
-        | "obj" | "lib" | "exp" | "ilk" | "tlog" | "log" | "tmp" | "lastbuildstate" | "idb"
+        | "obj"
+            | "lib"
+            | "exp"
+            | "ilk"
+            | "tlog"
+            | "log"
+            | "tmp"
+            | "lastbuildstate"
+            | "idb"
+            | "ncb"
         // Source / project files.
         | "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx" | "idl" | "inl" | "rc" | "s" | "asm"
-        | "sln" | "vcxproj" | "props" | "targets"
+        | "sln" | "vcxproj" | "props" | "targets" | "suo" | "user"
     )
 }
 
@@ -1917,6 +1969,13 @@ fn resolve_input_arch_dir(drivers_dir: &Path, arch_out: &str) -> Result<PathBuf>
     for name in candidates {
         let p = drivers_dir.join(name);
         if p.is_dir() {
+            let meta = fs::symlink_metadata(&p).with_context(|| format!("stat {}", p.display()))?;
+            if meta.file_type().is_symlink() {
+                bail!(
+                    "refusing to package guest tools because a symlink was found in drivers/: {}",
+                    p.display()
+                );
+            }
             return Ok(p);
         }
     }
@@ -2073,6 +2132,11 @@ fn validate_windows_safe_rel_path(rel_path: &str) -> Result<()> {
         if component.ends_with('.') || component.ends_with(' ') {
             bail!(
                 "package path {rel_path:?} contains a Windows-invalid component (trailing '.' or space): {component:?}"
+            );
+        }
+        if let Some(c) = component.chars().find(|c| (*c as u32) < 0x20) {
+            bail!(
+                "package path {rel_path:?} contains a Windows-invalid component (control character {c:?}): {component:?}"
             );
         }
         if let Some(c) = component.chars().find(|c| {
