@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::dxbc;
 use crate::shader;
-use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
+use crate::shader_limits::{MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES};
 use crate::sm3;
 use crate::sm3::decode::TextureType;
 use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
@@ -206,6 +206,13 @@ pub fn translate_d3d9_shader_to_wgsl(
         )));
     }
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
+    if token_stream.len() > MAX_D3D9_SHADER_BYTECODE_BYTES {
+        return Err(ShaderTranslateError::Malformed(format!(
+            "shader bytecode length {} exceeds maximum {} bytes",
+            token_stream.len(),
+            MAX_D3D9_SHADER_BYTECODE_BYTES
+        )));
+    }
     let token_stream = normalize_sm2_sm3_instruction_lengths(token_stream)
         .map_err(ShaderTranslateError::Malformed)?;
 

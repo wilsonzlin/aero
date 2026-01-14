@@ -4926,6 +4926,33 @@ fn rejects_oversized_shader_bytecode_sm3_decoder() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_oversized_shader_bytecode() {
+    // The high-level translation entrypoint should reject oversized token streams before attempting
+    // any decoding/normalization work.
+    let bytecode = vec![0u8; MAX_D3D9_SHADER_BYTECODE_BYTES + 4];
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &bytecode,
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+
+    // Ensure the same size cap is enforced when the bytecode is wrapped in a DXBC container.
+    let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &bytecode)]);
+    let err =
+        shader_translate::translate_d3d9_shader_to_wgsl(&dxbc, shader::WgslOptions::default())
+            .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn rejects_out_of_range_sampler_register_legacy_translator() {
     // ps_2_0 texld r0, t0, s16 (sampler index out of range).
     let mut out = vec![0xFFFF0200];
