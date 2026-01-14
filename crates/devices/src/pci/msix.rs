@@ -31,6 +31,16 @@ pub struct MsixCapability {
 }
 
 impl MsixCapability {
+    /// Returns `true` if `addr` targets the xAPIC Local APIC MMIO MSI window (0xFEE0_0000).
+    ///
+    /// The platform interrupt controller currently only models xAPIC-style MSI delivery. If a
+    /// guest programs an MSI-X table entry with an address outside of this window, the platform
+    /// will drop the message; treat that as "blocked delivery" so devices can latch the PBA pending
+    /// bit and retry once the guest finishes programming a valid MSI address.
+    fn is_xapic_msi_address(addr: u64) -> bool {
+        (addr >> 32) == 0 && (addr & 0xFFF0_0000) == 0xFEE0_0000
+    }
+
     fn mask_unused_pba_bits(&mut self) {
         let bits = usize::from(self.table_size) % 64;
         if bits == 0 {
@@ -317,8 +327,8 @@ impl MsixCapability {
     /// - When MSI-X is disabled (MSI-X Enable = 0), this returns `None` and does not mutate the
     ///   Pending Bit Array (PBA).
     /// - When MSI-X is enabled but delivery is blocked (function mask, vector mask, or the table
-    ///   entry is not fully programmed), this returns `None` and sets the PBA pending bit for the
-    ///   vector.
+    ///   entry is not fully programmed), this returns `None` and sets the PBA pending bit for
+    ///   the vector.
     /// - When delivery is successful, the pending bit is cleared.
     pub fn trigger(&mut self, vector: u16) -> Option<MsiMessage> {
         if !self.enabled {
@@ -336,7 +346,7 @@ impl MsixCapability {
             return None;
         }
         let msg = self.entry_message(vector)?;
-        if msg.address == 0 {
+        if !Self::is_xapic_msi_address(msg.address) {
             self.set_pending(vector, true);
             return None;
         }
@@ -381,7 +391,7 @@ impl MsixCapability {
             let Some(msg) = self.entry_message(vector) else {
                 continue;
             };
-            if msg.address == 0 {
+            if !Self::is_xapic_msi_address(msg.address) {
                 continue;
             }
 
@@ -564,5 +574,45 @@ mod tests {
             1,
             "reserved MSI-X PBA bits should be masked to zero"
         );
+    }
+
+    #[test]
+    fn invalid_msix_address_latches_pending_and_delivers_after_programming() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsixCapability::new(1, 0, 0x1000, 0, 0x2000)));
+        let cap_offset = config.find_capability(super::PCI_CAP_ID_MSIX).unwrap() as u16;
+
+        // Enable MSI-X.
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        config.write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15)));
+
+        let mut interrupts = PlatformInterrupts::new();
+        interrupts.set_mode(PlatformInterruptMode::Apic);
+
+        let msix = config.capability_mut::<MsixCapability>().unwrap();
+
+        // Program entry 0 with an address outside the LAPIC MSI window; delivery should be treated
+        // as blocked and latch PBA pending.
+        msix.table_write(0x0, &0x1234_5678u32.to_le_bytes());
+        msix.table_write(0x4, &0u32.to_le_bytes());
+        msix.table_write(0x8, &0x0045u32.to_le_bytes());
+        msix.table_write(0xc, &0u32.to_le_bytes()); // unmasked
+
+        assert!(!msix.trigger_into(0, &mut interrupts));
+        assert_eq!(interrupts.get_pending(), None);
+
+        let mut pba = [0u8; 8];
+        msix.pba_read(0, &mut pba);
+        assert_eq!(u64::from_le_bytes(pba) & 1, 1);
+
+        // Once the guest programs a valid MSI address, draining pending should deliver and clear
+        // the pending bit.
+        msix.table_write(0x0, &0xfee0_0000u32.to_le_bytes());
+        msix.table_write(0x4, &0u32.to_le_bytes());
+        assert_eq!(msix.deliver_pending_into(&mut interrupts), 1);
+        assert_eq!(interrupts.get_pending(), Some(0x45));
+
+        msix.pba_read(0, &mut pba);
+        assert_eq!(u64::from_le_bytes(pba) & 1, 0);
     }
 }
