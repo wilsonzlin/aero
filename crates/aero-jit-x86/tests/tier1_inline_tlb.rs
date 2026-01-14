@@ -2137,7 +2137,7 @@ fn tier1_inline_tlb_cross_page_store_mmio_exits_to_runtime_w16() {
     assert_eq!(mmio.vaddr, addr);
     assert_eq!(mmio.size, 2);
     assert!(mmio.is_write);
-    assert_eq!(mmio.value & 0xffff, 0xBEEF);
+    assert_eq!(mmio.value, 0xBEEF);
     assert_eq!(mmio.rip, 0x1000);
 }
 
@@ -2231,7 +2231,7 @@ fn tier1_inline_tlb_cross_page_store_mmio_exits_to_runtime_w32() {
     assert_eq!(mmio.vaddr, addr);
     assert_eq!(mmio.size, 4);
     assert!(mmio.is_write);
-    assert_eq!(mmio.value & 0xffff_ffff, 0xDEAD_BEEF);
+    assert_eq!(mmio.value, 0xDEAD_BEEF);
     assert_eq!(mmio.rip, 0x1000);
 }
 
@@ -2777,7 +2777,7 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     assert_eq!(mmio.vaddr, 0xF000);
     assert_eq!(mmio.size, 4);
     assert!(mmio.is_write);
-    assert_eq!(mmio.value & 0xffff_ffff, 0xDEAD_BEEF);
+    assert_eq!(mmio.value, 0xDEAD_BEEF);
     assert_eq!(mmio.rip, 0x1000);
 }
 
