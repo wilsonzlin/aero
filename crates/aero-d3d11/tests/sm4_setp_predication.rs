@@ -1172,16 +1172,12 @@ fn translates_setp_ordered_ne_is_false_when_nan_is_involved() {
 
     // For ordered `ne`, the translator should emit `x == x` NaN guards.
     assert!(
-        translated
-            .wgsl
-            .contains("((setp_a_0).x) == ((setp_a_0).x)"),
+        translated.wgsl.contains("((setp_a_0).x) == ((setp_a_0).x)"),
         "expected ordered ne setp to include NaN guard for lhs (`x == x`):\n{}",
         translated.wgsl
     );
     assert!(
-        translated
-            .wgsl
-            .contains("((setp_b_0).x) == ((setp_b_0).x)"),
+        translated.wgsl.contains("((setp_b_0).x) == ((setp_b_0).x)"),
         "expected ordered ne setp to include NaN guard for rhs (`x == x`):\n{}",
         translated.wgsl
     );

@@ -48,7 +48,8 @@ fn submit_admin_identify(pc: &mut PcPlatform, bar0_base: u64, asq: u64, id_buf: 
 }
 
 #[test]
-fn pc_platform_nvme_msix_snapshot_restore_preserves_vector_mask_pending_and_delivers_after_unmask() {
+fn pc_platform_nvme_msix_snapshot_restore_preserves_vector_mask_pending_and_delivers_after_unmask()
+{
     const RAM_SIZE: usize = 2 * 1024 * 1024;
     let config = PcPlatformConfig {
         enable_nvme: true,
@@ -80,7 +81,11 @@ fn pc_platform_nvme_msix_snapshot_restore_preserves_vector_mask_pending_and_deli
     let msix_base = u16::from(msix_cap);
     let table = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x04);
     let pba = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x08);
-    assert_eq!(table & 0x7, 0, "NVMe MSI-X table should live in BAR0 (BIR=0)");
+    assert_eq!(
+        table & 0x7,
+        0,
+        "NVMe MSI-X table should live in BAR0 (BIR=0)"
+    );
     assert_eq!(pba & 0x7, 0, "NVMe MSI-X PBA should live in BAR0 (BIR=0)");
     let table_offset = u64::from(table & !0x7);
     let pba_offset = u64::from(pba & !0x7);
@@ -212,8 +217,8 @@ fn pc_platform_nvme_msix_snapshot_restore_preserves_vector_mask_pending_and_deli
 }
 
 #[test]
-fn pc_platform_nvme_msix_snapshot_restore_preserves_function_mask_pending_and_delivers_after_unmask()
-{
+fn pc_platform_nvme_msix_snapshot_restore_preserves_function_mask_pending_and_delivers_after_unmask(
+) {
     const RAM_SIZE: usize = 2 * 1024 * 1024;
     let config = PcPlatformConfig {
         enable_nvme: true,
@@ -245,7 +250,11 @@ fn pc_platform_nvme_msix_snapshot_restore_preserves_function_mask_pending_and_de
     let msix_base = u16::from(msix_cap);
     let table = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x04);
     let pba = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x08);
-    assert_eq!(table & 0x7, 0, "NVMe MSI-X table should live in BAR0 (BIR=0)");
+    assert_eq!(
+        table & 0x7,
+        0,
+        "NVMe MSI-X table should live in BAR0 (BIR=0)"
+    );
     assert_eq!(pba & 0x7, 0, "NVMe MSI-X PBA should live in BAR0 (BIR=0)");
     let table_offset = u64::from(table & !0x7);
     let pba_offset = u64::from(pba & !0x7);
@@ -260,12 +269,7 @@ fn pc_platform_nvme_msix_snapshot_restore_preserves_function_mask_pending_and_de
 
     // Enable MSI-X and set Function Mask (bit 14).
     let ctrl = pci_cfg_read_u16(&mut pc, bdf, msix_base + 0x02);
-    pci_cfg_write_u16(
-        &mut pc,
-        bdf,
-        msix_base + 0x02,
-        ctrl | (1 << 15) | (1 << 14),
-    );
+    pci_cfg_write_u16(&mut pc, bdf, msix_base + 0x02, ctrl | (1 << 15) | (1 << 14));
 
     // Set up admin queue and submit an IDENTIFY command.
     let asq = 0x10000u64;
@@ -375,4 +379,3 @@ fn pc_platform_nvme_msix_snapshot_restore_preserves_function_mask_pending_and_de
         "expected MSI-X pending bit 0 to clear after restore + unmask + delivery"
     );
 }
-
