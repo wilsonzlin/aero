@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, PortIO};
+use aero_gpu_vga::{DisplayOutput, PortIO, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -108,10 +108,10 @@ fn boot_int10_vbe_display_start() {
         // Verify the BIOS VBE display-start state is mirrored into the Bochs VBE_DISPI x/y offset
         // registers on the VGA device.
         let mut vga = vga.borrow_mut();
-        vga.port_write(0x01CE, 2, 0x0008);
-        let x_off = vga.port_read(0x01CF, 2) as u16;
-        vga.port_write(0x01CE, 2, 0x0009);
-        let y_off = vga.port_read(0x01CF, 2) as u16;
+        vga.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0008);
+        let x_off = vga.port_read(VBE_DISPI_DATA_PORT, 2) as u16;
+        vga.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0009);
+        let y_off = vga.port_read(VBE_DISPI_DATA_PORT, 2) as u16;
         assert_eq!((x_off, y_off), (1, 0));
 
         vga.present();

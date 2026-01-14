@@ -1,4 +1,5 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -10,19 +11,19 @@ fn enable_a20(m: &mut Machine) {
 }
 
 fn program_vbe_linear_64x64x32(m: &mut Machine) {
-    // Bochs VBE_DISPI programming via 0x01CE/0x01CF index/data ports.
-    m.io_write(0x01CE, 2, 0x0001);
-    m.io_write(0x01CF, 2, 64); // XRES
+    // Bochs VBE_DISPI programming via index/data ports.
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64); // XRES
 
-    m.io_write(0x01CE, 2, 0x0002);
-    m.io_write(0x01CF, 2, 64); // YRES
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64); // YRES
 
-    m.io_write(0x01CE, 2, 0x0003);
-    m.io_write(0x01CF, 2, 32); // BPP
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 32); // BPP
 
-    m.io_write(0x01CE, 2, 0x0004);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
     // ENABLE | LFB_ENABLE.
-    m.io_write(0x01CF, 2, 0x0041);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 }
 
 fn write_pixel_bgrx(m: &mut Machine, width: u32, x: u32, y: u32, b: u8, g: u8, r: u8) {

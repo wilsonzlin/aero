@@ -1,3 +1,4 @@
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use emulator::devices::vga::{DisplayOutput, PortIO, VgaDevice};
 
 #[test]
@@ -18,14 +19,14 @@ fn bochs_vbe_lfb_write_renders() {
     let mut dev = VgaDevice::new();
 
     // Program 64x64x32bpp, LFB enabled (Bochs VBE_DISPI).
-    dev.port_write(0x01CE, 2, 0x0001);
-    dev.port_write(0x01CF, 2, 64);
-    dev.port_write(0x01CE, 2, 0x0002);
-    dev.port_write(0x01CF, 2, 64);
-    dev.port_write(0x01CE, 2, 0x0003);
-    dev.port_write(0x01CF, 2, 32);
-    dev.port_write(0x01CE, 2, 0x0004);
-    dev.port_write(0x01CF, 2, 0x0041);
+    dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
+    dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
+    dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    dev.port_write(VBE_DISPI_DATA_PORT, 2, 32);
+    dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    dev.port_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
     // Write a single red pixel at (0,0) in BGRX format.
     let lfb_base = dev.lfb_base();

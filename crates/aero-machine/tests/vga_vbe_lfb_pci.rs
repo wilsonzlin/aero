@@ -1,5 +1,6 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 
 fn enable_a20(m: &mut Machine) {
@@ -66,14 +67,14 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
 
     // Match the programming sequence used by `aero-gpu-vga`'s
     // `vbe_linear_framebuffer_write_shows_up_in_output` test.
-    m.io_write(0x01CE, 2, 0x0001);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0002);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0003);
-    m.io_write(0x01CF, 2, 32);
-    m.io_write(0x01CE, 2, 0x0004);
-    m.io_write(0x01CF, 2, 0x0041);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
     // changes (e.g. config-driven legacy VGA LFB vs AeroGPU BAR1-backed legacy VBE).

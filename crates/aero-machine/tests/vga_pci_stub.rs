@@ -1,5 +1,8 @@
 use aero_devices::pci::PciBdf;
-use aero_gpu_vga::DisplayOutput;
+use aero_gpu_vga::{
+    DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT, VGA_PCI_CLASS_CODE,
+    VGA_PCI_DEVICE_ID, VGA_PCI_SUBCLASS, VGA_PCI_VENDOR_ID,
+};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -60,14 +63,14 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
 
         let vendor_id = bus.read_config(bdf, 0x00, 2) as u16;
         let device_id = bus.read_config(bdf, 0x02, 2) as u16;
-        assert_eq!(vendor_id, 0x1234);
-        assert_eq!(device_id, 0x1111);
+        assert_eq!(vendor_id, VGA_PCI_VENDOR_ID);
+        assert_eq!(device_id, VGA_PCI_DEVICE_ID);
 
         let class_reg = bus.read_config(bdf, 0x08, 4);
         let class_code = ((class_reg >> 24) & 0xFF) as u8;
         let subclass = ((class_reg >> 16) & 0xFF) as u8;
-        assert_eq!(class_code, 0x03);
-        assert_eq!(subclass, 0x00);
+        assert_eq!(class_code, VGA_PCI_CLASS_CODE);
+        assert_eq!(subclass, VGA_PCI_SUBCLASS);
 
         let header_type = bus.read_config(bdf, 0x0E, 1) as u8;
         assert_eq!(header_type, 0x00);
@@ -99,14 +102,14 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
 
     // Program a VBE linear mode and confirm MMIO writes via BAR0 affect the visible framebuffer
     // (via the PCI MMIO router).
-    m.io_write(0x01CE, 2, 0x0001);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0002);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0003);
-    m.io_write(0x01CF, 2, 32);
-    m.io_write(0x01CE, 2, 0x0004);
-    m.io_write(0x01CF, 2, 0x0041);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
     // Write a red pixel at (0,0) in BGRX format via *machine memory* at the BAR0 base.
     m.write_physical_u8(bar0_base, 0x00); // B

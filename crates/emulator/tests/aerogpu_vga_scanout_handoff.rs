@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_shared::scanout_state::{
     ScanoutState, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
 };
@@ -44,7 +45,7 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     dev.borrow_mut().set_scanout_state(Some(scanout.clone()));
 
     // Enable PCI I/O + memory decoding:
-    // - I/O decoding is required for VGA/VBE port access (0x3B0..0x3DF, 0x01CE/0x01CF).
+    // - I/O decoding is required for VGA/VBE port access.
     // - memory decoding is required for BAR1 accesses and BAR0 scanout programming.
     dev.borrow_mut().config_write(0x04, 2, (1 << 0) | (1 << 1));
 
@@ -64,14 +65,14 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     // Program a Bochs VBE mode (64x64x32bpp, LFB enabled).
     {
         let mut d = dev.borrow_mut();
-        d.vga_port_write(0x01CE, 2, 0x0001);
-        d.vga_port_write(0x01CF, 2, 64);
-        d.vga_port_write(0x01CE, 2, 0x0002);
-        d.vga_port_write(0x01CF, 2, 64);
-        d.vga_port_write(0x01CE, 2, 0x0003);
-        d.vga_port_write(0x01CF, 2, 32);
-        d.vga_port_write(0x01CE, 2, 0x0004);
-        d.vga_port_write(0x01CF, 2, 0x0041);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 64);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 64);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 32);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
     }
 
     // Write a red pixel at (0,0) in BGRX format via the BAR1-mapped LFB.
@@ -122,14 +123,14 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     {
         let mut d = dev.borrow_mut();
         // Attempt to switch to a different legacy VBE mode.
-        d.vga_port_write(0x01CE, 2, 0x0001);
-        d.vga_port_write(0x01CF, 2, 800);
-        d.vga_port_write(0x01CE, 2, 0x0002);
-        d.vga_port_write(0x01CF, 2, 600);
-        d.vga_port_write(0x01CE, 2, 0x0003);
-        d.vga_port_write(0x01CF, 2, 32);
-        d.vga_port_write(0x01CE, 2, 0x0004);
-        d.vga_port_write(0x01CF, 2, 0x0041);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 800);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 600);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 32);
+        d.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+        d.vga_port_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
     }
     // Attempt to scribble the legacy LFB.
     mem.write(

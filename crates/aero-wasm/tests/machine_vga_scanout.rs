@@ -1,6 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_wasm::{Machine, RunExitKind};
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+
+const _: () = {
+    assert!(VBE_DISPI_DATA_PORT == VBE_DISPI_INDEX_PORT + 1);
+};
 
 fn boot_sector_write_a_to_b8000() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -87,20 +92,21 @@ fn boot_sector_vbe_64x64x32_red_pixel() -> [u8; 512] {
     sector[i] = 0xFC;
     i += 1;
 
-    // mov dx, 0x01CE  (Bochs VBE index port)
-    sector[i..i + 3].copy_from_slice(&[0xBA, 0xCE, 0x01]);
+    // mov dx, VBE_DISPI_INDEX_PORT (Bochs VBE index port)
+    let [lo, hi] = VBE_DISPI_INDEX_PORT.to_le_bytes();
+    sector[i..i + 3].copy_from_slice(&[0xBA, lo, hi]);
     i += 3;
 
     // Helper macro: write VBE register (index in AX, value in AX) using out dx, ax with dx toggling.
     let write_vbe_reg = |index: u16, value: u16, sector: &mut [u8; 512], i: &mut usize| {
-        // dx is expected to be 0x01CE here.
+        // dx is expected to be VBE_DISPI_INDEX_PORT here.
         // mov ax, index
         sector[*i..*i + 3].copy_from_slice(&[0xB8, (index & 0xFF) as u8, (index >> 8) as u8]);
         *i += 3;
         // out dx, ax
         sector[*i] = 0xEF;
         *i += 1;
-        // inc dx (0x01CF)
+        // inc dx (VBE_DISPI_DATA_PORT)
         sector[*i] = 0x42;
         *i += 1;
         // mov ax, value
@@ -109,7 +115,7 @@ fn boot_sector_vbe_64x64x32_red_pixel() -> [u8; 512] {
         // out dx, ax
         sector[*i] = 0xEF;
         *i += 1;
-        // dec dx (back to 0x01CE)
+        // dec dx (back to VBE_DISPI_INDEX_PORT)
         sector[*i] = 0x4A;
         *i += 1;
     };

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use aero_gpu_vga::DisplayOutput;
+use aero_gpu_vga::{DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -36,14 +36,14 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
 
     // Match the programming sequence used by `aero-gpu-vga`'s
     // `vbe_linear_framebuffer_write_shows_up_in_output` test.
-    m.io_write(0x01CE, 2, 0x0001);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0002);
-    m.io_write(0x01CF, 2, 64);
-    m.io_write(0x01CE, 2, 0x0003);
-    m.io_write(0x01CF, 2, 32);
-    m.io_write(0x01CE, 2, 0x0004);
-    m.io_write(0x01CF, 2, 0x0041);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    m.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    m.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
     let base = u64::from(lfb_base);
     assert_eq!(u64::from(vga.borrow().lfb_base()), base);

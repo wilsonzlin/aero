@@ -1,4 +1,4 @@
-use aero_gpu_vga::DisplayOutput;
+use aero_gpu_vga::{DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
@@ -47,14 +47,14 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     let mut vm = Machine::new(cfg.clone()).unwrap();
 
     // Program Bochs VBE_DISPI to 64x64x32 with LFB enabled.
-    vm.io_write(0x01CE, 2, 0x0001);
-    vm.io_write(0x01CF, 2, 64);
-    vm.io_write(0x01CE, 2, 0x0002);
-    vm.io_write(0x01CF, 2, 64);
-    vm.io_write(0x01CE, 2, 0x0003);
-    vm.io_write(0x01CF, 2, 32);
-    vm.io_write(0x01CE, 2, 0x0004);
-    vm.io_write(0x01CF, 2, 0x0041);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
     // Write a few pixels (packed 32bpp BGRX).
     let base = u64::from(lfb_base);

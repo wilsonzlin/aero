@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
+use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT, VBE_FRAMEBUFFER_OFFSET};
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
@@ -83,14 +83,14 @@ fn machine_restore_migrates_legacy_vga_snapshot_v1_vram_layout() {
     let mut vm = Machine::new(cfg.clone()).unwrap();
 
     // Program Bochs VBE_DISPI to 64x64x32 with LFB enabled.
-    vm.io_write(0x01CE, 2, 0x0001);
-    vm.io_write(0x01CF, 2, 64);
-    vm.io_write(0x01CE, 2, 0x0002);
-    vm.io_write(0x01CF, 2, 64);
-    vm.io_write(0x01CE, 2, 0x0003);
-    vm.io_write(0x01CF, 2, 32);
-    vm.io_write(0x01CE, 2, 0x0004);
-    vm.io_write(0x01CF, 2, 0x0041);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0002);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 64);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0003);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 32);
+    vm.io_write(VBE_DISPI_INDEX_PORT, 2, 0x0004);
+    vm.io_write(VBE_DISPI_DATA_PORT, 2, 0x0041);
 
     // Write one red pixel at (0,0) in packed 32bpp BGRX.
     vm.write_physical_u32(vm.vbe_lfb_base(), 0x00FF_0000);
