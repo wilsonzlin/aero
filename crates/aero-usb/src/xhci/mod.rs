@@ -2626,6 +2626,24 @@ impl XhciController {
                 }
             }
 
+            // When a transfer results in an endpoint halt (STALL/TRB error), reflect that into the
+            // guest Endpoint Context so software can observe the halted state and issue Reset
+            // Endpoint.
+            if exec
+                .endpoint_state(ep_addr)
+                .is_some_and(|st| st.halted)
+            {
+                if self.write_endpoint_state_to_context(
+                    mem,
+                    slot_id,
+                    endpoint_id,
+                    context::EndpointState::Halted,
+                ) {
+                    self.slots[slot_idx].endpoint_contexts[usize::from(endpoint_id - 1)]
+                        .set_endpoint_state_enum(context::EndpointState::Halted);
+                }
+            }
+
             // Drain and emit transfer events.
             let events = exec.take_events();
             for ev in events {
@@ -3096,6 +3114,41 @@ impl XhciController {
         let dev_ctx = context::DeviceContext32::new(dev_ctx_ptr);
         let ep_ctx = dev_ctx.endpoint_context(mem, endpoint_id).ok()?;
         Some(ep_ctx.endpoint_state_enum())
+    }
+
+    fn write_endpoint_state_to_context(
+        &self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+        state: context::EndpointState,
+    ) -> bool {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return false;
+        }
+        if self.dcbaap == 0 {
+            return false;
+        }
+        let dcbaa = context::Dcbaa::new(self.dcbaap);
+        let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
+            return false;
+        };
+        let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
+        if dev_ctx_ptr == 0 {
+            return false;
+        }
+
+        let ctx_base = match dev_ctx_ptr
+            .checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64))
+        {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let dw0 = mem.read_u32(ctx_base);
+        let new_dw0 = (dw0 & !0x7) | (u32::from(state.raw()) & 0x7);
+        mem.write_u32(ctx_base, new_dw0);
+        true
     }
 
     fn write_endpoint_dequeue_to_context(
