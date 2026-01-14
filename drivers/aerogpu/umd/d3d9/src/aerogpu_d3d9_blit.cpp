@@ -965,9 +965,15 @@ static HRESULT blit_locked_impl(Device* dev,
     dev->textures[0] = saved_tex0;
     (void)emit_set_texture_locked(dev, 0);
 
-    dev->vs = saved_vs;
-    dev->ps = saved_ps;
-    (void)emit_bind_shaders_locked(dev);
+    // The host command stream validator rejects null shader binds. If the caller
+    // did not have a pipeline bound (common early in device bring-up), keep the
+    // current internal shaders bound instead of restoring a null pair. The next
+    // draw/blit will re-bind the appropriate pipeline.
+    if (saved_vs && saved_ps) {
+      dev->vs = saved_vs;
+      dev->ps = saved_ps;
+      (void)emit_bind_shaders_locked(dev);
+    }
 
     dev->render_targets[0] = saved_rts[0];
     dev->render_targets[1] = saved_rts[1];
@@ -1229,9 +1235,15 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
     dev->textures[0] = saved_tex0;
     (void)emit_set_texture_locked(dev, 0);
 
-    dev->vs = saved_vs;
-    dev->ps = saved_ps;
-    (void)emit_bind_shaders_locked(dev);
+    // The host command stream validator rejects null shader binds. If the caller
+    // did not have a pipeline bound (common early in device bring-up), keep the
+    // current internal shaders bound instead of restoring a null pair. The next
+    // draw/blit will re-bind the appropriate pipeline.
+    if (saved_vs && saved_ps) {
+      dev->vs = saved_vs;
+      dev->ps = saved_ps;
+      (void)emit_bind_shaders_locked(dev);
+    }
 
     dev->render_targets[0] = saved_rts[0];
     dev->render_targets[1] = saved_rts[1];

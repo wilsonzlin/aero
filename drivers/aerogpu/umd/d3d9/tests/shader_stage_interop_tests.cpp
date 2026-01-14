@@ -189,6 +189,7 @@ struct CleanupDevice {
   D3D9DDI_DEVICEFUNCS device_funcs{};
   D3DDDI_HADAPTER hAdapter{};
   D3DDDI_HDEVICE hDevice{};
+  std::vector<D3DDDI_HRESOURCE> resources;
   std::vector<D3D9DDI_HSHADER> shaders;
   std::vector<D3DDDI_HRESOURCE> resources;
   bool has_adapter = false;
@@ -316,6 +317,185 @@ bool CreateDummyTexture(CleanupDevice* cleanup, D3DDDI_HRESOURCE* out_tex) {
   cleanup->resources.push_back(create_res.hResource);
   *out_tex = create_res.hResource;
   return true;
+}
+
+bool CreateDummyTexture(CleanupDevice* cleanup, D3DDDI_HRESOURCE* out_tex) {
+  if (!cleanup || !out_tex) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnCreateResource != nullptr, "pfnCreateResource")) {
+    return false;
+  }
+
+  // D3DFMT_X8R8G8B8 = 22.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 3u; // D3DRTYPE_TEXTURE (conventional value; AeroGPU currently treats this as metadata)
+  create_res.format = 22u;
+  create_res.width = 2;
+  create_res.height = 2;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  HRESULT hr = cleanup->device_funcs.pfnCreateResource(cleanup->hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(texture2d)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned hResource")) {
+    return false;
+  }
+  cleanup->resources.push_back(create_res.hResource);
+  *out_tex = create_res.hResource;
+  return true;
+}
+
+bool CheckNoNullShaderBinds(const uint8_t* buf, size_t capacity) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return false;
+  }
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
+        return false;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return true;
+}
+
+bool TestColorFillDoesNotBindNullShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnColorFill != nullptr, "pfnColorFill")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyResource != nullptr, "pfnDestroyResource")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  // Repro: ensure the "saved" shader state for the blit helper is null (common
+  // immediately after device creation). The command stream must never contain
+  // BIND_SHADERS with vs==0 or ps==0.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->vs = nullptr;
+    dev->ps = nullptr;
+    dev->user_vs = nullptr;
+    dev->user_ps = nullptr;
+  }
+
+  dev->cmd.reset();
+
+  D3D9DDIARG_COLORFILL fill{};
+  fill.hDst = hTex;
+  fill.pRect = nullptr;
+  fill.color_argb = 0xFF112233u;
+  fill.flags = 0;
+  HRESULT hr = cleanup.device_funcs.pfnColorFill(cleanup.hDevice, &fill);
+  if (!Check(hr == S_OK, "ColorFill")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ColorFill)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  return CheckNoNullShaderBinds(buf, len);
+}
+
+bool TestBltDoesNotBindNullShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnBlt != nullptr, "pfnBlt")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyResource != nullptr, "pfnDestroyResource")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hSrc{};
+  D3DDDI_HRESOURCE hDst{};
+  if (!CreateDummyTexture(&cleanup, &hSrc)) {
+    return false;
+  }
+  if (!CreateDummyTexture(&cleanup, &hDst)) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->vs = nullptr;
+    dev->ps = nullptr;
+    dev->user_vs = nullptr;
+    dev->user_ps = nullptr;
+  }
+
+  dev->cmd.reset();
+
+  D3D9DDIARG_BLT blt{};
+  blt.hSrc = hSrc;
+  blt.hDst = hDst;
+  blt.pSrcRect = nullptr;
+  blt.pDstRect = nullptr;
+  blt.filter = 0;
+  blt.flags = 0;
+  HRESULT hr = cleanup.device_funcs.pfnBlt(cleanup.hDevice, &blt);
+  if (!Check(hr == S_OK, "Blt")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(Blt)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  return CheckNoNullShaderBinds(buf, len);
 }
 
 struct VertexXyzrhwDiffuse {
@@ -874,6 +1054,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestUnsupportedFvfPsOnlyFailsWithoutDraw()) {
+    return 1;
+  }
+  if (!aerogpu::TestColorFillDoesNotBindNullShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestBltDoesNotBindNullShaders()) {
     return 1;
   }
   return 0;
