@@ -1174,6 +1174,80 @@ fn sm4_gs_movc_respects_saturate() {
 }
 
 #[test]
+fn sm4_gs_rcp_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // rcp o0.xyzw, l(2, 4, 8, 16)
+    let mut inst = vec![opcode_token(OPCODE_RCP, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([
+        2.0f32.to_bits(),
+        4.0f32.to_bits(),
+        8.0f32.to_bits(),
+        16.0f32.to_bits(),
+    ]));
+    inst[0] = opcode_token(OPCODE_RCP, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("1.0 / ("),
+        "expected rcp to lower to reciprocal divide:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_rsq_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // rsq o0.xyzw, l(4, 9, 16, 25)
+    let mut inst = vec![opcode_token(OPCODE_RSQ, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([
+        4.0f32.to_bits(),
+        9.0f32.to_bits(),
+        16.0f32.to_bits(),
+        25.0f32.to_bits(),
+    ]));
+    inst[0] = opcode_token(OPCODE_RSQ, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("inverseSqrt("),
+        "expected rsq to lower to WGSL inverseSqrt():\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_and_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // and o0.xyzw, l(0xffffffff, 0, 0xffffffff, 0), l(0, 0xffffffff, 0, 0xffffffff)
+    let mut inst = vec![opcode_token(OPCODE_AND, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([0xffff_ffff, 0, 0xffff_ffff, 0]));
+    inst.extend_from_slice(&imm32_vec4([0, 0xffff_ffff, 0, 0xffff_ffff]));
+    inst[0] = opcode_token(OPCODE_AND, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains(") & ("),
+        "expected and to lower to WGSL bitwise &:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn gs_translate_rejects_regfile_output_depth_source() {
     let module = Sm4Module {
         stage: ShaderStage::Geometry,

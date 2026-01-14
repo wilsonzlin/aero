@@ -494,6 +494,19 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     &input_sivs,
                 )?;
             }
+            Sm4Inst::Rcp { dst, src } | Sm4Inst::Rsq { dst, src } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    src,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    opcode_name(inst),
+                    &input_sivs,
+                )?;
+            }
             Sm4Inst::Add { dst, a, b } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
                 for src in [a, b] {
@@ -505,6 +518,21 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                         verts_per_primitive,
                         inst_index,
                         "add",
+                        &input_sivs,
+                    )?;
+                }
+            }
+            Sm4Inst::And { dst, a, b } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [a, b] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "and",
                         &input_sivs,
                     )?;
                 }
@@ -1196,11 +1224,27 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({x}, {y}, {z}, {w_lane})"));
                 emit_write_masked(&mut w, inst_index, "f16tof32", dst.reg, dst.mask, rhs)?;
             }
+            Sm4Inst::Rcp { dst, src } => {
+                let src = emit_src_vec4(inst_index, "rcp", src, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("1.0 / ({src})"));
+                emit_write_masked(&mut w, inst_index, "rcp", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Rsq { dst, src } => {
+                let src = emit_src_vec4(inst_index, "rsq", src, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("inverseSqrt({src})"));
+                emit_write_masked(&mut w, inst_index, "rsq", dst.reg, dst.mask, rhs)?;
+            }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(inst_index, "add", a, &input_sivs)?;
                 let b = emit_src_vec4(inst_index, "add", b, &input_sivs)?;
                 let rhs = maybe_saturate(dst.saturate, format!("({a}) + ({b})"));
                 emit_write_masked(&mut w, inst_index, "add", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::And { dst, a, b } => {
+                let a = emit_src_vec4_u32(inst_index, "and", a, &input_sivs)?;
+                let b = emit_src_vec4_u32(inst_index, "and", b, &input_sivs)?;
+                let rhs = format!("bitcast<vec4<f32>>(({a}) & ({b}))");
+                emit_write_masked(&mut w, inst_index, "and", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Mul { dst, a, b } => {
                 let a = emit_src_vec4(inst_index, "mul", a, &input_sivs)?;
