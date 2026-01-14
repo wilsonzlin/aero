@@ -18068,7 +18068,7 @@ fn main() {{
                 }]);
 
                 // ps_5_0 version token: type=0 (PS) in bits 16.., major=5 in bits 4..7.
-                let version_token = (0u32 << 16) | (5u32 << 4);
+                let version_token = 5u32 << 4;
 
                 let t0 = vec![
                     operand_token(
@@ -18598,8 +18598,10 @@ fn cs_main() {
 
             // Keep the scratch buffer small so the test is fast and can force growth without
             // allocating a multi-megabyte backing buffer.
-            let mut desc = ExpansionScratchDescriptor::default();
-            desc.frames_in_flight = 1;
+            let mut desc = ExpansionScratchDescriptor {
+                frames_in_flight: 1,
+                ..Default::default()
+            };
             // `ExpansionScratchAllocator` rounds the requested per-frame segment size up to satisfy
             // WebGPU offset alignment rules (storage/uniform/copy). Some backends (notably wgpu GL)
             // report `min_storage_buffer_offset_alignment == 256`, meaning two tiny allocations can
@@ -18714,8 +18716,10 @@ fn cs_main() {
 
             // Keep the per-frame scratch capacity small (but deterministic) so that the test can
             // assert that repeated GS prepass draws do not force the allocator to grow/reallocate.
-            let mut desc = ExpansionScratchDescriptor::default();
-            desc.frames_in_flight = 1;
+            let mut desc = ExpansionScratchDescriptor {
+                frames_in_flight: 1,
+                ..Default::default()
+            };
             let storage_alignment =
                 (exec.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
             desc.per_frame_size = storage_alignment.saturating_mul(32).max(64 * 1024);

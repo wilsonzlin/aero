@@ -48,7 +48,7 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
             .expect("compute translation should succeed");
         assert_wgsl_validates(&translated.wgsl);
 
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated
                 .wgsl
@@ -152,8 +152,8 @@ fn compute_translate_and_run_copy_raw_srv_to_uav() {
             return;
         }
 
-        let binding_t0 = BINDING_BASE_TEXTURE + 0;
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_t0 = BINDING_BASE_TEXTURE;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated.wgsl.contains("@group(2)"),
             "translated compute WGSL must use @group(2):\n{}",
@@ -259,8 +259,8 @@ fn compute_translate_and_run_copy_structured_srv_to_uav() {
             return;
         }
 
-        let binding_t0 = BINDING_BASE_TEXTURE + 0;
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_t0 = BINDING_BASE_TEXTURE;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated.wgsl.contains("@group(2)"),
             "translated compute WGSL must use @group(2):\n{}",

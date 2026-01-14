@@ -580,13 +580,8 @@ fn decodes_and_translates_compute_shader_with_srv_and_uav_buffers() {
     // - ld_raw r0.x, l(0), t0
     // - store_raw u0.x, l(0), r0.x
     // - ret
-    let mut body = Vec::<u32>::new();
-
     // dcl_thread_group 8,1,1
-    body.push(opcode_token(OPCODE_DCL_THREAD_GROUP, 4));
-    body.push(8);
-    body.push(1);
-    body.push(1);
+    let mut body: Vec<u32> = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 8, 1, 1];
 
     // dcl_resource_raw t0
     body.push(opcode_token(OPCODE_DCL_RESOURCE_RAW, 3));

@@ -160,7 +160,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         writer.set_pipeline(PipelineKind::Compute, PIPELINE);
 
         writer.set_bind_buffer(IA_BINDING_META, META, 0, 0);
-        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + 0, VB0, 0, 0);
+        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE, VB0, 0, 0);
         writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + 1, VB1, 0, 0);
         // Bind unused slots to a valid buffer; the shader doesn't reference them for this test.
         for i in 2..IA_MAX_VERTEX_BUFFERS as u32 {

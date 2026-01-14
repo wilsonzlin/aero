@@ -163,7 +163,7 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             "expected compute builtin in WGSL:\n{}",
             translated.wgsl
         );
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated
                 .wgsl
@@ -322,7 +322,7 @@ fn compute_translate_and_run_group_id_and_group_index_write_linear_id() {
             "expected local_invocation_index builtin in WGSL:\n{}",
             translated.wgsl
         );
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated
                 .wgsl
@@ -507,7 +507,7 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
             "expected local_invocation_index builtin in WGSL:\n{}",
             translated.wgsl
         );
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated
                 .wgsl

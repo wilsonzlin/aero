@@ -12,7 +12,7 @@ fn token_dump_scans_fixture_without_panicking() {
 
     assert!(!insts.is_empty(), "expected at least one instruction");
     assert!(
-        insts.iter().any(|i| i.ext_tokens.len() > 0),
+        insts.iter().any(|i| !i.ext_tokens.is_empty()),
         "expected ps_add fixture to contain an extended opcode token (e.g. add_sat)"
     );
     assert_eq!(

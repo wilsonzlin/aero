@@ -116,9 +116,9 @@ fn gs_stage_bindings_do_not_conflict_with_vertex_pulling() {
         let prelude = pulling.wgsl_prelude();
 
         // Fake "GS stage" resources bound at the standard D3D11 register-space bindings.
-        let gs_cb0_binding = BINDING_BASE_CBUFFER + 0;
-        let gs_t0_binding = BINDING_BASE_TEXTURE + 0;
-        let gs_s0_binding = BINDING_BASE_SAMPLER + 0;
+        let gs_cb0_binding = BINDING_BASE_CBUFFER;
+        let gs_t0_binding = BINDING_BASE_TEXTURE;
+        let gs_s0_binding = BINDING_BASE_SAMPLER;
 
         // Extended D3D11 stages (GS/HS/DS) and vertex pulling share bind group 3 in the binding
         // model. Vertex pulling uses a reserved high binding-number range so it doesn't collide

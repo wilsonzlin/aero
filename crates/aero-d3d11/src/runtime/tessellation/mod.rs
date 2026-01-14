@@ -684,7 +684,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&ds_params, 0, &vec![0u8; 16]);
+            queue.write_buffer(&ds_params, 0, &[0u8; 16]);
 
             let user_ds_wgsl = r#"
 @group(3) @binding(0) var<uniform> ds_offset: vec4<f32>;

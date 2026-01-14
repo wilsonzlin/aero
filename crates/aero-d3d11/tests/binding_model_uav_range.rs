@@ -14,7 +14,7 @@ fn binding_model_ranges_are_disjoint() {
 
     assert_eq!(MAX_CBUFFER_SLOTS, 32);
     assert_eq!(D3D11_MAX_CONSTANT_BUFFER_SLOTS, 14);
-    assert!(D3D11_MAX_CONSTANT_BUFFER_SLOTS <= MAX_CBUFFER_SLOTS);
+    const { assert!(D3D11_MAX_CONSTANT_BUFFER_SLOTS <= MAX_CBUFFER_SLOTS) };
     assert_eq!(MAX_TEXTURE_SLOTS, 128);
     assert_eq!(MAX_SAMPLER_SLOTS, 16);
     assert_eq!(MAX_UAV_SLOTS, 8);

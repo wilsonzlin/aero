@@ -602,17 +602,11 @@ fn sm4_gs_mad_translates_to_wgsl_compute_prepass() {
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
     tokens.push(0x42); // imm
-    for _ in 0..4 {
-        tokens.push(0x3f800000); // 1.0
-    }
+    tokens.extend([0x3f800000; 4]); // 1.0
     tokens.push(0x42); // imm
-    for _ in 0..4 {
-        tokens.push(0x40000000); // 2.0
-    }
+    tokens.extend([0x40000000; 4]); // 2.0
     tokens.push(0x42); // imm
-    for _ in 0..4 {
-        tokens.push(0x40400000); // 3.0
-    }
+    tokens.extend([0x40400000; 4]); // 3.0
 
     tokens.push(opcode_token(OPCODE_RET, 1));
 
@@ -758,13 +752,9 @@ fn sm4_gs_movc_translates_to_wgsl_compute_prepass() {
     tokens.push(0);
     tokens.push(0);
     tokens.push(0x42); // a imm
-    for _ in 0..4 {
-        tokens.push(0x40000000); // 2.0
-    }
+    tokens.extend([0x40000000; 4]); // 2.0
     tokens.push(0x42); // b imm
-    for _ in 0..4 {
-        tokens.push(0x40400000); // 3.0
-    }
+    tokens.extend([0x40400000; 4]); // 3.0
 
     tokens.push(opcode_token(OPCODE_RET, 1));
 

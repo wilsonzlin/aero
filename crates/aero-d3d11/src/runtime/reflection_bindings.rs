@@ -1812,6 +1812,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 data
             }
 
+            #[allow(clippy::too_many_arguments)]
             async fn draw_and_sample(
                 device: &wgpu::Device,
                 queue: &wgpu::Queue,

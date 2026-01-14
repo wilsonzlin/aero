@@ -98,7 +98,7 @@ fn insert_viewport_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 
@@ -154,7 +154,7 @@ fn insert_viewport_nan_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 
@@ -217,7 +217,7 @@ fn insert_viewport_oob_and_duplicate_last_draw(
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 
@@ -281,7 +281,7 @@ fn insert_scissor_enable_and_rect_before_first_draw_xy(
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 
@@ -333,7 +333,7 @@ fn insert_scissor_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 
@@ -383,7 +383,7 @@ fn insert_scissor_disable_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 
@@ -440,7 +440,7 @@ fn insert_scissor_oob_and_duplicate_last_draw(
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
         let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
         let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
-        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+        if size < ProtocolCmdHdr::SIZE_BYTES || !size.is_multiple_of(4) || cursor + size > bytes.len() {
             break;
         }
 

@@ -262,12 +262,12 @@ fn rejects_geometry_shader_input_with_non_immediate_vertex_index_representation(
 
 #[test]
 fn decodes_gs_instance_count_decl() {
-    let mut body = Vec::<u32>::new();
-
     // dcl_gsinstancecount 4
-    body.push(opcode_token(OPCODE_DCL_GS_INSTANCE_COUNT, 2));
-    body.push(4);
-    body.push(opcode_token(OPCODE_RET, 1));
+    let body = vec![
+        opcode_token(OPCODE_DCL_GS_INSTANCE_COUNT, 2),
+        4,
+        opcode_token(OPCODE_RET, 1),
+    ];
 
     // Stage type 2 is geometry shader.
     let tokens = make_sm5_program_tokens(2, &body);

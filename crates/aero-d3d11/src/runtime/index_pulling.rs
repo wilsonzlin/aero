@@ -137,14 +137,8 @@ mod tests {
         // Index pulling bindings are typically used in the same bind group as vertex pulling
         // (`VERTEX_PULLING_GROUP`). They must be in the reserved internal binding range so they
         // never collide with D3D11 register-space bindings.
-        assert!(
-            INDEX_PULLING_PARAMS_BINDING >= BINDING_BASE_INTERNAL,
-            "index pulling params binding must be in internal range"
-        );
-        assert!(
-            INDEX_PULLING_BUFFER_BINDING >= BINDING_BASE_INTERNAL,
-            "index pulling buffer binding must be in internal range"
-        );
+        const { assert!(INDEX_PULLING_PARAMS_BINDING >= BINDING_BASE_INTERNAL) };
+        const { assert!(INDEX_PULLING_BUFFER_BINDING >= BINDING_BASE_INTERNAL) };
 
         // Index pulling must not overlap any possible vertex buffer bindings.
         let last_possible_vb_binding =

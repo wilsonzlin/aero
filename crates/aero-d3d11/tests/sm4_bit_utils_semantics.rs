@@ -209,7 +209,7 @@ fn compute_bit_utils_produce_expected_results() {
             return;
         }
 
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         let device = rt.device();
         let queue = rt.queue();
 
@@ -459,7 +459,7 @@ fn compute_isubc_and_usubb_produce_expected_carry_and_borrow() {
             return;
         }
 
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         let device = rt.device();
         let queue = rt.queue();
 
@@ -740,7 +740,7 @@ fn compute_uaddc_and_iaddc_produce_expected_sum_and_carry() {
             return;
         }
 
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         let device = rt.device();
         let queue = rt.queue();
 

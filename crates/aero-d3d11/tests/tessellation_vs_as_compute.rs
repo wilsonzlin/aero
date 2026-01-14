@@ -246,7 +246,7 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
 }
 
 fn pack_u16_indices_to_words(indices: &[u16]) -> Vec<u32> {
-    let mut words = vec![0u32; (indices.len() + 1) / 2];
+    let mut words = vec![0u32; indices.len().div_ceil(2)];
     for (i, &idx) in indices.iter().enumerate() {
         let word_idx = i / 2;
         let shift = (i % 2) * 16;

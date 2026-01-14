@@ -352,7 +352,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             .checked_mul(stride)
             .ok_or_else(|| anyhow!("meta offset overflow"))?;
         meta.push((
-            read_u32(&meta_bytes, base + 0)?,
+            read_u32(&meta_bytes, base)?,
             read_u32(&meta_bytes, base + 4)?,
             read_u32(&meta_bytes, base + 8)?,
             read_u32(&meta_bytes, base + 12)?,

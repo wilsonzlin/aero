@@ -265,8 +265,8 @@ fn aerogpu_cmd_gs_emulation_passthrough_vs_uses_storage_buffer_vertex_pulling() 
                 regs: {
                     let mut regs = [[0u32; 4]; REG_COUNT];
                     regs[0] = [f32_bits(-1.0), f32_bits(-1.0), f32_bits(2.0), f32_bits(1.0)];
-                    for reg in 1..=VARYING_COUNT {
-                        regs[reg] = [f32_bits(1.0), f32_bits(0.0), f32_bits(0.0), f32_bits(1.0)];
+                    for reg in regs.iter_mut().skip(1) {
+                        *reg = [f32_bits(1.0), f32_bits(0.0), f32_bits(0.0), f32_bits(1.0)];
                     }
                     regs
                 },
@@ -275,8 +275,8 @@ fn aerogpu_cmd_gs_emulation_passthrough_vs_uses_storage_buffer_vertex_pulling() 
                 regs: {
                     let mut regs = [[0u32; 4]; REG_COUNT];
                     regs[0] = [f32_bits(3.0), f32_bits(-1.0), f32_bits(2.0), f32_bits(1.0)];
-                    for reg in 1..=VARYING_COUNT {
-                        regs[reg] = [f32_bits(1.0), f32_bits(0.0), f32_bits(0.0), f32_bits(1.0)];
+                    for reg in regs.iter_mut().skip(1) {
+                        *reg = [f32_bits(1.0), f32_bits(0.0), f32_bits(0.0), f32_bits(1.0)];
                     }
                     regs
                 },
@@ -285,8 +285,8 @@ fn aerogpu_cmd_gs_emulation_passthrough_vs_uses_storage_buffer_vertex_pulling() 
                 regs: {
                     let mut regs = [[0u32; 4]; REG_COUNT];
                     regs[0] = [f32_bits(-1.0), f32_bits(3.0), f32_bits(2.0), f32_bits(1.0)];
-                    for reg in 1..=VARYING_COUNT {
-                        regs[reg] = [f32_bits(1.0), f32_bits(0.0), f32_bits(0.0), f32_bits(1.0)];
+                    for reg in regs.iter_mut().skip(1) {
+                        *reg = [f32_bits(1.0), f32_bits(0.0), f32_bits(0.0), f32_bits(1.0)];
                     }
                     regs
                 },
