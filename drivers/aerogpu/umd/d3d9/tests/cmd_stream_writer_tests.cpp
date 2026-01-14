@@ -59,6 +59,7 @@ AllocRef AEROGPU_D3D9_CALL device_test_track_render_target_write(
     uint32_t alloc_id,
     uint64_t share_token);
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
+HRESULT AEROGPU_D3D9_CALL adapter_test_set_completed_fence(D3DDDI_HADAPTER hAdapter, uint64_t completed_fence);
 HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
     D3DDDI_HDEVICE hDevice,
     uint32_t src_index,
@@ -1680,9 +1681,9 @@ bool TestEventQueryGetDataSemantics() {
   }
 
   // Force the query into the "not ready" state.
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    adapter->completed_fence = 0;
+  hr = adapter_test_set_completed_fence(open.hAdapter, 0);
+  if (!Check(hr == S_OK, "adapter_test_set_completed_fence (not ready)")) {
+    return false;
   }
 
   uint32_t done = 0;
@@ -1791,9 +1792,9 @@ bool TestEventQueryGetDataSemantics() {
   }
 
   // Mark the fence complete and re-poll.
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    adapter->completed_fence = fence_value;
+  hr = adapter_test_set_completed_fence(open.hAdapter, fence_value);
+  if (!Check(hr == S_OK, "adapter_test_set_completed_fence (fence complete)")) {
+    return false;
   }
 
   // The UMD may defer making an EVENT query "visible" to GetData(DONOTFLUSH)
@@ -11397,9 +11398,9 @@ bool TestPresentStatsAndFrameLatency() {
 
   // Force the present fence into the "not completed" state so we can validate
   // D3DPRESENT_DONOTWAIT throttling.
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    adapter->completed_fence = 0;
+  hr = adapter_test_set_completed_fence(open.hAdapter, 0);
+  if (!Check(hr == S_OK, "adapter_test_set_completed_fence (present not completed)")) {
+    return false;
   }
 
   present.d3d9_present_flags = 0x1u; // D3DPRESENT_DONOTWAIT
@@ -11417,9 +11418,9 @@ bool TestPresentStatsAndFrameLatency() {
   }
 
   // Mark the fence complete and confirm presents proceed again.
-  {
-    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    adapter->completed_fence = first_present_fence;
+  hr = adapter_test_set_completed_fence(open.hAdapter, first_present_fence);
+  if (!Check(hr == S_OK, "adapter_test_set_completed_fence (present completed)")) {
+    return false;
   }
 
   present.d3d9_present_flags = 0;

@@ -27565,6 +27565,16 @@ HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE 
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL adapter_test_set_completed_fence(D3DDDI_HADAPTER hAdapter, uint64_t completed_fence) {
+  if (!hAdapter.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* adapter = as_adapter(hAdapter);
+  std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+  adapter->completed_fence = completed_fence;
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
