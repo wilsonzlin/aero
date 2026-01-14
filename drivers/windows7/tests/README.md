@@ -391,10 +391,11 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
 - `-EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`)
 
 - COM1 redirected to a host log file
-- Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
-  virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
-  - When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness also requires the guest marker
-    `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS` (provision the guest with `--test-snd-buffer-limits`).
+  - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for
+   virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net when RESULT=PASS is seen.
+   - When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness also requires the guest marker
+     `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS` (provision the guest with `--test-snd-buffer-limits` or
+     env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`).
   - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
     is enabled, the harness also injects a small keyboard + mouse sequence via QMP (prefers `input-send-event`, with backcompat fallbacks when unavailable) and requires
     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
@@ -487,7 +488,7 @@ This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrappe
     `--test-input-led` for LED/statusq (compat: `--test-input-leds`), also `--test-input-events-extended` for the extended markers,
     and `--test-input-tablet-events` (alias: `--test-tablet-events`) for tablet.)
   - To require the virtio-snd buffer limits stress test, set `with_virtio_snd=true` and `with_snd_buffer_limits=true` (requires a
-    guest image provisioned with `--test-snd-buffer-limits`).
+    guest image provisioned with `--test-snd-buffer-limits` / env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`).
 
 See `host-harness/README.md` for required prerequisites and usage.
 

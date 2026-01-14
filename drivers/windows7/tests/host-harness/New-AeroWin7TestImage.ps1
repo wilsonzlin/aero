@@ -832,8 +832,8 @@ $readmeVirtioInputCompatNotes
        - Use `-RequireSndCapture` to fail if no capture endpoint exists.
        - Use `-RequireNonSilence` to fail if only silence is captured.
    - To run the virtio-snd buffer limits stress test (required when running the host harness with
-     `-WithSndBufferLimits` / `--with-snd-buffer-limits`), generate this media with `-TestSndBufferLimits`
-     (adds `--test-snd-buffer-limits` to the scheduled task).
+      `-WithSndBufferLimits` / `--with-snd-buffer-limits`), generate this media with `-TestSndBufferLimits`
+      (adds `--test-snd-buffer-limits` to the scheduled task; env var equivalent: `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`).
   - To accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest, generate this media with
     `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
   - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
