@@ -944,8 +944,90 @@ static void test_eventq_not_started_skips_callback_and_signal(void)
     TEST_ASSERT(cbRec.Calls == 0);
     TEST_ASSERT(cbInFlight == 0);
     TEST_ASSERT(signalRec.Calls == 0);
+    /* PeriodState bookkeeping occurs during parse even when Started==FALSE. */
+    TEST_ASSERT(seq[0] == 1);
+    TEST_ASSERT(lastTime[0] != 0);
 
     TestFreePool(&pool);
+}
+
+static void test_eventq_removed_skips_processing_and_repost(void)
+{
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIOSND_DMA_BUFFER pool;
+    VIRTIOSND_EVENTQ_STATS stats;
+    KSPIN_LOCK lock;
+    EVT_VIRTIOSND_EVENTQ_EVENT* cbFn;
+    void* cbCtx;
+    volatile LONG cbInFlight;
+    VIRTIOSND_EVENTQ_CALLBACK_STATE cbState;
+    TEST_EVENTQ_CB_REC cbRec;
+    VIRTIOSND_EVENTQ_PERIOD_STATE period;
+    TEST_EVENTQ_SIGNAL_REC signalRec;
+    LONG seq[2];
+    LONGLONG lastTime[2];
+    BOOLEAN reposted;
+
+    VirtioSndHostQueueInit(&q, 8);
+
+    /*
+     * Removed == TRUE must short-circuit before touching the buffer pool contents.
+     * Provide an uninitialized pool to validate this does not crash/deref.
+     */
+    RtlZeroMemory(&pool, sizeof(pool));
+    RtlZeroMemory(&stats, sizeof(stats));
+    KeInitializeSpinLock(&lock);
+
+    RtlZeroMemory(&cbRec, sizeof(cbRec));
+    cbFn = TestEventqCallback;
+    cbCtx = &cbRec;
+    cbInFlight = 0;
+
+    cbState.Lock = &lock;
+    cbState.Callback = &cbFn;
+    cbState.CallbackContext = &cbCtx;
+    cbState.CallbackInFlight = &cbInFlight;
+
+    RtlZeroMemory(&signalRec, sizeof(signalRec));
+    RtlZeroMemory(seq, sizeof(seq));
+    RtlZeroMemory(lastTime, sizeof(lastTime));
+
+    RtlZeroMemory(&period, sizeof(period));
+    period.SignalStreamNotification = TestSignalStreamNotification;
+    period.SignalStreamNotificationContext = &signalRec;
+    period.PcmPeriodSeq = seq;
+    period.PcmLastPeriodEventTime100ns = lastTime;
+    period.StreamCount = 2u;
+
+    /*
+     * Cookie must be non-NULL to hit the Removed==TRUE early return.
+     * Use an arbitrary pointer; it should not be dereferenced.
+     */
+    reposted = VirtIoSndEventqHandleUsed(
+        &q.Queue,
+        &pool,
+        &stats,
+        /*JackState=*/NULL,
+        &cbState,
+        &period,
+        /*Started=*/TRUE,
+        /*Removed=*/TRUE,
+        /*Cookie=*/(void*)0x1234,
+        /*UsedLen=*/(UINT32)sizeof(VIRTIO_SND_EVENT),
+        /*EnableDebugLogs=*/TRUE,
+        /*RepostMask=*/NULL);
+
+    TEST_ASSERT(reposted == FALSE);
+    TEST_ASSERT(q.SubmitCalls == 0);
+    TEST_ASSERT(stats.Completions == 0);
+    TEST_ASSERT(stats.Parsed == 0);
+    TEST_ASSERT(cbRec.Calls == 0);
+    TEST_ASSERT(cbInFlight == 0);
+    TEST_ASSERT(signalRec.Calls == 0);
+    TEST_ASSERT(seq[0] == 0);
+    TEST_ASSERT(seq[1] == 0);
+    TEST_ASSERT(lastTime[0] == 0);
+    TEST_ASSERT(lastTime[1] == 0);
 }
 
 int main(void)
@@ -962,6 +1044,7 @@ int main(void)
     test_eventq_repost_mask_sets_bit_without_submitting();
     test_eventq_callback_inflight_counter_is_balanced();
     test_eventq_not_started_skips_callback_and_signal();
+    test_eventq_removed_skips_processing_and_repost();
 
     printf("virtiosnd_eventq_drain_tests: PASS\n");
     return 0;
